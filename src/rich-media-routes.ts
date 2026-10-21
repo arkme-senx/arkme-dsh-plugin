@@ -15,6 +15,7 @@ export interface ArkmeRichMediaRouteOptions {
   allowNonLoopback: boolean
   temporaryDirectory: string
   maxUploadBytes: number
+  requestTimeoutMs?: number
 }
 
 function isLoopback(address: string | undefined): boolean {
@@ -198,7 +199,9 @@ export function createArkmeLocalFileHandler(service: ArkmeService, options: Arkm
 export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const controller = new AbortController()
-    const timeout = setTimeout(() => { controller.abort(new Error('媒体读取超时')) }, 2_000)
+    const timeout = setTimeout(() => {
+      controller.abort(new ArkmePluginError('media-read-timeout', '媒体读取超时，请重试', true, 504))
+    }, options.requestTimeoutMs ?? 30_000)
     const abortOnClose = () => { controller.abort(new Error('媒体请求已取消')) }
     res.once('close', abortOnClose)
     try {
@@ -224,7 +227,8 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
       if (req.method === 'HEAD' || response.body === null) { res.end(); return }
       await pipeline(Readable.fromWeb(response.body as never), res)
     } catch (error) {
-      const known = error instanceof ArkmePluginError ? error : new ArkmePluginError('media-internal-error', '媒体读取失败', true, 500, { cause: error })
+      const known = controller.signal.reason instanceof ArkmePluginError ? controller.signal.reason
+        : error instanceof ArkmePluginError ? error : new ArkmePluginError('media-internal-error', '媒体读取失败', true, 500, { cause: error })
       if (!res.headersSent) {
         const encoded = JSON.stringify({ ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
         res.writeHead(known.httpStatus, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(encoded), 'Cache-Control': 'no-store' })

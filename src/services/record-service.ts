@@ -1,4 +1,5 @@
-import {projectTeamForward} from '../team-forward-presentation.js'
+import { projectForwardRecordsPreview, projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
+import type { ProfileService } from './profile-service.js'
 import { projectedMessageQuote, readMessageQuote, type ArkmeMessageQuote } from '../message-quote.js'
 import type { SelfRoleService } from './self-role-service.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
@@ -342,6 +343,7 @@ export class RecordService {
       session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',
     ) => Promise<ResolvedMentions>,
     private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
+    private readonly forwardProfiles?: Pick<ProfileService, 'sealProfileImageRef'>,
   ) {
     this.submissions = new RecordReeditSubmissions({
       list: userId => this.runtime.stateStore.listRecordReeditSubmissions(userId),
@@ -875,10 +877,12 @@ export class RecordService {
     if (!current || current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
       throw new ArkmePluginError('record-account-changed', '登录账号已变化，请重新打开', false, 409)
     }
-    return this.recordTimelineItemFromRaw(data, session.userId, {
+    const item = this.recordTimelineItemFromRaw(data, session.userId, {
       displayItems: media.displayItemsByRecordUid.get(uid) ?? [],
       mediaUnavailable: media.unavailableRecordUids.has(uid),
     })
+    await this.hydrateForwardAvatars(data, session.userId, item)
+    return item
   }
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
@@ -1446,16 +1450,18 @@ export class RecordService {
     const visibleOverflow = visibleRawItems.length > normalizedLimit
     const rawItems = visibleRawItems.slice(0, normalizedLimit)
     const media = await this.media.hydrateRecordMediaPage(rawItems, session)
-    const items = rawItems.map(raw => {
+    const items: ArkmeSelfRecordItem[] = []
+    for (const raw of rawItems) {
       const recordUid = this.recordUid(raw)
       const displayItems = media.displayItemsByRecordUid.get(recordUid)
-      return this.recordItem(raw, session.userId, {
+      const item = this.recordItem(raw, session.userId, {
         ...(displayItems === undefined ? {} : { displayItems }),
         mediaUnavailable: media.unavailableRecordUids.has(recordUid),
       })
-    }).filter(
-      (item): item is ArkmeSelfRecordItem => item !== undefined,
-    )
+      if (item === undefined) continue
+      await this.hydrateForwardAvatars(raw, session.userId, item)
+      items.push(item)
+    }
     const lastVisibleRaw = rawItems.at(-1)
     const lastVisibleCursor = lastVisibleRaw === undefined ? undefined : {
       sendAtMillis: numberValue(objectValue(lastVisibleRaw).send_at ?? objectValue(objectValue(lastVisibleRaw).record_core).send_at),
@@ -1859,6 +1865,13 @@ export class RecordService {
     }
   }
 
+  async hydrateForwardAvatars(raw: unknown, viewerUserId: number, item: Pick<ArkmeTimelineItem, 'forwardRecords' | 'sendAtMillis'>): Promise<void> {
+    if (item.forwardRecords === undefined || this.forwardProfiles === undefined
+      || item.forwardRecords.items.every(value => value.sourceType === 'long_recording_segments')) return
+    item.forwardRecords = await projectForwardRecordsWithAvatars(this.media.recordContentPayload(raw), viewerUserId,
+      item.sendAtMillis, this.media, this.forwardProfiles) ?? item.forwardRecords
+  }
+
   recordTimelineItemFromRaw(
     raw: unknown,
     userId: number,
@@ -1867,7 +1880,9 @@ export class RecordService {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     const extensionProjection = this.recordExtensionProjection(raw, userId)
-    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload) ?? projectTeamForward(item.content_payload ?? core.content_payload,(files,longArticle)=>this.media.forwardContentBlocks(files,userId ?? 0,{longArticle}))
+    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload)
+      ?? projectForwardRecordsPreview(objectValue(item.content_payload ?? core.content_payload), userId,
+        numberValue(item.send_at ?? core.send_at), this.media)
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
     const callRecord = projectCallRecord(raw, userId)
     return {
@@ -1908,7 +1923,9 @@ export class RecordService {
     const recordUid = stringValue(item.record_uid ?? core.record_uid).trim()
     if (recordUid === '') return undefined
     const extensionProjection = userId === undefined ? undefined : this.recordExtensionProjection(raw, userId)
-    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload) ?? projectTeamForward(item.content_payload ?? core.content_payload,(files,longArticle)=>this.media.forwardContentBlocks(files,userId ?? 0,{longArticle}))
+    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload)
+      ?? (userId === undefined ? undefined : projectForwardRecordsPreview(
+        objectValue(item.content_payload ?? core.content_payload), userId, numberValue(item.send_at ?? core.send_at), this.media))
     const contentBlocks = userId === undefined ? undefined : this.media.richContentBlocks(raw, userId, options.displayItems)
     return {
       recordUid,

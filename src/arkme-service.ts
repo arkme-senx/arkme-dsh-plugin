@@ -605,7 +605,7 @@ export class ArkmeService {
     }, async () => { await this.realtime.invalidateRecordProjection() },
     async (source, text, humans, bots, session, textFormat) => await this.chat.resolveMentions(
       source, text, text, humans, bots, session, undefined, textFormat,
-    ), async session => await this.profile.recordSenderSnapshot(session))
+    ), async session => await this.profile.recordSenderSnapshot(session), this.profile)
     this.arrangementSource = new ArrangementSourceService(this.runtime, this.arrangement, this.privacy, this.record, this.callHistory, this.source)
     this.record.selfRoles = this.selfRoles
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
