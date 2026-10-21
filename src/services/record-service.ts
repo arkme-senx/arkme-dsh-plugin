@@ -1709,6 +1709,8 @@ export class RecordService {
         send_at: Date.now(),
       },
       session,
+      undefined,
+      quote === undefined ? {} : { trackWriteOutcome: true },
     )
     if (quote !== undefined && data.accepted !== true) {
       throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
