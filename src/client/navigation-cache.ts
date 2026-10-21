@@ -111,6 +111,11 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
       : {}),
     ...(groupAvatar === undefined ? {} : { groupAvatar }),
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
+    ...(typeof item.latestActivityAtMillis === 'number' && Number.isSafeInteger(item.latestActivityAtMillis) && item.latestActivityAtMillis > 0
+      && (item.latestActivityKind === 'member_joined' || item.latestActivityKind === 'record')
+      ? { latestActivityAtMillis: item.latestActivityAtMillis, latestActivityKind: item.latestActivityKind } : {}),
+    ...(typeof item.latestPreviewUpdatedAtMillis === 'number' && Number.isSafeInteger(item.latestPreviewUpdatedAtMillis) && item.latestPreviewUpdatedAtMillis > 0
+      ? { latestPreviewUpdatedAtMillis: item.latestPreviewUpdatedAtMillis } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
     ...(typeof item.badgeUnreadCount === 'number' && Number.isFinite(item.badgeUnreadCount)
