@@ -26,11 +26,25 @@ function validArticle(article: ComposerArticle | undefined): article is Composer
 /** Independent from the text/files draft: article sends must never consume that draft. */
 export class ComposerArticleStore {
   private states = new Map<string, ComposerArticleState>()
+  private nativePrefixes = new Set<string>()
+  private isNative(key: string): boolean { return [...this.nativePrefixes].some(prefix => key.startsWith(prefix)) }
+  useNativePersistence(prefix: string): void {
+    if (this.nativePrefixes.has(prefix)) return
+    // Import legacy cards once before the native snapshot; native null wins below.
+    try {
+      const keys = Object.keys(localStorage).filter(key => key.startsWith(storagePrefix + prefix)).slice(0, 1000)
+      for (const key of keys) this.get(key.slice(storagePrefix.length))
+    } catch { /* Browser storage may be disabled. */ }
+    this.nativePrefixes.add(prefix)
+  }
+  confirmNativeSave(key: string): void {
+    if (this.isNative(key)) try { localStorage.removeItem(storagePrefix + key) } catch { /* Native state is already durable. */ }
+  }
   private listeners = new Set<() => void>()
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   get = (key?: string): ComposerArticleState | undefined => {
     if (!key) return undefined
-    if (!this.states.has(key)) {
+    if (!this.states.has(key) && !this.isNative(key)) {
       try {
         const saved = JSON.parse(localStorage.getItem(storagePrefix + key) || 'null') as ComposerArticleState | null
         if (saved && validArticle(saved.article) && typeof saved.recordUid === 'string'
@@ -42,12 +56,12 @@ export class ComposerArticleStore {
     return this.states.get(key)
   }
   entries(): ReadonlyMap<string, ComposerArticleState> { return new Map(this.states) }
-  applyRemote(key: string, value: unknown): void {
+  applyRemote(key: string, value: unknown, restoring = false): void {
     if (value === null) { this.write(key, undefined); return }
     const state = value as ComposerArticleState | undefined
     if (!state || !validArticle(state.article) || typeof state.recordUid !== 'string'
       || typeof state.relationUid !== 'string' || typeof state.sending !== 'boolean') return
-    this.write(key, state)
+    this.write(key, restoring ? { ...state, sending: false, error: state.sending ? '上次发送结果待确认，可重试；将使用同一提交标识' : state.error } : state)
   }
   set(key: string, article: ComposerArticle): void {
     if (this.get(key)?.sending) return
@@ -92,7 +106,7 @@ export class ComposerArticleStore {
   }
   private write(key: string, state: ComposerArticleState | undefined): void {
     if (state) this.states.set(key, state); else this.states.delete(key)
-    try { if (state) localStorage.setItem(storagePrefix + key, JSON.stringify(state)); else localStorage.removeItem(storagePrefix + key) } catch { /* Best effort local recovery. */ }
+    if (!this.isNative(key)) try { if (state) localStorage.setItem(storagePrefix + key, JSON.stringify(state)); else localStorage.removeItem(storagePrefix + key) } catch { /* Best effort browser recovery. */ }
     for (const listener of this.listeners) listener()
   }
 }

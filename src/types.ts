@@ -1478,6 +1478,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     imageRead: true
@@ -1771,6 +1772,11 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
+  latestActivityAtMillis?: number
+  latestActivityKind?: 'member_joined' | 'record'
+  /** Server mutation time when a lifecycle change reselects an earlier activity. */
+  latestPreviewUpdatedAtMillis?: number
   activeAtMillis: number
   unreadCount: number
   /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */
@@ -3862,6 +3868,7 @@ export interface ArkmeArkoAskResult {
 }
 
 export interface ArkmeArkoRunStatus {
+imageInputSupported?:boolean
   sessionId: number
   runUid: string
   status: string
@@ -4096,6 +4103,11 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'arko.models'
+  | 'arko.ask'
+  | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
   | 'people.list' | 'people.open-chat'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
@@ -4578,6 +4590,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.models'
   | 'arko.model.activate'
   | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.pending.prepare'
+  | 'arko.pending.acknowledge'
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'

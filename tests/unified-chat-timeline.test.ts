@@ -3,6 +3,7 @@ import { CHAT_TIMELINE_SOURCES, compareUnifiedTimelineEvents, mergeUnifiedTimeli
 import { parseUnifiedTimelineResponse, UnifiedChatTimelineService } from '../src/services/unified-chat-timeline-service.js'
 import { ChatService } from '../src/services/chat-service.js'
 import { ArkmeUpstreamResponseError } from '../src/services/service.js'
+import { OfflineContextService } from '../src/services/offline-context-service.js'
 
 const statuses = () => CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready' as const, itemCount: 0 }))
 function response() { return { protocol_version: 2, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
@@ -75,6 +76,56 @@ describe('unified timeline owner contract', () => {
     expect(result.unified?.events[0]).toMatchObject({ eventId: id, orderTie: 'relation', item: { timelineEventId: id } })
     expect(chatTimelineEventId('key', 1, 'prod', 'chat', 'message:chat:relation')).not.toBe(id)
     expect(chatTimelineEventId('key', 2, 'test', 'chat', 'message:chat:relation')).not.toBe(id)
+  })
+  it.each([2, '6690025278483443577'] as const)('loads a full message page with exact offline-context owner %s', async owner => {
+    const item = { itemUid: 'record', timelineItemKey: 'opaque-relation', senderName: 'Bot', isMe: false,
+      sendAtMillis: 10, title: '', textContent: 'build notification', status: 1, sequence: 9 }
+    const raw = { ...response(), timeline_items: [{ event_id: 'message:chat:relation', kind: 'message', source: 'messages',
+      occurred_at: 10, order_tie: 'relation', content_status: 'available', payload: { relation: { rel_uid: 'relation', record_owner_user_id: owner } } }] }
+    const runtime = { requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, subscribeAccountScope: () => () => {}, authenticatedChatPost: async () => raw }
+    const source = { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }),
+      sourceItem: async () => ({ kind: 'group_chat' }), chatTimelineItemKey: async () => 'opaque-relation' }
+    const contexts = new OfflineContextService(runtime as never, source as never)
+    const service = new UnifiedChatTimelineService(runtime as never, source as never,
+      { projectChatTimelineItems: async () => [item] } as never, {} as never, undefined, contexts)
+    try {
+      const page = await service.read('ref')
+      expect(page.unified?.complete).toBe(true)
+      expect(page.items).toHaveLength(1)
+      expect(page.items[0]?.recordOwnerUserId).toBe(owner)
+      expect(await contexts.messageAnchor(page.items[0]!.offlineContextMessageRef!, 'chat'))
+        .toEqual({ record_uid: 'record', record_owner_user_id: owner })
+    } finally { service.dispose(); contexts.dispose() }
+  })
+  it.each(['initial', 'older'] as const)('keeps %s history readable when Bot IDs exceed offline-context limits', async mode => {
+    const record = 'r'.repeat(210), relation = 'm'.repeat(215), owner = '6690025278483443577'
+    const items = [{ itemUid: record, timelineItemKey: relation, senderName: 'Bot', isMe: false,
+      sendAtMillis: 10, title: '', textContent: 'build notification', status: 1, sequence: 9 },
+    { itemUid: 'ordinary-record', timelineItemKey: 'ordinary-relation', senderName: '同事', isMe: false,
+      sendAtMillis: 9, title: '', textContent: 'previous message', status: 1, sequence: 8 }]
+    const raw = { ...response(), older_has_more: true, has_more: true, older_cursor: 'next', next_cursor: 'next',
+      timeline_items: items.map(item => ({ event_id: item.timelineItemKey, kind: 'message', source: 'messages',
+        occurred_at: item.sendAtMillis, order_tie: item.timelineItemKey, content_status: 'available',
+        payload: { relation: { rel_uid: item.timelineItemKey, record_uid: item.itemUid, record_owner_user_id: owner } } })) }
+    const runtime = { requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, subscribeAccountScope: () => () => {}, authenticatedChatPost: vi.fn(async () => raw) }
+    const source = { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }),
+      sourceItem: async () => ({ kind: 'group_chat' }), chatTimelineItemKey: async (_user: number, _chat: string, id: string) => id }
+    const contexts = new OfflineContextService(runtime as never, source as never)
+    const service = new UnifiedChatTimelineService(runtime as never, source as never,
+      { projectChatTimelineItems: async () => items } as never, {} as never, undefined, contexts)
+    try {
+      const initial = await service.read('ref')
+      const page = mode === 'older' ? await service.read('ref', { mode, cursor: initial.unified!.olderCursor }) : initial
+      expect(page.unified?.complete).toBe(true)
+      expect(page.items.map(item => item.itemUid)).toEqual(['ordinary-record', record])
+      expect(page.items[1]).not.toHaveProperty('offlineContextMessageRef')
+      expect(page.items[0]?.offlineContextMessageRef).toBeTruthy()
+      expect(page.unified?.olderHasMore).toBe(true)
+      expect(page.unified?.olderCursor).toBeTruthy()
+      expect(runtime.authenticatedChatPost.mock.calls).toHaveLength(mode === 'older' ? 2 : 1)
+    } finally { service.dispose(); contexts.dispose() }
   })
   it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }

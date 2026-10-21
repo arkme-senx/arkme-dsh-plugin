@@ -67,3 +67,14 @@ it('restores retry state after a replayed article submission fails', async () =>
  reject(new Error('offline')); await sending
  expect(store.get('key')).toMatchObject({sending:false,error:'offline',recordUid:identity})
 })
+it('native tombstones cannot lazily reload a legacy card; cold recovery unlocks an interrupted send', () => {
+ const legacy=new ComposerArticleStore(),key='prod:42:arkme-composer:42:arko';legacy.set(key,existing)
+ const native=new ComposerArticleStore();native.useNativePersistence('prod:42:arkme-composer:42:')
+ native.applyRemote(key,null);expect(native.get(key)).toBeUndefined()
+ const state={...legacy.get(key)!,sending:true}
+ native.applyRemote(key,state,true)
+ expect(native.get(key)).toMatchObject({sending:false,recordUid:state.recordUid,relationUid:state.relationUid})
+ native.applyRemote(key,state)
+ expect(native.get(key)?.sending).toBe(true)
+ native.confirmNativeSave(key);expect(localStorage.getItem('arkme.composer.article.v1:'+key)).toBeNull()
+})
