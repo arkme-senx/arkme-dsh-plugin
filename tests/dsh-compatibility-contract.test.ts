@@ -4,9 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { inject } from '../src/index.js'
 
 const TARGET_DSH_VERSIONS = [
-  '0.1.0-rc.8',
-  '0.1.1-rc.2',
-  '0.1.2-alpha.1',
+  '0.2.1-rc.2',
 ] as const
 
 describe('DSH compatibility contract', () => {
@@ -34,7 +32,7 @@ describe('DSH compatibility contract', () => {
     expect(manifest.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-client-runtime')
   })
 
-  it('declares every supported prerelease family for each DSH peer', () => {
+  it('accepts only the migrated Harness release for every DSH peer', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       peerDependencies: Record<string, string>
     }
@@ -43,6 +41,9 @@ describe('DSH compatibility contract', () => {
 
     expect(peers.length).toBeGreaterThan(0)
     for (const [name, range] of peers) {
+      for (const old of ['0.1.5-rc.2', '0.1.2-alpha.1', '0.2.1-rc.1', '0.2.1']) {
+        expect(satisfies(old, range), `${name} must reject ${old}`).toBe(false)
+      }
       for (const version of TARGET_DSH_VERSIONS) {
         expect(satisfies(version, range), `${name} must accept ${version}`).toBe(true)
       }

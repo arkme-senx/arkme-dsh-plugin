@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import { installArkmeSettingsNavIcons } from '../src/client/settings-nav-icons.js'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  IconUserOutline16: ({ size = 16, className }: { size?: number; className?: string }) => (
+  IconUserOutlineMedium: ({ size = 16, className }: { size?: number; className?: string }) => (
     <svg width={size} height={size} className={className} viewBox="0 0 16 16">
       <path d="user-head" />
       <path d="user-shoulders" />

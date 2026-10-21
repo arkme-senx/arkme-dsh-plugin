@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   Toast: ({ text, onDone }: { text: string; onDone: () => void }) => <div role="alert" onClick={onDone}>{text}</div>,
-  IconWarningOutline16: () => null,
+  IconWarningOutlineMedium: () => null,
 }))
 let renderer: ReactTestRenderer | undefined
 let events: EventTarget

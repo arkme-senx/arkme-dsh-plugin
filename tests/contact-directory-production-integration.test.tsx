@@ -103,14 +103,14 @@ describe('production sibling Contacts tab', () => {
   it('uses real apply slots: conversations remain unmodified until the sibling Contacts tab enters contacts mode', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<>
         <Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
       </>)
       await Promise.resolve()
     })
@@ -150,14 +150,14 @@ describe('production sibling Contacts tab', () => {
   it('uses the AppFrame seats as a single narrow Contacts view and retains section folds across a conversations round trip', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<div style={{ gridTemplateColumns: '56px minmax(0, 1fr) 0px' }}>
         <Sidebar collapsed useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
         <div data-shell-overlay />
       </div>)
       await Promise.resolve()
@@ -181,14 +181,14 @@ describe('production sibling Contacts tab', () => {
   it('restores cached directory rows immediately without reloading the same fresh Contacts page', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<>
         <Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
       </>)
       await Promise.resolve()
     })
@@ -218,11 +218,11 @@ it('saves a remark through real sibling seats and immediately updates the select
     : original(operation, params))
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '联系人').props.onClick() })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
@@ -295,12 +295,12 @@ it('adds through the real Contacts dialog, refreshes matching counts and keeps a
   })
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
     arkmeUi.showContacts()
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
   const directory = renderer.root.findByProps({ 'aria-label': '联系人目录' })
@@ -399,12 +399,12 @@ it('accepts a later server directory refresh after a local remark save on a stab
   })
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
     arkmeUi.showContacts()
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
   await act(async () => { button(renderer, '编辑').props.onClick() })

@@ -19,7 +19,18 @@ import { ArkmeAttachmentDraftTile } from '../src/client/ArkmeRichContent.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeReadReceiptPanel } from '../src/client/ArkmeReadReceiptPanel.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer'
+// Native MenuSurface portals its material backing; refs must be DOM Nodes.
+const create: typeof createRenderer = (element, options) => createRenderer(element, {
+  ...options,
+  createNodeMock: node => {
+    const ref = options?.createNodeMock?.(node)
+      ?? (typeof node.type === 'string' ? document.createElement(node.type) : null)
+    if (ref instanceof HTMLElement && 'data-menu-backing' in node.props) ref.setAttribute('data-menu-backing', '')
+    return ref
+  },
+})
+afterEach(() => { document.querySelectorAll('[data-menu-backing]').forEach(node => node.remove()) })
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -49,7 +60,8 @@ describe('Team send UI recovery', () => {
   beforeEach(() => {
     localStorage.clear(); mocks.call.mockReset()
     vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
-    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1 })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16))
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id))
     localStorage.setItem(storageKey, JSON.stringify({ text: '问题', assets: [] }))
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }

@@ -7,7 +7,7 @@ import { ArkmeCalendarNavigationStatus } from '../src/client/ArkmeCalendarNaviga
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ IconLoadingOutline16: () => <i data-spinner /> }))
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ IconLoadingOutlineMedium: () => <i data-spinner /> }))
 let host: HTMLDivElement, root: Root
 let navigation: ReturnType<typeof useSelfCalendarNavigation>
 let supersede: (revision: number | undefined) => void
