@@ -29,8 +29,9 @@ async function fixture(code = false, snapshotOnly = false) {
   const prepare = vi.fn(async () => preparedDirectory())
   const upload = vi.fn(async () => directoryResult())
   const importFile = vi.fn(async () => ({ importRef: 'opaque-import', phase: 'prepared', revision: 1 }))
+  const importFiles = vi.fn(async () => ({ supported: true, batchIds: ['batch'], remaining: 0, items: [] }))
   const mount = () => ctx.plugin(Object.assign((inner: Context) => registerArkmeTools(inner, {
-    prepareRecordingDirectory: prepare, importRecordingDirectory: upload, importRecordingFile: importFile,
+    prepareRecordingDirectory: prepare, importRecordingDirectory: upload, importRecordingFile: importFile, importRecordingFiles: importFiles,
   } as unknown as ArkmeToolPorts), { inject: ['tools', 'systemPrompt'] }))
   const mounted = await mount()
   const session = Session.create(SessionId('confirmation-runtime'))
@@ -54,11 +55,25 @@ async function fixture(code = false, snapshotOnly = false) {
   const consume = () => {
     for (const message of inbox.claim('next-step', 0)) session.append('user/message', message, { surfaceOp: 'append' })
   }
-  return { ctx, mounted, mount, session, agent, prepare, upload, importFile, invoke, enqueue, consume }
+  return { ctx, mounted, mount, session, agent, prepare, upload, importFile, importFiles, invoke, enqueue, consume }
 }
 
 describe.each([false, true])('conversational confirmation with durable DSH inbox events (snapshotOnly=%s)', snapshotOnly => {
   const fixtureForSession = (code = false) => fixture(code, snapshotOnly)
+  it('keeps one confirmed multi-file request intact through the real DSH tool runtime', async () => {
+    const f = await fixtureForSession()
+    const files = [1, 2].map(n => ({ file_ref: `arkme-file-v1.00000000-0000-4000-8000-00000000000${n}`, start_at_millis: 1_700_000_000_000 }))
+    const args = { action: 'upload', files }
+    f.enqueue('导入这两份录音'); f.consume()
+    expect(JSON.stringify(await f.invoke(args, 'arkme_recording_import'))).toContain('confirmation_required')
+    expect(f.importFiles).not.toHaveBeenCalled()
+    f.enqueue('确认导入'); f.consume()
+    const result = await f.invoke(args, 'arkme_recording_import')
+    expect(result.isError).toBe(false)
+    expect(f.importFiles).toHaveBeenCalledOnce()
+    expect(f.importFiles.mock.calls[0]![0]).toHaveLength(2)
+    expect(f.importFile).not.toHaveBeenCalled()
+  })
   it.each(['invalid', 'conflict', 'time_required'] as const)('returns a read-only result without confirmation when all files are %s', async outcome => {
     const f = await fixtureForSession()
     f.prepare.mockResolvedValue({ ...preparedDirectory(), preview: [{ relativePath: 'meeting.wav', outcome }] })

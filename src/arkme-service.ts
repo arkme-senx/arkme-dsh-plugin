@@ -57,7 +57,8 @@ import { normalizeConversationViewports } from './conversation-viewport-state.js
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import { LocalRecordingDirectorySource } from './recording-directory-source.js'
-import { importStagedRecording } from './recording-tool-import.js'
+import { importStagedRecordingBatch, type RecordingFileBatchResult } from './recording-tool-import.js'
+import { recordingToolBatchPlanner } from './services/recording-tool-workflow.js'
 import { prepareRecordingDirectory, importRecordingDirectory, type RecordingDirectoryInput, type PreparedRecordingDirectory, type RecordingDirectoryResult } from './recording-directory-import.js'
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeMemberEventQuery } from './types.js'
@@ -1352,9 +1353,17 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async recordingImportReceipt(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null> { return await this.recording.recordingImportReceipt(taskId, expectedUserId) }
   /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
   async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    const result = await this.importRecordingFiles([input], signal)
+    const item = result.items[0]
+    if (item?.outcome === 'matched_uploaded') throw new ArkmePluginError('recording-import-already-uploaded', '该录音已上传，不重复导入；旧录音不会自动补入新批次', false)
+    if (!item?.job) throw new ArkmePluginError(item?.errorCode ?? 'recording-import-file-failed', '录音导入未完成，请检查原任务后重试', true)
+    return item.job
+  }
+  async importRecordingFiles(inputs: RecordingFileImportInput[], signal?: AbortSignal): Promise<RecordingFileBatchResult> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
-    return await importStagedRecording(this.filesOwner(), this.recording, directory, input, signal)
+    return await importStagedRecordingBatch(this.filesOwner(), this.recording, directory, inputs,
+      recordingToolBatchPlanner(this.runtime, this.recordingWorkflowService), signal)
   }
   async prepareRecordingDirectory(input: RecordingDirectoryInput, signal?: AbortSignal): Promise<PreparedRecordingDirectory> {
     if (!this.runtime.config.recordingImportDirectory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
@@ -1363,7 +1372,8 @@ arkoImagesV1:true,
   async importRecordingDirectory(input: RecordingDirectoryInput, prepared: PreparedRecordingDirectory, signal?: AbortSignal): Promise<RecordingDirectoryResult> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
-    return await importRecordingDirectory(this.recording, new LocalRecordingDirectorySource(directory), input, prepared, signal)
+    return await importRecordingDirectory(this.recording, new LocalRecordingDirectorySource(directory), input, prepared, signal,
+      recordingToolBatchPlanner(this.runtime, this.recordingWorkflowService))
   }
   /** Account-bound status shared by the UI and recording tool. */ async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
   /** @internal Built-in loopback UI only. */ async recordingImportList(signal?: AbortSignal, page?: { toMillis: number; limit: number; offset: number }): Promise<PublicRecordingImportCurrentSnapshot> { return await this.recording.recordingImportList(signal, page) }

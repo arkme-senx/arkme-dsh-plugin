@@ -978,6 +978,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.listRecordingImportJobs(userId)
   }
 
+  async planRecordingToolBatch(...args: Parameters<ArkmeStateStore['planRecordingToolBatch']>) {
+    return await this.operationalState.planRecordingToolBatch(...args)
+  }
+
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
     return await this.operationalState.listAllRecordingImportJobs()
   }

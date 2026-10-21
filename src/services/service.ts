@@ -112,6 +112,7 @@ arkoFileRefs(userId:number):Promise<string[]>
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
