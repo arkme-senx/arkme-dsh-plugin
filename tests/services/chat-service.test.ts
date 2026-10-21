@@ -14,6 +14,7 @@ import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateSt
 import { SourceService } from '../../src/services/source-service.js'
 import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
+import { assertRecordForwardInput } from '../fixtures/record-forward-input.js'
 import { createArkmeCoreToolDefinitions } from '../../src/tools/index.js'
 
 const config: ArkmeServiceConfig = {
@@ -294,13 +295,16 @@ describe('ChatService', () => {
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]?.conversationPreview).toBe(answered)
   })
 
-  it.each(['send_to_self', 'topic'] as const)('preserves Markdown when forwarding to %s', async targetKind => {
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('uses the strict Record write contract and preserves Markdown when forwarding to %s', async targetKind => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = {
       config: { maxTextLength: 20_000 },
       requireSession: vi.fn(async () => session),
       stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
-      authenticatedPost: vi.fn(async () => ({ record_uid: 'forwarded', status: 1 })),
+      authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => {
+        assertRecordForwardInput(body)
+        return { record_uid: 'forwarded', status: 1 }
+      }),
     }
     const source = { openSourceRef: vi.fn(async (ref: string) => ({
       version: 1, userId: 42, kind: ref === 'source' ? 'private_chat' : targetKind,

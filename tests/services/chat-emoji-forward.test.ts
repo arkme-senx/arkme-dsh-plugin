@@ -36,7 +36,7 @@ describe('Record forwarding emoji boundaries', () => {
     await chat.forwardSourceMessages('default', [page.items[0]!.messageActionRef!], { recordUid: 'forward-emoji' })
     expect(authenticatedPost).toHaveBeenCalledWith('/api/v1/records/create', expect.objectContaining({
       content_payload: expect.objectContaining({ forward_records: expect.objectContaining({ items: [expect.objectContaining({
-        title: '题'.repeat(495), text: textContent.slice(0, 995), text_preview: '文'.repeat(495),
+        title: '题'.repeat(495), text: textContent.slice(0, 995),
       })] }) }),
     }), expect.objectContaining({ userId: 42 }), undefined)
     expect(page.items[0]?.textContent).toBe(textContent)
