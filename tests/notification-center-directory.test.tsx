@@ -25,6 +25,8 @@ import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-con
 import type { TeamConversation } from '../src/team-app-contract.js'
 import { builtinDirectoryPreferences } from '../src/client/builtin-directory-preferences.js'
 import { notificationDirectoryPreferences } from '../src/client/notification-directory-preferences.js'
+import { localDirectoryPreferences } from '../src/client/local-directory-preferences.js'
+import type { LocalDirectoryPreferences } from '../src/local-directory-preferences.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -81,8 +83,16 @@ beforeEach(async () => {
     requestAnimationFrame: () => 1, cancelAnimationFrame: vi.fn(), setTimeout, clearTimeout,
   })
   notices = [notice]
+  const directoryPreferences = new Map<string, LocalDirectoryPreferences>()
   mocks.callArkme.mockReset()
-  mocks.callArkme.mockImplementation(async (operation: string) => {
+  mocks.callArkme.mockImplementation(async (operation: string, params?: { accountKey?: string; entries?: LocalDirectoryPreferences }) => {
+    if (operation.startsWith('directory.preferences.')) {
+      const account = params?.accountKey ?? ''
+      const saved = directoryPreferences.get(account) ?? {}
+      if (operation === 'directory.preferences.set') directoryPreferences.set(account, { ...saved, ...params?.entries })
+      if (operation === 'directory.preferences.migrate') directoryPreferences.set(account, { ...params?.entries, ...saved })
+      return { ...directoryPreferences.get(account) }
+    }
     if (operation === 'provider.instance') return { instanceId: 'notification-directory-test' }
     if (operation === 'sources.list') return { directory: 'root', items: sources, hasMore: false }
     if (operation === 'arrangements.reminders.list') return { items: notices }
@@ -92,6 +102,7 @@ beforeEach(async () => {
     return {}
   })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 7001 })
+  await localDirectoryPreferences.hydrate('test:7001', true)
   arkmeChatDirectory.activateAccount('test:7001')
   arkmeChatDirectory.publish(sources)
   arkmeUi.selectSource(sources[1]!)
@@ -124,6 +135,9 @@ describe('notification directory stability', () => {
     expect(menu().findAllByProps({ role: 'separator' })).toHaveLength(0)
     await act(async () => menu().findByProps({ 'aria-label': '置顶对话' }).props.onClick())
     expect(notificationDirectoryPreferences.read('test:7001')).toBe(true)
+    expect(mocks.callArkme).toHaveBeenCalledWith('directory.preferences.set', {
+      accountKey: 'test:7001', entries: { notification: { pinned: true, pinnedAt: expect.any(Number) } },
+    }, expect.any(AbortSignal))
     expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
     await act(async () => { renderer!.unmount(); renderer = create(<Workspace />) })
     expect(conversationOrder()).toEqual(['通知', '置顶对话', '较新对话', '较早对话'])
@@ -147,6 +161,9 @@ describe('notification directory stability', () => {
     expect(menu().findAllByProps({ role: 'separator' })).toHaveLength(0)
     await act(async () => menu().findByProps({ 'aria-label': '置顶对话' }).props.onClick())
     expect(builtinDirectoryPreferences.read('test:7001')[entry]).toBeGreaterThan(0)
+    expect(mocks.callArkme).toHaveBeenCalledWith('directory.preferences.set', {
+      accountKey: 'test:7001', entries: { [`builtin:${entry}`]: { pinned: true, pinnedAt: expect.any(Number) } },
+    }, expect.any(AbortSignal))
     expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
     expect(arkmeUi.getViewSnapshot()).toBe(before)
     await act(async () => { renderer!.unmount(); renderer = create(<Workspace showHarnessEntry />) })
