@@ -1499,6 +1499,8 @@ arkoImagesV1?:true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    relationPages?: true
+    recordingPersonReferences?: true
     recordingEntities?: true
     recordingEntityStart?: true
     speakerPresence?: true
@@ -4109,11 +4111,13 @@ export type ArkmePluginOperation =
   | 'arko.pending.read'
   | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
+  | 'relations.list' | 'relations.records'
   | 'people.list' | 'people.open-chat'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'

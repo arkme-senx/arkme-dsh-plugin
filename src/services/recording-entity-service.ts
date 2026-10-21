@@ -1,12 +1,12 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeRecordingPrivateTranscriptItem } from '../recording-presentation.js'
 import type { ArkmeRecordingTranscriptSource } from '../types.js'
-import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityDay, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityDay, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityPort } from '../recording-entity-contract.js'
 import { recordingEntityDisplayRange } from '../recording-entity-range.js'
 import { recordingSearchIdentityHash, recordingSearchVersion } from '../recording-search-version.js'
-import { ArkmePluginError, ServiceRuntime, objectValue } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue } from './service.js'
 import { entityAccuracy, entityOccurrenceContext, entityParticipation, entityPersonalization, entityRelevance } from './recording-entity-personalization.js'
 import type { RecordingEntityFeedbackInput, RecordingEntityFeedbackResult, RecordingEntityFeedbackUndoInput } from '../recording-entity-contract.js'
 
@@ -208,6 +208,56 @@ export class RecordingEntityService implements RecordingEntityPort {
     await check()
     await this.assertCurrent(session, revision, signal)
     return { version: string(ref.version), items, total: occurrences.length, offset, hasMore: offset + limit < occurrences.length }
+  }
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal): Promise<RecordingPersonReferences> {
+    const scope = this.query(query)
+    if (![query.identityHash, query.transcriptVersion].every(v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v))) throw invalid()
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession(), revision = this.revision
+    const controller = new AbortController(), readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const [day, rows] = await Promise.all([
+      this.read(query, session, readSignal),
+      this.transcripts.entityTranscriptRows(scope.dateStamp, scope.source, session, readSignal),
+    ]).finally(() => controller.abort())
+    await this.assertCurrent(session, revision, signal)
+    if (day.day_stamp !== scope.dateStamp || day.transcript_source !== scope.source) throw invalid()
+    const matching = rows.filter(row => recordingSearchIdentityHash({ sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: row.transcriptSource }) === query.identityHash)
+    if (matching.length !== 1) throw stale()
+    const row = matching[0]!, original = row.rawTranscriptText ?? row.text
+    if (row.transcriptSource !== scope.source || recordingSearchVersion({ ...row, text: original }) !== query.transcriptVersion) throw stale()
+    const result: RecordingPersonReferences = { identityHash: query.identityHash, transcriptVersion: query.transcriptVersion, status: 'not_analyzed', references: [] }
+    if (day.status === 'not_started') return result
+    if (day.status === 'processing') return { ...result, status: 'processing' }
+    if (day.status !== 'succeeded' || day.view_mode !== 'official' || !day.job_id || !day.result_version) throw stale()
+    const rowId = `${row.sessionId}:${row.childId}:${row.asrItemIndex}:${row.transcriptSource}`
+    const raw = await this.runtime.authenticatedRelationPost<Record<string, unknown>>('/api/v1/entity/audio-day/person-references', {
+      job_id: day.job_id, result_version: day.result_version, row_ids: [rowId],
+    }, session, signal, { bypassCache: true, cacheMs: 0 }).catch(error => {
+      if (error instanceof ArkmePluginError && error.code === 'arkme-code-1001'
+        && (error.message === 'audio_person_references_stale' || (error instanceof ArkmeUpstreamResponseError && error.responseData === 'audio_person_references_stale'))) throw stale()
+      throw error
+    })
+    if (raw.job_id !== day.job_id || raw.result_version !== day.result_version) throw stale()
+    const sources = array(raw.rows, 1), source = sources[0]
+    if (!source || source.row_id !== rowId || source.content_hash !== createHash('sha256').update(original, 'utf8').digest('hex')) throw stale()
+    if (!['complete', 'not_analyzed'].includes(String(source.status))) throw invalid()
+    const refs = array(source.references, 10000)
+    if (source.status !== 'complete' && refs.length) throw invalid()
+    let previousEnd = -1
+    for (const reference of refs) {
+      const start = integer(reference.start), end = integer(reference.end), text = string(reference.text, 20)
+      if (start < previousEnd || end <= start || !['resolved', 'unresolved', 'group', 'generic'].includes(String(reference.status))) throw invalid()
+      previousEnd = end
+      const range = recordingEntityDisplayRange(original, row.text, start, end, text)
+      if (!range) throw stale()
+      const targetName = reference.status === 'resolved' ? string(reference.target_name, 1024) : undefined
+      if (targetName !== undefined ? !targetName.trim() : reference.target_name !== undefined) throw invalid()
+      result.references.push({ ...range, text, status: reference.status as RecordingPersonReferences['references'][number]['status'], ...(targetName ? { targetName } : {}) })
+    }
+    const current = await this.read(query, session, signal)
+    if (current.status !== 'succeeded' || JSON.stringify(this.identity(current)) !== JSON.stringify(this.identity(day))) throw stale()
+    await this.assertCurrent(session, revision, signal)
+    return { ...result, status: source.status as 'complete' | 'not_analyzed' }
   }
   private requestId(value: string): string {
     if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(value)) throw invalid()

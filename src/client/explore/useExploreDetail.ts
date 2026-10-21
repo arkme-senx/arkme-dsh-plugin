@@ -71,7 +71,9 @@ export function useExploreDetail(selected: ExploreItem | undefined, module: Expl
     const saved = entry?.value
     cachedAt.current = entry?.at ?? 0
     metadata.current = saved ? { recordsAt: saved.recordsAt, overviewAt: saved.overviewAt, firstKeys: saved.firstKeys } : { recordsAt: 0, overviewAt: 0, firstKeys: [] }
-    const initial = saved ? { ...saved.detail, item: item ?? saved.detail.item } : item && module === 'relations' ? empty(item) : undefined
+    // The list is a different projection: it must not overwrite an already read
+    // overview. Only renew the opaque action reference from the current list.
+    const initial = saved ? { ...saved.detail, item: { ...saved.detail.item, ref: item?.ref ?? saved.detail.item.ref } } : item && module === 'relations' ? empty(item) : undefined
     detailRef.current = initial; setDetail(initial)
     if (item) {
       if (!saved || Date.now() - saved.recordsAt > 30_000) void readDetail(item, undefined, !!saved)

@@ -8,7 +8,7 @@ import type { OfflineContextRequest } from './offline-context-contract.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
-import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
+import type { RecordingPersonReferencesQuery, RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
@@ -456,6 +456,8 @@ export class ArkmeService {
   async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
   async exploreEnrich(refs: unknown, signal?: AbortSignal) { return this.explore.enrich(refs, signal) }
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
+  async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
   async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
@@ -1077,7 +1079,9 @@ arkoImagesV1:true,
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        relationPages: true,
         recordingEntities: true,
+        recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
         offlineContextV1:true,
@@ -1325,6 +1329,7 @@ arkoImagesV1:true,
 
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.startRecordingEntities(query, signal) }
   async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntities(query, signal) }
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingPersonReferences(query, signal) }
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityOccurrences(query, signal) }
   async recordingEntityFeedback(input: RecordingEntityFeedbackInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityFeedback(input, signal) }
   async undoRecordingEntityFeedback(input: RecordingEntityFeedbackUndoInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.undoRecordingEntityFeedback(input, signal) }

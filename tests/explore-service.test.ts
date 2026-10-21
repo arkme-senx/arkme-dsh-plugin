@@ -104,7 +104,7 @@ describe('Explore domain migration',()=>{
     expect(f.calls.map(x=>x.path)).toEqual(['/api/v1/entity/detail'])
     f.calls.length=0
     expect((await f.service.detail(ref,undefined,undefined,'records')).evidence).toHaveLength(1)
-    expect(f.calls.map(x=>x.path)).toEqual(['/api/v1/entity/records/list'])
+    expect(f.calls.map(x=>x.path)).toEqual(['/api/v1/entity/records/page','/api/v1/entity/records/list'])
     expect(f.sources.privateRemarksByUserIds).not.toHaveBeenCalled()
   })
   it('rejects enrichment references after account changes and rejects other module refs',async()=>{
