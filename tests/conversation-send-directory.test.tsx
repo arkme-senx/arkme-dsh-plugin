@@ -939,7 +939,7 @@ describe('conversation send directory projection', () => {
     const body = await mountBottomControl()
     const readCount = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
     const button = renderer!.root.findByProps({ 'aria-label': '回到底部' })
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(body.scrollTop).toBe(900)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readCount)
     expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
@@ -3696,7 +3696,7 @@ describe('conversation send directory projection', () => {
     const button = menu.findByProps({ 'aria-label': '指定主题' })
     expect(button.props.disabled).toBe(true)
     // Also guard the handler, so stale/synthetic invocations cannot bypass the capability.
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(renderer!.root.findAllByType(ArkmeRecordTopicAssignmentDialog)).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(0)
   })

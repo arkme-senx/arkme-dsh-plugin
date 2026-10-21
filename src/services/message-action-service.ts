@@ -66,6 +66,7 @@ export class MessageActionService {
     item: ArkmeArkoHistoryItem,
     userId: number,
   ): Promise<Pick<ArkmeArkoHistoryItem, 'messageActionRef' | 'messageActionCapabilities'>> {
+    if (item.role==='user' && item.contentBlocks?.some(block=>block.kind==='image')) return {}
     const textContent = item.text.trim()
     if (textContent === '' || item.messageId <= 0 || item.sessionId <= 0 || item.status !== 1) return {}
     const entryRecordUid = item.entryRecordUid?.trim() ?? ''
