@@ -7,6 +7,7 @@ type PlaybackState = { segmentId: string; status: 'loading' | 'playing' | 'faile
 export function useCallTranscriptPlayback(callRef: string, beforePlay: () => void) {
   const [state, setState] = useState<PlaybackState>()
   const active = useRef<{ audio: HTMLAudioElement; segmentId: string }>()
+  const queue = useRef<ArkmeCallTranscriptSegment[]>([])
   const generation = useRef(0)
   const release = useCallback(() => {
     generation.current++
@@ -21,13 +22,14 @@ export function useCallTranscriptPlayback(callRef: string, beforePlay: () => voi
     current.audio.removeAttribute('src')
     current.audio.load()
   }, [])
-  const stop = useCallback(() => { release(); setState(undefined) }, [release])
-  useEffect(() => { setState(undefined); return release }, [callRef, release])
+  const stop = useCallback(() => { queue.current = []; release(); setState(undefined) }, [release])
+  useEffect(() => { queue.current = []; setState(undefined); return () => { queue.current = []; release() } }, [callRef, release])
 
-  const toggle = (segment: ArkmeCallTranscriptSegment) => {
+  const toggle = (segment: ArkmeCallTranscriptSegment, remaining: ArkmeCallTranscriptSegment[] = [], force = false) => {
     if (!segment.audioUrl?.trim()) return
-    if (active.current?.segmentId === segment.segmentId) { stop(); return }
+    if (!force && active.current?.segmentId === segment.segmentId) { stop(); return }
     stop()
+    queue.current = remaining
     beforePlay()
     const request = generation.current
     const valid = () => generation.current === request
@@ -40,7 +42,7 @@ export function useCallTranscriptPlayback(callRef: string, beforePlay: () => voi
     try {
       const audio = new Audio(segment.audioUrl)
       active.current = { audio, segmentId: segment.segmentId }
-      audio.onended = () => { if (valid()) stop() }
+      audio.onended = () => { if (!valid()) return; const next = queue.current.shift(); if (next) toggle(next, [...queue.current], true); else stop() }
       audio.onerror = fail
       audio.onplaying = () => { if (valid()) setState({ segmentId: segment.segmentId, status: 'playing' }) }
       audio.onwaiting = () => { if (valid()) setState({ segmentId: segment.segmentId, status: 'loading' }) }
@@ -49,5 +51,5 @@ export function useCallTranscriptPlayback(callRef: string, beforePlay: () => voi
       }).catch(fail)
     } catch { fail() }
   }
-  return { state, toggle, stop }
+  return { state, toggle, stop, playItems: (items: ArkmeCallTranscriptSegment[]) => { if (items[0]) toggle(items[0], items.slice(1), true) } }
 }

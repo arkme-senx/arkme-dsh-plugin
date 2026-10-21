@@ -2,6 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeCallDetailContent } from '../src/client/ArkmeCallDetailContent.js'
 import { ArkmeCallDetailDrawer } from '../src/client/ArkmeCallDetailDrawer.js'
+import { useCallTranscriptPlayback } from '../src/client/use-call-transcript-playback.js'
 import { callArkme } from '../src/client/api.js'
 import type { ArkmeCallDetail, ArkmeTimelineItem } from '../src/types.js'
 
@@ -32,11 +33,23 @@ const detail: ArkmeCallDetail = {
 const selected = { callRef: 'call', peerDisplayName: '鹏', mediaType: 'video' as const, acceptedAtMillis: 1000, durationSeconds: 8 }
 const item: ArkmeTimelineItem = { itemUid: 'note', senderName: '我', isMe: true, title: '', textContent: '', status: 1, sendAtMillis: 1000, callRecord: { callRef: 'call', mediaType: 'video', text: '视频通话' } }
 let view: ReactTestRenderer
-const clickSegment = (text: string) => view.root.findAllByType('button').find(button => String(button.props['aria-label']).endsWith(`录音片段：${text}`))!.props.onClick()
+const clickSegment = (text: string) => view.root.findAll(node => node.props.role === 'button').find(button => String(button.props['aria-label']).endsWith(`录音片段：${text}`))!.props.onClick()
 beforeEach(() => { FakeAudio.instances = []; vi.stubGlobal('Audio', FakeAudio); vi.mocked(callArkme).mockResolvedValue(detail) })
 afterEach(() => { act(() => { view?.unmount() }); vi.unstubAllGlobals() })
 
 describe('shared call transcript playback', () => {
+  it('does not play missing audio or keyboard events from nested correction controls', async () => {
+    await act(async () => { view = create(<ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />) })
+    const bubble = view.root.findByProps({ 'aria-label': '播放鹏的录音片段：第一段' })
+    const target = {}, child = {}, preventDefault = vi.fn()
+    act(() => bubble.props.onKeyDown({ key: 'Enter', target: child, currentTarget: target, preventDefault }))
+    const missing = view.root.findAllByType('article')[2]!.findAll(node => node.type === 'span' && node.props.onKeyDown)[0]!
+    act(() => missing.props.onClick())
+    expect(FakeAudio.instances).toHaveLength(0)
+    expect(preventDefault).not.toHaveBeenCalled()
+    act(() => bubble.props.onKeyDown({ key: 'Enter', target, currentTarget: target, preventDefault }))
+    expect(FakeAudio.instances).toHaveLength(1)
+  })
   it('pauses a retained video on leaving without restarting it on return', async () => {
     const video = { pause: vi.fn(), play: vi.fn(async () => {}), currentTime: 0 }
     await act(async () => { view = create(<ArkmeCallDetailContent selectedItem={selected} detail={detail} detailState="ready" />, { createNodeMock: node => node.type === 'video' ? video : null }) })
@@ -146,4 +159,29 @@ describe('shared call transcript playback', () => {
     expect(audio.pause).toHaveBeenCalledOnce()
     expect(JSON.stringify(view.toJSON())).not.toContain('■ 正在播放')
   })
+})
+
+
+it('plays the selected call clips in order and cancels the rest on stop or call switch', async () => {
+  let player!: ReturnType<typeof useCallTranscriptPlayback>
+  function Player({ callRef }: { callRef: string }) { player = useCallTranscriptPlayback(callRef, () => {}); return null }
+  await act(async () => { view = create(<Player callRef="one" />) })
+  act(() => player.playItems(detail.transcriptSegments.slice(0, 2)))
+  const first = FakeAudio.instances[0]!
+  await act(async () => { first.resolve() })
+  act(() => first.onended!())
+  expect(FakeAudio.instances[1]!.src).toBe('https://example.com/b.wav')
+  expect(first.pause).toHaveBeenCalledOnce()
+  await act(async () => { FakeAudio.instances[1]!.resolve() })
+  act(() => player.playItems(detail.transcriptSegments.slice(0, 2)))
+  const staleEnd = FakeAudio.instances[2]!.onended!
+  act(() => player.stop())
+  act(() => staleEnd())
+  expect(FakeAudio.instances).toHaveLength(3)
+  act(() => player.playItems(detail.transcriptSegments.slice(0, 2)))
+  const switchEnd = FakeAudio.instances[3]!.onended!
+  await act(async () => { view.update(<Player callRef="two" />) })
+  act(() => switchEnd())
+  expect(FakeAudio.instances).toHaveLength(4)
+  expect(player.state).toBeUndefined()
 })

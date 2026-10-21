@@ -2589,6 +2589,8 @@ export interface ArkmeMessageCopyLinkMediaItem {
 export interface ArkmeMessageCopyLinkStructuredContent {
   structuredKind: number
   durationMillis: number
+  /** Only the server-authorized selection snapshot; never the full source session. */
+  longRecordingSegments?: ArkmeForwardTranscriptSegment[]
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {
@@ -4147,6 +4149,8 @@ export type ArkmePluginOperation =
   | 'topic.dissolve'
   | 'provider.capabilities'
   | 'source.message-extension.capabilities'
+  | 'transcript.local.read'
+  | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
@@ -4548,6 +4552,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.compare'
   | 'recordings.compare.start'
   | 'recordings.forward.capabilities'
+  | 'recordings.copy-link'
   | 'recordings.forward'
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'

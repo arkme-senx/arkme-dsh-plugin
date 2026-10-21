@@ -31,6 +31,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
 arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
 arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
 prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>

@@ -1,3 +1,4 @@
+import { createMessageCopyLink } from './message-copy-link-create.js'
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
 import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import { underlineCapabilities, underlineId, readUnderlineSnapshot, type MessageUnderlineChange } from '../message-annotations.js'
@@ -779,9 +780,25 @@ function messageCopyLinkMediaItemFromData(value: unknown): ArkmeMessageCopyLinkS
 function messageCopyLinkStructuredContentFromData(value: unknown): ArkmeMessageCopyLinkSnapshotItem['structuredContent'] | undefined {
   const data = objectValue(value)
   if (Object.keys(data).length === 0) return undefined
+  let segments: NonNullable<ArkmeMessageCopyLinkSnapshotItem['structuredContent']>['longRecordingSegments']
+  if (data.long_recording_segments !== undefined && data.long_recording_segments !== null) {
+    if (!Array.isArray(data.long_recording_segments) || data.long_recording_segments.length > 150 || (data.long_recording_segments.length > 0 && integerLikeValue(data.structured_kind) !== 1)) {
+      throw new ArkmePluginError('message-copy-link-unavailable', '录音分享内容无效', false, 502)
+    }
+    segments = data.long_recording_segments.map(raw => {
+      const row = objectValue(raw)
+      const start = row.start_millis, end = row.end_millis
+      if (typeof start !== 'number' || typeof end !== 'number' || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || typeof row.text !== 'string') {
+        throw new ArkmePluginError('message-copy-link-unavailable', '录音分享内容无效', false, 502)
+      }
+      const speakerNumber = Math.max(0, integerLikeValue(row.speaker_number))
+      return { speakerNumber, speakerName: stringValue(row.speaker_label).trim() || `说话人 ${speakerNumber}`, textContent: row.text, startMillis: start, endMillis: end }
+    })
+  }
   return {
     structuredKind: integerLikeValue(data.structured_kind),
     durationMillis: Math.max(0, integerLikeValue(data.duration_millis)),
+    ...(segments === undefined ? {} : { longRecordingSegments: segments }),
   }
 }
 
@@ -3118,18 +3135,7 @@ export class ChatService {
           record_owner_user_id: reference.recordOwnerUserId,
           record_uid: reference.recordUid,
         })
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/messages/copy-link/get-or-create',
-        { sources },
-        session,
-        options.signal,
-      )
-      const sid = stringValue(data.sid).trim()
-      const url = stringValue(data.url).trim()
-      if (sid === '' || !/^https?:\/\//i.test(url)) {
-        throw new ArkmePluginError('message-copy-link-response-invalid', '复制链接失败，请稍后重试', true, 502)
-      }
-      return { sid, url }
+      return await createMessageCopyLink(this.runtime, sources, session, options.signal)
     }
 
   async resolveMessageCopyLink(
@@ -3153,8 +3159,8 @@ export class ChatService {
       }
       const items = rawItems.map(raw => {
         const item = messageCopyLinkSnapshotItemFromData(raw)
-        if (item.displayKind !== 1 && item.templateKind !== 8) return item
-        const contentBlocks = this.media.forwardContentBlocks(listValue(objectValue(raw).media_items), session.userId, { longArticle: true })
+        if (item.displayKind !== 1 && item.templateKind !== 8 && !(item.templateKind === 5 && item.structuredContent?.structuredKind === 1)) return item
+        const contentBlocks = this.media.forwardContentBlocks(listValue(objectValue(raw).media_items), session.userId, { longArticle: item.displayKind === 1 || item.templateKind === 8 })
         return { ...item, contentBlocks, ...(item.mediaItems.length > contentBlocks.length ? { mediaUnavailable: true } : {}) }
       })
       if (items.length === 0 || items.length > MAX_MESSAGE_COPY_LINK_ITEMS) {
