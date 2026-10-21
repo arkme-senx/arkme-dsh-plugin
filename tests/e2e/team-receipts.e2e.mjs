@@ -78,7 +78,16 @@ it('loads bounded summaries, keeps paged totals and refreshes receipts without t
     await control.click();const details=page.getByRole('dialog',{name:'查看阅读状态',exact:true})
     await details.getByText('成员1',{exact:true}).waitFor()
     expect(await details.innerText()).toContain('1/1000')
+    const capture=process.env.ARKME_E2E_CAPTURE_DIR
+    if(capture){await mkdir(capture,{recursive:true});await page.screenshot({path:join(capture,'team-read-receipts-partial.png')})}
+    // Pagination adds a new identity. Wait for its optional private-remark
+    // authorization read to finish before measuring the receipt-only phase.
+    const namesDone=page.waitForResponse(response=>{
+      try { const body=response.request().postDataJSON(); return body?.operation==='team.app.people.remarks' && body.params?.personRefs?.length===5 }
+      catch { return false }
+    })
     await details.getByRole('button',{name:'更多成员',exact:true}).click();await details.getByText('成员3',{exact:true}).waitFor()
+    await (await namesDone).finished()
     const before=calls.filter(c=>c.path.endsWith('/timeline/page')).length
     await incoming.locator('.arkme-timed-bubble').evaluate(n=>window.__teamReceiptBubble=n)
     await expect.poll(()=>streams.size).toBeGreaterThan(0)
@@ -91,8 +100,7 @@ it('loads bounded summaries, keeps paged totals and refreshes receipts without t
     expect(await editor.textContent()).toBe('尚未发送的草稿')
     expect(await incoming.locator('.arkme-timed-bubble').evaluate(n=>n===window.__teamReceiptBubble)).toBe(true)
     expect(await details.getByText('成员3',{exact:true}).count()).toBe(1)
-    const capture=process.env.ARKME_E2E_CAPTURE_DIR
-    if(capture){await mkdir(capture,{recursive:true});await page.screenshot({path:join(capture,'team-read-receipts.png')})}
+    if(capture){await page.screenshot({path:join(capture,'team-read-receipts.png')})}
     await page.keyboard.press('Escape');await details.waitFor({state:'hidden'})
     await incoming.getByRole('button',{name:/查看阅读状态.*团队已读 1000\/1000/}).click();await details.waitFor()
     expect(errors).toEqual([])

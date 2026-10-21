@@ -588,8 +588,8 @@ export class TeamAppService {
           if (id) seen.add(String(id))
           members.push({ ...await this.identity(v.identity, actor, { id, context }),
             ...(id ? { key: await this.key(`receipt-member:${id}`, actor), isMe: String(id) === String(actor) } : {}),
-            ...(typeof v.read === 'boolean' ? { read: v.read } : {}),
-            ...(num(v.read_at) > 0 ? { readAt: num(v.read_at) } : {}) })
+            // Team read_at is a cursor update time, not this message's first read.
+            ...(typeof v.read === 'boolean' ? { read: v.read } : {}) })
         }
         return { ...(typeof data.team_read === 'boolean' ? { teamRead: data.team_read } : {}),
           ...(internal && typeof data.visitor_read === 'boolean' ? { visitorRead: data.visitor_read } : {}),

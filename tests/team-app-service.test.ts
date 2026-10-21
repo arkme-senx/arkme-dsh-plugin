@@ -163,6 +163,7 @@ describe('Team App owner adapter', () => {
     expect(first.members).toHaveLength(messageSide==='team'?3:4)
     expect(first.members.map(m=>m.key)).toEqual(second.members.map(m=>m.key))
     expect(first.members.find(m=>m.isMe)).toMatchObject({nickname:'重名',read:true})
+    expect(first.members.find(m=>m.isMe)?.readAt).toBeUndefined()
     expect(first.members.at(-1)?.read).toBeUndefined()
     expect(JSON.stringify(first)).not.toMatch(/user_id|actor_user_id|sender_user_id/)
     expect(Object.keys(f.requests.at(-1)!.body).sort()).toEqual(['conversation_uid','cursor','limit','message_uid','side'])
