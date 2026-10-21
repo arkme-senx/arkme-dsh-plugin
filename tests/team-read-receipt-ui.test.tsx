@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { TeamReceiptDetails } from '../src/client/TeamReadReceipts.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
 import type { TeamMessage, TeamReceipts } from '../src/team-app-contract.js'
 import { emptyTeamReceipt, type TeamReceiptState, type TeamReceiptStore } from '../src/client/team-read-receipts.js'
@@ -82,11 +83,81 @@ it('keeps failure inspectable and preserves known counts during a failed refresh
 it('keeps outgoing external-contact state separate and never exposes team readers to external viewers', async () => {
   state = { value: { ...receipts(3), visitorRead: true }, loading: false, at: 1 }
   await render({ side: 'team', own: true })
-  expect(host.querySelector('.team-receipt-badge')?.textContent).toBe('对方已读 · 团队已读 3/3')
+  expect(host.querySelector('[aria-label="查看阅读状态：对方已读 · 团队已读 3/3"]')).not.toBeNull()
+  expect(indicator()?.textContent).toBe('3')
   await render({}, false)
   expect(host.querySelector('.team-receipt-badge')).toBeNull()
   expect(indicator()).toBeNull()
   await render({ own: true, recipientRead: false }, false)
   expect(indicator()?.getAttribute('data-arkme-read-receipt-indicator')).toBe('unread')
   expect(host.textContent).not.toContain('团队已读')
+})
+
+
+it.each([false, true])('keeps the outgoing circle left of the bubble and colors it by visitor read=%s', async visitorRead => {
+  state = { value: { ...receipts(2), visitorRead }, loading: false, at: 1 }
+  await render({ side: 'team', own: true })
+  const bubble = host.querySelector('.arkme-timed-bubble')!, control = bubble.previousElementSibling!
+  expect(control.hasAttribute('data-arkme-read-receipt')).toBe(true)
+  expect(bubble.nextElementSibling).toBeNull()
+  expect(indicator()?.getAttribute('data-arkme-read-receipt-indicator')).toBe('count')
+  expect(indicator()?.getAttribute('data-arkme-read-receipt-tone')).toBe(visitorRead ? 'info' : 'neutral')
+  expect(indicator()?.textContent).toBe('2')
+  expect(indicator()?.querySelector('path')).toBeNull()
+  await act(async () => control.querySelector<HTMLButtonElement>('button')!.click())
+  expect(onReceipts).toHaveBeenCalledWith(control.querySelector('button'))
+})
+
+it('retains a numeric ring for zero and all team readers, independent of visitor state', async () => {
+  state = { value: { ...receipts(0), visitorRead: true }, loading: false, at: 1 }
+  await render({ side: 'team', own: true })
+  const bubble = host.querySelector('.arkme-timed-bubble'), control = bubble!.previousElementSibling
+  expect(indicator()?.textContent).toBe('0')
+  await update({ value: { ...receipts(3), visitorRead: false }, loading: false, at: 2 })
+  expect(indicator()?.textContent).toBe('3')
+  expect(indicator()?.getAttribute('data-arkme-read-receipt-tone')).toBe('neutral')
+  expect(host.querySelector('.arkme-timed-bubble')).toBe(bubble)
+  expect(bubble!.previousElementSibling).toBe(control)
+  await render({ side: 'team', own: false })
+  expect(host.querySelector('.arkme-timed-bubble')!.nextElementSibling?.hasAttribute('data-arkme-read-receipt')).toBe(true)
+})
+
+it.each([
+  receipts(3),
+  { ...receipts(3), visitorRead: true, hasMore: true },
+  { ...receipts(3), visitorRead: true, senderExcluded: false },
+])('keeps unknown visitor or team count as a placeholder, not an unread circle', async value => {
+  state = { value, loading: false, at: 1 }
+  await render({ side: 'team', own: true })
+  expect(indicator()?.getAttribute('data-arkme-read-receipt-indicator')).toBe('placeholder')
+  expect(indicator()?.textContent).toBe('')
+})
+
+it('orders readers by their latest time, dims unread members with a dot, and keeps unknown explicit', async () => {
+  const today = new Date(); today.setHours(14, 12, 0, 0)
+  const value: TeamReceipts = { hasMore: false, senderExcluded: true, visitorRead: false, members: [
+    { key: 'u', nickname: '未读甲', read: false },
+    { key: 'a', nickname: '早读乙', read: true, readAt: today.getTime() - 60_000 },
+    { key: 'b', nickname: '晚读丙', read: true, readAt: today.getTime() },
+    { key: 'c', nickname: '待同步丁' },
+    { key: 'd', nickname: '已读无时间戊', read: true },
+  ] }
+  const sourceOrder = value.members.map(m => m.key)
+  await act(async () => root.render(<TeamReceiptDetails message={{ ...message, side: 'team' }}
+    visitor={{ nickname: '外部访客' }} state={{ value, loading: false, at: 1 }}
+    onRetry={() => {}} onMore={() => {}} renderAvatar={() => <span />} />))
+  expect(host.querySelector('[aria-label="阅读状态筛选"]')).toBeNull()
+  expect(host.textContent).toContain('外部联系人')
+  const text = host.textContent!
+  expect(text.indexOf('晚读丙')).toBeLessThan(text.indexOf('早读乙'))
+  expect(text.indexOf('早读乙')).toBeLessThan(text.indexOf('已读无时间戊'))
+  expect(text.indexOf('已读无时间戊')).toBeLessThan(text.indexOf('未读甲'))
+  expect(text).toContain('14:12')
+  expect(text).toContain('14:11')
+  expect(text).toContain('状态待同步')
+  expect(value.members.map(m => m.key)).toEqual(sourceOrder)
+  const dots = host.querySelectorAll('[aria-label="未读"]')
+  expect(dots).toHaveLength(2)
+  for (const dot of dots) expect((dot.previousElementSibling as HTMLElement).style.opacity).toBe('0.5')
+  expect(host.querySelectorAll('.team-receipt-heading')).toHaveLength(2)
 })

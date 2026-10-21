@@ -1,3 +1,4 @@
+import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
@@ -45,7 +46,7 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
   if (!incoming.avatarRef && previous.avatarRef !== undefined) merged.avatarRef = previous.avatarRef
   if (!incoming.avatarRefs?.length && previous.avatarRefs !== undefined) merged.avatarRefs = previous.avatarRefs
   if (!incoming.groupAvatar?.slots.length && previous.groupAvatar !== undefined) merged.groupAvatar = previous.groupAvatar
-  return retainNewerArkmeChatPolicy(previous, merged)
+  return retainNewerArkmeChatActivity(previous, retainNewerArkmeChatPolicy(previous, merged))
 }
 
 function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }): ArkmeSourceItem {

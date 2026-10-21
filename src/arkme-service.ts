@@ -7,10 +7,12 @@ import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { CapabilityService } from './services/capability-service.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
+import { OfflineContextService } from './services/offline-context-service.js'
+import type { OfflineContextRequest } from './offline-context-contract.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
-import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
+import type { RecordingPersonReferencesQuery, RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
@@ -395,6 +397,7 @@ export class ArkmeService {
   private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly offlineContexts: OfflineContextService
   private readonly recordingWorkflowService: RecordingWorkflowService
   private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
@@ -492,6 +495,8 @@ export class ArkmeService {
   async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
   async exploreEnrich(refs: unknown, signal?: AbortSignal) { return this.explore.enrich(refs, signal) }
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
+  async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
   async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
@@ -544,11 +549,16 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
-    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamApp = new TeamAppService(this.runtime, this.profile, {
+      openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
+    }, {
+      privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+    })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      identifyReply: (conversation, message, user) => this.teamApp.replyKey(conversation, message, user),
       execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
     })
     this.teamDelivery.start()
@@ -577,6 +587,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.offlineContexts = new OfflineContextService(this.runtime,this.source,this.media, async userId => await this.realtime.invalidateOfflineContextProjection(userId))
     this.recordingWorkflowService = new RecordingWorkflowService(this.runtime)
     this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
@@ -627,7 +638,8 @@ export class ArkmeService {
       this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
-      read: ref => this.filesOwner().readLocal(ref),
+      read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
+withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
       upload: (refs, signal) => this.filesOwner().uploadRefs(refs, signal),
       project: (raw, userId) => this.media.richContentBlocks(raw, userId),
     })
@@ -658,6 +670,7 @@ export class ArkmeService {
         void this.realtime.refreshAttentionSummary()
       },
       async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+    this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
@@ -677,7 +690,7 @@ export class ArkmeService {
       this.messageActions,
       this.callHistory,
     )
-    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
         ...(sourceKeys?.length ? { sourceKeys } : {}) })
@@ -895,6 +908,7 @@ export class ArkmeService {
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
   async dayReviewSource(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.source(input, signal) }
+  async dayReviewModels(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.models(input, signal) }
   async dayReviewPrompts(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prompts(input, signal) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
@@ -1092,6 +1106,7 @@ export class ArkmeService {
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         imageRead: true,
@@ -1109,9 +1124,12 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        relationPages: true,
         recordingEntities: true,
+        recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        offlineContextV1:true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
         durableChatTimeline: true,
@@ -1255,6 +1273,7 @@ export class ArkmeService {
     this.extensionReview.dispose()
     this.media.dispose()
     this.recordingEntitiesOwner.dispose()
+    this.offlineContexts.dispose()
     this.explore.dispose()
     this.calendarDayReview.dispose()
     this.conversationActivity.dispose()
@@ -1355,6 +1374,7 @@ export class ArkmeService {
 
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.startRecordingEntities(query, signal) }
   async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntities(query, signal) }
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingPersonReferences(query, signal) }
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityOccurrences(query, signal) }
   async recordingEntityFeedback(input: RecordingEntityFeedbackInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityFeedback(input, signal) }
   async undoRecordingEntityFeedback(input: RecordingEntityFeedbackUndoInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.undoRecordingEntityFeedback(input, signal) }
@@ -1473,6 +1493,10 @@ export class ArkmeService {
     return await this.arko.arkoAsk(text, options)
   }
 
+  async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }
+  async arkoPrepareTurn(turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn) { return this.arko.arkoPrepareTurn(turn) }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number) { return this.arko.arkoAcknowledgeTurn(uid,expectedUserId) }
+
   async arkoRunStatus(sessionId: number, runUid: string, signal?: AbortSignal): Promise<ArkmeArkoRunStatus> {
     return await this.arko.arkoRunStatus(sessionId, runUid, signal)
   }
@@ -1571,6 +1595,7 @@ export class ArkmeService {
     return await this.source.renameTopic(sourceRef, title)
   }
 
+  offlineContext(input: OfflineContextRequest,signal?:AbortSignal) { return this.offlineContexts.offlineContext(input,signal) }
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }

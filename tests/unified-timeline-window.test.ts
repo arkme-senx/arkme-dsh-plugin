@@ -4,7 +4,7 @@ import { reconcileUnifiedTimeline } from '../src/unified-timeline-reconcile.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineEvent, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelinePage } from '../src/types.js'
 const event = (eventId: string, text = eventId, source: ArkmeUnifiedTimelineEvent['source'] = 'world_public'): ArkmeUnifiedTimelineEvent => ({ eventId, text, source, kind: 'notice', orderTie: eventId, occurredAtMillis: 1, contentStatus: 'available' })
-const window = (events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 1, events,
+const window = (events: ArkmeUnifiedTimelineEvent[] = []): ArkmeUnifiedTimelineWindow => ({ protocolVersion: 2, events,
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })), complete: true,
   windowTokens: ['window'], hasMore: false, olderHasMore: true, newerHasMore: false, olderCursor: 'history-frontier', newerCursor: 'tail-frontier' })
 const page = (unified: ArkmeUnifiedTimelineWindow): ArkmeTimelinePage => ({ source: {} as never, items: [], unified, hasMore: unified.hasMore })
@@ -53,6 +53,21 @@ describe('Host reconciliation bounds', () => {
       { mode: 'refresh', cursor: 'next', limit: undefined },
       { mode: 'newer', cursor: 'tail', limit: undefined },
     ])
+  })
+  it('publishes healthy sources from a finite partial page and retains missing source content', async () => {
+    const partial = (events: ArkmeUnifiedTimelineEvent[], cursor: string) => {
+      const value = { ...window(events), complete: false, hasMore: false, nextCursor: cursor }
+      value.sources.find(source => source.source === 'world_public')!.status = 'gap'
+      return page(value)
+    }
+    const read = vi.fn().mockResolvedValueOnce(partial([event('linked-card', 'confirmed', 'offline_context')], 'retry'))
+    const updated = await reconcileUnifiedTimeline({ windowTokens: ['w'] }, read, signal())
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(updated.unified?.complete).toBe(false)
+    expect(updated.unified?.sources.find(source => source.source === 'world_public')?.status).toBe('gap')
+    const previous = window([event('retained-world'), event('stale-card', 'old', 'offline_context')])
+    const result = await refreshUnifiedTimelineWindow(previous, async () => updated, signal(), false)
+    expect(result.unified?.events.map(item => item.eventId).sort()).toEqual(['linked-card', 'retained-world'])
   })
   it('rejects repeated continuation, overflow and failures without returning partial data', async () => {
     const repeated = vi.fn().mockResolvedValue(page({ ...window(), hasMore: true, nextCursor: 'repeat' }))

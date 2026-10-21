@@ -1,6 +1,7 @@
+import { OfflineContextMessageLink } from './OfflineContextMessageLink.js'
 import { useMemo, useRef, useState } from 'react'
 import { ChatsCircle } from '@phosphor-icons/react/dist/icons/ChatsCircle'
-import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
+import { OfflineContextPending } from './OfflineContextPending.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
 import type { OfflineContextActions, OfflineContextEntry, OfflineContextMessage } from '../../offline-context.js'
@@ -46,8 +47,8 @@ function exampleEntries(): OfflineContextEntry[] {
   ]
 }
 
-export function offlineContextPreviewRequested(location: Pick<Location, 'hostname' | 'search'> = window.location): boolean {
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
+export function offlineContextPreviewRequested(location: Pick<Location, 'hostname' | 'search'> | undefined = window.location): boolean {
+  return location !== undefined && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
     && new URLSearchParams(location.search).get('arkme-offline-context-preview') === '1'
 }
 
@@ -76,6 +77,7 @@ export function OfflineContextPreview() {
         if (change.kind === 'dismiss') return { ...next, state: 'dismissed' }
         if (change.kind === 'restore') return { ...next, state: item.id === 'demo-candidate' ? 'suggested' : 'linked' }
         if (change.kind === 'confirm') return { ...next, state: 'linked' }
+        if (change.kind === 'withdraw') return { ...next, visibility: 'private', hasSharedSnapshot: false }
         if (change.kind === 'share') return { ...next, visibility: 'shared' }
         if (change.kind === 'relink') {
           const target = messages.find(message => message.messageRef === change.messageRef)
@@ -126,18 +128,17 @@ export function OfflineContextPreview() {
       <section className="arkme-offline-preview-conversation" aria-label="示例聊天">
         <header><strong>{conversation === 'demo-private' ? '同事' : '产品讨论群'}</strong><span>线下交流补全上下文</span></header>
         <div className="arkme-offline-preview-scroll">
-          {pending.length > 0 && <div className="arkme-offline-preview-pending"><button type="button" aria-expanded={showPending} onClick={() => setShowPending(!showPending)}>
-            <Waveform size={15} />{pending.length} 段线下交流待确认 <span>{showPending ? '收起' : '查看'}</span></button>
-            {showPending && pending.map(card)}</div>}
+          {pending.length > 0 && <OfflineContextPending count={pending.length} open={showPending} onToggle={() => setShowPending(!showPending)}>
+            {pending.map(card)}</OfflineContextPending>}
           <p className="arkme-offline-preview-date">2026 年 10 月 14 日 · 示例</p>
           {[...linked.map(entry => ({ at: entry.startAtMillis, key: entry.id, node: card(entry) })),
             ...messages.map(message => ({ at: message.occurredAtMillis, key: message.messageRef, node: <div id={`offline-preview-${message.messageRef}`} className={`arkme-offline-preview-message ${highlight === message.messageRef ? 'is-highlighted' : ''}`}>
               <small>{conversation === 'demo-private' ? '同事' : '群成员'}</small><p>{message.excerpt}</p>
               {conversation === 'demo-group' && <div className="arkme-offline-preview-attachment">测算图片 · 示例占位<br /><small>完整录音 / 人声切片 / 存储成本</small></div>}
-              <div className="arkme-offline-preview-message-footer">{linked.some(entry => entry.messages.some(link => link.messageRef === message.messageRef)) && <button type="button" onClick={() => {
+              <div className="arkme-offline-preview-message-footer">{linked.some(entry => entry.messages.some(link => link.messageRef === message.messageRef)) && <OfflineContextMessageLink onOpen={() => {
                 const entry = linked.find(entry => entry.messages.some(link => link.messageRef === message.messageRef))
                 if (entry) document.querySelector(`[data-offline-context-id="${entry.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }}>线下已讨论 ↗</button>}<time>{offlineClock(message.occurredAtMillis)}</time></div>
+              }} />}<time>{offlineClock(message.occurredAtMillis)}</time></div>
             </div> })),
           ].sort((a, b) => a.at - b.at).map(row => <div className="arkme-offline-preview-row" key={row.key}>{row.node}</div>)}
           {removed.map(card)}

@@ -28,9 +28,9 @@ export async function readAskDshOriginal(block: ArkmeContentBlock, signal: Abort
   return blob
 }
 
-export type AskDshPreparation = (sourceRef:string,items:readonly ArkmeTimelineItem[],signal:AbortSignal,progress:(text:string)=>void)=>Promise<File[]>
+export type AskDshPreparation = (signal: AbortSignal, progress: (text: string) => void) => Promise<File[]>
 
-export function useAskDsh(scopeKey: string, onComplete: () => void, prepare?:AskDshPreparation) {
+export function useAskDsh(scopeKey: string, onComplete: () => void) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const running = useRef<AbortController | undefined>(undefined)
@@ -40,7 +40,7 @@ export function useAskDsh(scopeKey: string, onComplete: () => void, prepare?:Ask
     setStatus(''); setBusy(false); attempt.current = undefined
     return () => { running.current?.abort(); running.current = undefined }
   }, [scopeKey])
-  const run = async (sourceRef: string, items: readonly ArkmeTimelineItem[]) => {
+  const runPrepared = async (identity: string, prepare: AskDshPreparation) => {
     if (running.current) return
     const auth = arkmeAuthStore.getSnapshot().auth
     if (auth?.status !== 'authenticated' || !auth.userId) { setStatus('请先登录'); return }
@@ -59,16 +59,11 @@ export function useAskDsh(scopeKey: string, onComplete: () => void, prepare?:Ask
         && surface?.isConnected && surface.getAttribute('data-arkme-account-scope') === accountScope
     }
     const stopAuth = arkmeAuthStore.subscribe(() => { if (!sameAccount()) controller.abort() })
-    const key = JSON.stringify([scopeKey, sourceRef, items.map(item => [item.itemUid, item.messageActionRef, item.recordVersion, item.version])])
+    const key = JSON.stringify([scopeKey, identity])
     if (attempt.current?.key !== key) attempt.current = { key, id: crypto.randomUUID() }
     setBusy(true); setStatus('正在准备快记及附件…')
     try {
-      const files = prepare ? await prepare(sourceRef,items,signal,setStatus) : await prepareAskDshNotes(items, {
-        detail: (item, readSignal) => callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail', {
-          sourceRef, actionRef: item.messageActionRef ?? '', includeAttachments: true,
-        }, readSignal),
-        original: readAskDshOriginal,
-      }, signal, setStatus)
+      const files = await prepare(signal, setStatus)
       signal.throwIfAborted()
       if (!sameAccount()) throw new Error('账号已切换，请重试')
       await bridge.prepare({ operationId: attempt.current.id, files, signal, progress: setStatus })
@@ -90,5 +85,14 @@ export function useAskDsh(scopeKey: string, onComplete: () => void, prepare?:Ask
       if (running.current === controller) { running.current = undefined; setBusy(false) }
     }
   }
-  return { busy, status, run }
+  const run = (sourceRef: string, items: readonly ArkmeTimelineItem[]) => runPrepared(
+    JSON.stringify([sourceRef, items.map(item => [item.itemUid, item.messageActionRef, item.recordVersion, item.version])]),
+    (signal, progress) => prepareAskDshNotes(items, {
+      detail: (item, readSignal) => callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail', {
+        sourceRef, actionRef: item.messageActionRef ?? '', includeAttachments: true,
+      }, readSignal),
+      original: readAskDshOriginal,
+    }, signal, progress),
+  )
+  return { busy, status, run, runPrepared }
 }

@@ -52,3 +52,12 @@ it.each(['summary','truncated','missing-original'] as const)('rejects incomplete
  await expect(prepareTeamAskDshNotes('conversation',[message('卡片')],'团队',new AbortController().signal,undefined,{preflight:async()=>[fresh],original})).rejects.toThrow(/完整/)
  expect(original).not.toHaveBeenCalled()
 })
+
+it('retains the current viewer remark while all exported bytes come from the current preflight',async()=>{
+ const selected={...message('本地旧文'),sender:{nickname:'我的备注'}}
+ const fresh={...message('当前正文'),sender:{nickname:'公开昵称'}}
+ const files=await prepareTeamAskDshNotes('conversation',[selected],'团队 · 访客',new AbortController().signal,undefined,{preflight:async()=>[fresh],original:async()=>new Blob()})
+ const markdown=await text(files[0]!)
+ expect(markdown).toContain('我的备注');expect(markdown).toContain('团队 · 访客');expect(markdown).toContain('当前正文')
+ expect(markdown).not.toContain('公开昵称');expect(markdown).not.toContain('本地旧文')
+})

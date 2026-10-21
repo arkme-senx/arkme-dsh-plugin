@@ -10,6 +10,7 @@ interface Ports {
   currentUser(): Promise<number | undefined>
   files(): FileTransfers
   identify(ref: string, userId: number): Promise<string>
+  identifyReply?(conversationRef: string, messageRef: string, userId: number): Promise<string>
   execute(operation: TeamAppOperation, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown>
 }
 const fail = (code: string, message: string) => new ArkmePluginError(`team-${code}`, message, false, 409)
@@ -77,6 +78,10 @@ export class TeamSendQueue {
     if (input.reply && (typeof input.reply.messageRef !== 'string' || !input.reply.messageRef || !Number.isSafeInteger(input.reply.version) || input.reply.version <= 0
       || input.reply.quote && (!readMessageQuote(input.reply.quote) || input.reply.quote.recordVersion !== input.reply.version))) throw fail('invalid_request', '引用消息或选区无效')
     const conversationKey = await this.ports.identify(input.conversationRef, user)
+    if (input.reply && this.ports.identifyReply) {
+      const key = await this.ports.identifyReply(input.conversationRef, input.reply.messageRef, user)
+      if (key !== input.reply.messageKey) throw fail('invalid_request', '引用消息与当前会话不匹配')
+    }
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
     const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.reply ? {reply:input.reply} : {})})
@@ -85,7 +90,7 @@ export class TeamSendQueue {
       if (prior) {
         if (prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
           || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
-          || JSON.stringify(prior.reply) !== JSON.stringify(input.reply)) {
+          || JSON.stringify(prior.reply && {key:prior.reply.messageKey,version:prior.reply.version,quote:prior.reply.quote}) !== JSON.stringify(input.reply && {key:input.reply.messageKey,version:input.reply.version,quote:input.reply.quote})) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
         }
         return
@@ -93,7 +98,7 @@ export class TeamSendQueue {
       if (tasks.filter(task => !['sent', 'cancelled'].includes(task.state)).length >= 100) throw fail('queue-full', '待发送消息过多，请先处理失败消息')
       const completed = tasks.filter(task => ['sent', 'cancelled'].includes(task.state) && !task.fileRefs.length).slice(0, -100)
       for (const task of completed) tasks.splice(tasks.indexOf(task), 1)
-      tasks.push({ ...inputCopy, taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
+      tasks.push({ ...inputCopy,  taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
         files: teamTaskFiles(files), attempts: 0, nextAttemptAt: 0 })
     })
     this.wake(0)

@@ -30,8 +30,10 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
-  const service = new TeamAppService(runtime, avatars)
-  return { service, runtime, requests, fetchImpl, avatars, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
+  const contacts = { privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()) }
+  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts)
+  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
@@ -53,6 +55,35 @@ it('opens private matching references for maximum-size Team text without cloud I
   expect(result.items[0]?.anchor).toEqual(anchor)
   expect(f.requests).toHaveLength(calls)
  } finally { db.close() }
+})
+it.each([
+  [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
+  [undefined, 'unknown'], [null, 'unknown'], [99, 'unknown'],
+])('projects current visitor member_type %s consistently across directory and timeline', async (raw, expected) => {
+  const visitor = { nickname: '访客', ...(raw === undefined ? {} : { member_type: raw }) }
+  const value = { ...conversation, side: 'team', visitor }
+  const f = fixture(path => path.endsWith('/conversations/list') ? { items: [value], has_more: false }
+    : { channel, conversation: value, messages: [{ ...message, sender: { ...message.sender, member_type: 'svip' } }] })
+  const page = await f.service.execute('team.app.conversations', { side: 'team' }) as { items: TeamConversation[] }
+  const result = await f.service.execute('team.app.timeline', { conversationRef: page.items[0]!.ref }) as TeamTimeline
+  expect(page.items[0]!.visitor?.memberType).toBe(expected)
+  expect(result.conversation.visitor?.memberType).toBe(expected)
+  // A team sender's membership must not be substituted for the visitor's.
+  expect(result.messages[0]!.sender.memberType).toBe('svip')
+  expect(f.requests).toHaveLength(2)
+  expect(JSON.stringify(result.conversation)).not.toMatch(/external_user_id|member_type|actor_user_id/)
+})
+
+it('clears a former membership when a fresh response is free or unavailable', async () => {
+  let visitor: Record<string, unknown> = { nickname: '访客', member_type: 'svip' }
+  const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', visitor }, messages: [] }))
+  const opened = await open(f)
+  expect(opened.conversation!.visitor?.memberType).toBe('svip')
+  for (const raw of ['free', undefined]) {
+    visitor = { nickname: '访客', member_type: raw }
+    const value = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
+    expect(value.conversation.visitor?.memberType).toBe(raw ?? 'unknown')
+  }
 })
 
 it('persists private Team marks across refreshed references without cloud writes or Chat authority', async () => {
@@ -96,6 +127,18 @@ it('persists private Team marks across refreshed references without cloud writes
 })
 
 describe('Team App owner adapter', () => {
+  it('resolves official membership by provider identity, including users with no team conversations', async () => {
+    let teams: unknown = [{ ...channel, team_id: '9223372036854775801', name: channel.name }]
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : { teams })
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: false })
+    teams = [{ ...channel, name: '官方改名后', role: 3 }]
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: true })
+    teams = []
+    await expect(f.service.execute('team.app.official.membership', {})).resolves.toEqual({ jotmoId: 'arkme_cn', isMember: false })
+    teams = undefined
+    await expect(f.service.execute('team.app.official.membership', {})).rejects.toMatchObject({ code: 'team-reference-invalid' })
+    expect(f.requests.every(r => !r.path.endsWith('/conversations/open'))).toBe(true)
+  })
   it.each(['external', 'team'] as const)('projects %s-side message receipts in the internal view with stable member identities and sender exclusion', async messageSide => {
     const f=fixture(path=>path.endsWith('/read-receipts/query')
       ? {team_read:true,visitor_read:false,has_more:false,members:[
@@ -424,7 +467,28 @@ describe('Team App owner adapter', () => {
     f.avatars.publicAvatarPresentationsByArkmeIds.mockRejectedValue(new Error('avatar unavailable'))
     const degraded = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(degraded.items).toHaveLength(2)
-    expect(degraded.items[0]?.avatarRef).toBeUndefined()
+    expect(degraded.items[0]?.avatarRef).toBe('profile-avatar')
+    expect(degraded.avatarState).toBe('unavailable')
+  })
+  it('returns membership without waiting for avatars, then enriches and caches only viewer-scoped presentation', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
+      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 }], total_count: 1,
+    } : { teams: [{ ...channel, role: 1 }] })
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const first = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' }) as TeamMembers
+    expect(first.avatarState).toBe('pending')
+    expect(f.avatars.publicAvatarPresentationsByArkmeIds).not.toHaveBeenCalled()
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', { avatarRef: 'real-avatar' }]]))
+    const fresh = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'wait' }) as TeamMembers
+    expect(fresh).toMatchObject({ avatarState: 'ready', items: [{ avatarRef: 'real-avatar' }] })
+    const cached = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' }) as TeamMembers
+    expect(cached.items[0]?.avatarRef).toBe('real-avatar')
+    // An explicit empty presentation is authoritative; a failure is not.
+    f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', {} as { avatarRef: string }]]))
+    const cleared = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'wait' }) as TeamMembers
+    expect(cleared.items[0]?.avatarRef).toBeUndefined()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' })).rejects.toMatchObject({ code: 'team-reference-invalid' })
   })
   it('rechecks membership on every byte request and never forwards provider credentials or URLs', async () => {
     let denied = false
@@ -555,4 +619,128 @@ it('binds a frozen Team card to owner-blind target media and removes source acto
  expect(card.forwardRecords?.items[0]).toMatchObject({senderName:'原作者',textContent:'冻结正文',contentBlocks:[{mediaRef:card.media[0]?.ref}]})
  expect(card.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
  expect(JSON.stringify(card.forwardRecords)).not.toContain('private-signed')
+})
+
+describe('Team visitor private chat authority', () => {
+  it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客' } }, messages: [] }))
+    const opened = await open(f)
+    const result = await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', peerUserId: 999, displayName: '伪造昵称' })
+    expect(result).toEqual({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })
+    expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledExactlyOnceWith(200, { presentationDisplayName: '访客', expectedViewerUserId: 90 })
+    expect(f.requests.at(-1)?.body).toEqual({ conversation_uid: 'conversation-private', side: 'team', before_seq: 0, limit: 1 })
+  })
+  it.each([undefined, 0, 90, '9223372036854775806'])('rejects missing, self, and unsafe visitor identities: %s', async external_user_id => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id }, messages: [] }))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toMatchObject({ code: 'team-visitor-identity-unavailable' })
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('does not let an external viewer use team visitor actions', async () => {
+    const f = fixture(() => ({ channel, conversation, messages: [] })), opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects changed account and a mismatched returned conversation', async () => {
+    let current: Record<string, unknown> = { ...conversation, side: 'team', external_user_id: 200 }
+    const f = fixture(() => ({ channel, conversation: current, messages: [] })), opened = await open(f)
+    current = { ...current, conversation_uid: 'wrong-conversation' }
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90' })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+})
+
+
+it('opens production visitor through the server-selected latest external message, ignoring team senders', async () => {
+  const current = { ...conversation, side: 'team', external_user_id: undefined, latest_external_seq: 7, visitor: { nickname: '访客' } }
+  const f = fixture((_path, body) => ({ channel, conversation: current, messages: body.before_seq === 8
+    ? [{ ...message, side: 'external', actor_user_id: 200, seq: 7 }]
+    : [{ ...message, side: 'team', actor_user_id: 11, seq: 9 }] }))
+  const opened = await open(f)
+  await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })
+  expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledExactlyOnceWith(200, { presentationDisplayName: '访客', expectedViewerUserId: 90 })
+  expect(f.requests.at(-1)!.body).toMatchObject({ before_seq: 8, limit: 1 })
+})
+it.each([
+  { side: 'team', actor_user_id: 200, seq: 7 },
+  { side: 'external', actor_user_id: 200, seq: 6 },
+  { side: 'external', actor_user_id: undefined, seq: 7 },
+])('never substitutes a different message or missing sender for the verified external identity', async raw => {
+  const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: undefined, latest_external_seq: 7 }, messages: [{ ...message, ...raw }] }))
+  const opened = await open(f)
+  await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+  expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+})
+
+
+describe('Team people identity and private remarks', () => {
+  function setup() {
+    let current = { ...conversation, side: 'team' }
+    const f = fixture(() => ({ channel, conversation: current, messages: [message], has_more: false }))
+    return { ...f, setConversation(uid: string) { current = { ...current, conversation_uid: uid } } }
+  }
+  async function target(f: ReturnType<typeof setup>) {
+    const result = await open(f)
+    const ref = result.conversation!.ref
+    const page = await f.service.execute('team.app.timeline', { conversationRef: ref }) as TeamTimeline
+    return { ref, person: page.messages[0]!.sender }
+  }
+  it('opens the exact internal sender with a viewer/conversation-bound reference, never its nickname', async () => {
+    const f = setup(), { ref, person } = await target(f)
+    expect(person.personKey).toBeTruthy(); expect(person.personRef).toBeTruthy(); expect(person.isMe).toBe(false)
+    await f.service.execute('team.app.person.private.open', { conversationRef: ref, personRef: person.personRef, userId: 999 })
+    expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledWith(11, expect.objectContaining({ expectedViewerUserId: 90 }))
+  })
+  it('batch resolves only viewer-owned remarks without writing them to Team', async () => {
+    const f = setup(), { ref, person } = await target(f)
+    f.contacts.privateRemarksByUserIds.mockResolvedValue(new Map([[11, '我的同事备注']]))
+    const result = await f.service.execute('team.app.people.remarks', { conversationRef: ref, personRefs: [person.personRef] })
+    expect(result).toEqual({ items: [{ personKey: person.personKey, remark: '我的同事备注' }] })
+    expect(f.contacts.privateRemarksByUserIds).toHaveBeenCalledWith([11], {})
+    expect(JSON.stringify(f.requests)).not.toContain('我的同事备注')
+    f.contacts.privateRemarksByUserIds.mockResolvedValue(new Map())
+    expect(await f.service.execute('team.app.people.remarks', { conversationRef: ref, personRefs: [person.personRef] })).toEqual({items:[{personKey:person.personKey,remark:''}]})
+  })
+  it('rejects cross-conversation person references before contacts or private chat access', async () => {
+    const f = setup(), first = await target(f)
+    f.setConversation('other-conversation')
+    const second = await target(f)
+    await expect(f.service.execute('team.app.person.private.open', { conversationRef: second.ref, personRef: first.person.personRef })).rejects.toThrow()
+    await expect(f.service.execute('team.app.people.remarks', { conversationRef: second.ref, personRefs: [first.person.personRef] })).rejects.toThrow()
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled(); expect(f.contacts.privateRemarksByUserIds).not.toHaveBeenCalled()
+  })
+  it('rejects stale membership and account changes before returning private remarks', async () => {
+    const f = setup(), first = await target(f)
+    f.setConversation('mismatched-response')
+    await expect(f.service.execute('team.app.people.remarks', { conversationRef: first.ref, personRefs:[first.person.personRef] })).rejects.toThrow()
+    expect(f.contacts.privateRemarksByUserIds).not.toHaveBeenCalled()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.person.private.open', { conversationRef:first.ref,personRef:first.person.personRef })).rejects.toThrow()
+  })
+  it('never exposes member action references to the external viewer', async () => {
+    const f = fixture(() => ({channel,conversation,messages:[message],has_more:false})), opened = await open(f)
+    const page = await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    expect(page.messages[0]!.sender.personRef).toBeUndefined(); expect(page.messages[0]!.sender.personKey).toBeUndefined()
+  })
+})
+
+it('projects server reply keys and rejects cross-conversation or cross-account reply references before sending', async () => {
+  let current = conversation
+  const f = fixture(path => path.endsWith('/messages/send') ? {...message,reply:{message_uid:message.message_uid,seq:1,record_version:3,state:'available',text:'原文',sender:{nickname:'同事'}}} : {channel,conversation:current,messages:[message]})
+  const opened = await open(f), conversationRef = opened.conversation!.ref
+  const page = await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+  const parent = page.messages[0]!
+  const key = await f.service.replyKey(conversationRef,parent.ref,90)
+  expect(key).toBe(parent.key)
+  const sent = await f.service.execute('team.app.send',{conversationRef,replyToRef:parent.ref,replyRecordVersion:3,content:{text_content:'延展',template_kind:1}}) as TeamSendResult
+  expect(sent.message?.reply?.key).toBe(parent.key)
+  expect(f.requests.at(-1)!.body.reply_to).toBe(message.message_uid)
+  current = {...conversation,conversation_uid:'another'}
+  const other = await open(f), before = f.requests.length
+  await expect(f.service.execute('team.app.send',{conversationRef:other.conversation!.ref,replyToRef:parent.ref})).rejects.toThrow()
+  expect(f.requests).toHaveLength(before)
+  f.changeAccount()
+  await expect(f.service.replyKey(conversationRef,parent.ref,91)).rejects.toThrow()
 })

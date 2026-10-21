@@ -307,6 +307,16 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.operationalState.writeCancellationCompletion(completion)
   }
 
+  async readOfflineContextJournal(scope: string) {
+    return await this.operationalState.readOfflineContextJournal(scope)
+  }
+  async putOfflineContextJournal(scope: string, id: string, entry: import('./offline-context-contract.js').OfflineContextJournalEntry): Promise<void> {
+    await this.operationalState.putOfflineContextJournal(scope, id, entry)
+  }
+  async deleteOfflineContextJournal(scope: string, id: string, fingerprint: string): Promise<void> {
+    await this.operationalState.deleteOfflineContextJournal(scope, id, fingerprint)
+  }
+
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
   }
@@ -920,6 +930,12 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async recordReeditFileRefs(userId: number): Promise<string[]> {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
+
+  async arkoPendingTurns(userId:number) { return this.operationalState.arkoPendingTurns(userId) }
+  async arkoTurn(userId:number,uid:string) { return this.operationalState.arkoTurn(userId,uid) }
+  async prepareArkoTurn(userId:number,turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>) { return this.operationalState.prepareArkoTurn(userId,turn,request) }
+  async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
+  async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
 
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }

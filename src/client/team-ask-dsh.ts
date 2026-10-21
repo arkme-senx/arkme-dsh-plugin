@@ -11,6 +11,8 @@ interface TeamMaterialReader {
   original(block:ArkmeContentBlock,signal:AbortSignal):Promise<Blob>
 }
 
+export const canAskDshTeamMessage = (message: TeamMessage): boolean => message.state === 'published' && message.contentStatus === 'available' && !!message.content && message.seq > 0
+
 /** Preflight precedes even pure-text export. Only returned bodies are fed to
  * the shared preparer; its timeline-text preference cannot restore stale text. */
 export async function prepareTeamAskDshNotes(conversationRef:string,selected:readonly TeamMessage[],sourceName:string,signal:AbortSignal,progress?:(text:string)=>void,reader?:TeamMaterialReader):Promise<File[]>{
@@ -22,7 +24,7 @@ export async function prepareTeamAskDshNotes(conversationRef:string,selected:rea
   if(fresh.length!==selected.length||fresh.some((message,index)=>message.key!==selected[index]!.key||message.version!==selected[index]!.version||message.contentStatus!=='available'))throw new Error('选中的团队消息已变化，请重新选择')
   const items=fresh.map((message,index)=>{
     if(message.mediaComplete===false||!message.forwardRecords&&message.content?.template_kind!==1&&!message.media.length)throw new Error('完整附件清单暂不可用，请刷新后重试')
-    const item=teamMessagePresentation(message)
+    const item=teamMessagePresentation({...message,sender:{...message.sender,nickname:selected[index]!.sender.nickname}})
     const originalBlock=(block:ArkmeContentBlock):ArkmeContentBlock=>{
       const media=message.media.find(media=>media.ref===block.mediaRef)
       if(!media)throw new Error('完整附件清单暂不可用，请刷新后重试')

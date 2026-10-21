@@ -15,13 +15,13 @@ const message: TeamMessage = { ref: 'team-message-ref', key: 'm1', seq: 1, revis
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   localMarkRef: 'team-mark-ref', content: { text_content: '前缀选中的文字后缀', template_kind: 1 } }
 let root: Root, host: HTMLDivElement
-const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
+const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
 function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -47,12 +47,31 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); document.getSelection()?.removeAllRanges(); vi.unstubAllGlobals() })
 it('uses the same automatic toolbar for Team text and copies only the selected substring', async () => {
   await render(); const p = await select()
-  expect(labels(toolbar())).toEqual(['复制', '全选', '标记'])
+  expect(labels(toolbar())).toEqual(['复制', '全选', '标记', '查找'])
   expect(toolbar()?.textContent).toContain('仅本机')
   await mouse(p, 'contextmenu', 2)
   expect(document.querySelector('[role="menu"]')).toBeNull()
   await act(async () => toolbar()!.querySelector('button')!.click())
   expect(copyText).toHaveBeenCalledWith('选中的文字')
+})
+it.each([
+  ['external', false, '外部用户'], ['team', false, '同事'], ['team', true, '自己'],
+] as const)('keeps the original time inside the bubble for %s own=%s', async (side, own, nickname) => {
+  const at = new Date('2026-10-19T16:12:34+08:00').getTime()
+  await render({ ...message, side, own, sender: { nickname }, createdAt: at })
+  const bubble = host.querySelector<HTMLElement>('.arkme-timed-bubble')!
+  const time = bubble.querySelector<HTMLTimeElement>(':scope > .arkme-message-timestamp')!
+  expect(time?.dateTime).toBe('2026-10-19T08:12:34.000Z')
+  expect(host.querySelectorAll('time')).toHaveLength(1)
+  expect(bubble.lastElementChild).toBe(time)
+  expect(bubble.querySelector('[data-arkme-text-selection]')?.contains(time)).toBe(false)
+  expect(bubble.style.background).toContain(own ? '--arkme-chat-self-bubble' : '--arkme-chat-other-bubble')
+  const body = bubble.closest('article')!
+  expect(body.querySelector('strong')?.textContent).toBe(own ? undefined : nickname)
+  // Own messages have no empty sender/time header consuming another row.
+  if (own) expect(body.querySelector('strong')).toBeNull()
+  await render({ ...message, side, own, sender: { nickname }, createdAt: at, version: 2, content: { text_content: '编辑后的内容', template_kind: 1 } })
+  expect(host.querySelector<HTMLTimeElement>('.arkme-message-timestamp')?.dateTime).toBe(time.dateTime)
 })
 it('selects just the message body and passes explicit Team mark authority without Chat authority', async () => {
   await render(); await select()
@@ -88,7 +107,7 @@ it('shares the fallback context menu and retains the captured selection after fo
 it('keeps whole-message commands permission gated and clears the menu after deletion', async () => {
   await render(); const p = host.querySelector('p')!
   await mouse(p, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '消息详情', '查看阅读状态'])
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '查看阅读状态'])
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '复制')!.click())
   expect(copyText).toHaveBeenCalledWith(message.content!.text_content)
   await render({ ...message, own: true, canEdit: true, canDelete: true })
@@ -110,7 +129,7 @@ it('dismisses on Escape and does not register deleted or pending messages for ma
 it('enters multiselect and gates commands that need an injected owner', async () => {
   await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
-  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '举报', '消息详情', '查看阅读状态'])
+  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '举报', '查看阅读状态'])
   expect(buttons.find(button => button.textContent === '转发')?.disabled).toBe(true)
   await act(async () => buttons.find(button => button.textContent === '多选')!.click())
   expect(selectMessage).toHaveBeenCalledOnce()
@@ -148,4 +167,28 @@ it('offers mark audience only inside the established selection toolbar and prese
   const markButton=[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='标记')!
   await act(async()=>markButton.click())
   await waitForMark(()=>expect(mark).toHaveBeenCalledWith(expect.objectContaining({cloudMarkRef:message.ref}),expect.objectContaining({text:'选中的文字'})))
+})
+it('routes own right-click details to the snapshot while body click stays in reading details', async () => {
+  await render({ ...message, own: true })
+  await mouse(host.querySelector('p')!, 'click')
+  expect(detail).toHaveBeenCalledOnce(); expect(snapshot).not.toHaveBeenCalled()
+  await mouse(host.querySelector('p')!, 'contextmenu', 2)
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '消息详情')!.click())
+  expect(snapshot).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
+})
+
+it('enables actual extension and DSH callbacks, closes the menu and keeps backend gaps disabled', async () => {
+  const extend = vi.fn(), ask = vi.fn()
+  await act(async () => root.render(<TeamConversationMessage message={message} avatar={null} writable showReceipts={false}
+    receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error}
+    onReply={extend} onAsk={ask} />))
+  for (const label of ['延展', '问 DSH']) {
+    await mouse(host.querySelector('p')!, 'contextmenu', 2)
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
+    expect(buttons.find(button => button.textContent === label)?.disabled).toBe(false)
+    expect(buttons.find(button => button.textContent === '表态')?.disabled).toBe(true)
+    await act(async () => buttons.find(button => button.textContent === label)!.click())
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  }
+  expect(extend).toHaveBeenCalledOnce(); expect(ask).toHaveBeenCalledOnce()
 })

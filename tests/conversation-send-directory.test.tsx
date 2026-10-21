@@ -30,7 +30,7 @@ import type {
 } from '../src/types.js'
 
 function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], moments: import('../src/types.js').ArkmeInterwovenMention[] = [], hasMore = false, cursor?: { beforeSequence: number }) {
-  const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 1, events: [
+  const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: [
     ...items.map(item => ({ kind: 'message' as const, eventId: item.itemUid, source: 'messages' as const, occurredAtMillis: item.sendAtMillis,
       orderTie: String(item.sequence ?? 0).padStart(12, '0'), contentStatus: 'available' as const, item: { ...item, timelineEventId: item.itemUid } })),
     ...moments.map(item => ({ kind: 'moment' as const, eventId: item.momentId, source: 'interwoven' as const, occurredAtMillis: item.occurredAtMillis,
@@ -437,7 +437,7 @@ describe('conversation send directory projection', () => {
         const query = params?.cursor?.unified
         if (query?.cacheOnly) throw new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'no cache', retryable: false })
         modes.push(query?.mode ?? 'initial')
-        const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 1,
+        const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2,
           events: [{ eventId: 'stable-event', source: 'world_public', occurredAtMillis: 100, orderTie: 'stable', contentStatus: 'available', kind: 'external', title: '公开快记', text }],
           sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'world_public' ? 'ready' : 'not_applicable', itemCount: source === 'world_public' ? 1 : 0 })),
           complete: true, windowTokens: ['opaque-window'], hasMore: false, olderHasMore: false, newerHasMore: false }
@@ -939,7 +939,7 @@ describe('conversation send directory projection', () => {
     const body = await mountBottomControl()
     const readCount = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
     const button = renderer!.root.findByProps({ 'aria-label': '回到底部' })
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(body.scrollTop).toBe(900)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readCount)
     expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
@@ -1095,6 +1095,32 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTop).toBe(300)
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'bottom-history' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'data-arkme-bottom-error': true })).toHaveLength(0)
+  })
+
+  it('positions a cached context card before releasing its virtual anchor', async () => {
+    const page = unifiedFixture(target, [])
+    page.unified.events.push({ kind: 'offline-context', eventId: 'context-event', source: 'offline_context',
+      occurredAtMillis: 50, orderTie: 'context', contentStatus: 'available', entryRef: 'context-ref', revision: '1', title: '', summary: '' })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline' ? Promise.resolve(page) : baseCall(operation, ...args))
+    const body = { scrollTop: 0, scrollHeight: 5000, clientHeight: 600,
+      scrollTo: vi.fn(({ top, behavior }: { top: number; behavior: string }) => {
+        // A native smooth scroll has not reached the row when React consumes
+        // the target and releases the forced virtual chunk.
+        if (behavior === 'auto') body.scrollTop = top
+      }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
+      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'context-event', offlineContextRef: 'context-ref' },
+        getBoundingClientRect: () => ({ top: 3000 - body.scrollTop, bottom: 3200 - body.scrollTop, height: 200 }) }],
+    }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    body.scrollTop = 0
+    await act(async () => { arkmeUi.showConversationTarget(target, 'context-ref', 50, undefined, undefined, false, false, 'context-ref') })
+    expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
+    expect(body.scrollTop).toBe(2800)
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
   })
 
   it('lets a newer locate of an already loaded message supersede a pending return', async () => {
@@ -1866,6 +1892,7 @@ describe('conversation send directory projection', () => {
     const localStorage = new Map<string, string>()
     const sessionStorage = new Map<string, string>()
     vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(() => true),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,
@@ -3669,7 +3696,7 @@ describe('conversation send directory projection', () => {
     const button = menu.findByProps({ 'aria-label': '指定主题' })
     expect(button.props.disabled).toBe(true)
     // Also guard the handler, so stale/synthetic invocations cannot bypass the capability.
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(renderer!.root.findAllByType(ArkmeRecordTopicAssignmentDialog)).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(0)
   })

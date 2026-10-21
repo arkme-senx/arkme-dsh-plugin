@@ -17,6 +17,7 @@ export const ARKME_MEMBER_JOINED_BIZ_TYPE = 24
 export const ARKME_MEMBER_EVENT_CREATED_BIZ_TYPE = 27
 
 export interface ArkmeMemberInvalidationHint {
+  joinAtMillis?: number
   eventUid: string
   chatSessionUid: string
   eventAtMillis: number
@@ -201,7 +202,7 @@ export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvali
   if (eventUid === undefined || chatSessionUid === undefined || eventAtMillis === undefined
     || positiveInteger(source.actor_user_id) === undefined || positiveInteger(source.member_user_id) === undefined
     || positiveInteger(source.join_at) === undefined || nonNegativeInteger(source.source_client_id) === undefined) return undefined
-  return { eventUid, chatSessionUid, eventAtMillis }
+  return { eventUid, chatSessionUid, eventAtMillis, joinAtMillis: positiveInteger(source.join_at)! }
 }
 
 export function decodeArkmeMemberEventDataLine(line: string): ArkmeMemberInvalidationHint | undefined {

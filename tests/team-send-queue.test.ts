@@ -56,7 +56,8 @@ async function fixture() {
   })
   const createQueue = () => {
     const queue = new TeamSendQueue({currentUser:async()=>user,files:()=>files,
-      identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},execute})
+      identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},
+      identifyReply:async(ref,message,actor)=>{if(!message.startsWith(`${ref}:reply:`)||!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-invalid_request','wrong conversation',false,409);return message.split('#')[0]!},execute})
     queues.push(queue);return queue
   }
   let queue = createQueue()
@@ -68,7 +69,7 @@ async function fixture() {
 }
 
 it('persists an immutable quote through upload, lost ACK, restart and stable retries',async()=>{
-  const f=await fixture(),file=await f.stage(),reply={messageRef:'parent-ref',messageKey:'parent-key',version:7,text:'😀',senderName:'成员',quote:{version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:7,start:1,end:3,text:'😀',prefix:'中',suffix:'文'}}
+  const f=await fixture(),file=await f.stage(),reply={messageRef:'42:conversation:reply:parent#original',messageKey:'42:conversation:reply:parent',version:7,text:'😀',senderName:'成员',quote:{version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:7,start:1,end:3,text:'😀',prefix:'中',suffix:'文'}}
   const command=input({fileRefs:[file.fileRef],reply:structuredClone(reply)})
   f.setOnline(false);await f.queue.enqueue(command)
   command.reply!.text='mutated after enqueue';command.reply!.quote!.text='坏'
@@ -413,4 +414,23 @@ describe('Team delivery with the shared FileTransfers owner', () => {
     expect(f.execute).toHaveBeenCalledTimes(1)
     vi.setSystemTime(Date.now()+2001);await f.queue.recover();expect(f.execute).toHaveBeenCalledTimes(2)
   })
+})
+
+it('persists reply identity through restart and retries without dropping or changing the parent', async () => {
+  const f = await fixture(); f.setOnline(false)
+  const request = input({reply:{messageRef:'42:conversation:reply:parent#old',messageKey:'42:conversation:reply:parent',version:3,text:'问题',senderName:'同事'}})
+  await f.queue.enqueue(request)
+  f.restart()
+  const restored = (await f.queue.list(request.conversationRef))[0]!
+  expect(restored.reply?.messageRef).toBe(request.reply!.messageRef)
+  expect(restored.reply?.messageKey).toBe('42:conversation:reply:parent')
+  await f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:parent#rotated'}})
+  await expect(f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:other',messageKey:'42:conversation:reply:other'}})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+  await expect(f.queue.enqueue({...request,clientUid:randomUUID(),reply:{...request.reply!,messageRef:'42:another:reply:parent'}})).rejects.toMatchObject({code:'team-invalid_request'})
+  f.setOnline(true); f.loseAck(); await f.queue.recover()
+  await vi.advanceTimersByTimeAsync(60_000); await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends = f.execute.mock.calls.filter(([op])=>op==='team.app.send')
+  expect(sends.length).toBeGreaterThan(0)
+  for (const [,command] of sends) expect(command).toMatchObject({clientUid:request.clientUid,replyToRef:request.reply!.messageRef,replyRecordVersion:3})
 })

@@ -1,3 +1,4 @@
+import { OfflineContextConnected } from './offline-context/OfflineContextConnected.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -57,6 +58,7 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
   })) ?? []
   const rowIds = rows.map(event => ({ id: event.kind === 'message' ? `message:${event.item.itemUid}` : event.eventId }))
   const renderedRows = rows.map((event, index) => {
+          if (event.kind === 'offline-context') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><OfflineContextConnected entryRef={event.entryRef} revision={event.revision} title={event.title} source={source} /></article>
           if (event.kind === 'world-public') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><ArkmeTimelinePublicNote recordRef={event.recordRef} authorName={event.authorName} isGroup={source?.kind === 'group_chat'} /></article>
           if (event.kind === 'member-join') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={status}>
             {event.item.action !== 'join' && <>

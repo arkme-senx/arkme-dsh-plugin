@@ -263,7 +263,7 @@ export class SearchService {
       {
         scene_kind: sceneKinds[options.scene],
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
-        ...(scope.search_scope === 'global' ? { search_scope: 'global' } : scope),
+        ...(scope.search_scope === 'global' && options.sourceRef === undefined ? { search_scope: 'global' } : scope),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
@@ -282,10 +282,11 @@ export class SearchService {
     if (options.sourceRef !== undefined) {
       if (this.source === undefined) throw new ArkmePluginError('search-source-unavailable', '会话搜索暂不可用', true)
       const source = await this.source.openSourceRef(options.sourceRef, userId)
-      if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
-        throw new ArkmePluginError('search-source-invalid', '请选择私聊或群聊搜索', false)
-      }
-      return { search_scope: 'chat_session', source_kinds: [3], source_uid: source.ownerRef }
+      if (source.kind === 'private_chat' || source.kind === 'group_chat') return { search_scope: 'chat_session', source_kinds: [3], source_uid: source.ownerRef }
+      if (source.kind === 'topic') return { search_scope: 'topic', source_kinds: [2], source_uid: source.ownerRef }
+      if (source.kind === 'send_to_self') return { search_scope: 'global', source_kinds: [1, 2] }
+      if (source.kind === 'default_category') return { search_scope: 'global', source_kinds: [1] }
+      throw new ArkmePluginError('search-source-invalid', '当前内容暂不支持查找', false)
     }
     const scope = options.searchScope ?? 'global'
     if (!['global', 'topic', 'chat_session'].includes(scope)) throw new ArkmePluginError('search-source-invalid', '搜索范围无效', false)
@@ -304,9 +305,13 @@ export class SearchService {
     if (sourceRef !== undefined) {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
-      const targetSource = await this.source.sourceItem(source)
-      return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
-        ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
+      // Chat results share one session. Personal search may span several topics,
+      // so resolve each result's actual topic below instead of attaching the root.
+      if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+        const targetSource = await this.source.sourceItem(source)
+        return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
+          ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
+      }
     }
     const targets = new Map<string, { sourceKind: number; sourceUid: string; title: string }>()
     const aggregateTitleByKey = new Map(result.sourceAggregates.map(item => [

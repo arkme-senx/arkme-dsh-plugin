@@ -10,10 +10,20 @@ export type TeamAppOperation = `team.app.${
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'mark.capabilities' | 'mark.list' | 'mark.change'
+  | 'official.membership' | 'visitor.private.open' | 'person.private.open' | 'people.remarks'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
-export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
+/** Presentation-only status; current membership is resolved against the official target by the Host. */
+export interface TeamOfficialMembership { jotmoId: string; isMember: boolean }
+export interface TeamIdentity {
+  nickname: string; imageRef?: string; imageKey?: string
+  /** Viewer-scoped identity; never a display-name match or a public account id. */
+  personKey?: string; personRef?: string; isMe?: boolean
+  publicNickname?: string
+  /** Current entitlement from the identity's member_type, never inferred from missing data. */
+  memberType?: 'free' | 'vip' | 'svip' | 'unknown'
+}
 export interface TeamChannel {
   avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
@@ -51,7 +61,11 @@ export interface TeamReceipts {
   senderExcluded?: boolean
   members: TeamReceiptMember[]
 }
-export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
+export interface TeamMembers {
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
+  avatarState?: 'pending' | 'ready' | 'unavailable'
+}
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }

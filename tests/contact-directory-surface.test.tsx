@@ -159,6 +159,8 @@ describe('ContactDirectorySurface content', () => {
     }
 
     const withRemark = renderContact(base)
+    const withGeneratedAvatar = renderContact({ ...base, avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '林' } })
+    expect(withGeneratedAvatar).toContain('>林<')
     const withNickname = renderContact({ ...base, remark: '' })
     const withDisplayName = renderContact({ ...base, remark: '', nickname: '' })
 

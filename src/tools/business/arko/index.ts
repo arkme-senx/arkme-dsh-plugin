@@ -42,9 +42,9 @@ function normalizeWaitMillis(value: number | undefined): number {
   return Math.min(ARKO_MAX_WAIT_MILLIS, Math.trunc(value * 1000))
 }
 
-function normalizeText(value: string): string {
+function normalizeText(value: string, hasImages=false): string {
   const text = value.trim()
-  if (text === '') throw new Error('发送给 Arko 的内容不能为空')
+  if (text === '' && !hasImages) throw new Error('发送给 Arko 的内容不能为空')
   if ([...text].length > ARKO_MAX_TEXT_LENGTH) throw new Error('发送给 Arko 的内容过长')
   return text
 }
@@ -225,7 +225,9 @@ export function createArkmeArkoAskToolDefinition(service: ArkmeArkoToolPort): To
     name: 'arkme_arko_ask',
     description: 'Ask Arko, Arkme\'s conversational cloud AI agent, to answer or perform Arkme business operations for the signed-in user. When a previous result is waiting_user, continue that same run with both reply_to fields from next_action. This may trigger remote business effects, so call only after an explicit current human request.',
     parameters: {
-      text: { type: 'string', required: true, description: 'Exact user request to send to Arko.' },
+      text: { type: 'string', description: 'Exact user request; may be empty only with images.' },
+      image_file_refs:{type:'array',items:{type:'string'},description:'Ordered opaque image file_refs staged through Arkme Files. Never local paths or URLs; at most 9.'},
+      client_turn_uid:{type:'string',description:'Only when retrying an unresolved turn returned by arkme_arko_pending: preserve its exact identity and input.'},
       session_id: { type: 'integer', description: 'Optional existing Arko session_id. When omitted, the latest Arko session is restored or created.' },
       wait_seconds: { type: 'number', description: 'How long to wait for the streamed answer, 1-55 seconds. Defaults to 25. If it times out, use arkme_arko_run_status later.' },
       model_route_key: { type: 'string', description: 'Optional exact Arko model route key. Omit unless it came from a trusted Arkme model selection surface.' },
@@ -244,10 +246,11 @@ export function createArkmeArkoAskToolDefinition(service: ArkmeArkoToolPort): To
       if ((replyToRunUid === '') !== (replyToAssistantMsgId === undefined)) {
         throw new Error('继续 Arko 任务时必须同时提供 reply_to_run_uid 和 reply_to_assistant_msg_id')
       }
-      const result = await service.arkoAsk(normalizeText(args.text), {
+      const result = await service.arkoAsk(normalizeText(args.text ?? '',Boolean(args.image_file_refs?.length)), {
+        ...(args.image_file_refs?.length ? {imageFileRefs:args.image_file_refs} : {}),
         ...(sessionId === undefined ? {} : { sessionId }),
         waitMillis: normalizeWaitMillis(args.wait_seconds),
-        clientTurnUid: arkoTurnUidForToolCall(String(exec.callId)),
+        clientTurnUid: args.client_turn_uid ?? arkoTurnUidForToolCall(String(exec.callId)),
         ...(modelRouteKey === '' ? {} : { modelRouteKey }),
         ...(replyToRunUid === '' ? {} : { replyToRunUid }),
         ...(replyToAssistantMsgId === undefined ? {} : { replyToAssistantMsgId }),
@@ -364,7 +367,19 @@ export const arkoCancelToolModule = defineArkmeCoreToolModule({
   create: createArkmeArkoCancelToolDefinition,
 })
 
+export const arkoModelsToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.arko.models.v1',toolName:'arkme_arko_models',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:(service:ArkmeArkoToolPort)=>defineTool({name:'arkme_arko_models',description:'Read published Arko model routes and their actual image input capability before selecting a model.',parameters:{},output:ARKO_OUTPUT,isConcurrencySafe:()=>true,
+ async execute(_args,exec){return JSON.stringify(await service.arkoModelCatalog(exec.signal))}}),
+})
+export const arkoPendingToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.arko.pending.v1',toolName:'arkme_arko_pending',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:(service:ArkmeArkoToolPort)=>defineTool({name:'arkme_arko_pending',description:'Read unresolved Arko turns in the current account. To confirm one, call arkme_arko_ask with the original text, file_refs, model or reply target and client_turn_uid; never create a replacement turn.',parameters:{},output:ARKO_OUTPUT,isConcurrencySafe:()=>true,
+ async execute(){return JSON.stringify((await service.arkoPendingTurns()).map(turn=>({client_turn_uid:turn.clientTurnUid,session_id:turn.sessionId,text:turn.text,image_file_refs:turn.images?.map(file=>file.fileRef) ?? [],model_route_key:turn.modelRouteKey,reply_to_run_uid:turn.replyToRunUid,reply_to_assistant_msg_id:turn.replyToAssistantMsgId})))}}),
+})
+
 export const arkoToolModules = [
+ arkoModelsToolModule,arkoPendingToolModule,
   arkoProfileToolModule,
   arkoSessionToolModule,
   arkoAskToolModule,

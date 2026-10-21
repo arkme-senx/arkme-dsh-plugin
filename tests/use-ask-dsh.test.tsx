@@ -52,3 +52,21 @@ it('cancels on scope change and allows starting again without a stuck busy state
   await act(async () => { renderer!.update(<Harness scope="other" done={done} />) })
   expect(signal?.aborted).toBe(true); expect(state.busy).toBe(false); expect(done).not.toHaveBeenCalled()
 })
+
+it('uses a custom authorized reader for Team without invoking Chat snapshot APIs', async () => {
+  const prepare = vi.fn(async (_request: DraftRequest) => ({sessionId:'new'}))
+  environment(prepare)
+  const done = vi.fn(); await act(async () => { renderer = create(<Harness done={done} />) })
+  const reader = vi.fn(async () => [new File(['team prose'],'团队消息.md',{type:'text/markdown'})])
+  await act(async () => { await state.runPrepared('team:key:version',reader) })
+  expect(reader).toHaveBeenCalledWith(expect.any(AbortSignal),expect.any(Function))
+  expect(mocks.call).not.toHaveBeenCalled()
+  expect(await prepare.mock.calls[0]![0].files[0]!.text()).toBe('team prose')
+  expect(done).toHaveBeenCalledOnce()
+})
+it('does not prepare a native draft if the custom reader fails', async () => {
+  const prepare = vi.fn(async () => ({sessionId:'new'})); environment(prepare)
+  const done = vi.fn(); await act(async () => { renderer = create(<Harness done={done} />) })
+  await act(async () => { await state.runPrepared('team',async()=>{throw new Error('原消息已变化')}) })
+  expect(state.status).toBe('原消息已变化'); expect(prepare).not.toHaveBeenCalled(); expect(done).not.toHaveBeenCalled()
+})

@@ -63,8 +63,8 @@ it('adds Reply for a single eligible message and forwards exact captured text', 
   const p = host.querySelector('p')!; select(document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!, 7, 9)
   await act(async () => p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
   const buttons = Array.from(document.querySelectorAll('[role="toolbar"] button'))
-  expect(buttons.map(el => el.textContent)).toEqual(['复制', '全选', '回复'])
-  await act(async () => { (buttons[2] as HTMLButtonElement).click(); await new Promise(resolve => setTimeout(resolve, 20)) })
+  expect(buttons.map(el => el.textContent)).toEqual(['复制', '全选', '查找', '回复'])
+  await act(async () => { (buttons.find(button => button.textContent === '回复') as HTMLButtonElement).click(); await new Promise(resolve => setTimeout(resolve, 20)) })
   expect(reply).toHaveBeenCalledWith(expect.objectContaining({ item: base }), expect.objectContaining({ text: '可以', start: 7, sourceDigest: digest(base) }))
 })
 it('does not expose another conversation or an unsupported composite card as a reply target', async () => {
@@ -91,7 +91,7 @@ it('uses 延展 for self and offers underline without silently claiming unsuppor
   const p = host.querySelector('p')!; select(document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!, 7, 9)
   await act(async () => p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
   let buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))
-  expect(buttons.map(el => el.textContent)).toEqual(['复制', '全选', '标记', '延展'])
+  expect(buttons.map(el => el.textContent)).toEqual(['复制', '全选', '标记', '查找', '延展'])
   await act(async () => { buttons[2]!.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
   expect(underline).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'self' }), expect.objectContaining({ text: '可以', start: 7 }))
   expect(document.querySelector('[role="alert"]')?.textContent).toContain('暂未保存')
@@ -99,7 +99,7 @@ it('uses 延展 for self and offers underline without silently claiming unsuppor
   // Same source/version, but a presentation refresh replaced its text nodes.
   p.textContent = base.textContent
   buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))
-  await act(async () => { buttons[3]!.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
+  await act(async () => { buttons.find(button => button.textContent === '延展')!.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
   expect(reply).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'self' }), expect.objectContaining({ text: '可以', start: 7 }))
 })
 it('keeps self topic quote drafts separate and preserves body when cancelling', () => {

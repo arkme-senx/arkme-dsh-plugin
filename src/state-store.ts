@@ -1,3 +1,5 @@
+import { sameArkoTurnIntent, isValidArkoPendingTurn, validArkoStoredTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from './arko-turn-contract.js'
+import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
 import { validRecordingImportBatch } from './recording-workflow-contract.js'
 import { ArrangementBoardCacheStore } from './arrangement-board-cache-store.js'
@@ -30,7 +32,9 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
+ offlineContextJournal?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
 
   version: 2
@@ -42,6 +46,22 @@ interface PersistedState {
   recordReeditSubmissionsByUser: unknown
   recordReeditDraftRevision: unknown
   recordingImportJobsByUser: Record<string, Record<string, RecordingImportJob>>
+}
+
+function offlineContextJournalScope(state:PersistedState,scope:string):Record<string,OfflineContextJournalEntry> {
+ const fail=()=>new Error('本地上下文操作记录损坏，已保留恢复信息')
+ if(!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw fail()
+ if(state.offlineContextJournal===undefined)state.offlineContextJournal={}
+ const journal=state.offlineContextJournal
+ if(!journal || typeof journal!=='object' || Array.isArray(journal))throw fail()
+ const scoped=journal as Record<string,unknown>
+ if(scoped[scope]===undefined)scoped[scope]={}
+ const entries=scoped[scope]
+ if(!entries || typeof entries!=='object' || Array.isArray(entries))throw fail()
+ for(const value of Object.values(entries)) {
+  if(!value || typeof value!=='object' || typeof value.fingerprint!=='string' || typeof value.sealed!=='string' || value.expiresAtMillis!==undefined && !Number.isSafeInteger(value.expiresAtMillis))throw fail()
+ }
+ return entries as Record<string,OfflineContextJournalEntry>
 }
 
 function emptyState(): PersistedState {
@@ -340,11 +360,13 @@ function parseState(raw: string): PersistedState {
     }
   }
   return {
+    arkoTurnsByUser: source.arkoTurnsByUser ?? {},
     version: 2,
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
+    offlineContextJournal:source.offlineContextJournal,
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -441,6 +463,60 @@ export class ArkmeStateStore {
     this.boardCache = new ArrangementBoardCacheStore(directory)
   }
 
+  private arkoTurns(state: PersistedState, userId: number): Record<string, ArkmeArkoStoredTurn> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Arko 账号无效')
+    const root = state.arkoTurnsByUser ?? {}
+    if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('Arko 发送恢复数据损坏')
+    const accounts = root as Record<string, unknown>
+    const values = accounts[String(userId)] ?? {}
+    if (!values || typeof values !== 'object' || Array.isArray(values)
+      || Object.entries(values).some(([uid, entry]) => !validArkoStoredTurn(entry, userId, uid))) {
+      throw new Error('Arko 发送恢复数据损坏')
+    }
+    accounts[String(userId)] = values
+    state.arkoTurnsByUser = root
+    return values as Record<string, ArkmeArkoStoredTurn>
+  }
+
+  async arkoPendingTurns(userId: number): Promise<ArkmeArkoPendingTurn[]> {
+    return this.read(state => Object.values(this.arkoTurns(state, userId))
+      .map(value => structuredClone(value.turn))
+      .sort((left, right) => left.createdAtMillis - right.createdAtMillis))
+  }
+
+  async arkoTurn(userId: number, uid: string): Promise<ArkmeArkoStoredTurn | undefined> {
+    return this.read(state => structuredClone(this.arkoTurns(state, userId)[uid]))
+  }
+
+  async prepareArkoTurn(userId: number, turn: ArkmeArkoPendingTurn, request?: Record<string, unknown>): Promise<void> {
+    if (!isValidArkoPendingTurn(turn, userId)) throw new Error('Arko 发送恢复参数无效')
+    await this.update(state => {
+      const values = this.arkoTurns(state, userId)
+      const existing = values[turn.clientTurnUid]
+      if (existing && !sameArkoTurnIntent(existing.turn, turn)) throw new Error('Arko 轮次标识已用于其他内容')
+      if (existing?.request && request && JSON.stringify(existing.request) !== JSON.stringify(request)) {
+        throw new Error('Arko 请求已冻结，不能修改')
+      }
+      if (!existing && Object.keys(values).length >= 20) throw new Error('Arko 待确认消息过多，请先处理原消息')
+      const frozenRequest = request ?? existing?.request
+      const next = {
+        turn: structuredClone(existing?.turn ?? turn),
+        ...(frozenRequest === undefined ? {} : { request: structuredClone(frozenRequest) }),
+      }
+      if (!validArkoStoredTurn(next, userId, turn.clientTurnUid)) throw new Error('Arko 请求恢复数据无效')
+      values[turn.clientTurnUid] = next
+    })
+  }
+
+  async acknowledgeArkoTurn(userId: number, uid: string): Promise<void> {
+    await this.update(state => { delete this.arkoTurns(state, userId)[uid] })
+  }
+
+  async arkoFileRefs(userId: number): Promise<string[]> {
+    return this.read(state => Object.values(this.arkoTurns(state, userId))
+      .flatMap(value => value.turn.images?.map(file => file.fileRef) ?? []))
+  }
+
   private reviewPending(state: PersistedState): Record<string, unknown> {
     const value = state.dayReviewPending ?? {}
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('日回顾提交恢复记录损坏，未创建新任务')
@@ -484,6 +560,23 @@ export class ArkmeStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
+  async readOfflineContextJournal(scope: string): Promise<Record<string, OfflineContextJournalEntry>> {
+    return this.read(state => structuredClone(offlineContextJournalScope(state,scope)))
+  }
+  async putOfflineContextJournal(scope:string,id:string,entry:OfflineContextJournalEntry):Promise<void> {
+    await this.update(state=>{
+      const entries=offlineContextJournalScope(state,scope)
+      const prior=entries[id]
+      if(prior && prior.fingerprint!==entry.fingerprint) throw new Error('操作编号已用于其他内容')
+      if(prior) return
+      for(const [key,value] of Object.entries(entries)) if(value.expiresAtMillis!==undefined && value.expiresAtMillis<Date.now()) delete entries[key]
+      if(Object.keys(entries).length>=64) throw new Error('请先核对尚未完成的操作')
+      entries[id]=structuredClone(entry)
+    })
+  }
+  async deleteOfflineContextJournal(scope:string,id:string,fingerprint:string):Promise<void> {
+    await this.update(state=>{const entries=offlineContextJournalScope(state,scope);if(entries[id]?.fingerprint===fingerprint)delete entries[id]})
+  }
   async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     return await this.read(state => [...(state.pendingByUser[String(userId)] ?? [])])
   }
