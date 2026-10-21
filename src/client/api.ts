@@ -252,6 +252,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
+  | 'source.message-anchor.capture'
   | 'source.message-underline.capabilities'
   | 'source.message-underline.list'
   | 'source.message-underline.change'

@@ -697,3 +697,32 @@ it('official hints refresh only the official owner and reconnect reconciles it e
     expect(invalidate).toHaveBeenCalledWith('test:42')
   } finally { await act(async () => renderer.unmount()) }
 })
+
+it('mark hints refresh only visible marks, preserving bodies, quote sources and directory', async () => {
+  const { subscribeMessageMarkInvalidations } = await import('../src/client/message-mark-invalidations.js')
+  const { subscribeMessageQuoteInvalidations } = await import('../src/client/message-quote-invalidations.js')
+  const marks = vi.fn(), quotes = vi.fn()
+  const stopMarks = subscribeMessageMarkInvalidations(marks)
+  const stopQuotes = subscribeMessageQuoteInvalidations(quotes)
+  let socket!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  class FakeWebSocket { onopen = null; onmessage = null; constructor() { socket = this }; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  const read = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  const records = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  const timeline = vi.spyOn(arkmeChatTimelineDelta, 'invalidateWindows')
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    read.mockClear(); records.mockClear(); timeline.mockClear(); marks.mockClear(); quotes.mockClear()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'projection-invalidated', projection: 'message_annotations', revision: 1 }) } as MessageEvent<string>) })
+    expect(marks).toHaveBeenCalledExactlyOnceWith(false)
+    expect(quotes).not.toHaveBeenCalled()
+    expect(records).not.toHaveBeenCalled()
+    expect(timeline).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
+  } finally {
+    stopMarks(); stopQuotes()
+    if (renderer !== undefined) await act(async () => renderer.unmount())
+  }
+})

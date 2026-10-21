@@ -1,3 +1,5 @@
+import { invalidateMessageQuoteSources } from '../src/client/message-quote-invalidations.js'
+import { invalidateMessageMarks } from '../src/client/message-mark-invalidations.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeTimelineItem, ArkmeTimelineExtensionParent } from '../src/types.js'
@@ -10,9 +12,9 @@ const item = (uid: string): ArkmeTimelineItem => ({ itemUid: uid, messageActionR
 const parent = (uid: string): ArkmeTimelineExtensionParent => ({ itemUid: `parent:${uid}`, senderName: '我', title: '', textContent: '来源' })
 const element = (uid: string) => ({ getAttribute: () => uid })
 let current: ReadonlyMap<string, ArkmeTimelineExtensionParent>
-function Harness({ scope = 'account:topic', sourceRef = 'topic', items }: {
-  scope?: string; sourceRef?: string; items: ArkmeTimelineItem[]
-}) { current = usePersonalExtensionParents(scope, sourceRef, items); return null }
+function Harness({ scope = 'account:topic', sourceRef = 'topic', items, isChat = false }: {
+  scope?: string; sourceRef?: string; items: ArkmeTimelineItem[]; isChat?: boolean
+}) { current = usePersonalExtensionParents(scope, sourceRef, items, 'stable-source', isChat); return null }
 let observers: { emit: (entries: unknown[]) => void; observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[]
 let renderer: ReactTestRenderer | undefined
 beforeEach(() => {
@@ -87,4 +89,24 @@ describe('personal cross-topic source previews', () => {
     expect(callArkme).toHaveBeenCalledTimes(3)
     expect(current.get('a')).toEqual(parent('a'))
   })
+})
+
+it('revalidates only visible quoted chat occurrences and clears cached text before a failed read', async () => {
+  const quote = { version: 1 as const, projection: 'arkme-text-v1' as const, sourceDigest: 'a'.repeat(64), start: 0, end: 2, text: '私密', prefix: '', suffix: '' }
+  const child = { ...item('a'), recordOwnerUserId: 7, sequence: 4, extensionParent: { ...parent('a'), quote, quoteState: 'available' as const } }
+  const items = [child, item('b')]
+  callArkme.mockResolvedValue({ items: [child] })
+  await act(async () => { renderer = create(<Harness items={items} isChat />) })
+  await act(async () => visible(['a','b']))
+  expect(callArkme).toHaveBeenCalledTimes(1)
+  expect(callArkme.mock.calls[0]!.slice(0,2)).toEqual(['source.timeline-around', { sourceRef:'topic', itemUid:'a', recordOwnerUserId:7, beforeLimit:1, afterLimit:1 }])
+  expect(current.get('a')?.quote?.text).toBe('私密')
+  act(() => invalidateMessageMarks())
+  expect(callArkme).toHaveBeenCalledTimes(1)
+  callArkme.mockRejectedValue(new Error('permission lookup unavailable'))
+  await act(async () => invalidateMessageQuoteSources('stable-source'))
+  expect(current.get('a')?.quote).toBeUndefined()
+  expect(current.get('a')?.quoteState).toBe('unavailable')
+  await act(async () => visible(['a']))
+  expect(current.get('a')?.quote).toBeUndefined()
 })

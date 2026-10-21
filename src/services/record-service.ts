@@ -1710,7 +1710,7 @@ export class RecordService {
       },
       session,
     )
-    if (quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(quote))) {
+    if (quote !== undefined && data.accepted !== true) {
       throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
     }
     const createdRecordUid = stringValue(data.record_uid).trim() || normalizedUid

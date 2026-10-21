@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
-  'sourceMessageExtensionCapabilities',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
   'nativeAnnotations', 'setNativeAnnotationSource',
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
