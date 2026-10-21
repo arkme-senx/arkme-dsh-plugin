@@ -7,6 +7,7 @@ import { findSelectedMessageText } from '../src/client/message-selection-search.
 import type { TeamConversation, TeamMessage, TeamTimeline } from '../src/team-app-contract.js'
 const {call,request,download}=vi.hoisted(()=>({call:vi.fn(),request:vi.fn(),download:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
+vi.mock('../src/client/local-directory-preferences.js',()=>({localDirectoryPreferences:{subscribe:()=>()=>{},read:()=>({})},useLocalDirectoryPreferenceHydration:()=>{}}))
 vi.mock('../src/client/outgoing-call-ui-controller.js',()=>({outgoingCallUi:{request}}))
 vi.mock('../src/client/conversation-export.js',()=>({downloadArkmeConversationMarkdown:download}))
 vi.mock('../src/client/ArkmeDetailShell.js',()=>({ArkmeDetailShell:({children,onClose}:any)=><section data-test-panel><button onClick={onClose}>关闭面板</button>{children}</section>}))

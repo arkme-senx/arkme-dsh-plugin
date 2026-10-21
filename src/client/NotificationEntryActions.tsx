@@ -28,9 +28,9 @@ export function useNotificationEntryActions(accountKey: string | undefined, acti
     overlays: active && accountKey && <>
       {point?.account === accountKey && <ArkmeActionMenu label={tr('通知的会话操作')} point={point} autoFocus onClose={() => setPoint(undefined)} actions={[
         { id: 'preview', label: tr('预览'), onSelect: () => { setPoint(undefined); setPreviewAccount(accountKey) } },
-        { id: 'pin', label: tr(pinned ? '取消置顶' : '置顶对话'), onSelect: () => {
+        { id: 'pin', label: tr(pinned ? '取消置顶' : '置顶对话'), onSelect: async () => {
           setPoint(undefined)
-          try { notificationDirectoryPreferences.pin(accountKey, !pinned); setError('') }
+          try { await notificationDirectoryPreferences.pin(accountKey, !pinned); setError('') }
           catch (caught) { setError(caught instanceof Error ? caught.message : tr('操作失败，请重试')) }
         } },
       ]} />}

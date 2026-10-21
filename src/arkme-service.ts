@@ -1,3 +1,4 @@
+import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
 import { PeopleService } from './services/people-service.js'
 import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
@@ -458,7 +459,7 @@ export class ArkmeService {
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
   async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
   async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
-  async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
+  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown) { return this.people.list(source, signal, cursor) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
@@ -2281,6 +2282,17 @@ arkoImagesV1:true,
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  async localDirectoryPreferences(accountKey: string, entries?: unknown, migrate = false, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (accountKey !== `${this.config.environment}:${userId}`) throw new ArkmePluginError('directory-account-changed', '账号已变化，请重新打开对话', false, 409)
+    if (!this.stateStore.localDirectoryPreferences) throw new ArkmePluginError('directory-storage-unavailable', '本机设置保存暂不可用，请重试', true, 503)
+    const normalized = entries === undefined ? undefined : normalizeLocalDirectoryPreferences(entries)
+    if (entries !== undefined && (!normalized || !Object.keys(normalized).length || Object.keys(normalized).length !== Object.keys(entries as object).length)) throw new ArkmePluginError('directory-preference-invalid', '本机设置内容无效', false, 400)
+    return this.stateStore.localDirectoryPreferences(accountKey, normalized, migrate)
+  }
+
   async conversationViewports(accountKey: string, surface: string, entries?: unknown, signal?: AbortSignal): Promise<import('./conversation-viewport-state.js').ConversationViewportEntries> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()

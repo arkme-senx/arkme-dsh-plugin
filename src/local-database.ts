@@ -1,3 +1,4 @@
+import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
 import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
@@ -151,6 +152,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS local_directory_preferences (
+        account_key TEXT NOT NULL, entry_key TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, entry_key)
       );
       CREATE TABLE IF NOT EXISTS conversation_viewports (
         account_key TEXT NOT NULL, surface TEXT NOT NULL, payload TEXT NOT NULL,
@@ -1170,6 +1175,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async recentEmojiIds(accountKey: string): Promise<string[]> {
     return this.readRecentEmojiIds(accountKey)
+  }
+
+  async localDirectoryPreferences(accountKey: string, entries?: LocalDirectoryPreferences, migrate = false): Promise<LocalDirectoryPreferences> {
+    if (entries) this.transaction(() => {
+      const statement = this.database.prepare(migrate
+        ? 'INSERT OR IGNORE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)'
+        : 'INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)')
+      for (const [key, value] of Object.entries(normalizeLocalDirectoryPreferences(entries))) statement.run(accountKey, key, JSON.stringify(value))
+    })
+    const result: LocalDirectoryPreferences = Object.create(null)
+    for (const row of this.database.prepare('SELECT entry_key,payload FROM local_directory_preferences WHERE account_key=?').all(accountKey) as { entry_key: string; payload: string }[]) {
+      try { Object.assign(result, normalizeLocalDirectoryPreferences({ [row.entry_key]: JSON.parse(row.payload) })) } catch { /* Ignore corrupt individual entries. */ }
+    }
+    return result
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

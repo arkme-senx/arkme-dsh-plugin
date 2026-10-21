@@ -1068,7 +1068,7 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
-  if (operation === 'people.list') return service.peopleList(params.source, requestSignal)
+  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor)
   if (operation === 'people.open-chat') return service.peopleOpenChat(stringParam(params, 'ref'), requestSignal)
   if (operation === 'relations.list') return service.relationPage(params as Omit<ExploreQuery,'module'>, requestSignal)
   if (operation === 'relations.records') return service.relationRecords({ref:typeof params.ref==='string'?params.ref:'',...(typeof params.cursor==='string'?{cursor:params.cursor}:{})},requestSignal)
@@ -2639,6 +2639,9 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'directory.preferences.read': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), undefined, false, requestSignal)
+    case 'directory.preferences.set': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, false, requestSignal)
+    case 'directory.preferences.migrate': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, true, requestSignal)
     case 'conversation.viewport.read': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), undefined, requestSignal)
     case 'conversation.viewport.write': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), params.entries ?? [], requestSignal)
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)

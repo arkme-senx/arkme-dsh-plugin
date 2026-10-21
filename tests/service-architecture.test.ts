@@ -31,7 +31,7 @@ const expectedPublicMethods = [
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
-  'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'publishLongArticle', 'stageLongArticleImage',
+  'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'publishLongArticle', 'stageLongArticleImage',
   'listArchives', 'getArchiveStates', 'setArchiveState',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
