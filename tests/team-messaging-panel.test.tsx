@@ -49,7 +49,9 @@ describe('Team send UI recovery', () => {
   beforeEach(() => {
     localStorage.clear(); mocks.call.mockReset()
     vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
-    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1 })
+    // The current DSH menu runs a positioning loop. Real frames are asynchronous.
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16))
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
     localStorage.setItem(storageKey, JSON.stringify({ text: '问题', assets: [] }))
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
@@ -57,7 +59,7 @@ describe('Team send UI recovery', () => {
     })
   })
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
-  const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
+  const mount = async (options: Parameters<typeof create>[1] = {createNodeMock: element => typeof element.type === 'string' ? document.createElement(element.type) : null}) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
   it('persists a reply draft across remount, enqueues the original reference and clears only the accepted reply', async () => {
@@ -528,7 +530,7 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
       ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
       : {summary:{read:2,unread:0,total:2},visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
-    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    await mount({ createNodeMock: element => typeof element.type === 'string' ? document.createElement(element.type) : null })
     const receiptButton = () => renderer!.root.findAllByType('button').find(button => button.props['aria-label']?.startsWith('查看阅读状态：'))!
     await act(async()=>{receiptButton().props.onClick({currentTarget:null});await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('团队已读 2/2')
@@ -543,7 +545,7 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? {conversation:{...conversation,side:'team'},messages:[own],hasMore:false,beforeSeq:0}
       : {teamRead:true,visitorRead:false,members:[]})
-    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    await mount({ createNodeMock: element => typeof element.type === 'string' ? document.createElement(element.type) : null })
     const button = renderer!.root.findAllByType('button').find(node => node.props['aria-label']?.startsWith('查看阅读状态：'))!
     expect(button.type).toBe('button')
     await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
@@ -558,7 +560,7 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? { conversation: { ...conversation, side: 'team', visitor: { nickname: '访客' } }, messages: [incoming, sent], hasMore: false, beforeSeq: 0 }
       : { visitorRead: true, members: [], hasMore: false, senderExcluded: true })
-    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    await mount({ createNodeMock: element => typeof element.type === 'string' ? document.createElement(element.type) : null })
     const rows = renderer!.root.findAllByType(TeamConversationMessage)
     const avatar = () => rows[0]!.findByProps({ 'aria-label': '访客 的用户卡片' })
     await act(async () => avatar().props.onClick({ stopPropagation() {} }))
