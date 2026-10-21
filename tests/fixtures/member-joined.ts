@@ -7,4 +7,3 @@ export const joinedBundle = (source = 'direct_add', actor = 1, member = 2) => ({
     member_display_name_snapshot: '李四', join_source: source,
   } },
 })
-
