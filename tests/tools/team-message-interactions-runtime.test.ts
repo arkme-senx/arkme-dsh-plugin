@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { ToolCallId as CallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { createSessionInput } from '../helpers/session-input.js'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -18,7 +19,7 @@ it('requires real current human confirmation for every new Team write and dispos
   const ports = {forwardTeamMessages: forward, createTeamMessageCopyLink: share, reportTeamMessage: report, updateTeamSend: update}
   const mounted = await ctx.plugin(Object.assign((inner: Context) => registerArkmeTools(inner, ports as unknown as ArkmeToolPorts), {inject: ['tools', 'systemPrompt']}))
   const session = Session.create(SessionId('team-interaction-session'))
-  const inbox = new Inbox(session, {inserted() {}, discarded() {}, claimed() {}})
+  const inbox = createSessionInput(session)
   const agent = {id: session.id, session, inbox} as unknown as Agent
   let count = 0
   const invoke = async (name: string, args: Record<string, unknown>) => {

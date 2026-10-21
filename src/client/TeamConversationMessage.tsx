@@ -1,4 +1,4 @@
-import {Toast,IconCheckOutline16} from '@deepseek-ai/dsh-client-ui-primitives'
+import {Toast,IconCheckOutlineMedium} from '@deepseek-ai/dsh-client-ui-primitives'
 import {ArkmeMessageReportDialog} from './ArkmeMessageReportDialog.js'
 import {createArkmeSdk} from '../sdk/index.js'
 import {ArkmeReactionPreview,ArkmeReactionSelections} from './ArkmeReactionPreview.js'
@@ -103,6 +103,6 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     {reporting && conversationRef && <ArkmeMessageReportDialog item={{...teamMessagePresentation(message),messageRef:message.ref}}
       submitReport={(input,signal)=>createArkmeSdk().reportTeamMessage(conversationRef,message.ref,message.version,({1:'spam',2:'illegal',3:'harassment',4:'other'} as const)[input.reportType],input.reason??'',signal)}
       onClose={()=>setReporting(false)} onSubmitted={()=>{setReporting(false);setReported(true)}} />}
-    {reported && <Toast text={tr('举报已提交')} anchor={bubble.current} icon={<IconCheckOutline16 />} onDone={()=>setReported(false)} />}
+    {reported && <Toast text={tr('举报已提交')} anchor={bubble.current} icon={<IconCheckOutlineMedium />} onDone={()=>setReported(false)} />}
   </article>
 }

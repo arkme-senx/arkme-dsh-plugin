@@ -9,6 +9,7 @@ import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {pathToFileURL} from 'node:url'
 import {expect,it} from 'vitest'
+import {createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
 const dsh=process.env.ARKME_DSH_CHECKOUT,profile=process.env.ARKME_PACKED_PROFILE
 if(!dsh||!profile||!process.env.NODE_EXTRA_CA_CERTS||!process.env.ARKME_E2E_TLS_KEY)throw new Error('isolated installed profile, official DSH and TLS fixture required')
 const load=path=>import(/* @vite-ignore */pathToFileURL(path).href)
@@ -17,7 +18,6 @@ if(!/^file:.*\.tgz$/.test(manifest.dependencies?.['@senguoyun/dsh-arkme']??''))t
 const {launchWebScaffold}=await load(join(dsh,'apps/web/tests/scaffold.ts'))
 const require=createRequire(join(profile,'package.json'))
 const {createArkmeSdk}=await load(require.resolve('@senguoyun/dsh-arkme/sdk'))
-const {createUserMessage,createToolResultMessage}=await load(require.resolve('@deepseek-ai/dsh-llm'))
 const {chromium}=createRequire(join(dsh,'apps/web/package.json'))('playwright')
 it('uses exact Team occurrences through the installed SDK, confirmed session tools and original UI menus',async()=>{
  const root=await mkdtemp(join(tmpdir(),'team interactions acceptance ')),calls=[],browserErrors=[]
@@ -123,6 +123,16 @@ it('uses exact Team occurrences through the installed SDK, confirmed session too
   await pane.locator('[data-team-message-key]').first().getByLabel('消息操作',{exact:true}).click({button:'right'})
   for(const name of ['转发','复制链接','举报','多选'])await page.getByRole('menuitem',{name,exact:true}).waitFor()
   if(process.env.ARKME_E2E_CAPTURE_DIR){await mkdir(process.env.ARKME_E2E_CAPTURE_DIR,{recursive:true});await page.screenshot({path:join(process.env.ARKME_E2E_CAPTURE_DIR,'team-interactions-menu.png')})}
+  await page.getByRole('menuitem',{name:'举报',exact:true}).click()
+  const reportDialog=page.getByRole('dialog',{name:'举报和反馈',exact:true})
+  await reportDialog.getByRole('radio',{name:'垃圾广告',exact:true}).click()
+  const beforeUiReport=calls.filter(call=>call.path.endsWith('/conversations/messages/reports/create')).length
+  await reportDialog.getByRole('button',{name:'提交举报',exact:true}).click()
+  await expect.poll(()=>calls.filter(call=>call.path.endsWith('/conversations/messages/reports/create')).length).toBe(beforeUiReport+1)
+  await page.getByText('举报已提交',{exact:true}).waitFor()
+  expect(await reportDialog.count()).toBe(0)
+  if(process.env.ARKME_E2E_CAPTURE_DIR)await page.screenshot({path:join(process.env.ARKME_E2E_CAPTURE_DIR,'team-report-success.png')})
+  await pane.locator('[data-team-message-key]').first().getByLabel('消息操作',{exact:true}).click({button:'right'})
   await page.getByRole('menuitem',{name:'延展',exact:true}).click()
   await pane.getByRole('button',{name:'取消延展',exact:true}).waitFor()
   if(process.env.ARKME_E2E_CAPTURE_DIR)await page.screenshot({path:join(process.env.ARKME_E2E_CAPTURE_DIR,'team-reply-composer.png')})
