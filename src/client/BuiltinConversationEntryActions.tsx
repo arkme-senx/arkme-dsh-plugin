@@ -29,8 +29,9 @@ export function useBuiltinEntryActions(account: string | undefined, active: bool
     overlays: active && account && <>
       {point?.account === account && <ArkmeActionMenu label={`${names[point.entry]}的会话操作`} point={point} autoFocus onClose={() => setPoint(undefined)} actions={[
         { id: 'preview', label: tr('预览'), onSelect: () => { setPreview({ account, entry: point.entry, source: point.entry === 'self' ? selfSource() : undefined }); setPoint(undefined) } },
-        { id: 'pin', label: tr(pins[point.entry] ? '取消置顶' : '置顶对话'), onSelect: () => {
-          try { builtinDirectoryPreferences.pin(account, point.entry, !pins[point.entry]); setError('') }
+        { id: 'pin', label: tr(pins[point.entry] ? '取消置顶' : '置顶对话'), onSelect: async () => {
+          setPoint(undefined)
+          try { await builtinDirectoryPreferences.pin(account, point.entry, !pins[point.entry]); setError('') }
           catch (caught) { setError(caught instanceof Error ? caught.message : tr('操作失败，请重试')) }
           setPoint(undefined)
         } },

@@ -68,6 +68,7 @@ export interface PublicRecordingImportProgress {
 }
 
 export interface PublicRecordingImportJob {
+  batch?: import('./recording-workflow-contract.js').RecordingImportBatch
   kind: 'local'
   importRef: string
   revision: number

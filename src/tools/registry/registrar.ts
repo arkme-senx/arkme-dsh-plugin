@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
@@ -93,6 +94,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
+  if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
   if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
@@ -113,7 +116,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
   if (name === 'arkme_recording_import') return args.action === 'retry'
     ? '是否确认重试这条失败的录音上传任务？'
-    : `是否确认按指定的开始时间导入所选录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？`
+    : `是否确认按指定的开始时间导入所选${Array.isArray(args.files) ? ` ${args.files.length} 个` : ''}录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？服务支持时，新录音处理完成后将发送通知，并自动生成对应日期的日总结和时间轴。`
   if (name === 'arkme_archive_set') return args.self_archived === true
     ? '是否确认归档此主题及其子主题？内容仍可搜索和引用，可在已归档中恢复。'
     : '是否确认取消此主题的单独归档？独立归档的子主题会保留；如果父级仍归档，此主题仍随父级归档。'

@@ -1,6 +1,7 @@
 import type { FetchLike } from './service.js'
 
 export type ArkmeDesktopBridgeAction =
+  | 'device.lock.status' | 'device.lock.bind' | 'device.lock.lock' | 'device.lock.unlock' | 'device.lock.sync' | 'device.lock.logout' | 'device.lock.cleanup'
   | 'capabilities.get'
   | 'lifecycle.get'
   | 'notification.show'
@@ -39,6 +40,7 @@ export interface ArkmeDesktopNotificationDispatchResult {
 }
 
 interface ArkmeDesktopCapabilities {
+  deviceLocked?: boolean
   notificationShow: boolean
   badgeApplySnapshot: { mode: 'count' | 'dot' | 'unsupported' }
 }
@@ -97,6 +99,7 @@ export async function requestArkmeDesktopBridge(
   fetchImpl: FetchLike,
   action: ArkmeDesktopBridgeAction,
   payload: object,
+  timeoutMs = DESKTOP_BRIDGE_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
   const response = await fetchImpl(config.endpoint, {
     method: 'POST',
@@ -105,7 +108,7 @@ export async function requestArkmeDesktopBridge(
       'content-type': 'application/json',
     },
     body: JSON.stringify({ schemaVersion: 1, sessionId: config.sessionId, action, payload }),
-    signal: AbortSignal.timeout(DESKTOP_BRIDGE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(Math.min(30000, Math.max(1000, timeoutMs))),
   })
   if (!response.ok) throw new Error(`desktop bridge returned HTTP ${String(response.status)}`)
   const body = responseObject(await response.json()) as ArkmeDesktopBridgeResponse | undefined
@@ -148,6 +151,7 @@ export class ArkmeDesktopAttentionBridge {
     // this cheap loopback handshake for each intent instead of pinning a denied
     // or newly-granted OS state for the whole Harness lease.
     const capabilities = await this.readCapabilities(true)
+    if (capabilities?.deviceLocked === true) return { fallbackToBrowser: false, outcome: 'accepted' }
     if (capabilities?.notificationShow !== true) {
       return { fallbackToBrowser: true, outcome: capabilities === undefined ? 'unavailable' : 'unsupported' }
     }
@@ -234,6 +238,7 @@ export class ArkmeDesktopAttentionBridge {
       if (mode !== 'count' && mode !== 'dot' && mode !== 'unsupported') return undefined
       this.capabilities = {
         notificationShow: capabilities.notificationShow,
+        deviceLocked: responseObject(capabilities.deviceLock)?.locked === true,
         badgeApplySnapshot: { mode },
       }
       return this.capabilities

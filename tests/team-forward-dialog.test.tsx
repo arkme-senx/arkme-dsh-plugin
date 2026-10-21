@@ -97,3 +97,20 @@ it('reloads after the development StrictMode lifecycle and releases every reques
  await act(async()=>root.render(null))
  expect(mocks.team.mock.calls.every(call=>call[2].aborted)).toBe(true)
 })
+
+
+it('confirms IME text before submitting a forwarding comment with Enter',async()=>{
+ const sender=vi.fn().mockResolvedValue({itemUid:'accepted',localState:'synced'})
+ const attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)
+ await act(async()=>root.render(<TeamForwardDialog attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
+ await click(row('同事'))
+ const input=dialog().querySelector<HTMLTextAreaElement>('textarea')!
+ await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true})))
+ expect(sender).not.toHaveBeenCalled()
+ await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:229,bubbles:true,cancelable:true})))
+ expect(sender).not.toHaveBeenCalled()
+ await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',shiftKey:true,bubbles:true,cancelable:true})))
+ expect(sender).not.toHaveBeenCalled()
+ await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})))
+ expect(sender).toHaveBeenCalledOnce()
+})

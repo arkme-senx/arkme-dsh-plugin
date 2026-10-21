@@ -97,6 +97,10 @@ describe('Team send UI recovery', () => {
     await act(async()=>{latestButton.props.onClick();await tick()})
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('new')
   })
+  it('does not render a zero cursor as message content in the live window', async () => {
+    await mount()
+    expect(renderer!.root.findByProps({className:'team-conversation-pane'}).children.filter(child=>typeof child==='string')).not.toContain('0')
+  })
   it('can cancel extension without clearing the existing message draft', async () => {
     localStorage.setItem(storageKey,JSON.stringify({text:'已有草稿',assets:[],reply:{messageRef:'parent',messageKey:'parent',version:1,senderName:'同事',text:'问题'}}))
     await mount()

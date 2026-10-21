@@ -32,6 +32,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingToolBatches?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
  offlineContextJournal?: unknown
@@ -377,6 +378,7 @@ function parseState(raw: string): PersistedState {
         ? Math.max(source.recordReeditDraftRevision as number, legacyRecordReeditRevision(recordReeditDraftsByUser, recordReeditSubmissionsByUser))
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
+    recordingToolBatches: source.recordingToolBatches,
     dayReviewPending: source.dayReviewPending ?? {},
   }
 }
@@ -737,6 +739,22 @@ export class ArkmeStateStore {
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
       .map(cloneRecordingImportJob))
+  }
+
+  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal) {
+    const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
+    let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
+    await this.update(state => {
+      if (!/^[a-z_-]+:[1-9][0-9]*$/.test(scope)) throw new Error('录音批次账号无效')
+      const root = state.recordingToolBatches ?? {}
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('录音导入批次记录损坏，已保留原记录')
+      const accounts = root as Record<string, unknown>
+      const plan = planRecordingToolBatch(accounts[scope], candidates, timeZone)
+      accounts[scope] = plan.journal
+      state.recordingToolBatches = accounts
+      members = structuredClone(plan.members)
+    }, signal)
+    return members
   }
 
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {

@@ -191,18 +191,24 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') {
-        teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
-        if (intent.conversation.side === 'team') teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
+        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
+        controller.signal.throwIfAborted()
+        if (intent.conversation.side === 'team') await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
+        controller.signal.throwIfAborted()
         setSelected(intent.conversation); return
       }
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') { if (intent.channel) teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
+      if (intent.kind === 'team') { if (intent.channel) await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
       const publicRef = intent.kind === 'official'
         ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
       const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
-      if (value.conversation) { teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation)); setSelected(value.conversation) }
+      if (value.conversation) {
+        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation))
+        controller.signal.throwIfAborted()
+        setSelected(value.conversation)
+      }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
       else throw new Error(tr('暂时无法打开对话，请重试'))
       void refreshTeamDirectory(accountKey)
@@ -756,9 +762,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
           requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
         }}/>
     </header>
-    {(quoteNavigation.notice || replyBack.current || historyWindow.current) && <div role="status">{quoteNavigation.notice}
+    {Boolean(quoteNavigation.notice || replyBack.current || historyWindow.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
-      {historyWindow.current && <button type="button" onClick={()=>{historyWindow.current=0;replyBack.current=undefined;quoteNavigation.clear();latest.current=undefined;viewport.current=undefined;void refresh(0,true)}}>{tr('回到最新消息')}</button>}
+      {historyWindow.current > 0 && <button type="button" onClick={()=>{historyWindow.current=0;replyBack.current=undefined;quoteNavigation.clear();latest.current=undefined;viewport.current=undefined;void refresh(0,true)}}>{tr('回到最新消息')}</button>}
     </div>}
     {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}
     {error && <div role="alert" className="team-error">{error}</div>}
