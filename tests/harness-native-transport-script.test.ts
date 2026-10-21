@@ -41,17 +41,26 @@ function fixture(search = '?arkme-harness-embed=1') {
   runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
   disposers.push(() => listeners.get('pagehide')?.())
   const hooks = window.__DSH_TRANSPORT__
-  const rpc = async (method: string, args: object) => (await hooks.fetch(new URL(`http://localhost:3000/api/${method}`), { body: JSON.stringify({ rpcId: 'rpc', method, payload: { args } }) })).json()
+  const rpc = async (method: string, args: object) => (await hooks.fetch(`api/${method}`, { body: JSON.stringify({ rpcId: 'rpc', method, payload: { args } }) })).json()
   const row = (runtimeRef = 'windows', extra = {}) => ({ runtimeRef, sessionRef: 'same', title: runtimeRef, updatedAt: 42, running: false, blank: false, local: false, presence: 'online', capabilities: ['session.native'], ...extra })
   return { window, attributes, fetch, wire, sockets, listeners, rpc, row, hooks, directory: window.__ARKME_NATIVE_DIRECTORY__ }
 }
 it('leaves non-embedded pages untouched', () => expect(fixture('').hooks).toBeUndefined())
+it('accepts the 0.2 relative unary RPC route and the legacy URL carrier', async () => {
+  const f = fixture()
+  await f.rpc('session/create', { request: { workspaceId: 'work' } })
+  expect(f.fetch.mock.calls.at(-1)?.[0].href).toBe('http://localhost:3000/api/session/create')
+  await f.hooks.fetch(new URL('http://localhost:3000/api/session/create'), {
+    body: JSON.stringify({ rpcId: 'legacy', method: 'session/create', payload: { args: { request: { workspaceId: 'work' } } } }),
+  })
+  expect(f.fetch.mock.calls.at(-1)?.[0].pathname).toBe('/api/session/create')
+})
 it('merges account rows with native local rows and publishes add/update/delete through the native event stream', async () => {
   const f = fixture(), abort = new AbortController()
   const stream = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
   expect((await stream.next()).value.clientId).toBe('local-client')
   f.directory.publish([f.row(), f.row('linux'), f.row('archived', { archived: true }), f.row('child', { origin: 'subagent' })])
-  expect((await stream.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:windows:same', updatedAt: 42 }] })
+  expect((await stream.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:windows:same', updatedAt: 42, projections: { kind: 'cached' } }] })
   expect((await stream.next()).value.args[0].sessionId).toBe('arkme:linux:same')
   const list = await f.rpc('session/list', { _request: {} })
   expect(list.result.value.items.map((row: any) => row.sessionId)).toEqual(['local', 'arkme:windows:same', 'arkme:linux:same'])

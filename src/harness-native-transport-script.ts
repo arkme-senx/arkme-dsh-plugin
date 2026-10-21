@@ -30,7 +30,7 @@ function installNativeTransport(route: string): void {
   type Json = Record<string, any>
   const rows = new Map<string, DshAccountSession>()
   const summary = (row: DshAccountSession) => ({ sessionId: identity(row.runtimeRef, row.sessionRef), updatedAt: row.updatedAt,
-    running: row.running, blank: row.blank, projections: { asOfSeq: row.projectionAsOfSeq ?? -1, values: { title: row.title || null } } })
+    running: row.running, blank: row.blank, projections: { kind: 'cached', asOfSeq: row.projectionAsOfSeq ?? -1, values: { title: row.title || null } } })
 
   // Bounded queues hold protocol frames, never another copy of conversation state.
   function inbox(signal: AbortSignal) {
@@ -98,7 +98,7 @@ function installNativeTransport(route: string): void {
     if (!localRows.has(local.sessionId) && localRows.size >= 10_000) return
     // Only bounded list metadata is retained, never history or arbitrary projections.
     localRows.set(local.sessionId, { sessionId: local.sessionId, updatedAt: local.updatedAt, running: local.running, blank: local.blank,
-      projections: { asOfSeq: local.projections?.asOfSeq, values: { title: local.projections?.values?.title } } })
+      projections: { kind: local.projections?.kind ?? 'cached', asOfSeq: local.projections?.asOfSeq, values: { title: local.projections?.values?.title } } })
     reconcileLocal(local.sessionId)
   }
   const localFrame = (frame: Json): boolean => {
@@ -335,7 +335,11 @@ function installNativeTransport(route: string): void {
   }
   const failure = (message: string) => ({ ok: false, error: { code: 'CAPABILITY_UNSUPPORTED', message, details: {} } })
   const hooks = {
-    async fetch(url: URL, init: RequestInit) {
+    async fetch(input: string | URL, init: RequestInit) {
+      // 0.2 passes document-relative strings (api/session/create), while older
+      // callers supplied URL objects. Honor the embedded document's root base.
+      const base = window.document?.baseURI ?? new URL('/', window.location.href).href
+      const url = new URL(input, base)
       if (!url.pathname.startsWith('/api/')) return fetch(url, init)
       const message = JSON.parse(String(init.body)) as Json
       if (url.pathname !== `/api/${message.method}`) throw new Error('原生传输入口不一致')

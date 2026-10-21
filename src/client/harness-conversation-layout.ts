@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { HARNESS_LAYOUT_MODULES, type HarnessLayoutPart } from '../harness-conversation-layout-contract.js'
 
 export interface NativeWidthProps {
@@ -60,7 +60,7 @@ export function installHarnessConversationLayoutLoader(ctx: ClientContext, doc: 
     doc.head.append(script)
   })
   const loader = () => pending ??= Promise.all([importPart('width'), importPart('navigation')]).then(([widthValue, railValue]) => {
-    const width = widthValue as { version?: number; WidthHandle?: unknown; resolveContentWidth?: unknown; classes?: { root?: unknown } }
+    const width = widthValue as { version?: number; WidthHandle?: unknown; resolveContentWidth?: unknown; classes?: { root?: unknown; body?: unknown } }
     const rail = railValue as { version?: number; TurnNavigator?: unknown }
     if (width?.version !== 1 || rail?.version !== 1 || typeof width.WidthHandle !== 'function'
       || typeof width.resolveContentWidth !== 'function' || typeof width.classes?.root !== 'string'
@@ -68,7 +68,7 @@ export function installHarnessConversationLayoutLoader(ctx: ClientContext, doc: 
       throw new Error('Native layout interface changed')
     }
     return { WidthHandle: width.WidthHandle, TurnNavigator: rail.TurnNavigator,
-      resolveContentWidth: width.resolveContentWidth, rootClass: width.classes.root } as HarnessConversationLayout
+      resolveContentWidth: width.resolveContentWidth, rootClass: [width.classes.root, typeof width.classes.body === 'string' ? width.classes.body : undefined].filter(Boolean).join(' ') } as HarnessConversationLayout
   }).catch(() => {
     console.warn('Arkme wide conversation unavailable; standard chat layout retained.')
     return undefined

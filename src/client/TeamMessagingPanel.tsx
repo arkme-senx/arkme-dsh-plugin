@@ -47,7 +47,7 @@ import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
 import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
-import { Toast, IconCheckOutline16, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconCheckOutlineMedium, IconWarningOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { arkmeUi } from './ui-controller.js'
@@ -988,7 +988,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
           {applications?.hasMore && <button disabled={busy} onClick={() => { void loadApplications(applications.nextCursor, ++generation.current).catch(e => { setError(errorText(e)) }) }}>{tr('更多申请')}</button>}
         </div>
       </details>}
-    {notice && <Toast key={notice.sequence} text={notice.text} anchor={settingsRef.current} icon={notice.failed ? <IconWarningOutline16 /> : <IconCheckOutline16 />} onDone={dismissNotice} />}
+    {notice && <Toast key={notice.sequence} text={notice.text} anchor={settingsRef.current} icon={notice.failed ? <IconWarningOutlineMedium /> : <IconCheckOutlineMedium />} onDone={dismissNotice} />}
     {confirm && <div className="team-confirm" role="alert"><p>{confirm.label}</p><button disabled={busy} onClick={() => { setConfirm(undefined) }}>{tr('取消')}</button><button className="arkme-team-action" disabled={busy} onClick={() => { void mutate(confirm.run) }}>{tr('确认')}</button></div>}
   </section>
 }

@@ -1,4 +1,4 @@
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import { appendToolResult, sessionEvents } from '../helpers/tool-session.js'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -25,6 +25,24 @@ function agent(events: Array<Record<string, unknown>>) {
 }
 
 describe('Arkme conversational confirmation', () => {
+  it('preserves confirmation proof from the shipped 0.1.x tool-result envelope', async () => {
+    const events = sessionEvents([{ type: 'user/message', data: { source: { kind: 'user' }, content: [] } }])
+    const current = agent(events)
+    const conversation = new ArkmeConversationalConfirmation()
+    const execute = vi.fn(async () => 'done')
+    const rootCallId = CallId('legacy-prepare')
+    const input = { agent: current, operationKey: 'legacy-write', arguments: {}, question: '确认？', execute }
+    const prepared = await conversation.prepareOrExecute({ ...input, callId: rootCallId, rootCallId })
+    events.push({ type: 'tool/result', data: { message: {
+      role: 'user', source: { kind: 'tool', callId: rootCallId },
+      content: [{ type: 'tool-result', toolCallId: rootCallId, content: [{ type: 'text', text: JSON.stringify(prepared) }] }],
+    } } })
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '好' }] } })
+    const next = CallId('legacy-commit')
+    await expect(conversation.prepareOrExecute({ ...input, callId: next, rootCallId: next })).resolves.toBe('done')
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['pending', 'completed', 'no-question'] as const)('preserves a newer operation when a delayed preparation returns (%s)', async scenario => {
     const events = sessionEvents()
     const current = agent(events)
