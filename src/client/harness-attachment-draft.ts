@@ -1,4 +1,4 @@
-/** Compatibility face for DSH 0.1.5 native draft services. No send capability is exposed. */
+/** Compatibility face for DSH 0.2.1 native draft services. No send capability is exposed. */
 export interface Snapshot<T> { getSnapshot(): T; subscribe(listener: () => void): () => void }
 export interface DraftInput {
   state: Snapshot<{ draft: string; draftRev: number; attachmentIds: readonly string[]; phase: string }>
@@ -14,6 +14,7 @@ export interface DraftConversation {
 export interface DraftSessions {
   list: Snapshot<{ current?: string; byId: Record<string, { workspaceId?: string }> }>
   create(options: { sessionId: string; workspaceId?: string }): Promise<string>
+  retain(id: string, options: { source: 'controllerOperation'; signal: AbortSignal }): { ready: Promise<unknown>; release(): void }
   open(id: string): void
   scope(id: string): { get(key: string): unknown } | undefined
   binding(id: string): { session: { projections: { faceOf(key: string): Snapshot<unknown> } } } | undefined
@@ -60,7 +61,7 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
   return {
     dispose() { lifetime.abort(); attempts.clear() },
     async prepare(request) {
-      if (!sessions.create || !sessions.scope || !sessions.binding) throw unsupported()
+      if (!sessions.create || !sessions.retain || !sessions.scope || !sessions.binding) throw unsupported()
       const signal = AbortSignal.any([request.signal, lifetime.signal, AbortSignal.timeout(120_000)])
       const check = () => { signal.throwIfAborted(); if (!isCurrentAccount()) throw new Error('账号或 DSH 窗口已切换，请重试') }
       check()
@@ -73,6 +74,7 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
       if (attempt.complete) return { sessionId: attempt.id }
       attempt.busy = true
       const previous = sessions.list.getSnapshot().current
+      let reference: ReturnType<DraftSessions['retain']> | undefined
       let conversation: DraftConversation | undefined
       let drafts: readonly NativeDraft[] = []
       try {
@@ -102,6 +104,11 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
         const confirmedWorkspace = await waitForDraftOperation(defaultWorkspace(attempt.id), signal)
         check()
         if (confirmedWorkspace !== attempt.workspaceId) throw new Error('目标对话工作区已变更，请重新选择快记后操作')
+        // Since 0.2, create only catalogues the Session. Own its generation
+        // until native main-view navigation takes over, including failed/aborted opens.
+        reference = sessions.retain(attempt.id, { source: 'controllerOperation', signal })
+        await waitForDraftOperation(reference.ready, signal)
+        check()
         const scope = sessions.scope(attempt.id)
         conversation = scope?.get('conversation') as DraftConversation | undefined
         if (!scope || !conversation?.createDrafts || !conversation.fileUploads || !conversation.input?.for) throw unsupported()
@@ -157,7 +164,7 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
         // Never take selection back from a user who navigated elsewhere.
         if (isCurrentAccount() && previous && sessions.list.getSnapshot().current === attempt.id) sessions.open(previous)
         throw error
-      } finally { attempt.busy = false }
+      } finally { reference?.release(); attempt.busy = false }
     },
   }
 }
