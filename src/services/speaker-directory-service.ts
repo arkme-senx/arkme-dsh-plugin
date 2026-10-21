@@ -1,6 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryPage, SpeakerDirectorySeen, SpeakerDirectoryStatus, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
+import { parseSpeakerSimilarity, type SpeakerSimilarityResult, type SpeakerVoiceSamples } from '../speaker-similarity-contract.js'
+import type { MediaService } from './media-service.js'
 import type { RecordingService } from './recording-service.js'
 import type { UnmarkedSpeakerService } from './unmarked-speaker-service.js'
 
@@ -29,10 +31,12 @@ function inputString(value: unknown, maxBytes: number, fallback = ''): string {
 
 export class SpeakerDirectoryService {
   constructor(private readonly runtime: ServiceRuntime, private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directorySpeakerAvatars'>,
-    private readonly unmarked: Pick<UnmarkedSpeakerService, 'directoryCandidateRef'>) {}
+    private readonly unmarked: Pick<UnmarkedSpeakerService, 'directoryCandidateRef'> & Partial<Pick<UnmarkedSpeakerService, 'segments'>>,
+    private readonly media?: Pick<MediaService, 'issueRecordingPlaybackMediaRef'>) {}
 
-  private async request(path: string, body: Record<string, unknown>, signal?: AbortSignal) {
+  private async request(path: string, body: Record<string, unknown>, signal?: AbortSignal, expectedUserId?: number) {
     const session = await this.runtime.requireSession()
+    if (expectedUserId !== undefined && session.userId !== expectedUserId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(`/api/v1/audio/speaker-directory/${path}`, body, session, signal,
       { lane: path === 'seen' ? 'write' : 'interactive-read', cacheMs: 0, cancelWhenUnobserved: true })
     signal?.throwIfAborted()
@@ -75,18 +79,7 @@ export class SpeakerDirectoryService {
     const snapshotVersion = str(data.snapshot_version), throughCursor = str(data.through_cursor), nextCursor = str(data.next_cursor)
     if (!snapshotVersion || !throughCursor || (data.has_more && !nextCursor)) throw invalid()
     const key = await this.key()
-    const items = data.items.map(value => {
-      const raw = objectValue(value), ref = objectValue(raw.detail_ref)
-      if (!['marked', 'unmarked'].includes(String(raw.type)) || typeof raw.is_self !== 'boolean'
-        || ref.type !== (raw.type === 'marked' ? 'speaker' : 'candidate') || !str(ref.id) || !str(raw.person_key)) throw invalid()
-      if (ref.expected_version !== undefined) str(ref.expected_version)
-      const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv)
-      const encrypted = Buffer.concat([cipher.update(JSON.stringify({ userId: session.userId, environment: this.runtime.config.environment,
-        type: ref.type, id: ref.id, expectedVersion: ref.expected_version })), cipher.final()])
-      return { personKey: str(raw.person_key), type: raw.type as 'marked' | 'unmarked', displayName: str(raw.display_name),
-        displayNumber: integer(raw.display_number), isSelf: raw.is_self, dayCount: integer(raw.day_count), lastSeenAt: integer(raw.last_seen_at),
-        detailRef: [prefix, iv.toString('base64url'), encrypted.toString('base64url'), cipher.getAuthTag().toString('base64url')].join('.') }
-    })
+    const items = data.items.map(value => this.person(value, key, session.userId))
     signal?.throwIfAborted()
     return { ...state, items, hasMore: data.has_more, nextCursor, snapshotVersion, throughCursor }
   }
@@ -124,6 +117,90 @@ export class SpeakerDirectoryService {
     if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
     signal?.throwIfAborted()
     return requested.map(({ detailRef, id }) => ({ detailRef, ...(avatars.has(id) ? { avatarRef: avatars.get(id)! } : {}) }))
+  }
+
+  private unavailable(error: unknown): boolean {
+    return error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)
+  }
+
+  async similar(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerSimilarityResult> {
+    const session = await this.runtime.requireSession(), ref = await this.readDetailRef(input.detailRef, session.userId)
+    const version = inputString(input.version, 512), cursor = inputString(input.cursor, 4096)
+    if (cursor && !version) throw new ArkmePluginError('speaker-similarity-version-required', '请先读取相似声音第一页', false)
+    try {
+      const { data } = await this.request('similar', { schema_version: 1, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion },
+        limit: 20, cursor, version }, signal, session.userId)
+      const key = await this.key()
+      // The returned anchor must be the requested identity, not an unrelated nearest neighbour.
+      if (data.supported !== false) {
+        const anchor = objectValue(objectValue(data.anchor).detail_ref)
+        if (anchor.type !== ref.type || anchor.id !== ref.id) throw invalid()
+      }
+      let result: SpeakerSimilarityResult
+      try { result = parseSpeakerSimilarity(data, value => this.person(value, key, session.userId)) }
+      catch { throw invalid() }
+      if (result.supported && version && result.version !== version) throw new ArkmePluginError('speaker-similarity-stale', '相似声音证据已更新，请重新查找', true, 409)
+      return result
+    } catch (error) {
+      signal?.throwIfAborted()
+      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+      if (this.unavailable(error)) return { supported: false }
+      throw error
+    }
+  }
+
+  async voiceSamples(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerVoiceSamples> {
+    const session = await this.runtime.requireSession(), ref = await this.readDetailRef(input.detailRef, session.userId)
+    try {
+      const { data } = await this.request('voice-samples', { schema_version: 1, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion }, limit: 3 }, signal, session.userId)
+      if (data.supported === false) return this.fallbackSamples(ref, session.userId, signal)
+      if (data.supported !== true || data.schema_version !== 1 || !Array.isArray(data.items) || data.items.length > 3) throw invalid()
+      const source = objectValue(data.detail_ref)
+      if (source.type !== ref.type || source.id !== ref.id) throw invalid()
+      const seen = new Set<string>()
+      const samples = data.items.map(value => {
+        const row = objectValue(value), key = str(row.sample_key), locator = objectValue(row.locator)
+        const start = integer(locator.start_at), end = integer(locator.end_at)
+        if (!key || seen.has(key) || end <= start || !Number.isSafeInteger(locator.num) || !str(locator.session_id) || !str(locator.child_id)) throw invalid()
+        seen.add(key)
+        return { sampleKey: key, timeLabel: str(row.time_label).slice(0, 100), durationMillis: end - start, transcript: str(row.transcript).slice(0, 2000),
+          locator: { viewerUserId: session.userId, sessionId: str(locator.session_id), childId: str(locator.child_id), asrItemStartAt: start, asrItemEndAt: end, speakerNumber: locator.num as number } }
+      })
+      const items = await Promise.all(samples.map(async ({ locator, ...row }) => ({ ...row,
+        ...(this.media ? { mediaRef: await this.media.issueRecordingPlaybackMediaRef(locator, signal) } : {}) })))
+      signal?.throwIfAborted()
+      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+      return { supported: true, items }
+    } catch (error) {
+      signal?.throwIfAborted()
+      if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+      if (this.unavailable(error)) return this.fallbackSamples(ref, session.userId, signal)
+      throw error
+    }
+  }
+
+  private async fallbackSamples(ref: Record<string, unknown>, userId: number, signal?: AbortSignal): Promise<SpeakerVoiceSamples> {
+    // Existing unmarked clips remain usable before the representative-sample endpoint ships.
+    if (ref.type !== 'candidate' || !this.unmarked.segments) return { supported: false }
+    const candidate = await this.unmarked.directoryCandidateRef(str(ref.id), signal)
+    const page = await this.unmarked.segments(candidate, { limit: 3, ...(signal ? { signal } : {}) })
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+    return { supported: true, items: page.items.slice(0, 3).map(row => ({ sampleKey: row.segmentRef, timeLabel: `${row.date} ${row.timeRange}`, durationMillis: row.durationMillis, transcript: row.transcript,
+      ...(row.mediaRef ? { mediaRef: row.mediaRef } : {}) })) }
+  }
+
+  private person(value: unknown, key: Buffer, userId: number) {
+      const raw = objectValue(value), ref = objectValue(raw.detail_ref)
+      if (!['marked', 'unmarked'].includes(String(raw.type)) || typeof raw.is_self !== 'boolean'
+        || ref.type !== (raw.type === 'marked' ? 'speaker' : 'candidate') || !str(ref.id) || !str(raw.person_key)) throw invalid()
+      if (ref.expected_version !== undefined) str(ref.expected_version)
+      const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv)
+      const encrypted = Buffer.concat([cipher.update(JSON.stringify({ userId: userId, environment: this.runtime.config.environment,
+        type: ref.type, id: ref.id, expectedVersion: ref.expected_version })), cipher.final()])
+      return { personKey: str(raw.person_key), type: raw.type as 'marked' | 'unmarked', displayName: str(raw.display_name),
+        displayNumber: integer(raw.display_number), isSelf: raw.is_self, dayCount: integer(raw.day_count), lastSeenAt: integer(raw.last_seen_at),
+        detailRef: [prefix, iv.toString('base64url'), encrypted.toString('base64url'), cipher.getAuthTag().toString('base64url')].join('.') }
   }
 
   private async readDetailRef(value: unknown, viewerUserId: number): Promise<Record<string, unknown>> {

@@ -93,7 +93,7 @@ it('does not report a skipped newer body as committed when a later foreground ti
     const delayedTicket = s.cache.reserve()
     const foreground = body(work()).event!
     s.cache.write('test:1:chat', 'latest', { source: {} as never, items: [], hasMore: false,
-      unified: { protocolVersion: 1, events: [foreground], sources: [{ source: 'messages', status: 'ready', itemCount: 1 }],
+      unified: { protocolVersion: 2, events: [foreground], sources: [{ source: 'messages', status: 'ready', itemCount: 1 }],
         complete: true, windowTokens: ['window'], olderHasMore: false, newerHasMore: false, hasMore: false } })
     expect(() => s.execute({ action: 'commit', account: 'test:1', epoch: s.plan.epoch, expectedCheckpoint: s.plan.checkpoint,
       page: { manifest: false, checkpoint: 'checkpoint', retry: false, hasMore: false, sessions: [session([body(latest)])] },
@@ -124,7 +124,7 @@ it('keeps unread pins when 256 windows are evicted; ignores read history with no
   try {
     s.begin(); s.page([session([work(), { ...work('read'), unread: false }])]); expect(s.action('freeze').progress.total).toBe(1)
     s.page([session([body(work())])], false); s.action('finish')
-    for (let i=0;i<260;i++) s.cache.write('other', String(i), { source: {} as never, items: [], hasMore: false, unified: { protocolVersion: 1, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } })
+    for (let i=0;i<260;i++) s.cache.write('other', String(i), { source: {} as never, items: [], hasMore: false, unified: { protocolVersion: 2, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } })
     expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 })).toMatchObject({ events: [{ eventId: 'event:one' }] })
   } finally { s.close() }
 })
@@ -188,7 +188,7 @@ it('retains observed read acknowledgements across later manifest pages and body 
 
 it('keeps the foreground window allowance when unread bodies exceed the old shared cache budget', () => {
   const s=setup()
-  const foreground = { source: {} as never, items: [], hasMore: false, unified: { protocolVersion: 1 as const, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } }
+  const foreground = { source: {} as never, items: [], hasMore: false, unified: { protocolVersion: 2 as const, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } }
   try {
     s.cache.write('reading', 'anchor', foreground)
     s.begin(); const works=Array.from({length:65},(_,i)=>work(`large-${i}`,i+1));s.page([session(works)]);s.action('freeze')

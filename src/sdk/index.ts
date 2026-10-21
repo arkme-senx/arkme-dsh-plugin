@@ -1,7 +1,24 @@
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 export type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
-import type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
-export type { RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
+export type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
+import type { ArkmeArkoAskOptions, ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+import type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoHistoryPage,ArkmeArkoRunStatus } from '../types.js'
+export type { ArkmeArkoAskOptions,ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+export type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoModelOption,ArkmeArkoImageInput,ArkmeArkoHistoryPage,ArkmeArkoHistoryItem,ArkmeArkoRunStatus } from '../types.js'
+export type { DayReviewModels } from '../calendar-day-review.js'
+import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
+import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
+export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
+import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
+export type { OfflineContextRangeOptions,OfflineContextRequest,OfflineContextCommand,OfflineContextPreview,OfflineContextCommandResult,OfflineContextList,OfflineContextPort,OfflineContextTranscript,OfflineContextPlayback,OfflineContextCapability,OfflineContextCoverage } from '../offline-context-contract.js'
+export type { OfflineContextEntry,OfflineContextEvidence,OfflineContextMessage } from '../offline-context.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 import { connectArkmeRealtime } from '../client/realtime-connection.js'
@@ -443,6 +460,8 @@ export class ArkmeClientError extends Error {
   }
 }
 
+export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
+
 export interface ArkmeSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
@@ -501,6 +520,42 @@ export class ArkmeSdk {
     }
   }
 
+  async relationPage(query: Omit<ExploreQuery,'module'> = {}, signal?: AbortSignal): Promise<ExplorePage> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.list',{...query},signal)
+  }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal): Promise<ExploreDetail> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.records',{...query},signal)
+  }
+  private async requireArkoImages(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoImagesV1!==true) throw new Error('当前 Provider 不支持可靠 Arko 图文输入')
+  }
+  async arkoModels(signal?:AbortSignal):Promise<ArkmeArkoModelCatalog> {
+    await this.requireArkoImages(signal);return this.call('arko.models',{},signal)
+  }
+  /** Explicit human instruction. Images are owned staged file refs, never paths or URLs. */
+  async arkoAsk(text:string,options:ArkmeArkoAskOptions={},signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    await this.requireArkoImages(signal);return this.call('arko.ask',{text,...options},signal)
+  }
+  async arkoPendingTurns(signal?:AbortSignal):Promise<ArkmeArkoPendingTurn[]> {
+    await this.requireArkoImages(signal);return this.call('arko.pending.read',{},signal)
+  }
+  async arkoResumeTurn(clientTurnUid:string,signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    const turn=(await this.arkoPendingTurns(signal)).find(turn=>turn.clientTurnUid===clientTurnUid)
+    if (!turn) throw new Error('待确认 Arko 消息不存在或账号已切换')
+    return this.arkoAsk(turn.text,{sessionId:turn.sessionId,clientTurnUid:turn.clientTurnUid,expectedUserId:turn.userId,
+      ...(turn.images ? {imageFileRefs:turn.images.map(file=>file.fileRef)} : {}),
+      ...(turn.modelRouteKey ? {modelRouteKey:turn.modelRouteKey} : {}),
+      ...(turn.replyToRunUid ? {replyToRunUid:turn.replyToRunUid,replyToAssistantMsgId:turn.replyToAssistantMsgId!} : {})},signal)
+  }
+  async arkoHistory(limit=50,offset=0,signal?:AbortSignal):Promise<ArkmeArkoHistoryPage> {
+    await this.requireArkoImages(signal);return this.call('arko.history',{limit,offset},signal)
+  }
+  async arkoRunStatus(sessionId:number,runUid:string,signal?:AbortSignal):Promise<ArkmeArkoRunStatus> {
+    await this.requireArkoImages(signal);return this.call('arko.run.status',{sessionId,runUid},signal)
+  }
+
   /** Explicit user command; idempotently starts recognition for the current account/day. */
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
     if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
@@ -514,11 +569,20 @@ export class ArkmeSdk {
   }
 
   /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal): Promise<RecordingPersonReferences> {
+    if ((await this.capabilities(signal)).features.recordingPersonReferences !== true) throw new Error('当前 Provider 不支持录音人物指代')
+    return this.call('recordings.person-references', { ...query }, signal)
+  }
+
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
     if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
     return this.call('recordings.entities.occurrences', { ...query }, signal)
   }
 
+  async offlineContext(input:OfflineContextRequest,signal?:AbortSignal):ReturnType<OfflineContextPort['offlineContext']> {
+    if((await this.capabilities(signal)).features.offlineContextV1!==true)throw new Error('当前服务不支持录音聊天上下文')
+    return this.call('offline-context',input,signal)
+  }
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
     return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
@@ -540,6 +604,25 @@ export class ArkmeSdk {
   async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
     await this.requireSpeakerPresence(signal)
     return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
+    return this.call('recordings.speaker.correction.items', { ...query }, signal)
+  }
+
+  /** Human correction uses the same account-bound item references as the UI. */
+  /** Read only: null means no committed receipt was observed, not a failed write. */
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    return this.call('recordings.speaker.correction.result', { ...query }, signal)
+  }
+  async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext> {
+    return this.call('recordings.speaker.correction.context', { itemRef }, signal)
+  }
+  async applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.apply', { ...input }, signal)
+  }
+  async undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.undo', { ...input }, signal)
   }
 
   async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> {
@@ -565,6 +648,15 @@ export class ArkmeSdk {
     return capabilities
   }
 
+  async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.query', { expectedAccountScope }, signal)
+  }
+  /** Enable only after a human explicitly accepts ongoing actual-usage charges. */
+  async updateAutomaticCapability(expectedAccountScope: string, input: ArkmeCapabilityUpdate, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.update', { expectedAccountScope, ...input }, signal)
+  }
   async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
     if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
     return this.call('account.points.query', { expectedAccountScope }, signal)
@@ -1137,6 +1229,30 @@ export class ArkmeSdk {
         ? {}
         : { currentSessionId: options.currentSessionId.trim() }),
     }, options.signal)
+  }
+
+  /** List this account's publication receipts without starting validation or audit. */
+  async extensionPublishSessions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<import('../extensions/types.js').ArkmeExtensionPublishPage> {
+    await this.requireExtensionPublishRecovery(options.signal)
+    return await this.call('extensions.publish.list', { limit: options.limit ?? 20, offset: options.offset ?? 0 }, options.signal)
+  }
+
+  /** Read-only: this never starts an audit or retries publication. */
+  async extensionPublishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.status', { publishSessionId }, signal)
+  }
+
+  /** Write: call only for an explicit current human action. Never automatically retry. */
+  async resumeExtensionPublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.resume', { publishSessionId }, signal)
+  }
+
+  private async requireExtensionPublishRecovery(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.extensionPublishRecovery !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持发布状态查询与恢复', retryable: false })
   }
 
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
@@ -2115,7 +2231,7 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
@@ -2127,6 +2243,7 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+      ...(options.quote === undefined ? {} : { quote: options.quote }),
       fileRefs,
     }, options.signal)
   }
@@ -2409,6 +2526,19 @@ export class ArkmeSdk {
   }
 
   /** Read a device-location fact using a short-lived capability from the personal calendar. */
+  private async requireDayReview(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.calendarDayReview !== true) throw new Error('当前 Provider 不支持完整日回顾')
+  }
+  async dayReviewState(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.state', { ...query }, signal) }
+  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.create', { ...input }, signal) }
+  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
+  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
+  async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
+  async dayReviewModels(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review.js').DayReviewModels> { await this.requireDayReview(signal); return this.call('calendar.day-review.models', { ...query }, signal) }
+  async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
+  /** Permission-checked original evidence. Raw navigation locators remain Host-only. */
+  async dayReviewEvidence(query: DayReviewEvidenceQuery, signal?: AbortSignal): Promise<DayReviewOriginalEvidence> { await this.requireDayReview(signal); return this.call('calendar.day-review.evidence', { ...query }, signal) }
+
   async calendarRecordLocation(locationRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeCalendarRecordLocation> {
     return await this.call('calendar.record-location', { locationRef }, signal)
   }

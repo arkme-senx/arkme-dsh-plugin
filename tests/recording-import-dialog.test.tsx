@@ -7,15 +7,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
   uploadArkmeRecording: vi.fn(),
+  lookupArkmeRecordingImport: vi.fn(async () => null),
   inspectArkmeRecordingSelection: vi.fn(),
 }))
 
 vi.mock('../src/client/api.js', () => ({
   callArkme: mocks.callArkme,
   uploadArkmeRecording: mocks.uploadArkmeRecording,
+  lookupArkmeRecordingImport: mocks.lookupArkmeRecordingImport,
 }))
 vi.mock('../src/client/recordings/recording-import-selection.js', () => ({
   inspectArkmeRecordingSelection: mocks.inspectArkmeRecordingSelection,
+}))
+
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => {} }),
+  ownImportQueue: async (_key: string, _signal: AbortSignal, work: () => Promise<void>) => { await work() },
 }))
 
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
@@ -42,6 +50,7 @@ describe('recording import dialog behavior', () => {
   let renderer: ReactTestRenderer
 
   beforeEach(async () => {
+    mocks.lookupArkmeRecordingImport.mockReset().mockResolvedValue(null)
     mocks.callArkme.mockReset().mockImplementation(async operation => {
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
@@ -72,6 +81,7 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer?.unmount(); await tick() })
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   async function choose(files: File[]) {
@@ -81,6 +91,121 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
   }
+
+  it('uses the native chooser when available and keeps a cancellation quiet', async () => {
+    const pick = vi.fn(async () => [])
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(pick).toHaveBeenCalledOnce()
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('surfaces native picker failures without opening a competing browser chooser', async () => {
+    const pick = vi.fn(async () => { throw new Error('系统文件选择窗口未能打开') })
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' }).some(node => renderedText(node).includes('系统文件选择窗口未能打开'))).toBe(true)
+  })
+
+  function memoryJournal() {
+    const records = new Map<string, import('../src/client/recordings/recording-import-journal.js').ImportQueueRecord>()
+    return {
+      records,
+      list: async (key: string) => [...records.values()].filter(row => row.accountKey === key).map(row => ({ ...row })),
+      change: vi.fn(async (upserts: import('../src/client/recordings/recording-import-journal.js').ImportQueueRecord[], removals: string[]) => {
+        removals.forEach(id => records.delete(id)); upserts.forEach(row => records.set(row.id, { ...row }))
+      }),
+    }
+  }
+  async function remount(journal: ReturnType<typeof memoryJournal>, userId = 42) {
+    await act(async () => { renderer.unmount(); await tick() })
+    await act(async () => {
+      renderer = create(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={1_725_000_000_000}
+        currentUserId={userId} journal={journal} onAccepted={() => {}} />)
+      await tick()
+    })
+  }
+  it('restores unsubmitted candidates without uploading or losing start and ownership', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    await choose([new File(['a'], 'candidate.m4a')])
+    const record = [...journal.records.values()][0]!
+    expect(record.submission).toBeUndefined()
+    await remount(journal)
+    expect(renderedText(renderer.root)).toContain('candidate.m4a')
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect(renderer.root.findByProps({ 'aria-label': 'candidate.m4a录音开始时间' }).props.value).toBe(record.startAt)
+    await remount(journal, 43)
+    expect(renderedText(renderer.root)).not.toContain('candidate.m4a')
+  })
+  it('resumes a submitted but not locally copied file after remount, retaining batch identity', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    mocks.callArkme.mockImplementation(async operation => operation === 'recordings.workflow' ? { supported: true }
+      : operation === 'recordings.import.preflight' ? { duplicateFileNames: [] } : currentSnapshot())
+    mocks.uploadArkmeRecording.mockImplementationOnce(async () => await new Promise(() => {}))
+    await choose([new File(['a'], 'resumed.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    const record = [...journal.records.values()][0]!
+    expect(record.submission).toBeTruthy(); expect(record.batch).toBeTruthy()
+    await remount(journal)
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4]).toMatchObject({ batch: record.batch, clientTaskId: record.id })
+    expect(journal.records.size).toBe(0)
+  })
+  it('reconciles a lost Host reply before touching an unavailable source', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    await choose([new File(['a'], 'accepted.m4a')])
+    const record = [...journal.records.values()][0]!
+    record.submission = 'submitted'
+    record.source = { kind: 'handle', handle: { kind: 'file', name: record.fileName, getFile: vi.fn(), queryPermission: vi.fn(async () => 'denied' as const), requestPermission: vi.fn() } }
+    mocks.lookupArkmeRecordingImport.mockResolvedValueOnce({ ...await mocks.uploadArkmeRecording.getMockImplementation()!(), importRef: 'receipt', phase: 'accepted', fileName: record.fileName } as never)
+    await remount(journal)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect(record.source.handle.queryPermission).not.toHaveBeenCalled()
+    expect(journal.records.size).toBe(0)
+  })
+  it('retains the file and blocks network upload when the durable write fails', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    await choose([new File(['a'], 'disk-full.m4a')])
+    journal.change.mockRejectedValue(new Error('磁盘已满'))
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('队列尚未保存')
+    expect(renderedText(renderer.root)).toContain('disk-full.m4a')
+  })
+  it('pauses only a permission-lost file and resumes it from the access button', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    const files = [new File(['a'], 'permission.m4a'), new File(['b'], 'ready.m4a')]
+    await choose(files)
+    const records = [...journal.records.values()]
+    for (const row of records) row.submission = 'submitted'
+    let allowed = false
+    records[0]!.source = { kind: 'handle', handle: { kind: 'file', name: files[0]!.name,
+      getFile: async () => files[0]!, queryPermission: async () => allowed ? 'granted' : 'prompt',
+      requestPermission: async () => { allowed = true; return 'granted' } } }
+    await remount(journal)
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![1].name).toBe('ready.m4a')
+    await act(async () => { button(renderer, '恢复访问').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    expect(journal.records.size).toBe(0)
+  })
 
   it('assigns manually submitted files one batch only after capability confirmation', async () => {
     mocks.callArkme.mockImplementation(async operation => {
@@ -371,7 +496,7 @@ describe('recording import dialog behavior', () => {
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
   })
 
-  it('inspects large-file metadata sequentially instead of starting unbounded browser work', async () => {
+  it('bounds metadata reads to two while allowing a ready file to pass a slow cloud file', async () => {
     let releaseFirst!: () => void
     let releaseSecond!: () => void
     mocks.inspectArkmeRecordingSelection.mockReset().mockImplementationOnce(async () => {
@@ -387,11 +512,13 @@ describe('recording import dialog behavior', () => {
       new File(['b'], 'B.m4a', { type: 'audio/mp4' }),
       new File(['c'], 'C.m4a', { type: 'audio/mp4' }),
     ])
-    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(1)
-
-    await act(async () => { releaseFirst(); await tick() })
     expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(2)
+
     await act(async () => { releaseSecond(); await tick() })
+    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(3)
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': 'A.m4a数据归属' }).parent!)).toContain('正在准备')
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': 'C.m4a数据归属' }).parent!)).toContain('待导入')
+    await act(async () => { releaseFirst(); await tick() })
   })
 
   it('stops queued browser inspection when the account-scoped import owner unmounts', async () => {
@@ -399,16 +526,187 @@ describe('recording import dialog behavior', () => {
     mocks.inspectArkmeRecordingSelection.mockReset().mockImplementationOnce(async () => {
       await new Promise<void>(resolve => { releaseFirst = resolve })
       return { ok: true, format: 'M4A', durationMillis: 1_000 }
-    }).mockResolvedValue({ ok: true, format: 'M4A', durationMillis: 1_000 })
+    }).mockImplementationOnce(async () => await new Promise(() => undefined))
     await choose([
       new File(['a'], 'A.m4a', { type: 'audio/mp4' }),
       new File(['b'], 'B.m4a', { type: 'audio/mp4' }),
+      new File(['c'], 'C.m4a', { type: 'audio/mp4' }),
     ])
-    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(1)
+    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(2)
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
 
     await act(async () => { renderer.unmount(); releaseFirst(); await tick() })
 
-    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(1)
+    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(2)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('accepts a batch immediately during cloud preparation and uploads once without another click', async () => {
+    let ready!: () => void
+    mocks.inspectArkmeRecordingSelection.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { ready = resolve })
+      return { ok: true, format: 'M4A', durationMillis: 1_000 }
+    })
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    const cloud = new File(['a'], 'cloud.m4a')
+    const local = new File(['b'], 'local.m4a')
+    await choose([cloud, local])
+    const submit = button(renderer, '导入')
+    expect(submit.props.disabled).toBeFalsy()
+    await act(async () => { submit.props.onClick(); submit.props.onClick(); await tick() })
+
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '录音导入队列' }))).toContain('已加入导入队列 · 2 个文件，正在准备 1 个')
+    expect(renderer.root.findByProps({ 'aria-label': 'cloud.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(2)
+
+    // Files selected later must not silently join the already-submitted batch.
+    await choose([new File(['c'], 'later.m4a')])
+    await act(async () => { ready(); await tick() })
+    expect(mocks.uploadArkmeRecording.mock.calls.map(call => call[1])).toEqual([cloud, local])
+    expect(mocks.uploadArkmeRecording.mock.calls.map(call => call[4].batch.itemCount)).toEqual([2, 2])
+    expect(renderer.root.findByProps({ 'aria-label': '选择 later.m4a' })).toBeDefined()
+  })
+
+  it('queues forty files then twelve more while the first upload is busy, with separate fixed manifests', async () => {
+    let release!: () => void
+    const accepted = await mocks.uploadArkmeRecording()
+    mocks.uploadArkmeRecording.mockClear()
+    mocks.uploadArkmeRecording.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { release = resolve })
+      return accepted
+    })
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    const first = Array.from({ length: 40 }, (_, i) => new File(['a'], `first-${i}.m4a`))
+    const second = Array.from({ length: 12 }, (_, i) => new File(['b'], `second-${i}.m4a`))
+    await choose(first)
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
+    await choose(second)
+    expect(button(renderer, '导入').props.disabled).toBe(false)
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
+    expect(renderer.root.findByProps({ 'aria-label': 'second-0.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '录音导入队列' }))).toContain('排队 51 个')
+    await act(async () => { release(); await tick() })
+    const calls = mocks.uploadArkmeRecording.mock.calls
+    expect(calls.map(call => call[1])).toEqual([...first, ...second])
+    expect(new Set(calls.slice(0, 40).map(call => call[4].batch.batchId)).size).toBe(1)
+    expect(new Set(calls.slice(40).map(call => call[4].batch.batchId)).size).toBe(1)
+    expect(calls[0]![4].batch.batchId).not.toBe(calls[40]![4].batch.batchId)
+    expect(calls.slice(0, 40).map(call => call[4].batch.itemIndex)).toEqual(first.map((_, i) => i))
+    expect(calls.slice(40).every(call => call[4].batch.itemCount === 12)).toBe(true)
+  })
+
+  it('does not let an older batch unlock a retry that was queued while another file was uploading', async () => {
+    let releaseSecond!: () => void
+    let releaseRetry!: () => void
+    const accepted = await mocks.uploadArkmeRecording()
+    mocks.uploadArkmeRecording.mockClear()
+    mocks.uploadArkmeRecording
+      .mockRejectedValueOnce(new Error('temporary network error'))
+      .mockImplementationOnce(async () => {
+        await new Promise<void>(resolve => { releaseSecond = resolve })
+        return accepted
+      })
+      .mockImplementationOnce(async () => {
+        await new Promise<void>(resolve => { releaseRetry = resolve })
+        return accepted
+      })
+    await choose([new File(['a'], 'retry.m4a'), new File(['b'], 'busy.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 retry.m4a' }).props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    await act(async () => { releaseSecond(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(3)
+    expect(renderer.root.findByProps({ 'aria-label': '删除 retry.m4a' }).props.disabled).toBe(true)
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择 retry.m4a' })).toHaveLength(0)
+    expect(button(renderer, '导入').props.disabled).toBe(true)
+    await act(async () => { releaseRetry(); await tick() })
+  })
+
+  it('does not start later submitted batches after the account-scoped dialog unmounts', async () => {
+    let release!: () => void
+    const accepted = await mocks.uploadArkmeRecording()
+    mocks.uploadArkmeRecording.mockClear()
+    mocks.uploadArkmeRecording.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { release = resolve })
+      return accepted
+    })
+    await choose([new File(['a'], 'first.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    await choose([new File(['b'], 'second.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    await act(async () => { renderer.unmount(); release(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('excludes unreadable files before freezing a batch and can retry only the failed file', async () => {
+    mocks.inspectArkmeRecordingSelection.mockImplementation(async file => file.name === 'cloud.m4a'
+      ? { ok: false, message: '文件暂时无法读取' }
+      : { ok: true, format: 'M4A', durationMillis: 1_000 })
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    const cloud = new File(['a'], 'cloud.m4a')
+    const local = new File(['b'], 'local.m4a')
+    await choose([cloud, local])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![1]).toBe(local)
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![4].batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
+    expect(renderedText(renderer.root)).toContain('文件暂时无法读取')
+
+    mocks.inspectArkmeRecordingSelection.mockResolvedValue({ ok: true, format: 'M4A', durationMillis: 1_000 })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 cloud.m4a' }).props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![1]).toBe(cloud)
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4].batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4].batch.batchId)
+      .not.toBe(mocks.uploadArkmeRecording.mock.calls[0]![4].batch.batchId)
+  })
+
+  it('keeps the original fixed batch identity when a browser upload fails and is retried', async () => {
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: true }
+      throw new Error('unexpected')
+    })
+    mocks.uploadArkmeRecording.mockRejectedValueOnce(new Error('网络中断，请重试'))
+    await choose([new File(['a'], 'A.m4a'), new File(['b'], 'B.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    const first = mocks.uploadArkmeRecording.mock.calls[0]!
+    expect(first[4].batch).toMatchObject({ itemCount: 2, itemIndex: 0 })
+    expect(renderer.root.findByProps({ 'aria-label': 'A.m4a录音开始时间' }).props.disabled).toBe(true)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 A.m4a' }).props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(3)
+    expect(mocks.uploadArkmeRecording.mock.calls[2]![4].batch).toEqual(first[4].batch)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.workflow')).toHaveLength(1)
+  })
+
+  it('does not create an empty remote batch when no files pass preparation', async () => {
+    mocks.inspectArkmeRecordingSelection.mockRejectedValue(new Error('unreadable'))
+    await choose([new File(['a'], 'cloud.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'recordings.workflow')).toBe(false)
+    expect(renderedText(renderer.root)).toContain('文件未能完成准备')
+    expect(renderer.root.findByProps({ 'aria-label': '重试 cloud.m4a' }).props.disabled).toBe(false)
   })
 
   it('uses the current eight-column desktop table and keeps the time editor under the file name', async () => {
@@ -1331,7 +1629,7 @@ describe('recording import dialog behavior', () => {
     expect(renderer.root.findByProps({ 'aria-label': '删除 B.m4a' }).props.disabled).toBe(true)
     expect(renderedText(renderer.root)).not.toContain('已选择2个')
     expect(renderer.root.findAllByProps({ 'aria-label': '上传进度 0%' })).toHaveLength(1)
-    expect(renderedText(renderer.root.findByProps({ 'aria-label': 'B.m4a数据归属' }).parent!)).toContain('等待中')
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': 'B.m4a数据归属' }).parent!)).toContain('排队中')
     expect(button(renderer, '导入').props.disabled).toBe(true)
     expect(button(renderer, '导入').props.style).toMatchObject({ cursor: 'default' })
     expect(renderer.root.findByProps({ 'aria-label': 'B.m4a数据归属' }).findAllByType('button'))
@@ -1368,7 +1666,7 @@ describe('recording import dialog behavior', () => {
     const activeRow = table.findAllByProps({ role: 'row' })[1]!
     const queuedRow = table.findAllByProps({ role: 'row' })[2]!
     expect(renderedText(activeRow)).toContain('上传中')
-    expect(renderedText(queuedRow)).toContain('等待中')
+    expect(renderedText(queuedRow)).toContain('排队中')
     expect(activeRow.findByProps({ 'aria-label': '处理耗时 0s' })).toBeDefined()
     expect(queuedRow.findAll(node => typeof node.props?.['aria-label'] === 'string'
       && node.props['aria-label'].startsWith('处理耗时 '))).toHaveLength(0)
@@ -1527,4 +1825,34 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer.unmount(); await tick() })
     expect(preflightSignal?.aborted).toBe(true)
   })
+  function stubBrowserPicker(choose: () => Promise<unknown[]>) {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { showOpenFilePicker: choose }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { hasFocus: () => true, visibilityState: 'visible' }))
+    return renderer.root.findAll(node => node.type === 'div' && node.props.role === 'button')[0]!
+  }
+
+  it('renders an actionable toast for chooser failures without starting an upload', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const trigger = stubBrowserPicker(async () => { throw new DOMException('User activation required.', 'NotAllowedError') })
+    await act(async () => { trigger.props.onClick({ type: 'click', isTrusted: true, detail: 1 }); await tick() })
+    const toast = renderer.root.findByProps({ 'data-arkme-recording-picker-toast': true })
+    expect(renderedText(toast)).toBe('无法打开文件选择器：User activation required.')
+    expect(toast.props.role).toBe('alert')
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('keeps normal cancellation silent and does not repeat held keyboard requests', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const choose = vi.fn(async () => { throw new DOMException('The user aborted a request.', 'AbortError') })
+    const trigger = stubBrowserPicker(choose)
+    const preventDefault = vi.fn()
+    await act(async () => { trigger.props.onKeyDown({ key: 'Enter', repeat: true, preventDefault }); await tick() })
+    expect(choose).not.toHaveBeenCalled()
+    expect(preventDefault).toHaveBeenCalledOnce()
+    await act(async () => { trigger.props.onClick({ type: 'click', isTrusted: true, detail: 1 }); await tick() })
+    expect(choose).toHaveBeenCalledOnce()
+    expect(renderer.root.findAllByProps({ 'data-arkme-recording-picker-toast': true })).toHaveLength(0)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
 })

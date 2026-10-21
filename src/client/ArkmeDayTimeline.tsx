@@ -1,10 +1,9 @@
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { ReactionLabel } from './ReactionLabel.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { useReactionHistory } from './use-reaction-history.js'
+import { useDayTimelineData, type DayTimelineData } from './use-day-timeline-data.js'
 import type { ReactionExpression, ReactionOriginalMessage } from '../reaction-contract.js'
-import { arkmeAuthStore } from './auth-store.js'
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArkmeDayRecap, DayRecordingReview } from './ArkmeDayRecap.js'
 import type { DayRecapGenerator } from './day-recap-input.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -28,12 +27,13 @@ import {
   dayActivityDisplayName, dayActivityFilters, dayActivityInterval, dayActivityLabels, dayActivityMatchesFilter, dayActivityOverview, dayActivityPeriod, dayActivityQueryKey, dayActivityTime, dayActivityTitle,
   type DayActivityDetailPage, type DayActivityEntry, type DayActivityPage, type DayActivityQuery, type DayActivityReader,
 } from './calendar-activity-model.js'
-import { useDayActivities, useDayActivityDetail } from './use-day-activities.js'
+import { useDayActivityDetail } from './use-day-activities.js'
 
 export interface ArkmeDayTimelineProps {
   query: DayActivityQuery
   /** Intentionally no default adapter: no unconfirmed routes or synthetic production data. */
   reader?: DayActivityReader
+  data?: DayTimelineData
   onQueryChange(query: DayActivityQuery): void
   onOpenSource?(sourceRef: string): void
   onOpenReactionSource?(message: ReactionOriginalMessage, expression?: ReactionExpression): void
@@ -47,18 +47,22 @@ export interface ArkmeDayTimelineProps {
   arrangementsContent?: ReactNode
   onOpenLocations?(location?: ArkmeRecordLocationObservation): void
   generateRecap?: DayRecapGenerator
+  headerNavigation?: ReactNode
 }
 
 export function ArkmeDayTimeline(props: ArkmeDayTimelineProps) {
   // The view never reuses expanded details across account/date/timezone/filter changes.
-  return <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} />
+  return props.data ? <DayTimelineContent key={dayActivityQueryKey(props.query)} {...props} data={props.data} />
+    : <DayTimelineReader key={dayActivityQueryKey(props.query)} {...props} />
 }
 
-function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, refreshVersion = 0, renderRecord, renderCallDetail, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent, onAddArrangement }: ArkmeDayTimelineProps) {
+function DayTimelineReader(props: ArkmeDayTimelineProps) {
+  const data = useDayTimelineData(props.query, props.reader, props.refreshVersion)
+  return <DayTimelineContent {...props} data={data} />
+}
+
+function DayTimelineContent({ data: { activities: data, reactions: reactionData }, headerNavigation, onOpenLocations, query, reader, onQueryChange, onOpenSource, onOpenReactionSource, renderRecord, renderCallDetail, onDetailChange, generateRecap, arrangementsActive, onArrangementsChange, arrangementsContent, onAddArrangement }: ArkmeDayTimelineProps & { data: DayTimelineData }) {
   useArkmeLocale()
-  const data = useDayActivities(query, reader, refreshVersion)
-  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
-  const reactionData = useReactionHistory(auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined, data.page?.dayStartMillis, data.page?.dayEndMillis, refreshVersion)
   const reactionEvents = reactionData.events
   const [selectedId, setSelectedId] = useState<string>()
   const [locationRequestedId, setLocationRequestedId] = useState<string>()
@@ -68,7 +72,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
   const [locations, setLocations] = useState<{ snapshotId?: string; values: Record<string, ArkmeRecordLocationObservation | undefined> }>({ values: {} })
   const [restrictedIds, setRestrictedIds] = useState<ReadonlySet<string>>(() => new Set())
   const selected = data.page?.items.find(item => item.id === selectedId && item.access === 'available' && !restrictedIds.has(item.id))
-  const detail = useDayActivityDetail(query, selected?.id, data.page?.snapshotId, reader)
+  const detail = useDayActivityDetail(query, selected?.id, data.page?.snapshotId, reader, selected?.detailRevision)
   const location = useDayActivityLocation(query, selected?.canLoadLocation && selected.id === locationRequestedId && !detail.error ? selected.id : undefined, data.page?.snapshotId, reader)
   useEffect(() => {
     const value = location.value
@@ -82,7 +86,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
   const hasLocationHint = (item: DayActivityEntry) => Boolean(knownLocation(item) || item.locationSummary)
   useEffect(() => {
     const page = data.page, limit = reader?.capabilities?.autoLocationLimit ?? 0
-    if (!page || !reader?.loadLocation || !limit) return
+    if (!page || data.loading || !reader?.loadLocation || !limit) return
     if (attemptedLocations.current.snapshotId !== page.snapshotId) attemptedLocations.current = { snapshotId: page.snapshotId, ids: new Set() }
     const controller = new AbortController(), attempted = attemptedLocations.current.ids
     let running = 0
@@ -113,7 +117,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
     if (observer) root.current?.querySelectorAll('[data-activity-id]').forEach(element => observer.observe(element))
     else [...candidates].slice(0, limit).forEach(enqueue)
     return () => { observer?.disconnect(); controller.abort() }
-  }, [data.page, reader, query])
+  }, [data.page, data.loading, reader, query])
   useEffect(() => {
     if (detail.page?.access === 'restricted') {
       const id = detail.page.activityId
@@ -128,7 +132,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
   const incomplete = data.page?.completeness === 'partial' || (data.page?.missingKinds.length ?? 0) > 0
   const missing = data.page?.missingKinds.filter(kind => !reader?.capabilities || reader.capabilities.kinds.includes(kind)) ?? []
   const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: query.timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
-  const visibleReactions = auth?.status === 'authenticated' && !placesOnly
+  const visibleReactions = !placesOnly
     ? reactionEvents.map((event, index) => ({ event, index: event.eventId ?? String(index) })).filter(({ event }) => dateFormat.format(new Date(event.at)) === query.bucketDate
       && (query.kind === 'all' || event.sourceKind !== undefined && dayActivityMatchesFilter(query.kind,
         event.sourceKind === 'private_chat' || event.sourceKind === 'group_chat' ? event.sourceKind : 'note'))) : []
@@ -146,12 +150,11 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
       <div className="arkme-day-heading-label">
         <div className="arkme-day-heading-title"><h2>{tr("我的一天")}</h2>
           {!arrangementsActive && data.page && <DayActivityScopeInfo incomplete={incomplete}>
-            {reader?.capabilities && <p>{reader.capabilities.notice}</p>}
-            {data.page.notice && <p>{data.page.notice}</p>}
-            {incomplete && <p>{tr("当前仅显示部分来源。")}{missing.length > 0
-              ? tr('{v0}尚未完整覆盖；有更多页面时可继续加载。', { v0: missing.map(kind => tr(dayActivityLabels[kind])).join('、') })
-              : tr('部分数据尚未完整同步。')}</p>}
-            <p>{tr("概览只统计当前筛选下已加载、可查看的内容，不是全天总量。")}</p>
+            <p>{tr('数量按当前列表统计；还有内容时，可点击“加载更多”。')}</p>
+            {incomplete && <p>{missing.length > 0
+              ? tr('尚未全部显示：{v0}。', { v0: missing.map(kind => tr(dayActivityLabels[kind])).join('、') })
+              : tr('部分内容尚未显示。')}</p>}
+            <p>{tr('在这里浏览，不会把聊天标为已读。')}</p>
           </DayActivityScopeInfo>}
         </div>
         <p>{query.bucketDate}<ArkmeCalendarLunarDate date={query.bucketDate} /> · {query.timezone}</p>
@@ -160,14 +163,14 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
         {onAddArrangement && <button type="button" className="arkme-day-source" onClick={onAddArrangement}><Plus size={15} aria-hidden /> {tr('添加安排')}</button>}
         {onOpenLocations && <button type="button" className="arkme-day-source" onClick={() => onOpenLocations()}><MapPin size={15} aria-hidden /> {tr("当天位置")}</button>}
       </div>
+      {headerNavigation}
     </header>
 
-    {!arrangementsActive && reactionData.busy && !reactionData.events.length && <p className="arkme-day-status" role="status">正在加载表态记录…</p>}
     {!arrangementsActive && reactionData.error && <p role="alert">{reactionData.error} <button type="button" onClick={() => void reactionData.load()}>重试表态记录</button></p>}
     {!arrangementsActive && reactionData.hasMore && <button type="button" disabled={reactionData.busy} onClick={() => void reactionData.load(true)}>加载更多表态记录</button>}
     {!arrangementsActive && data.page && <>
-      <p className="arkme-day-overview">{!arrangementsActive && reactionData.busy && !items.length && !visibleReactions.length ? '正在加载当天活动…' : dayActivityOverview(items, query.mode, visibleReactions.length)}</p>
-      <RecordingCoverage page={data.page} />
+      {(items.length > 0 || visibleReactions.length > 0) && <p className="arkme-day-overview">{dayActivityOverview(items, query.mode, visibleReactions.length)}</p>}
+      {(query.kind === 'all' || query.kind === 'recording') && !placesOnly && <RecordingCoverage page={data.page} />}
     </>}
 
     <div className="arkme-day-filters" aria-label={tr("活动类型")}>
@@ -182,15 +185,16 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
     </div>
 
     {arrangementsActive ? arrangementsContent : <>
-    {!reader && <p className="arkme-day-status" role="status">{tr("多维活动数据尚未接入，原有日历仍可使用。")}</p>}
-    {reader && data.loading && <p className="arkme-day-status" role="status">{tr("正在加载当天活动…")}</p>}
+    {!reader && <p className="arkme-day-status" role="status">{tr("暂时无法读取当天活动。")}</p>}
+    {reader && (data.loading || reactionData.busy && !reactionData.events.length) && <p className="arkme-day-status" role="status">{tr(
+      items.length || visibleReactions.length ? '正在加载更多活动…' : '正在加载当天活动…')}</p>}
     {data.error && <div className="arkme-day-status" role="alert">{data.error}<button type="button" onClick={data.refresh}>{tr("重试")}</button></div>}
     {!!data.page?.warnings?.length && <div className="arkme-day-warning" role="alert">
       {data.page.warnings.map(warning => <p key={warning}>{warning}</p>)}<button type="button" disabled={data.loading} onClick={data.refresh}>{tr("重试加载")}</button>
     </div>}
-    {placesOnly && <p className="arkme-day-scope">{tr("仅筛选已确认地点的活动。列表自动补读最多 8 个可见活动的地点，其他活动可展开后手动查看；没有地点标签不代表当时没有位置。")}</p>}
-    {empty && <p className="arkme-day-status">{placesOnly ? '已加载活动中暂无已确认地点；可取消地点筛选后展开活动查看。' : data.page!.hasMore ? '本页没有匹配内容，可继续加载。'
-      : incomplete ? '已加载来源中暂无匹配内容。' : '这一天暂无匹配内容。'}</p>}
+    {placesOnly && <p className="arkme-day-scope">{tr("显示带有地点信息的活动。")}</p>}
+    {empty && <p className="arkme-day-status">{placesOnly ? '当前列表没有地点信息，可取消“地点”筛选查看其他活动。' : data.page!.hasMore ? '当前没有匹配的活动，可点击“加载更多”。'
+      : incomplete ? '暂未找到匹配的活动，部分内容还未加载完成。' : '这一天暂无匹配内容。'}</p>}
 
     {generateRecap && <ArkmeDayRecap query={query} entries={data.error || data.loading ? [] : items} generate={generateRecap}
       onSource={id => { onDetailChange?.(); setSelectedId(id); setLocationRequestedId(undefined)
@@ -251,7 +255,7 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
           </div>
         </article></Fragment>
         })}
-        {data.page?.hasMore && <button type="button" className="arkme-day-more" disabled={data.loadingMore}
+        {data.page?.hasMore && <button type="button" className="arkme-day-more" disabled={data.loading || data.loadingMore}
           onClick={() => { void data.loadMore() }}>{data.loadingMore ? tr("正在加载…") : tr("加载更多")}</button>}
       </div>
 
@@ -300,7 +304,6 @@ function DayTimelineContent({ onOpenLocations, query, reader, onQueryChange, onO
           </>}
       </aside>}
     </div>
-    <p className="arkme-day-footnote">{tr("查看活动及其预览不会更改会话已读状态。地点仅来自已加载记录的位置线索，不是全天完整轨迹。")}</p>
     </>}
   </section>
 }
@@ -320,7 +323,7 @@ function DayActivityScopeInfo({ incomplete, children }: { incomplete: boolean; c
     element.ownerDocument.addEventListener('pointerdown', closeOutside)
     return () => element.ownerDocument.removeEventListener('pointerdown', closeOutside)
   }, [])
-  const status = incomplete ? tr('部分来源已加载') : tr('当前来源已加载')
+  const status = incomplete ? tr('部分内容尚未显示') : tr('关于活动')
   return <details ref={root} className="arkme-day-scope-info" onKeyDown={event => {
     if (event.key !== 'Escape' || !root.current?.open) return
     event.preventDefault(); event.stopPropagation(); root.current.open = false
@@ -360,9 +363,8 @@ function LocationObservation({ location, summary, timezone }: { location: ArkmeR
   if (!location && summary) return <>
     <strong><MapPin size={14} aria-hidden /> {summary.label || '设备采集位置'}</strong>
     {summary.capturedAtMillis !== undefined && <p>{tr("采集时间")}：{new Intl.DateTimeFormat(arkmeIntlLocale(), { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(summary.capturedAtMillis)}</p>}
-    <p>{tr("已显示记录返回的位置摘要；精确坐标需在详情中授权读取。")}</p>
   </>
-  if (!location) return <p>{tr("这条记录没有可确认的设备采集位置，不代表当时没有外出。")}</p>
+  if (!location) return <p>{tr("这条记录没有保存位置信息。")}</p>
   const captured = location.capturedAtMillis
   const capturedLabel = captured === undefined ? '采集时间未知' : new Intl.DateTimeFormat(arkmeIntlLocale(), {
     timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -374,15 +376,17 @@ function LocationObservation({ location, summary, timezone }: { location: ArkmeR
       <dt>{tr("坐标")}</dt><dd>{location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}</dd>
       {location.accuracyMeters !== undefined && <><dt>{tr("定位精度")}</dt><dd>{tr("约")} {Math.round(location.accuracyMeters)} {tr("米")}</dd></>}
     </dl>
-    <p>{tr("这是一次设备定位，不代表连续轨迹、停留时长或整段录音的地点。")}</p>
+    <p>{tr("这是记录关联的位置信息。")}</p>
   </>
 }
 
 function RecordingCoverage({ page }: { page: DayActivityPage }) {
   const coverage = page.coverage
-  if (!coverage || coverage.state === 'error') return <p className="arkme-day-coverage-status">{tr("录音覆盖范围暂不可用，不代表当天没有录音。")}</p>
+  if (!coverage) return null
+  if (coverage.state === 'error') return <p className="arkme-day-coverage-status" role="status">{tr('录音时段暂时无法显示。')}</p>
   const known = coverage.intervals.map(interval => ({ interval, style: dayActivityInterval(interval, page.dayStartMillis, page.dayEndMillis) }))
     .filter(value => value.style !== undefined)
+  if (!known.length && coverage.state !== 'partial') return null
   // Human-speech spans must stay inside known owned physical recording intervals.
   const speech = (page.speechIntervals ?? []).flatMap(interval => known.flatMap(({ interval: physical }) => {
     const style = dayActivityInterval({ startAtMillis: Math.max(interval.startAtMillis, physical.startAtMillis),
@@ -390,13 +394,13 @@ function RecordingCoverage({ page }: { page: DayActivityPage }) {
     return style ? [style] : []
   }))
   return <section className="arkme-day-coverage" aria-label={tr("全天录音覆盖")}>
+    <p className="arkme-day-coverage-status">{tr('录音时段')}</p>
     <div className="arkme-day-track" role="img" aria-label={coverage.state === 'partial'
       ? tr("录音范围尚不完整，已知 {v0} 个音频区间", { v0: known.length }) : known.length ? tr("已有录音，共 {v0} 个音频区间", { v0: known.length }) : '无已知录音'}>
       {known.map(({ style }, index) => <span key={index} className="arkme-day-recorded" style={style} />)}
       {speech.map((style, index) => <span key={index} className="arkme-day-speech" style={style} />)}
     </div>
     <div className="arkme-day-ticks"><span>{tr("当天开始")}</span><span>{tr("当天结束")}</span></div>
-    {coverage.state === 'partial' && <p className="arkme-day-coverage-status">{tr("录音覆盖数据不完整，未覆盖区间不能断言为无录音。")}</p>}
-    {known.length > 0 && speech.length === 0 && <p className="arkme-day-coverage-status">{tr("已有录音，暂无已识别人声信息；不代表静音。")}</p>}
+    {coverage.state === 'partial' && <p className="arkme-day-coverage-status">{tr('部分录音时段尚未显示。')}</p>}
   </section>
 }

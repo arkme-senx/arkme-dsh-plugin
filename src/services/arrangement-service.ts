@@ -554,19 +554,9 @@ export class ArrangementService {
     if (stringValue(data.uid).trim() !== arrangementUid) {
       throw new ArkmePluginError('arrangement-contract-invalid', '安排详情响应身份不一致', true, 502)
     }
-    if (objectValue(data.source_provenance).version !== 1 && [5,6].includes(Number(data.source_type))) {
-      const recovered = await this.recovery.recover(data, session, signal).catch(() => undefined)
-      if (recovered) data.source_provenance = { version: 1, items: [recovered] }
-    }
-    return await this.arrangementItem(data, session.userId)
-  }
-
-  async sourceDocument(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<string> {
-    const session=await this.runtime.requireSession()
-    const ref=this.openArrangementRef(arrangementRef,session.userId)
-    const data=await this.runtime.authenticatedIntelligentPost<Record<string,unknown>>('/api/v1/arrangements/source/read',{uid:ref.arrangementUid,evidence_id:evidenceId},session,signal,{lane:'interactive-read',bypassCache:true})
-    if(data.state!=='ready') throw new ArkmePluginError('arrangement-source-unavailable',stringValue(data.reason)||'来源暂不可查看',false,404)
-    return stringValue(data.content)
+    const recovered = objectValue(data.source_provenance).version !== 1 && [5,6].includes(Number(data.source_type))
+      ? await this.recovery.recover(data, session, signal).catch(() => undefined) : undefined
+    return await this.arrangementItem(data, session.userId, recovered)
   }
 
   async sourceEvidence(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArrangementEvidenceData> {
@@ -574,10 +564,29 @@ export class ArrangementService {
     const ref = this.openArrangementRef(arrangementRef, session.userId)
     const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail', { uid: ref.arrangementUid }, session, signal, { lane: 'interactive-read', bypassCache: true })
     if (data.uid !== ref.arrangementUid || ![1,2,3].includes(Number(data.status))) throw new ArkmePluginError('arrangement-source-mismatch', '安排已删除或来源已变化，请刷新', false, 409)
-    const recovered = await this.recovery.cached(data, session)
-    if (recovered && objectValue(data.source_provenance).version !== 1) data.source_provenance = { version: 1, items: [recovered] }
-    const evidence = arrangementEvidence(data).find(e => e.id === evidenceId)
+    const recovered = objectValue(data.source_provenance).version !== 1 ? await this.recovery.cached(data, session) : undefined
+    const evidence = arrangementEvidence(data, recovered).find(e => e.id === evidenceId)
     if (!evidence) throw new ArkmePluginError('arrangement-source-missing', '来源信息已变化，请刷新', false, 404)
+    if (evidence.persisted) {
+      const result = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/source/read', {
+        uid: ref.arrangementUid, evidence_id: evidenceId,
+      }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      if (result.state === 'unavailable') throw new ArkmePluginError('arrangement-source-unavailable', stringValue(result.reason) || '来源已删除或当前无权查看', false, 404)
+      const source = objectValue(result.source)
+      // IDs locate evidence; never let a response replace its saved identity or destination.
+      const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref',
+        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref',
+        'input_id', 'request_uid', 'voice_file_id', 'agent_session_id', 'agent_message_id', 'occurred_at']
+      if (result.state !== 'ready' || fields.some(key => source[key] !== evidence[key])
+        || (source.text !== undefined && typeof source.text !== 'string')
+        || (result.content !== undefined && typeof result.content !== 'string')) {
+        throw new ArkmePluginError('arrangement-source-contract-invalid', '来源响应与当前安排不一致，请重试', true, 502)
+      }
+      evidence.text = evidence.kind === 'agent' ? stringValue(result.content) : stringValue(source.text)
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-source-account-changed', '账号已变化，请重新打开', false, 409)
     return evidence
   }
 
@@ -610,7 +619,7 @@ export class ArrangementService {
     }
   }
 
-  private async arrangementItem(raw: unknown, viewerUserId: number): Promise<ArkmeArrangementItem> {
+  private async arrangementItem(raw: unknown, viewerUserId: number, recovered?: ArrangementEvidenceData): Promise<ArkmeArrangementItem> {
     const item = objectValue(raw)
     const arrangementUid = stringValue(item.uid).trim()
     if (arrangementUid === '') {
@@ -618,11 +627,11 @@ export class ArrangementService {
     }
     const dueAtMillis = Math.trunc(numberValue(item.due_at))
     const remindAtMillis = Math.trunc(numberValue(item.remind_at))
-    if ([5,6].includes(Number(item.source_type)) && objectValue(item.source_provenance).version !== 1) {
+    if (!recovered && [5,6].includes(Number(item.source_type)) && objectValue(item.source_provenance).version !== 1) {
       const session = await this.runtime.requireSession()
-      if (session.userId === viewerUserId) { const recovered = await this.recovery.cached(item, session); if (recovered) item.source_provenance = { version: 1, items: [recovered] } }
+      if (session.userId === viewerUserId) recovered = await this.recovery.cached(item, session)
     }
-    const evidence = arrangementEvidence(item)
+    const evidence = arrangementEvidence(item, recovered)
     const summary = evidence.find(e => e.kind === 'audio_summary' && e.summary_id)
     const recordingSource = projectArrangementRecordingSource(summary ? { ...item, recording_source: { kind: 'daily-summary', date_stamp: summary.date_stamp, tz_offset: summary.tz_offset, summary_id: summary.summary_id } } : item)
     return {

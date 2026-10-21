@@ -337,6 +337,8 @@ describe('normal timeline related quick note drawer', () => {
     expect(view.root.findAllByType('button').some(node => node.props['aria-label'] === '已编辑')).toBe(false)
     await act(async () => view.update(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />))
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())
+    expect(JSON.stringify(view.toJSON())).not.toContain('历史快记')
+    await act(async () => view.root.findAllByType('button').find(node => node.children.includes('查看此版全文'))!.props.onClick())
     expect(JSON.stringify(view.toJSON())).toContain('历史快记')
     expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe('row')
     await act(async () => view.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick())
@@ -583,7 +585,7 @@ describe('normal timeline related quick note drawer', () => {
           if (element.props.contentEditable !== undefined) return null
           return element.props.style?.padding === '24px 22px'
             ? scrollBody
-            : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true }
+            : { focus: vi.fn(), contains: vi.fn(() => false), isConnected: true, setAttribute: vi.fn(), removeAttribute: vi.fn() }
         },
       })
       await Promise.resolve()

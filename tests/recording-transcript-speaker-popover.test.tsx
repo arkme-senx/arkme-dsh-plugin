@@ -27,6 +27,7 @@ describe('recording transcript speaker popover', () => {
     }]
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     mocks.callArkme.mockReset().mockImplementation(async operation => {
+      if (operation === 'recordings.totals.index') return { items: [], nextOffset: null }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.day') return {
         dateStamp: 1,
@@ -47,6 +48,7 @@ describe('recording transcript speaker popover', () => {
       }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     vi.stubGlobal('document', {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -103,7 +105,7 @@ describe('recording transcript speaker popover', () => {
     expect(stopPropagation).toHaveBeenCalledOnce()
     const editor = renderer.root.findByType(ArkmeRecordingSpeakerEditor)
     expect(editor.props.item.itemRef).toBe('sealed-item-2')
-    expect(editor.props.forceBatchUpdate).toBe(false)
+    expect(editor.props.initialBatchUpdate).toBe(false)
     expect(button.props['aria-expanded']).toBe(true)
   })
 

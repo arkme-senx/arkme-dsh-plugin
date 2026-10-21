@@ -1,3 +1,4 @@
+import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
 export type { ArkmeLinkMetadata } from './link-metadata.js'
@@ -42,6 +43,7 @@ export interface ArkmeCaptchaResult {
 }
 
 export interface ArkmeClientConfig {
+  hostPolicy?: Pick<ArkmeHostPolicy, 'distribution' | 'capabilities'>
   captchaId: string
   /** Public Baidu JavaScript API browser key, never a server secret. */
   baiduMapBrowserAk?: string
@@ -176,7 +178,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
-  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
+  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
 export interface ArkmeDirectoryPage {
   section: ArkmeDirectorySectionKind
@@ -278,6 +280,7 @@ export interface ArkmeDirectoryContactProfile {
   remark: string
   accountName?: string
   avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
 }
 
 export type ArkmeUnmarkedSpeakerInferenceState = 'pending' | 'ready' | 'failed' | 'unavailable'
@@ -996,10 +999,15 @@ export interface ArkmeArrangementEvidence {
   role: 'initial' | 'supplement' | 'related'
   text: string
   canOpen: boolean
+  /** Read protected source text only while the arrangement detail is expanded. */
+  readOnExpand?: boolean
   sourceDate?: string
   createdAtMillis?: number
   unavailableReason?: string
 }
+export type ArkmeArrangementSourceRead =
+  | { evidenceId: string; state: 'ready'; text: string }
+  | { evidenceId: string; state: 'unavailable'; reason: string }
 export type ArkmeArrangementSourceTarget =
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
@@ -1469,7 +1477,10 @@ export interface ArkmeProviderCapabilities {
     userProfile: true
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
+    calendarDayReview?: true
+arkoImagesV1?:true
     aiPoints?: true
+    automaticCapabilitiesV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -1488,10 +1499,13 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    relationPages?: true
+    recordingPersonReferences?: true
     recordingEntities?: true
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+    offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
     accountMessageSync?: true
@@ -1573,6 +1587,8 @@ export interface ArkmeProviderCapabilities {
     myExtensions?: true
     /** Optional additive publication of an exact owned live Cordis Package. */
     extensionPublish?: true
+    /** Query and explicitly resume current-account immutable publish sessions. */
+    extensionPublishRecovery?: true
     /** Optional additive capability for extension reviews, replies, and rating summaries. */
     extensionReviews?: true
   }
@@ -1758,6 +1774,11 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
+  latestActivityAtMillis?: number
+  latestActivityKind?: 'member_joined' | 'record'
+  /** Server mutation time when a lifecycle change reselects an earlier activity. */
+  latestPreviewUpdatedAtMillis?: number
   activeAtMillis: number
   unreadCount: number
   /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */
@@ -1986,6 +2007,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
   timelineOrderTie?: string
@@ -2083,6 +2105,9 @@ export interface ArkmeTimelineItem {
 }
 
 export interface ArkmeTimelineExtensionParent {
+  /** Immutable selected text, only from the validated quote_reply protocol. */
+  quote?: import('./message-quote.js').ArkmeMessageQuote
+  quoteState?: 'available' | 'edited' | 'unavailable'
   itemUid: string
   senderName: string
   title: string
@@ -3144,6 +3169,7 @@ export interface ArkmeRecordingCalendarMonth {
   fromStamp: number
   toStamp: number
   days: ArkmeRecordingCalendarDay[]
+  totals?: import('./recording-total-metrics.js').RecordingTotalMetrics
 }
 
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
@@ -3169,6 +3195,10 @@ export interface ArkmeRecordingSummaryModelRouteUpdate {
 }
 
 export interface ArkmeRecordingTranscriptItem {
+  /** Confirmed acoustic source, independent of who the voice belongs to. */
+  soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   itemId: string
   sessionId: string
   childId: string
@@ -3190,6 +3220,8 @@ export interface ArkmeRecordingTranscriptItem {
 export interface ArkmeRecordingWorkbenchItem {
   /** User-confirmed source, independent of the speaker identity. */
   soundSource?: ArkmeRecordingSoundSource
+  /** Includes a confirmed playback subrange after provider resegmentation. */
+  containsPlayback?: boolean
   /** Read-only precise search locator; never an authorization reference. */
   searchIdentityHash?: string
   searchVersion?: string
@@ -3256,6 +3288,55 @@ export interface ArkmeRecordingSpeakerRecommendation {
   optionKey?: string
 }
 
+/** Read-only, interval-bound evidence. Distances are never recognition probabilities. */
+export interface ArkmeRecordingSpeakerEvidenceInput {
+  itemRefs: string[]
+  referenceA: string[]
+  referenceB: string[]
+}
+
+export interface ArkmeRecordingSpeakerConsistencyInput {
+  anchorRefs: string[]
+  /** Optional current-page intervals; allowed only with one group anchor. */
+  itemRefs: string[]
+}
+
+export interface ArkmeRecordingSpeakerConsistencyGroup {
+  anchorRef: string
+  version: string
+  modelVersion: string
+  scoreDefinition: string
+  referenceMethod: string
+  state: 'ready' | 'partial' | 'building' | 'insufficient'
+  score: number | null
+  analyzedCount: number
+  totalCount: number
+  reviewCount: number | null
+  suspectedVoices?: number
+  items: Array<{ itemRef: string; deviation: number | null; status: 'ready' | 'insufficient'; reason?: string }>
+}
+
+export type ArkmeRecordingSpeakerConsistency = { supported: false } | { supported: true; groups: ArkmeRecordingSpeakerConsistencyGroup[] }
+
+export type ArkmeRecordingSpeakerEvidence = { supported: false } | {
+  supported: true
+  version: string
+  modelVersion: string
+  metric: 'cosine_distance'
+  aggregation: 'nearest_reference' | 'mean_reference' | 'centroid'
+  state: 'ready' | 'building'
+  reviewThreshold?: number
+  ambiguityMargin?: number
+  items: Array<{
+    itemRef: string
+    status: 'ready' | 'insufficient'
+    distanceA: number | null
+    distanceB: number | null
+    effectiveSpeechMillis: number
+    reason?: string
+  }>
+}
+
 export interface ArkmeRecordingSpeakerOption extends ArkmeRecordingSpeakerCandidate {
   currentAssignment: boolean
   recommended: boolean
@@ -3302,7 +3383,15 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   version: string
   undoRef?: string
   day?: ArkmeRecordingDay
+  /** Fresh transcript from the corrected source; day remains the system day. */
+  transcript?: ArkmeRecordingDay['transcript']
   warning?: string
+}
+
+export interface ArkmeRecordingSpeakerCorrectionResultQuery {
+  itemRef: string
+  action: 'apply' | 'undo'
+  idempotencyKey: string
 }
 
 export interface ArkmeRecordingTimelineDialoguePoint {
@@ -3364,14 +3453,29 @@ export interface ArkmeRecordingSection<T> {
   message: string
 }
 
+export interface ArkmeRecordingStorageMetrics {
+  /** Recorded VAD archive + playback clip bytes, not live OSS retained-object inventory. */
+  bytes: number
+  archiveBytes: number
+  clipBytes: number
+  state: 'ready' | 'partial' | 'processing' | 'unavailable'
+  confirmedCount: number
+  pendingCount: number
+  unknownCount: number
+}
+
 export interface ArkmeRecordingDailyMetrics {
-  /** System ASR input in owned recordings, clipped to the day; includes recorded retries. */
+  /** New upload-scoped storage contract; old hosts cannot supply it. */
+  storage?: ArkmeRecordingStorageMetrics
+  /** System ASR input in uploaded recordings, clipped to the day; includes recorded retries. */
   asrInputDurationMillis: number
   asrInputState: 'ready' | 'partial' | 'processing' | 'unavailable'
   asrInputEstimatedCount: number
   asrInputConfirmedCount: number
   asrInputPendingCount: number
   asrInputUnknownCount: number
+  /** Completed children whose API explicitly lacks historical input telemetry. */
+  asrInputMissingHistoryCount?: number
   /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
@@ -3680,6 +3784,14 @@ export interface ArkmeArkoSession {
   name: string
 }
 
+export interface ArkmeArkoImageInput {
+  protocolVersion: 1
+  maxImages: number
+  maxImageBytes: number
+  maxTotalBytes: number
+  mimeTypes: readonly string[]
+}
+
 export interface ArkmeArkoModelOption {
   routeKey: string
   displayName: string
@@ -3688,6 +3800,7 @@ export interface ArkmeArkoModelOption {
   costDescription?: string
   recommended: boolean
   selected: boolean
+  imageInput?: ArkmeArkoImageInput
 }
 
 export interface ArkmeArkoModelCatalog {
@@ -3700,10 +3813,13 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  /** Account-bound authority for private, persisted marks on completed text. */
+  localMarkRef?: string
   messageId: number
   sessionId: number
   role: ArkmeArkoMessageRole
   text: string
+  contentBlocks?: ArkmeContentBlock[]
   reasoning: string
   createdAtMillis: number
   status: number
@@ -3754,6 +3870,7 @@ export interface ArkmeArkoAskResult {
 }
 
 export interface ArkmeArkoRunStatus {
+imageInputSupported?:boolean
   sessionId: number
   runUid: string
   status: string
@@ -3932,7 +4049,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -3988,18 +4105,34 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'arko.models'
+  | 'arko.ask'
+  | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
-  | 'explore.list' | 'explore.detail' | 'explore.mutate' | 'explore.source'
+  | 'relations.list' | 'relations.records'
+  | 'people.list' | 'people.open-chat'
+  | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'recordings.person-references'
+  | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.correction.items'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
   | 'speaker-directory.list'
   | 'speaker-directory.seen'
   | 'speaker-directory.open'
   | 'speaker-directory.avatars'
+  | 'speaker-directory.similar'
+  | 'speaker-directory.voice-samples'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'self-roles.list'
@@ -4013,6 +4146,13 @@ export type ArkmePluginOperation =
   | 'topic.rename'
   | 'topic.dissolve'
   | 'provider.capabilities'
+  | 'source.message-extension.capabilities'
+  | 'source.local-message-mark.capabilities'
+  | 'source.local-message-mark.list'
+  | 'source.local-message-mark.change'
+  | 'source.message-underline.capabilities'
+  | 'source.message-underline.list'
+  | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
   | 'auth.status'
@@ -4067,6 +4207,8 @@ export type ArkmePluginOperation =
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
+  | 'account.capabilities.query'
+  | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
   | 'account.usage.tokens'
@@ -4121,6 +4263,31 @@ export type ArkmePluginOperation =
   | 'calendar.records'
   | 'calendar.activity'
   | 'calendar.day-recap'
+  | 'calendar.day-review.reconcile'
+  | 'calendar.day-review.resume'
+  | 'calendar.day-review.evidence'
+  | 'statistics.detail'
+  | 'statistics.active'
+  | 'statistics.long'
+  | 'chat.activity.read'
+  | 'chat.activity.participants'
+  | 'chat.activity.messages'
+  | 'chat.activity.source'
+  | 'chat.word-frequency.state'
+  | 'chat.word-frequency.create'
+  | 'chat.word-frequency.participants'
+  | 'chat.word-frequency.messages'
+  | 'chat.word-frequency.source'
+  | 'recordings.speech-statistics.state'
+  | 'recordings.speech-statistics.create'
+  | 'recordings.speech-statistics.occurrences'
+  | 'recordings.speech-statistics.source'
+  | 'calendar.day-review.state'
+  | 'calendar.day-review.create'
+  | 'calendar.day-review.result'
+  | 'calendar.day-review.source'
+  | 'calendar.day-review.models'
+  | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'
   | 'user.profile.refresh'
@@ -4161,6 +4328,7 @@ export type ArkmePluginOperation =
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.source.open'
+  | 'arrangements.source.read'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'
@@ -4297,6 +4465,9 @@ export type ArkmePluginOperation =
   | 'calls.history.summary.retry'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
+  | 'extensions.publish.list'
+  | 'extensions.publish.status'
+  | 'extensions.publish.resume'
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'
   | 'extensions.install.preview'
@@ -4368,6 +4539,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -4389,11 +4562,15 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.playback.open'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
+  | 'recordings.speaker.evidence'
+  | 'recordings.speaker.consistency'
   | 'recordings.speaker.assign-item'
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'
@@ -4410,11 +4587,17 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
   | 'arko.profile'
+  | 'arko.local-mark.capabilities'
+  | 'arko.local-mark.list'
+  | 'arko.local-mark.change'
   | 'arko.session'
   | 'arko.new-session'
   | 'arko.models'
   | 'arko.model.activate'
   | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.pending.prepare'
+  | 'arko.pending.acknowledge'
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
@@ -4474,6 +4657,7 @@ export interface ArkmeLongArticleImageFailure {
 }
 
 export interface ArkmePluginErrorBody {
+  publishReceipt?: import('./extensions/types.js').ArkmeExtensionPublishResult
   imageFailures?: ArkmeLongArticleImageFailure[]
   code: string
   message: string

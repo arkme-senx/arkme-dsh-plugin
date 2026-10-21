@@ -28,6 +28,10 @@ export interface ArkmeComposerEmoji {
 }
 
 export interface ArkmeComposerDraftSnapshot {
+  /** Last content edit, preserved when hydrating, replicating or restoring a failed send. */
+  editedAtMillis?: number
+  /** Last departure after editing. Zero means this draft has not left its conversation yet. */
+  leftAtMillis?: number
   extensionTarget?: ArkmeComposerExtensionTarget
   markdown?: ArkmeMarkdownDraft
   text: string
@@ -57,6 +61,27 @@ const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
   mentions: Object.freeze([]),
   emojis: Object.freeze([]),
 })
+
+export function arkmeDraftEditedAtMillis(draft: ArkmeComposerDraftSnapshot): number {
+  const value = draft.editedAtMillis
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000 ? value : 0
+}
+
+export function arkmeDraftActivityAtMillis(draft: ArkmeComposerDraftSnapshot): number {
+  // Older saved drafts have no departure field. Retain their old time, never hydration time.
+  const value = draft.leftAtMillis ?? draft.editedAtMillis
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000 ? value : 0
+}
+
+function sameDraftContent(left: ArkmeComposerDraftSnapshot, right: ArkmeComposerDraftSnapshot): boolean {
+  return left.text === right.text && left.markdown?.source === right.markdown?.source
+    && JSON.stringify(left.markdown?.document) === JSON.stringify(right.markdown?.document)
+    && JSON.stringify(left.mentions) === JSON.stringify(right.mentions)
+    && JSON.stringify(left.emojis) === JSON.stringify(right.emojis)
+    && JSON.stringify(left.extensionTarget) === JSON.stringify(right.extensionTarget)
+    && left.attachments.length === right.attachments.length
+    && left.attachments.every((attachment, index) => arkmeAttachmentId(attachment) === arkmeAttachmentId(right.attachments[index]!))
+}
 
 export const ARKME_COMPOSER_EMOJI_PLACEHOLDER = '\uFFFC'
 
@@ -319,11 +344,16 @@ export function releaseArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot):
 
 export class ArkmeComposerDraftStore {
   private readonly drafts = new Map<string, ArkmeComposerDraftSnapshot>()
-  private readonly listeners = new Set<(key?: string) => void>()
+  private readonly listeners = new Set<(key?: string, reason?: 'evict') => void>()
   private readonly persisted = new Map<string, string>()
+  private nativePersistence = false
   private lastPersisted = ''
   private pendingPersisted: string | undefined
   private revision = 0
+  private readonly changeRevisions = new Map<string, number>()
+  private readonly contentEditRevisions = new Map<string, number>()
+  private readonly departures = new Map<string, number>()
+  private contentEditRevision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
   beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
@@ -333,7 +363,7 @@ export class ArkmeComposerDraftStore {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
     const identity = { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fingerprint }
-    this.store(key, { ...draft, fileSendIdentity: identity })
+    this.store(key, { ...draft, fileSendIdentity: identity }, 'preserve')
     return identity
   }
   private static readonly storageKey = 'arkme-local-file-drafts-v1'
@@ -345,20 +375,32 @@ export class ArkmeComposerDraftStore {
       for (const entry of saved.slice(0, 100)) {
         if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[0].startsWith('arkme-composer:')) continue
         const draft = entry[1] as ArkmeComposerDraftSnapshot
-        if (typeof draft?.text !== 'string' || draft.text.length > 20_000 || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
+        const maxTextLength = /^arkme-composer:\d+:arko$/.test(entry[0]) ? 60 * 1024 : 20_000
+        if (typeof draft?.text !== 'string' || draft.text.length > maxTextLength || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
         const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
           && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
           .slice(0, 9).map(item => ({ localFile: item.localFile! }))
         const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
         if (draft.extensionTarget !== undefined && extensionTarget === undefined) continue
         if (attachments.length > 0 || draft.markdown?.document?.type === 'doc' || extensionTarget !== undefined) {
-          this.drafts.set(entry[0], { ...draft, attachments, ...(extensionTarget === undefined ? {} : { extensionTarget }) })
+          const { editedAtMillis: _savedTime, leftAtMillis: _savedDeparture, ...content } = draft
+          const editedAtMillis = arkmeDraftEditedAtMillis(draft)
+          this.drafts.set(entry[0], { ...content, attachments, ...(editedAtMillis ? { editedAtMillis } : {}),
+            ...(draft.leftAtMillis === undefined ? {} : { leftAtMillis: arkmeDraftActivityAtMillis(draft) }),
+            ...(extensionTarget === undefined ? {} : { extensionTarget }) })
           this.restoredKeys.add(entry[0])
         }
       }
       this.refreshPersisted()
       this.lastPersisted = this.persistedPayload()
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
+  }
+
+  /** Native files become the authority; browser data is read only for migration. */
+  useNativePersistence(): void { this.nativePersistence = true }
+  confirmNativeSave(key: string): void {
+    if (!this.nativePersistence || !this.persisted.delete(key)) return
+    try { this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.persistedPayload()) } catch { /* Native tombstones prevent stale browser data from returning. */ }
   }
 
   /** A per-key snapshot for desktop replication; includes ordinary text drafts. */
@@ -371,12 +413,23 @@ export class ArkmeComposerDraftStore {
       || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) return
     const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
     if (draft.extensionTarget !== undefined && extensionTarget === undefined) return
-    this.storeOrDelete(key, { ...draft, ...(extensionTarget === undefined ? {} : { extensionTarget }) })
+    this.storeOrDelete(key, { ...draft, ...(extensionTarget === undefined ? {} : { extensionTarget }) }, 'preserve')
   }
 
   readonly getRevision = (): number => this.revision
 
-  readonly subscribe = (listener: (key?: string) => void): (() => void) => {
+  /** Session-local edit order for aggregate previews; restored drafts do not become new activity. */
+  getChangeRevision(key: string | undefined): number { return key === undefined ? 0 : this.changeRevisions.get(key) ?? 0 }
+
+  getContentEditRevision(key: string): number { return this.contentEditRevisions.get(key) ?? 0 }
+
+  markConversationLeft(key: string, atMillis: number): void {
+    this.departures.set(key, atMillis)
+    const draft = this.drafts.get(key)
+    if (draft !== undefined) this.store(key, { ...draft, leftAtMillis: atMillis }, 'preserve')
+  }
+
+  readonly subscribe = (listener: (key?: string, reason?: 'evict') => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
@@ -385,10 +438,10 @@ export class ArkmeComposerDraftStore {
     return key === undefined ? EMPTY_DRAFT : this.drafts.get(key) ?? EMPTY_DRAFT
   }
 
-  setExtensionTarget(key: string | undefined, item: ArkmeTimelineItem | undefined): void {
+  setExtensionTarget(key: string | undefined, item: ArkmeTimelineItem | undefined, quote?: import('../message-quote.js').ArkmeMessageQuote): void {
     if (key === undefined) return
     const { extensionTarget: _previous, fileSendIdentity: _identity, ...draft } = this.get(key)
-    this.storeOrDelete(key, { ...draft, ...(item === undefined ? {} : { extensionTarget: composerExtensionTarget(item) }) })
+    this.storeOrDelete(key, { ...draft, ...(item === undefined ? {} : { extensionTarget: composerExtensionTarget(item, quote) }) })
   }
 
   setMarkdown(key: string | undefined, markdown: ArkmeMarkdownDraft, text: string, mentions: readonly ArkmeComposerMention[], emojis: readonly ArkmeComposerEmoji[]): void {
@@ -606,12 +659,16 @@ export class ArkmeComposerDraftStore {
     const restoreOriginal = current === EMPTY_DRAFT
     const restoreIdentity = restoreOriginal ? snapshot.fileSendIdentity : undefined
     const extensionTarget = restoreOriginal ? snapshot.extensionTarget : current.extensionTarget
+    const editedAtMillis = Math.max(arkmeDraftEditedAtMillis(current), arkmeDraftEditedAtMillis(snapshot))
+    const leftAtMillis = Math.max(arkmeDraftActivityAtMillis(current), arkmeDraftActivityAtMillis(snapshot), this.departures.get(key) ?? 0)
     this.storeOrDelete(key, {
       text, attachments: merged, mentions, emojis,
+      leftAtMillis,
+      ...(editedAtMillis ? { editedAtMillis } : {}),
       ...(extensionTarget === undefined ? {} : { extensionTarget }),
       ...((current.text === '' ? snapshot.markdown : current.markdown) === undefined ? {} : { markdown: (current.text === '' ? snapshot.markdown : current.markdown)! }),
       ...(restoreIdentity === undefined ? {} : { fileSendIdentity: restoreIdentity }),
-    })
+    }, 'preserve')
   }
 
   clear(key: string | undefined): void {
@@ -626,6 +683,8 @@ export class ArkmeComposerDraftStore {
   clearAccount(userId: number): void {
     if (!validUserId(userId)) return
     const prefix = accountPrefix(userId)
+    for (const key of this.contentEditRevisions.keys()) if (key.startsWith(prefix)) this.contentEditRevisions.delete(key)
+    for (const key of this.departures.keys()) if (key.startsWith(prefix)) this.departures.delete(key)
     let changed = false
     for (const [key, snapshot] of this.drafts) {
       if (!key.startsWith(prefix)) continue
@@ -633,10 +692,10 @@ export class ArkmeComposerDraftStore {
       releaseArkmeComposerDraft(snapshot)
       changed = true
     }
-    if (changed) this.publish()
+    if (changed) this.publish(undefined, this.nativePersistence ? 'evict' : undefined)
   }
 
-  private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
+  private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
     // A newly typed heading/list/fence has no visible text yet, but is still an editable draft.
     // Inspect the document: serializers may omit an empty heading or task item's Markdown source.
     const hasMarkdownStructure = snapshot.markdown?.document.content?.some(node => node.type !== 'paragraph' || (node.content?.length ?? 0) > 0)
@@ -645,13 +704,23 @@ export class ArkmeComposerDraftStore {
       this.publish(key)
       return
     }
-    this.store(key, snapshot)
+    this.store(key, snapshot, timing)
   }
 
-  private store(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
+  private store(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
+    const current = this.get(key)
+    const contentChanged = !sameDraftContent(current, snapshot)
+    if (timing === 'edit' && contentChanged) this.contentEditRevisions.set(key, ++this.contentEditRevision)
+    if (timing === 'edit' && current === EMPTY_DRAFT) this.departures.delete(key)
+    const editedAtMillis = timing === 'preserve' ? arkmeDraftEditedAtMillis(snapshot)
+      : contentChanged ? Date.now() : arkmeDraftEditedAtMillis(current)
+    const leftAtMillis = timing === 'preserve' ? snapshot.leftAtMillis
+      : current === EMPTY_DRAFT ? 0 : current.leftAtMillis ?? (arkmeDraftActivityAtMillis(current) || (contentChanged ? 0 : undefined))
     this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
+      ...(editedAtMillis ? { editedAtMillis } : {}),
+      ...(leftAtMillis === undefined ? {} : { leftAtMillis: arkmeDraftActivityAtMillis({ ...snapshot, leftAtMillis }) }),
       ...(snapshot.extensionTarget === undefined ? {} : { extensionTarget: snapshot.extensionTarget }),
       ...(snapshot.markdown === undefined ? {} : { markdown: snapshot.markdown }),
       attachments: Object.freeze([...snapshot.attachments]),
@@ -678,26 +747,31 @@ export class ArkmeComposerDraftStore {
 
   private persistedPayload(): string { return `[${[...this.persisted.values()].join(',')}]` }
 
-  private publish(key?: string): void {
+  private publish(key?: string, reason?: 'evict'): void {
     try {
-      // Persist only durable drafts. Plain typing must not serialize every other conversation.
-      const before = key === undefined ? undefined : this.persisted.get(key)
-      this.refreshPersisted(key)
-      if (key === undefined || before !== this.persisted.get(key)) {
-        this.pendingPersisted = this.persistedPayload()
-      }
-      // A failed write remains pending, including deletions. Plain edits retry
-      // the cached payload without serializing unrelated durable drafts again.
-      if (this.pendingPersisted !== undefined) {
-        if (this.pendingPersisted !== this.lastPersisted) {
-          this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.pendingPersisted)
-          this.lastPersisted = this.pendingPersisted
+      if (!this.nativePersistence) {
+        // Persist only durable drafts. Plain typing must not serialize every other conversation.
+        const before = key === undefined ? undefined : this.persisted.get(key)
+        this.refreshPersisted(key)
+        if (key === undefined || before !== this.persisted.get(key)) {
+          this.pendingPersisted = this.persistedPayload()
         }
-        this.pendingPersisted = undefined
+        // A failed write remains pending, including deletions. Plain edits retry
+        // the cached payload without serializing unrelated durable drafts again.
+        if (this.pendingPersisted !== undefined) {
+          if (this.pendingPersisted !== this.lastPersisted) {
+            this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.pendingPersisted)
+            this.lastPersisted = this.pendingPersisted
+          }
+          this.pendingPersisted = undefined
+        }
       }
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1
-    for (const listener of this.listeners) listener(key)
+    if (key !== undefined && this.drafts.has(key)) this.changeRevisions.set(key, this.revision)
+    else if (key !== undefined) this.changeRevisions.delete(key)
+    else for (const changedKey of this.changeRevisions.keys()) if (!this.drafts.has(changedKey)) this.changeRevisions.delete(changedKey)
+    for (const listener of this.listeners) { if (reason) listener(key, reason); else listener(key) }
   }
 
 }

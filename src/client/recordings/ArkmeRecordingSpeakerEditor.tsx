@@ -1,14 +1,18 @@
+import { PersonPicker } from '../explore/PersonPicker.js'
 import { tr, useArkmeLocale } from '../locale.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import type { ArkmeRecordingDay, ArkmeRecordingSpeakerOption, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { useRecordingSpeakerOptions } from './use-recording-speaker-options.js'
 import { arkmeTheme } from '../arkme-theme.js'
 import { useRecordingSpeakerCorrection } from './use-recording-speaker-correction.js'
 import { ArkmeRecordingSpeakerCorrection } from './ArkmeRecordingSpeakerCorrection.js'
+import { ArkmeRecordingSpeakerReview } from './ArkmeRecordingSpeakerReview.js'
+import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const desktop = {
   base: arkmeTheme.base, hover: arkmeTheme.hover, border: arkmeTheme.border, text: arkmeTheme.text,
@@ -28,8 +32,10 @@ const styles: Record<string, CSSProperties> = {
   optionLabel: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   add: { width: '100%', minHeight: 28, padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 4, background: 'transparent', color: desktop.blue, cursor: 'pointer', textAlign: 'left', fontSize: 12 },
   bottom: { minHeight: 42, flexShrink: 0, marginTop: 2, paddingTop: 6, display: 'flex', alignItems: 'center', gap: 5, borderTop: `1px solid ${desktop.border}` },
-  batchText: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontSize: 12 },
-  confirm: { padding: '6px 14px', border: 0, borderRadius: 10, background: desktop.text, color: desktop.base, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '16px' },
+  scope: { display: 'flex', gap: 3, flexShrink: 0, marginTop: 8, padding: 3, borderRadius: 6, background: desktop.hover },
+  scopeOption: { flex: 1, padding: '6px 4px', border: 0, borderRadius: 4, font: 'inherit', fontSize: 12, lineHeight: '16px', cursor: 'pointer', color: desktop.secondary, background: 'transparent' },
+  scopeHint: { minWidth: 0, flex: 1, color: desktop.secondary, fontSize: 11, lineHeight: '16px' },
+  confirm: { flexShrink: 0, padding: '7px 10px', border: 0, borderRadius: 8, background: desktop.text, color: desktop.base, cursor: 'pointer', font: 'inherit', fontSize: 12, lineHeight: '16px' },
   unassign: { padding: '5px 0', border: 0, background: 'transparent', color: desktop.danger, cursor: 'pointer', fontSize: 11 },
   error: { marginTop: 6, color: desktop.danger, fontSize: 11, lineHeight: '16px' },
 }
@@ -74,12 +80,13 @@ export function categorizeRecordingSpeakerOptions(options: readonly ArkmeRecordi
   }
 }
 
-function SpeakerOptionRow({ option, selected, onClick }: {
+function SpeakerOptionRow({ option, selected, disabled, onClick }: {
   option: ArkmeRecordingSpeakerOption
   selected: boolean
+  disabled: boolean
   onClick(): void
 }) {
-  return <button data-arkme-feedback="neutral" type="button" data-speaker-option-key={option.optionKey} aria-pressed={selected} style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}) }} onClick={onClick}>
+  return <button data-arkme-feedback="neutral" type="button" disabled={disabled} data-speaker-option-key={option.optionKey} aria-pressed={selected} style={{ ...styles.option, ...(selected ? { background: desktop.hover } : {}), ...(disabled ? { cursor: 'default' } : {}) }} onClick={onClick}>
     {option.avatarRef === undefined
       ? <span style={{ ...styles.avatar, ...(selected ? { boxShadow: '0 0 0 1px rgba(9,184,62,.3)' } : {}) }}>{option.label.slice(0, 1) || '声'}</span>
       : <ArkmeUserAvatar avatarRef={option.avatarRef} size={24} label={tr("{v0}的头像", { v0: option.label })} />}
@@ -88,14 +95,15 @@ function SpeakerOptionRow({ option, selected, onClick }: {
   </button>
 }
 
-function SpeakerSection({ title, options, selected, onSelect }: {
+function SpeakerSection({ title, options, selected, disabled, onSelect }: {
   title: string
   options: readonly ArkmeRecordingSpeakerOption[]
   selected: string
+  disabled: boolean
   onSelect(option: ArkmeRecordingSpeakerOption): void
 }) {
   if (options.length === 0) return null
-  return <section><div style={styles.title}><span>{title}</span><span>{options.length}</span></div>{options.map(option => <SpeakerOptionRow key={option.optionKey} option={option} selected={selected === option.optionKey} onClick={() => { onSelect(option) }} />)}</section>
+  return <section><div style={styles.title}><span>{title}</span><span>{options.length}</span></div>{options.map(option => <SpeakerOptionRow key={option.optionKey} option={option} disabled={disabled} selected={selected === option.optionKey} onClick={() => { onSelect(option) }} />)}</section>
 }
 
 export interface RecordingSpeakerUpdateFeedback {
@@ -105,17 +113,18 @@ export interface RecordingSpeakerUpdateFeedback {
   warning?: string
 }
 
-export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forceBatchUpdate = false, onUpdated, onClose, onPlay }: {
+export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
   items?: readonly ArkmeRecordingWorkbenchItem[]
   onPlay?(item: ArkmeRecordingWorkbenchItem): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
-  forceBatchUpdate?: boolean
+  initialBatchUpdate?: boolean
+  initialReview?: boolean
   onUpdated(day: ArkmeRecordingDay, removal?: RecordingSpeakerUpdateFeedback): void
   onClose(): void
 }) {
   useArkmeLocale()
-  const { contextKey: key, options: allOptions, loading, error: optionsError, ready: optionsReady, pending, refresh, save, unassign } = useRecordingSpeakerOptions(item)
+  const { contextKey: key, options: allOptions, loading, error: optionsError, ready: optionsReady, pending, refresh, save, savePerson, accountScope, unassign } = useRecordingSpeakerOptions(item)
   const correction = useRecordingSpeakerCorrection(item.itemRef)
   const excludedKeys = correction.context?.supported ? correction.context.excludedSpeakers.map(person => person.optionKey) : []
   const options = useMemo(() => allOptions.map(option => ({ ...option, recommended: option.recommended && !correction.loading && !correction.error && !excludedKeys.includes(option.optionKey) })), [allOptions, correction.context, correction.loading, correction.error])
@@ -123,6 +132,10 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
   const correctionPersonLabel = item.assignedSpeakerOptionKey ? item.speakerLabel : correctionTarget?.label
   const [correctionIntent, setCorrectionIntent] = useState<'reject' | 'source' | 'review'>()
   const [autoReject, setAutoReject] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickedPerson, setPickedPerson] = useState<{ label: string; speakerRef: string }>()
+  const [reviewOpen, setReviewOpen] = useState(initialReview)
+  const consistency = useRecordingConsistency(reviewOpen ? [] : [item.itemRef])
   const correctionChoice = useRef<{ target: typeof correctionTarget; rejectCurrent: boolean }>({ target: undefined, rejectCurrent: false })
   const openCorrection = (intent: 'reject' | 'source' | 'review') => {
     correctionChoice.current = { target: correctionTarget, rejectCurrent: !!item.assignedSpeakerOptionKey && !correctionTarget }
@@ -137,7 +150,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
   const viewGeneration = useRef(0)
   const [selected, setSelected] = useState('')
   const [query, setQuery] = useState('')
-  const [batch, setBatch] = useState(forceBatchUpdate)
+  const [batch, setBatch] = useState(initialBatchUpdate)
   const [mutationError, setMutationError] = useState('')
   const [removing, setRemoving] = useState(false)
   const categories = useMemo(() => categorizeRecordingSpeakerOptions(options, query), [options, query])
@@ -149,13 +162,13 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
 
   useEffect(() => {
     selectionTouched.current = false
-    setSelected(''); setQuery(''); setBatch(forceBatchUpdate); setMutationError(''); setRemoving(false)
+    setPickedPerson(undefined); setPickerOpen(false); setSelected(''); setQuery(''); setBatch(initialBatchUpdate); setMutationError(''); setRemoving(false)
     return () => { viewGeneration.current += 1 }
-  }, [forceBatchUpdate, key])
+  }, [initialBatchUpdate, key])
 
   useEffect(() => {
     if (!selectionTouched.current) setSelected(options.find(option => option.currentAssignment)?.optionKey ?? '')
-  }, [options, key, forceBatchUpdate])
+  }, [options, key, initialBatchUpdate])
 
   useLayoutEffect(() => {
     const list = listRef.current
@@ -192,7 +205,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !pending && !correctionIntent) onClose()
+      if (event.key === 'Escape' && !pending && !correctionIntent && !reviewOpen && !pickerOpen) onClose()
       if (event.key === 'Tab' && !event.shiftKey && !event.defaultPrevented
         && event.target === triggerRef.current && inputRef.current !== null) {
         event.preventDefault()
@@ -201,7 +214,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown) }
-  }, [onClose, pending, correctionIntent])
+  }, [onClose, pending, correctionIntent, reviewOpen, pickerOpen])
 
   const mutate = async () => {
     if (key === undefined || !canSubmit) return
@@ -209,7 +222,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
     const target = options.find(option => option.optionKey === selected)
     setMutationError('')
     try {
-      const result = await save(forceBatchUpdate || batch ? 'speaker' : 'item',
+      const result = pickedPerson ? await savePerson(batch ? 'speaker' : 'item', pickedPerson.speakerRef) : await save(batch ? 'speaker' : 'item',
         target === undefined ? { newSpeakerName } : { optionKey: target.optionKey },
       )
       if (result === undefined) return
@@ -222,6 +235,8 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
   }
 
   const choose = (option: ArkmeRecordingSpeakerOption) => {
+    setPickedPerson(undefined)
+    if (pending || removing) return
     selectionTouched.current = true
     setSelected(current => current === option.optionKey ? '' : option.optionKey)
     setQuery('')
@@ -231,7 +246,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
     const generation = viewGeneration.current
     setRemoving(true); setMutationError('')
     try {
-      const result = await unassign(forceBatchUpdate || batch ? 'speaker' : 'item')
+      const result = await unassign(batch ? 'speaker' : 'item')
       if (result === undefined || viewGeneration.current !== generation) return
       onUpdated(result.day, { itemId: item.itemId, scope: result.scope,
         count: result.scope === 'speaker' ? item.sameSpeakerItemCount : 1,
@@ -244,18 +259,18 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
       if (viewGeneration.current === generation) setRemoving(false)
     }
   }
-  const canBatch = forceBatchUpdate || item.sameSpeakerItemCount > 1
+  const canBatch = initialBatchUpdate || item.sameSpeakerItemCount > 1
   const selectedCurrent = options.some(option => option.currentAssignment && option.optionKey === selected)
-  const canSubmit = optionsReady && !pending && !selectedCurrent
-    && (options.some(option => option.optionKey === selected) || (newSpeakerName !== '' && !exactMatch))
+  const canSubmit = optionsReady && !pending && !removing && !selectedCurrent
+    && (!!pickedPerson || options.some(option => option.optionKey === selected) || (newSpeakerName !== '' && !exactMatch))
   const position = recordingSpeakerPopoverPosition(
     anchor ?? { left: 8, right: 40, top: 8, bottom: 40 },
     typeof window === 'undefined' ? { width: 1_024, height: 768 } : { width: window.innerWidth, height: window.innerHeight },
   )
 
-  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent) onClose() }} />
-  <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}) }} role="dialog" aria-label={tr("编辑说话人")}>
-    {correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
+  const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent && !reviewOpen && !pickerOpen) onClose() }} />
+  <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}), ...(reviewOpen ? { left: 'auto', right: 8, top: 8, width: 'min(820px, calc(100vw - 16px))', height: 'calc(100vh - 16px)', padding: 16 } : {}) }} role="dialog" aria-label={tr(reviewOpen ? '核对声音' : '编辑说话人')}>
+    {reviewOpen ? <ArkmeRecordingSpeakerReview key={item.itemRef} item={item} items={items} options={options} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} /> : correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
       autoReject={autoReject} rejectCurrent={correctionChoice.current.rejectCurrent}
       {...(correctionChoice.current.target?.kind === 'speaker' ? { target: correctionChoice.current.target } : {})}
       onUpdated={day => { onUpdated(day) }} onClose={onClose} {...(onPlay ? { onPlay } : {})} /> : <>
@@ -267,28 +282,37 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, forc
         disabled={pending || removing || key === undefined}
         style={{ ...styles.unassign, flexShrink: 0, fontSize: 12, ...(pending || removing ? { opacity: .5, cursor: 'default' } : {}) }}
         onClick={() => { void removeAssignment() }}>
-        {removing ? tr("取消中…") : forceBatchUpdate || batch ? tr("取消 {v0} 处标记", { v0: item.sameSpeakerItemCount }) : tr("取消标记")}
+        {removing ? tr("取消中…") : batch ? tr("取消 {v0} 处标记", { v0: item.sameSpeakerItemCount }) : tr("取消标记")}
       </button>
     </div>}
     <div style={{ display: 'flex', flexShrink: 0, flexWrap: 'wrap', gap: 8, padding: '2px 4px 9px', fontSize: 12 }}>
+      {onPlay && <button type="button" data-arkme-feedback="neutral" style={{ ...styles.unassign, display: 'inline-flex', alignItems: 'center', gap: 3, color: desktop.blue, fontSize: 12 }} onClick={() => { onPlay(item) }}><Play size={13} />{tr('试听这段')}</button>}
       {correctionPersonLabel && <button type="button" style={{ ...styles.unassign, fontSize: 12 }} disabled={pending}
         onClick={() => { openCorrection('reject') }}>{tr('不是 {v0}', { v0: correctionPersonLabel })}</button>}
       <button type="button" style={{ ...styles.unassign, fontSize: 12, color: desktop.secondary }} disabled={pending} onClick={() => { openCorrection('source') }}>{tr('声音来源 / 纠错')}</button>
+      <button type="button" aria-label={tr('查看声音一致性')} style={{ ...styles.unassign, fontSize: 12, color: desktop.blue }} disabled={pending || removing} onClick={() => setReviewOpen(true)}>{tr('声音一致性')} · {tr(recordingConsistencyLabel(consistency.groups[0], consistency.error))}</button>
     </div>
-    <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected('') }} placeholder={tr("输入名称")} />
+    <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} disabled={pending || removing} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected(''); setPickedPerson(undefined) }} placeholder={tr("输入名称")} />
+    <button type="button" style={{ ...styles.unassign, color: desktop.blue, padding: '7px 4px', textAlign: 'left', fontSize: 12 }} disabled={pending || removing || !accountScope} onClick={() => setPickerOpen(true)}>{tr('从人物档案选择')} ↗</button>
+    {pickedPerson && <div style={styles.current}><span style={styles.optionLabel}>{tr('已选择')}：{pickedPerson.label}</span><button type="button" style={styles.unassign} onClick={() => setPickedPerson(undefined)}>{tr('取消选择')}</button></div>}
     {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={{ ...styles.list, ...(item.assignedSpeakerOptionKey ? { maxHeight: 248 } : {}) }} data-speaker-options-list>
-      <SpeakerSection title={tr("推荐说话人")} options={categories.recommended} selected={selected} onSelect={choose} />
-      <SpeakerSection title={tr("已添加说话人")} options={categories.speakers} selected={selected} onSelect={choose} />
-      <SpeakerSection title={tr("Arkme 用户")} options={categories.users} selected={selected} onSelect={choose} />
+      <SpeakerSection title={tr("推荐说话人")} options={categories.recommended} selected={selected} disabled={pending || removing} onSelect={choose} />
+      <SpeakerSection title={tr("已添加说话人")} options={categories.speakers} selected={selected} disabled={pending || removing} onSelect={choose} />
+      <SpeakerSection title={tr("Arkme 用户")} options={categories.users} selected={selected} disabled={pending || removing} onSelect={choose} />
     </div>}
     {newSpeakerName !== '' && !exactMatch && <button data-arkme-feedback="neutral" type="button" aria-label={tr("添加新说话人")} style={styles.add} disabled={!optionsReady || pending} onClick={() => { void mutate() }}><Plus size={15} />{tr("添加“")}{newSpeakerName}{tr("”为说话人")}</button>}
     {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button data-arkme-feedback="neutral" type="button" aria-label={tr("重试读取说话人候选")} style={styles.unassign} onClick={refresh}>{tr("重试")}</button></div>}
     {mutationError !== '' && <div role="alert" style={styles.error}>{mutationError}</div>}
+    {canBatch && <div role="group" aria-label={tr('应用范围')} style={styles.scope}>
+      {[false, true].map(value => <button key={String(value)} type="button" data-arkme-feedback="neutral" aria-pressed={batch === value}
+        disabled={pending || removing} style={{ ...styles.scopeOption, ...(batch === value ? { background: desktop.base, color: desktop.text } : {}), ...(pending || removing ? { opacity: .5, cursor: 'default' } : {}) }}
+        onClick={() => { if (!pending && !removing) setBatch(value) }}>{value ? tr('当天同组 {v0} 处', { v0: item.sameSpeakerItemCount }) : tr('仅此片段')}</button>)}
+    </div>}
     <div style={styles.bottom}>
-      {canBatch ? <><input aria-label={tr("批量修改")} type="checkbox" checked={forceBatchUpdate || batch} disabled={pending || forceBatchUpdate} onChange={event => { if (!forceBatchUpdate) setBatch(event.target.checked) }} /><span style={styles.batchText}>{tr("批量修改")} {item.sameSpeakerItemCount} {tr("处“")}{item.speakerLabel}”</span></> : <span style={styles.batchText}>{tr("仅修改当前片段")}</span>}
-      <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? tr("保存中…") : tr("确认")}</button>
+      <span style={styles.scopeHint}>{batch ? tr('系统分组，可能包含不同的人') : tr('仅修改当前片段')}</span>
+      <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, color: desktop.tertiary, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? tr("保存中…") : tr("保存标记")}</button>
     </div>
     </>}
-  </div></>
+  </div>{pickerOpen && accountScope && <PersonPicker accountScope={accountScope} onClose={() => setPickerOpen(false)} onChoose={value => { selectionTouched.current = true; setPickedPerson(value); setSelected(''); setPickerOpen(false) }}/>}</>
   return typeof document === 'undefined' || document.body === undefined ? layer : createPortal(layer, document.body)
 }

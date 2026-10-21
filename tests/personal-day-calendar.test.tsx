@@ -50,6 +50,46 @@ beforeEach(() => {
 afterEach(() => { act(() => view?.unmount()); view = undefined; arkmeCalendarMonths.activateAccount(undefined); vi.restoreAllMocks() })
 async function mount(accountScope = 'prod:123') { await act(async () => { view = create(<ArkmePersonalDayCalendar accountScope={accountScope} onClose={() => {}} />) }) }
 
+it('retains a loaded activity page across review tabs without another source read', async () => {
+  await mount()
+  const reads = () => mocks.read.mock.calls.filter(([op, p]) => op === 'calendar.activity' && p.mode !== 'buckets').length
+  const before = reads()
+  await clickText('日总结')
+  expect(text()).not.toContain('自己的内容')
+  await clickText('时间轴')
+  await clickText('活动')
+  expect(text()).toContain('自己的内容')
+  expect(reads()).toBe(before)
+  expect(text()).not.toContain('正在加载当天活动')
+})
+
+it('does not load a newly selected day activity until its activity tab is opened', async () => {
+  await mount()
+  await clickText('日总结')
+  mocks.read.mockClear()
+  const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
+  await act(async () => month.props.onSelectDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)))
+  const reads = () => mocks.read.mock.calls.filter(([op, p]) => op === 'calendar.activity' && p.mode !== 'buckets')
+  expect(reads()).toHaveLength(0)
+  await clickText('活动')
+  expect(reads()).toHaveLength(6)
+  expect(text()).toContain('自己的内容')
+  await clickText('时间轴')
+  await clickText('活动')
+  expect(reads()).toHaveLength(6)
+})
+
+it('immediately drops retained activities after privacy invalidation while replacement reads are pending', async () => {
+  await mount()
+  await clickText('日总结')
+  const original = mocks.read.getMockImplementation()!
+  mocks.read.mockImplementation(async (op, params, signal) =>
+    op === 'calendar.activity' && params.mode !== 'buckets' ? new Promise(() => {}) : original(op, params, signal))
+  await act(async () => arkmeCalendarInvalidations.publishAll({ hard: true }))
+  await clickText('活动')
+  expect(text()).not.toContain('自己的内容')
+})
+
 describe('first-rail personal day calendar', () => {
   it('selects a future date, reads only its arrangements, and opens a date-scoped creation dialog', async () => {
     await mount()
@@ -78,8 +118,8 @@ describe('first-rail personal day calendar', () => {
     expect(text()).not.toContain('原版日历')
     expect(text()).toContain('当天位置')
     expect(text()).toContain('自己的内容')
-    expect(text()).toContain('录音索引有内容')
-    expect(text()).toContain('当前来源已加载')
+    expect(text()).toContain('有录音')
+    expect(text()).toContain('关于活动')
     expect(view!.root.findAllByProps({className:'arkme-calendar-lunar-date'})).toHaveLength(1)
     expect(view!.root.findAllByProps({'aria-label':'刷新当天活动'})).toHaveLength(0)
     expect(view!.root.findAllByProps({'aria-label':'关闭我的一天'})).toHaveLength(0)
@@ -140,6 +180,27 @@ it('keeps the calendar day visible without an entry to the full arrangement boar
   const month = view!.root.find(node => typeof node.props.onSelectDate === 'function' && node.props.selectedDate)
   await act(async () => month.props.onSelectDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)))
   expect(view!.root.findByProps({ className: 'arkme-personal-day-body' }).props.hidden).toBeUndefined()
+})
+
+it('clears calendar review content immediately on hard privacy invalidation', async () => {
+  const original = mocks.read.getMockImplementation()!
+  let restricted = false
+  mocks.read.mockImplementation(async (operation, ...args) => {
+    if (operation !== 'calendar.day-review.state') return original(operation, ...args)
+    if (restricted) throw new Error('原始资料已锁定')
+    return { supported: true, job: null, hasNewContent: false, versions: [], result: {
+      id: 'review', snapshotId: 'snapshot', generatedAtMillis: dateStamp, modelName: '模型', sourceKinds: ['self'],
+      coverage: [{ kind: 'self', status: 'complete', count: 1, note: '' }], sources: [{ ref: 'r', kind: 'self', label: '原文' }],
+      summary: [{ text: '隐私切换前可见的回顾', sourceRefs: ['r'] }], timeline: [],
+    } }
+  })
+  await mount()
+  await clickText('日总结')
+  expect(text()).toContain('隐私切换前可见的回顾')
+  restricted = true
+  await act(async () => { arkmeCalendarInvalidations.publishAll({ hard: true }) })
+  expect(text()).not.toContain('隐私切换前可见的回顾')
+  expect(text()).toContain('原始资料已锁定')
 })
 
 it('places the arrangements tab between conversations and calls and retains it across dates', async () => {

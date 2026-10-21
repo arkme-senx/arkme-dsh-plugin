@@ -2320,7 +2320,7 @@ describe('ChatService', () => {
       extension: { textContent: '附件延展', templateKind: 2 },
     })
     expect(record.createExtensionForConversation).toHaveBeenCalledWith(
-      'record-snapshot-1', childRecordUid, '附件延展', assets, undefined,
+      'record-snapshot-1', childRecordUid, '附件延展', assets, undefined, undefined,
     )
     expect(record.createTextForConversation).not.toHaveBeenCalled()
     expect(record.createFileAssetsForConversation).not.toHaveBeenCalled()

@@ -28,13 +28,19 @@ export interface ExplorePage {
   module: ExploreModule
   items: ExploreItem[]
   filters: ExploreFilter[]
+  totalKnown?: boolean
+  searchPending?: boolean
   total: number
   nextCursor?: string
   contextRef: string
   actions: ExploreAction[]
+  /** null means authorization could not be read; saved content remains readable. */
+  analysisEnabled?: boolean | null
   progress?: ExploreProgress
   notice?: string
   emptyMessage?: string
+  /** Optional contact remarks are loaded after the first useful page. */
+  needsEnrichment?: boolean
 }
 export interface ExploreEvidence {
   key: string
@@ -45,8 +51,15 @@ export interface ExploreEvidence {
   anchor: boolean
   ref?: string
   unavailableReason?: string
+  mentions?: Array<{ start: number; end: number; text: string }>
+  /** Complete refers to current-body coverage; resolved names are AI inferences, not contact verification. */
+  personReferenceStatus?: 'complete' | 'not_analyzed' | 'unavailable'
+  personReferences?: Array<{ start: number; end: number; text: string; status: 'resolved' | 'unresolved' | 'generic' | 'group'; targetName?: string }>
 }
+export interface ExploreEnrichment { items: Array<{ key: string; linkedContactName: string }> }
+export type ExploreDetailPart = 'overview' | 'records'
 export interface ExploreDetail {
+  snapshot?: string
   item: ExploreItem
   fields: Array<{ label: string; value: string }>
   evidence: ExploreEvidence[]
@@ -56,7 +69,13 @@ export interface ExploreDetail {
   reclassifyTargets?: Array<{ref:string;label:string}>
   notice?: string
 }
-export interface ExploreQuery { module: ExploreModule; filter?: string; query?: string; cursor?: string }
+export interface ExploreQuery {
+  /** Existing page refreshes may restore a loaded window; each owner request is capped at 100. */
+  limit?: number
+  /** Request exact directory/search totals and global type counts (the existing UI always does). */
+  includeCounts?: boolean
+  module: ExploreModule; filter?: string; query?: string; cursor?: string
+}
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
   | { kind: 'record'; item: ArkmeTimelineItem }

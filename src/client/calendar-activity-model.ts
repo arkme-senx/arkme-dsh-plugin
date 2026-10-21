@@ -17,6 +17,8 @@ export interface DayActivityQuery {
 }
 
 export interface DayActivityEntry {
+  /** Adapter-owned detail content version within the read session; independent of list cursors. */
+  detailRevision?: string
   /** Shared text is distinct from the viewer's physical audio coverage. */
   sharedRecording?: { detailRef?: string; sourceDigest: string; sourceLabel: string }
   /** Presentation only; image references retain the existing authorized image reader. */
@@ -100,7 +102,7 @@ export interface DayActivityDetailPage {
 /** A read-only adapter. No send, read-receipt, recording, or mutation methods. */
 export interface DayActivityReader {
   capabilities?: { kinds: readonly DayActivityKind[]; modes: readonly DayActivityMode[]; notice: string; autoLocationLimit?: number; background?: boolean }
-  loadDay(query: DayActivityQuery, options: { signal: AbortSignal; cursor?: string; snapshotId?: string }): Promise<DayActivityPage>
+  loadDay(query: DayActivityQuery, options: { signal: AbortSignal; cursor?: string; snapshotId?: string; onProgress?(page: DayActivityPage): void }): Promise<DayActivityPage>
   loadDetail(query: DayActivityQuery, activityId: string,
     options: { signal: AbortSignal; snapshotId: string; cursor?: string }): Promise<DayActivityDetailPage>
   loadLocation?(query: DayActivityQuery, activityId: string,

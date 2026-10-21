@@ -62,6 +62,8 @@ export interface RecordingEntityTarget {
   transcriptSource: ArkmeRecordingTranscriptSource
   start: number
   length: number
+  /** Exact current source row outside the selected day, for an anchored source preview. */
+  sourceText?: string
 }
 export interface RecordingEntityOccurrence {
   key: string
@@ -95,7 +97,29 @@ export interface RecordingEntityOccurrences {
 }
 export interface RecordingEntityOccurrenceQuery { entityRef: string; offset?: number; limit?: number; participantKey?: string }
 export interface RecordingEntityPort {
+  recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal): Promise<RecordingPersonReferences>
   startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult>
   recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay>
   recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences>
+}
+
+/** Exact public transcript identity; never accepts internal Audio row IDs. */
+export interface RecordingPersonReferencesQuery {
+  dateStamp: number
+  transcriptSource?: ArkmeRecordingTranscriptSource
+  identityHash: string
+  transcriptVersion: string
+}
+export interface RecordingPersonReference {
+  start: number
+  length: number
+  text: string
+  status: 'resolved' | 'unresolved' | 'group' | 'generic'
+  targetName?: string
+}
+export interface RecordingPersonReferences {
+  identityHash: string
+  transcriptVersion: string
+  status: 'complete' | 'not_analyzed' | 'processing'
+  references: RecordingPersonReference[]
 }

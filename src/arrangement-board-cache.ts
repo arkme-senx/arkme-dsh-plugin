@@ -48,9 +48,10 @@ export function parseArrangementBoardCachePages(value: unknown): ArkmeArrangemen
         if (!Array.isArray(item.provenance) || item.provenance.length > 200) fail()
         for (const raw of item.provenance as unknown[]) {
           const e = object(raw)
-          keys(e, ['id','kind','role','text','canOpen','sourceDate','createdAtMillis','unavailableReason'])
+          keys(e, ['id','kind','role','text','canOpen','readOnExpand','sourceDate','createdAtMillis','unavailableReason'])
           text(e.id,512); text(e.text,200000)
           if (!['record','audio_summary','call','input','voice_input','agent','manual'].includes(e.kind as string) || !['initial','supplement','related'].includes(e.role as string) || typeof e.canOpen !== 'boolean') fail()
+          if (e.readOnExpand !== undefined && typeof e.readOnExpand !== 'boolean') fail()
           if (e.createdAtMillis !== undefined) integer(e.createdAtMillis)
           if (e.sourceDate !== undefined && (typeof e.sourceDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.sourceDate))) fail()
           if (e.unavailableReason !== undefined) text(e.unavailableReason,512)

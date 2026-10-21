@@ -1,3 +1,4 @@
+import { assertHostCapability, hostAllows } from './host-policy.js'
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, readFile, rename, unlink, link } from 'node:fs/promises';
@@ -118,7 +119,7 @@ export class AppMigrationManager {
     private readonly origin: string;
     private readonly artifactOrigin: string;
     constructor(private readonly options: Options) {
-        this.enabled = migrationEligible(options.currentVersion, options.enabled, options.platform, options.architecture);
+        this.enabled = migrationEligible(options.currentVersion, options.enabled && hostAllows('clientSelfUpdate'), options.platform, options.architecture);
         this.snapshot = { phase: this.enabled ? 'idle' : 'disabled', currentVersion: options.currentVersion, downloadedBytes: 0, prompt: false };
         this.now = options.now ?? Date.now;
         this.fetcher = options.fetch ?? fetch;
@@ -302,6 +303,7 @@ export class AppMigrationManager {
         throw new Error('下载重定向次数过多');
     }
     async download(): Promise<MigrationSnapshot> {
+    assertHostCapability('clientSelfUpdate')
         return this.exclusive(async () => {
             await this.init();
             if (!this.enabled || this.disposed)
@@ -432,6 +434,7 @@ export class AppMigrationManager {
         return this.status();
     }
     async install(jobId?: string): Promise<MigrationSnapshot> {
+    assertHostCapability('clientSelfUpdate')
         await this.init();
         if (!jobId || jobId !== this.stored.completed?.jobId) throw new Error('下载任务已变化，请刷新状态');
         if (this.installing) return this.installing;

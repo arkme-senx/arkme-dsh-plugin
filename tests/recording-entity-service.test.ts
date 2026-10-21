@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { recordingSearchIdentityHash, recordingSearchVersion } from '../src/recording-search-version.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RecordingEntityService } from '../src/services/recording-entity-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
@@ -18,7 +20,7 @@ afterEach(() => { cleanup.splice(0).forEach(fn => fn()) })
 function fixture() {
   let credentials = { userId: 42, accessToken: 'test-access', refreshToken: 'test-refresh' }
   const store: ArkmeSessionStore = { read: async () => credentials, write: async next => { credentials = next }, delete: async () => {} }
-  const state = { day: day() as Record<string, unknown>, occurrences: [occurrence()] as Record<string, unknown>[], rows: [row], start: { status: 'accepted', job_id: 'private-job' } as Record<string, unknown>, fail: false, afterOccurrences: (() => {}) as () => void }
+  const state = { referenceError: undefined as {code:number;message:string;data?:unknown} | undefined, references: [] as Record<string, unknown>[], referenceHash: undefined as string | undefined, day: day() as Record<string, unknown>, occurrences: [occurrence()] as Record<string, unknown>[], rows: [row], start: { status: 'accepted', job_id: 'private-job' } as Record<string, unknown>, fail: false, afterOccurrences: (() => {}) as () => void }
   const paths: string[] = []
   const requests: Array<{ path: string; body: Record<string, unknown> }> = []
   const runtime = new ServiceRuntime({ environment: 'test', relationBaseUrl: 'https://relation.test', requestTimeoutMs: 1000 } as ArkmeServiceConfig,
@@ -27,10 +29,11 @@ function fixture() {
       const path = new URL(String(url)).pathname; paths.push(path)
       if (state.fail) throw new Error('offline')
       const body = JSON.parse(String(init?.body)); requests.push({ path, body })
-      const data = path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/ensure') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
+      if (path.endsWith('/person-references') && state.referenceError) return new Response(JSON.stringify(state.referenceError), {headers:{'content-type':'application/json'}})
+      const data = path.endsWith('/person-references') ? { job_id: body.job_id, result_version: body.result_version, rows: [{ row_id: (body.row_ids as string[])[0], content_hash: state.referenceHash ?? createHash('sha256').update(state.rows[0]!.rawTranscriptText ?? state.rows[0]!.text).digest('hex'), status: 'complete', references: state.references }] } : path.endsWith('/feedback/undo') ? { status: 'undone' } : path.endsWith('/feedback') ? { status: 'applied', receipt_id: 'private-receipt', undo_expires_at: Date.now() + 60_000 } : path.endsWith('/start') ? state.start : path.endsWith('/list') ? state.day : { job_id: body.job_id, view_mode: body.result_version ? 'official' : 'provisional',
         official_entity_id: body.official_entity_id, result_version: body.result_version, projection_entity_id: body.projection_entity_id,
         projection_revision: body.projection_revision, personalization: state.day.personalization, occurrences: state.occurrences }
-      if (path.endsWith('/occurrences')) state.afterOccurrences()
+      if (path.endsWith('/occurrences') || path.endsWith('/person-references')) state.afterOccurrences()
       return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
     })
   const reader = { entityTranscriptRows: vi.fn(async () => state.rows) }
@@ -39,6 +42,18 @@ function fixture() {
   return { runtime, service, state, reader, paths, requests }
 }
 describe('recording entity Host owner', () => {
+  it('returns a verified midnight source preview without an extra day fetch or timestamp fallback', async () => {
+    const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
+    const nextDay = new Date(date); nextDay.setDate(nextDay.getDate() + 1)
+    f.state.rows = [{ ...row, startAtMillis: nextDay.getTime() + 1000, endAtMillis: nextDay.getTime() + 2000 }]
+    f.state.occurrences = [{ ...occurrence(), start_ms: nextDay.getTime() + 1000, end_ms: nextDay.getTime() + 2000 }]
+    const result = await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })
+    expect(result.items[0]?.target).toMatchObject({ sourceText: '🙂武汉', start: 1, length: 2 })
+    expect(f.reader.entityTranscriptRows).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(result)).not.toMatch(/session:child|private-mention/)
+    f.state.rows = [{ ...f.state.rows[0]!, rawTranscriptText: '原文已修改', text: '原文已修改' }]
+    expect((await f.service.recordingEntityOccurrences({ entityRef: initial.entities![0]!.entityRef })).items[0]?.target).toBeUndefined()
+  })
   it('reads mentions and original text together, then checks the live version once', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date })
     f.paths.length = 0
@@ -70,7 +85,7 @@ describe('recording entity Host owner', () => {
     const mentions = await f.service.recordingEntityOccurrences(refs)
     expect(mentions.items[0]).toMatchObject({ observedText: '武汉', text: '🙂武汉', target: { start: 1, length: 2, transcriptSource: 'system' } })
     expect(JSON.stringify(mentions)).not.toMatch(/private-mention|session:child/)
-    expect(f.paths.every(path => !path.endsWith('/ensure'))).toBe(true)
+    expect(f.paths.every(path => !path.endsWith('/start'))).toBe(true)
   })
   it('rejects cross-account, tampered and obsolete projection references', async () => {
     const f = fixture(), initial = await f.service.recordingEntities({ dateStamp: date }), ref = initial.entities![0]!.entityRef
@@ -134,7 +149,7 @@ it('starts explicitly through an uncached owner command and hides internal IDs',
   const f = fixture()
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
   expect(await f.service.startRecordingEntities({ dateStamp: date })).toEqual({ status: 'accepted' })
-  expect(f.paths).toEqual(['/api/v1/entity/audio-day/ensure', '/api/v1/entity/audio-day/ensure'])
+  expect(f.paths).toEqual(['/api/v1/entity/audio-day/start', '/api/v1/entity/audio-day/start'])
   f.state.start = { status: 'failed', retryable: true, error_code: 'private-detail' }
   await expect(f.service.startRecordingEntities({ dateStamp: date })).rejects.toMatchObject({ code: 'recording-entities-start-failed', retryable: true })
   await expect(f.service.startRecordingEntities({ dateStamp: date }, AbortSignal.abort())).rejects.toThrow()
@@ -256,4 +271,62 @@ it('rejects incomplete counts and duplicate speaker identities instead of presen
   await expect(f.service.recordingEntities({ dateStamp: date })).rejects.toThrow()
   participation.participants[1] = { ...participant, speaker_key: 'distinct-speaker' }
   expect((await f.service.recordingEntities({ dateStamp: date })).entities![0]!.participation?.participants).toHaveLength(2)
+})
+
+it('passes owner system speakers through while keeping unknown audio source and identities private', async () => {
+  const f = fixture(); personalize(f)
+  f.state.occurrences = [{ ...occurrence(), context: { speaker_key: 'private-system-track', speaker_label: '说话人 3', relevance: 'unknown', accuracy: 'unverified', sound_source: 'unknown' } }]
+  const list = await f.service.recordingEntities({ dateStamp: date })
+  const detail = await f.service.recordingEntityOccurrences({ entityRef: list.entities![0]!.entityRef })
+  expect(detail.items[0]!.context).toMatchObject({ speakerLabel: '说话人 3', soundSource: 'unknown', relevance: 'unknown' })
+  expect(JSON.stringify(detail)).not.toContain('private-system-track')
+})
+
+function personReferenceFixture() {
+  const f = fixture()
+  const raw = '  (背景音) 🙂他问你，我们说其他  ', visible = '🙂他问你，我们说其他'
+  f.state.rows = [{ ...row, rawTranscriptText: raw, text: visible }]
+  const start = Array.from(raw).indexOf('他')
+  f.state.references = [{ start, end: start + 1, text: '他', status: 'resolved', target_name: '正式人物' },
+    { start: start + 2, end: start + 3, text: '你', status: 'unresolved' },
+    { start: start + 4, end: start + 6, text: '我们', status: 'group' }]
+  const current = f.state.rows[0]!
+  const query = { dateStamp: date, identityHash: recordingSearchIdentityHash({sessionId:current.sessionId,childId:current.childId,itemIndex:current.asrItemIndex,transcriptSource:current.transcriptSource}),transcriptVersion:recordingSearchVersion({...current,text:raw}) }
+  return { ...f, query }
+}
+it('reads source-bound pronouns through the same owner without inference or internal IDs', async () => {
+  const f = personReferenceFixture(), result = await f.service.recordingPersonReferences(f.query)
+  expect(result).toMatchObject({status:'complete', references:[{start:1,length:1,text:'他',status:'resolved',targetName:'正式人物'},{start:3,length:1,text:'你',status:'unresolved'},{start:5,length:2,text:'我们',status:'group'}]})
+  expect(JSON.stringify(result)).not.toMatch(/private-|session:child|source.*hash/)
+  expect(f.paths).toEqual(['/api/v1/entity/audio-day/list','/api/v1/entity/audio-day/person-references','/api/v1/entity/audio-day/list'])
+})
+it('keeps unrecognized/processing rows distinct from completed empty results', async () => {
+  const f=personReferenceFixture()
+  f.state.day.status='not_started';expect((await f.service.recordingPersonReferences(f.query)).status).toBe('not_analyzed')
+  f.state.day.status='processing';expect((await f.service.recordingPersonReferences(f.query)).status).toBe('processing')
+  expect(f.paths.some(p=>p.endsWith('/person-references'))).toBe(false)
+})
+it('rejects edited, stale, cross-account and malformed pronoun projections', async () => {
+  for (const mutate of [
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.query.transcriptVersion='0'.repeat(64)},
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.state.referenceHash='0'.repeat(64)},
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.state.afterOccurrences=()=>{f.state.day.result_version='changed'}},
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.state.afterOccurrences=()=>{void f.runtime.writeSession({userId:43,accessToken:'new',refreshToken:'new'})}},
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.state.references[1]!.target_name='invented'},
+    (f:ReturnType<typeof personReferenceFixture>)=>{f.state.references[0]!.end=999},
+  ]) {const f=personReferenceFixture();mutate(f);await expect(f.service.recordingPersonReferences(f.query)).rejects.toThrow()}
+})
+
+it('maps the owner stale contract for UI Tool and SDK without treating outages as stale', async () => {
+ for (const [code,message,data,want] of [
+  [1001,'参数错误','audio_person_references_stale','recording-entities-stale'],
+  [1001,'audio_person_references_stale',undefined,'recording-entities-stale'],
+  [1002,'服务器繁忙','audio_person_references_stale','arkme-code-1002'],
+  [1001,'参数错误','other_parameter','arkme-code-1001'],
+  [1001,'参数错误',{message:'audio_person_references_stale'},'arkme-code-1001'],
+ ] as const) {
+  const f=personReferenceFixture();f.state.referenceError={code,message,data}
+  await expect(f.service.recordingPersonReferences(f.query)).rejects.toMatchObject({code:want})
+  expect(f.requests.filter(x=>x.path.endsWith('/person-references'))).toHaveLength(1)
+ }
 })

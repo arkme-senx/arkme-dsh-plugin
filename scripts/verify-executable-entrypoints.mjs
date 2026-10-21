@@ -38,7 +38,7 @@ try {
   const ticket = await call({ kind: 'reserve' })
   if (!Number.isSafeInteger(ticket) || ticket <= 0) throw new Error('invalid worker ticket')
   const page = { source: { sourceRef: 'fixture', kind: 'private_chat', displayName: 'Fixture' }, items: [], hasMore: false,
-    unified: { protocolVersion: 1, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } }
+    unified: { protocolVersion: 2, events: [], sources: [], complete: true, windowTokens: [], olderHasMore: false, newerHasMore: false, hasMore: false } }
   if (!await call({ kind: 'write', scope: 'fixture', request: 'initial', page, options: { ticket, latest: true } })) throw new Error('worker did not commit')
   const restored = await call({ kind: 'read', scope: 'fixture', request: 'initial' })
   if (restored?.cache?.persistence !== 'committed') throw new Error('worker did not restore its commit')

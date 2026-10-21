@@ -1,3 +1,4 @@
+import { resolveHostPolicy } from './host-policy.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
 import { AppMigrationManager, migrationStateRoot } from './app-migration.js'
@@ -257,7 +258,7 @@ export function resolvePluginUpdateEnabled(
   configured: boolean,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  return configured && environment.ARKME_RUNTIME_MANAGED !== '1'
+  return configured && resolveHostPolicy(environment).capabilities.runtimeSelfUpdate && environment.ARKME_RUNTIME_MANAGED !== '1'
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -296,7 +297,9 @@ export function resolveDshRemoteProfileRef(
 }
 
 export function apply(ctx: Context, config: Config): void {
+  const hostPolicy = resolveHostPolicy()
   config = resolveArkmeConfig(ctx, config)
+  if (hostPolicy.credentialServicePrefix !== undefined) config = {...config, keychainServicePrefix:hostPolicy.credentialServicePrefix}
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)

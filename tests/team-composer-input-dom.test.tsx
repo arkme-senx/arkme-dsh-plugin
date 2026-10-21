@@ -1,3 +1,4 @@
+import { useArkmeComposerInputTimePreference } from '../src/client/ArkmeComposerInputStats.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -168,4 +169,17 @@ it('native deletion of the first adjacent emoji preserves the second identity',a
   expect(editor().querySelector('[data-arkme-editable-emoji]')?.getAttribute('data-arkme-editable-emoji')).toBe('thumb_up')
   await key({key:'Enter'})
   expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content.text_content).toBe('[jm_emoji:thumb_up]')
+})
+
+it('shares the time-display preference between concurrently mounted conversation surfaces', async () => {
+  function Observer() {
+    const [visible, setVisible] = useArkmeComposerInputTimePreference()
+    return <button data-shared-preference onClick={() => setVisible(!visible)}>{visible ? 'shown' : 'hidden'}</button>
+  }
+  await act(async () => root.render(<><Observer/><Observer/></>))
+  const buttons = host.querySelectorAll<HTMLButtonElement>('[data-shared-preference]')
+  expect([...buttons].map(b => b.textContent)).toEqual(['shown','shown'])
+  await act(async () => buttons[0]!.click())
+  expect([...buttons].map(b => b.textContent)).toEqual(['hidden','hidden'])
+  expect(localStorage.getItem('arkme.composer.show-input-time')).toBe('hidden')
 })

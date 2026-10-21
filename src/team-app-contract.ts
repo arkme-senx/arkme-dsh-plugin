@@ -4,13 +4,24 @@ import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
   'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
-  | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
+  | 'source' | 'channel' | 'channel.configure' | 'official' | 'official.membership' | 'open' | 'conversations' | 'timeline'
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
+  | 'visitor.private.open' | 'person.private.open' | 'people.remarks'
+  | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
-export interface TeamIdentity { nickname: string; imageRef?: string; imageKey?: string }
+/** Presentation-only status; current membership is resolved against the official target by the Host. */
+export interface TeamOfficialMembership { jotmoId: string; isMember: boolean }
+export interface TeamIdentity {
+  nickname: string; imageRef?: string; imageKey?: string
+  /** Viewer-scoped identity; never a display-name match or a public account id. */
+  personKey?: string; personRef?: string; isMe?: boolean
+  publicNickname?: string
+  /** Current entitlement from the identity's member_type, never inferred from missing data. */
+  memberType?: 'free' | 'vip' | 'svip' | 'unknown'
+}
 export interface TeamChannel {
   avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
@@ -30,14 +41,27 @@ export interface TeamMessage {
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
+  replyToKey?: string
   recipientRead?: boolean
+  /** Sealed, viewer-scoped snapshot for private local annotations, not Chat actions. */
+  localMarkRef?: string
 }
 export interface TeamPage<T> { items: T[]; hasMore: boolean; nextCursor?: string }
 export interface TeamTimeline { conversation: TeamConversation; messages: TeamMessage[]; hasMore: boolean; beforeSeq: number }
 export interface TeamOpen { channel: TeamChannel; openInbox: boolean; conversation?: TeamConversation }
 export interface TeamSendResult { message?: TeamMessage; reason?: string }
-export interface TeamReceipts { hasMore?: boolean; nextCursor?: string; teamRead: boolean; visitorRead: boolean; members: Array<TeamIdentity & { read: boolean; readAt: number }> }
-export interface TeamMembers { team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string }
+export interface TeamReceiptMember extends TeamIdentity { key?: string; isMe?: boolean; read?: boolean; readAt?: number }
+export interface TeamReceipts {
+  hasMore?: boolean; nextCursor?: string; teamRead?: boolean; visitorRead?: boolean
+  /** Whether the sender is reliably excluded from the recipient population. */
+  senderExcluded?: boolean
+  members: TeamReceiptMember[]
+}
+export interface TeamMembers {
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
+  avatarState?: 'pending' | 'ready' | 'unavailable'
+}
 export interface TeamApplication { ref: string; name: string; state: string; revision: number; requestedAt: number }
 
 export interface TeamAttention { external: boolean; team: boolean; applications?: boolean }

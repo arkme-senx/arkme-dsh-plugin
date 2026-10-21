@@ -667,7 +667,7 @@ describe('Chat policy realtime contract', () => {
 it('routes t=24 joins once as roster invalidation, separate from t=27 history and t=17 messages', async () => {
   const frame = { t: 24, event_uid: 'group:2:123:member-joined', chat_session_uid: 'group', actor_user_id: 1,
     member_user_id: 2, join_at: 123, event_at: 124, source_client_id: 0 }
-  expect(decodeArkmeMemberJoinedDataLine(`data: ${JSON.stringify(frame)}`)).toEqual({ eventUid: frame.event_uid, chatSessionUid: 'group', eventAtMillis: 124 })
+  expect(decodeArkmeMemberJoinedDataLine(`data: ${JSON.stringify(frame)}`)).toEqual({ eventUid: frame.event_uid, chatSessionUid: 'group', eventAtMillis: 124, joinAtMillis: 123 })
   for (const invalid of [{ ...frame, member_user_id: 0 }, { ...frame, unread_count: 9 }, { ...frame, display_name: 'private' }]) {
     expect(decodeArkmeMemberJoinedDataLine(`data: ${JSON.stringify(invalid)}`)).toBeUndefined()
   }

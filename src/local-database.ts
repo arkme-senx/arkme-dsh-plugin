@@ -1,3 +1,4 @@
+import { LocalMessageMarkStore } from './local-message-marks.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
 import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
@@ -127,6 +128,7 @@ function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly messageMarks: LocalMessageMarkStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
@@ -266,6 +268,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         this.database.exec('UPDATE conversation_member_cache SET payload_bytes = LENGTH(CAST(snapshot_json AS BLOB))')
       }
     })
+    this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
     this.selfRoleSync = new SelfRoleSyncStore(this.database, action => this.transaction(action))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
@@ -302,6 +305,16 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async readCancellationCompletion() { return await this.operationalState.readCancellationCompletion() }
   async writeCancellationCompletion(completion: import('./state-store.js').ArkmeCancellationCompletion | undefined) {
     await this.operationalState.writeCancellationCompletion(completion)
+  }
+
+  async readOfflineContextJournal(scope: string) {
+    return await this.operationalState.readOfflineContextJournal(scope)
+  }
+  async putOfflineContextJournal(scope: string, id: string, entry: import('./offline-context-contract.js').OfflineContextJournalEntry): Promise<void> {
+    await this.operationalState.putOfflineContextJournal(scope, id, entry)
+  }
+  async deleteOfflineContextJournal(scope: string, id: string, fingerprint: string): Promise<void> {
+    await this.operationalState.deleteOfflineContextJournal(scope, id, fingerprint)
   }
 
   async uniqueCode(): Promise<string> {
@@ -918,6 +931,16 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
 
+  async arkoPendingTurns(userId:number) { return this.operationalState.arkoPendingTurns(userId) }
+  async arkoTurn(userId:number,uid:string) { return this.operationalState.arkoTurn(userId,uid) }
+  async prepareArkoTurn(userId:number,turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>) { return this.operationalState.prepareArkoTurn(userId,turn,request) }
+  async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
+  async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
+
+  async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
+  async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
+  async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }
+
   async listRecordReeditSubmissions(userId: number) {
     return await this.operationalState.listRecordReeditSubmissions(userId)
   }
@@ -965,10 +988,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async admitRecordingImportJob(
     userId: number,
     job: RecordingImportJob,
-    unresolvedLimit: number,
     signal?: AbortSignal,
   ): ReturnType<ArkmeStateStore['admitRecordingImportJob']> {
-    return await this.operationalState.admitRecordingImportJob(userId, job, unresolvedLimit, signal)
+    return await this.operationalState.admitRecordingImportJob(userId, job, signal)
   }
 
   async replaceRecordingImportJob(

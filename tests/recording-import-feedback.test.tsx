@@ -5,8 +5,14 @@ import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from 
 import { toPublicRecordingImportJob } from '../src/recording-import-contract.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), uploadArkmeRecording: vi.fn(), inspectArkmeRecordingSelection: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme, uploadArkmeRecording: mocks.uploadArkmeRecording }))
+vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme, uploadArkmeRecording: mocks.uploadArkmeRecording, lookupArkmeRecordingImport: async () => null }))
 vi.mock('../src/client/recordings/recording-import-selection.js', () => ({ inspectArkmeRecordingSelection: mocks.inspectArkmeRecordingSelection }))
+
+vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
+  createImportJournal: () => ({ list: async () => [], change: async () => {} }),
+  ownImportQueue: async (_key: string, _signal: AbortSignal, work: () => Promise<void>) => { await work() },
+}))
 
 import { ArkmeRecordingImportDialog, ArkmeRecordingImportTrigger, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 
@@ -69,7 +75,7 @@ describe('recording import button feedback', () => {
     expect(label()).toBe('导入历史音频')
     const width = trigger().props.style.width
     expect(width).toBeGreaterThan(0)
-    for (const [phase, expected] of [['prepared', '音频上传中'], ['uploading', '音频上传中'], ['finalizing', '正在完成导入'], ['accepted', '导入历史音频']] as const) {
+    for (const [phase, expected] of [['prepared', '正在准备录音'], ['uploading', '音频上传中'], ['finalizing', '正在完成导入'], ['accepted', '导入历史音频']] as const) {
       items = [job(phase)]
       await open()
       await poll()
@@ -93,6 +99,36 @@ describe('recording import button feedback', () => {
     expect(label()).toBe('导入历史音频')
     await close()
     expect(notice()).toHaveLength(0)
+  })
+
+  it('keeps cloud preparation running after closing the dialog and switching away', async () => {
+    let prepared!: () => void
+    mocks.inspectArkmeRecordingSelection.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { prepared = resolve })
+      return { ok: true, format: 'M4A', durationMillis: 1_000 }
+    })
+    mocks.uploadArkmeRecording.mockResolvedValue(job('accepted'))
+    await open()
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.onChange({ target: { files: [new File(['cloud'], 'cloud.m4a')], value: '' } })
+      await tick()
+    })
+    expect(label()).toBe('导入历史音频')
+    await act(async () => {
+      renderer.root.findAll(node => node.type === 'button' && node.children.includes('导入'))[0]!.props.onClick()
+      await tick()
+    })
+    expect(label()).toBe('正在准备录音')
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    await close()
+    expect(dialog.open).toBe(false)
+    expect(notice()[0]?.children.join('')).toContain('录音会继续准备')
+
+    await act(async () => { renderer.update(<Surface foreground={false} />); await tick() })
+    expect(label()).toBe('正在准备录音')
+    await act(async () => { prepared(); await tick() })
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
+    expect(label()).toBe('导入历史音频')
   })
 
   it('shows owner-reported unfinished uploads without confusing later transcription failures with upload failures', async () => {
@@ -196,7 +232,7 @@ describe('recording import button feedback', () => {
 
     mocks.callArkme.mockRejectedValueOnce(new Error('任务列表暂不可用'))
     await act(async () => { rejectSecond(new Error('第二个文件上传失败')); await tick() })
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('正在准备录音')
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
     items = [owner, job('accepted', 'first')]
     await poll()

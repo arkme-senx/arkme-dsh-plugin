@@ -18,6 +18,12 @@ import {
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem } from '../src/types.js'
 
+// This static/node-renderer suite has no browser highlight layer. The real
+// mark interactions and geometry are covered in message-underlines.test.tsx.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 const richComposerSource = readFileSync(new URL('../src/client/ArkmeRichComposerInput.tsx', import.meta.url), 'utf8')
 
 const account: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'test', userId: 10001 }

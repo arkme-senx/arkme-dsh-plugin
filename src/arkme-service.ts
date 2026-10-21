@@ -1,8 +1,15 @@
 import { DeviceLockService } from './services/device-lock-service.js'
+import { PeopleService } from './services/people-service.js'
+import { StatisticsService } from './services/statistics-service.js'
+import { resolveHostPolicy } from './host-policy.js'
+import { CapabilityService } from './services/capability-service.js'
+import type { ArkmeCapabilityUpdate } from './capabilities.js'
+import { OfflineContextService } from './services/offline-context-service.js'
+import type { OfflineContextRequest } from './offline-context-contract.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
-import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
+import type { RecordingPersonReferencesQuery, RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
@@ -31,6 +38,10 @@ import type { TeamAppOperation } from './team-app-contract.js'
 import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { DayRecapService } from './services/day-recap-service.js'
+import { ConversationActivityService } from './services/conversation-activity-service.js'
+import { ConversationWordFrequencyService } from './services/conversation-word-frequency-service.js'
+import { RecordingSpeechStatisticsService } from './services/recording-speech-statistics-service.js'
+import { CalendarDayReviewService } from './services/calendar-day-review-service.js'
 import { createManagedAiLlmAdapter } from './managed-ai/adapter.js'
 import { ArkmeDesktopScreenshot } from './desktop-screenshot.js'
 import { RecordEditHistoryService } from './services/record-edit-history-service.js'
@@ -371,6 +382,8 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly statistics: StatisticsService
+  private readonly people: PeopleService
   private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
@@ -382,6 +395,7 @@ export class ArkmeService {
   private readonly selfRoleAvatars: SelfRoleAvatarStore
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
+  private readonly offlineContexts: OfflineContextService
   private readonly recordingWorkflowService: RecordingWorkflowService
   private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
@@ -436,11 +450,18 @@ export class ArkmeService {
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
   }
+  async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
+
   async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
   async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
   async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
-  async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal) { return this.explore.detail(ref, cursor, signal) }
+  async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
+  async exploreEnrich(refs: unknown, signal?: AbortSignal) { return this.explore.enrich(refs, signal) }
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
+  async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
+  async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
+  async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
   private readonly interwoven: InterwovenService
@@ -465,6 +486,10 @@ export class ArkmeService {
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
+  private readonly conversationActivity: ConversationActivityService
+  private readonly conversationWords: ConversationWordFrequencyService
+  private readonly speechStatistics: RecordingSpeechStatisticsService
+  private readonly calendarDayReview: CalendarDayReviewService
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -487,11 +512,16 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
-    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamApp = new TeamAppService(this.runtime, this.profile, {
+      openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
+    }, {
+      privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+    })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      identifyReply: (conversation, message, user) => this.teamApp.replyKey(conversation, message, user),
       execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
     })
     this.teamDelivery.start()
@@ -520,6 +550,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
+    this.offlineContexts = new OfflineContextService(this.runtime,this.source,this.media, async userId => await this.realtime.invalidateOfflineContextProjection(userId))
     this.recordingWorkflowService = new RecordingWorkflowService(this.runtime)
     this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
@@ -565,7 +596,12 @@ export class ArkmeService {
       this.record,
       this.source,
     )
-    this.arko = new ArkoService(this.runtime, this.profile, this.messageActions)
+    this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
+      read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
+withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
+      upload: (refs, signal) => this.filesOwner().uploadRefs(refs, signal),
+      project: (raw, userId) => this.media.richContentBlocks(raw, userId),
+    })
     this.commonGroups = new CommonGroupService(this.runtime, this.source)
     this.group = new GroupService(this.runtime, this.source, this.profile, {
       sendPrivateText: async (sourceRef, chatSessionUid, text, recordUid, relationUid, session, signal) => {
@@ -593,6 +629,7 @@ export class ArkmeService {
         void this.realtime.refreshAttentionSummary()
       },
       async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+    this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
@@ -612,7 +649,7 @@ export class ArkmeService {
       this.messageActions,
       this.callHistory,
     )
-    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven)
+    this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
         ...(sourceKeys?.length ? { sourceKeys } : {}) })
@@ -660,9 +697,15 @@ export class ArkmeService {
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
+    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
+    this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
+    this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
+    this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
+    this.calendarDayReview = new CalendarDayReviewService(this.runtime, this.recording, this.record, this.source, this.callHistory, this.privacy)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
-    this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker)
+    this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
       resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
@@ -729,6 +772,8 @@ export class ArkmeService {
   async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
   async membershipCurrent(expectedUserId: number) { return await this.membershipOwner.current(expectedUserId) }
   async membershipCatalog(expectedUserId: number) { return await this.membershipOwner.catalog(expectedUserId) }
+  async automaticCapabilities(expectedScope?: string, signal?: AbortSignal) { return new CapabilityService(this.runtime).query(expectedScope, signal) }
+  async updateAutomaticCapability(input: ArkmeCapabilityUpdate, expectedScope: string, signal?: AbortSignal) { return new CapabilityService(this.runtime).update(input, expectedScope, signal) }
   async aiPointsAccount(expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).account(expectedScope, signal) }
   async aiPointsConsumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).consumption(query, expectedScope, signal) }
 
@@ -802,6 +847,28 @@ export class ArkmeService {
     }) })
     return await this.dayRecapService.generate(input, signal)
   }
+  async reconcileDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.reconcile(input, signal) }
+  async resumeDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.resume(input, signal) }
+  async dayReviewEvidence(input: import('./calendar-day-review.js').DayReviewEvidenceQuery, signal?: AbortSignal) { return this.calendarDayReview.evidence(input, signal) }
+  async conversationActivityRead(input: unknown, signal?: AbortSignal) { return this.conversationActivity.read(input, signal) }
+  async conversationActivityParticipants(input: unknown, signal?: AbortSignal) { return this.conversationActivity.participants(input, signal) }
+  async conversationActivityMessages(input: unknown, signal?: AbortSignal) { return this.conversationActivity.messages(input, signal) }
+  async conversationActivitySource(input: unknown, signal?: AbortSignal) { return this.conversationActivity.source(input, signal) }
+  async conversationWordsState(input: unknown, signal?: AbortSignal) { return this.conversationWords.state(input, signal) }
+  async conversationWordsCreate(input: unknown, signal?: AbortSignal) { return this.conversationWords.create(input, signal) }
+  async conversationWordsParticipants(input: unknown, signal?: AbortSignal) { return this.conversationWords.participants(input, signal) }
+  async conversationWordsMessages(input: unknown, signal?: AbortSignal) { return this.conversationWords.messages(input, signal) }
+  async conversationWordsSource(input: unknown, signal?: AbortSignal) { return this.conversationWords.source(input, signal) }
+  async recordingSpeechState(input: unknown, signal?: AbortSignal) { return this.speechStatistics.state(input, signal) }
+  async recordingSpeechCreate(input: unknown, signal?: AbortSignal) { return this.speechStatistics.create(input, signal) }
+  async recordingSpeechOccurrences(input: unknown, signal?: AbortSignal) { return this.speechStatistics.occurrences(input, signal) }
+  async recordingSpeechSource(input: unknown, signal?: AbortSignal) { return this.speechStatistics.source(input, signal) }
+  async dayReviewState(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.state(input, signal) }
+  async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
+  async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
+  async dayReviewSource(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.source(input, signal) }
+  async dayReviewModels(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.models(input, signal) }
+  async dayReviewPrompts(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prompts(input, signal) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
     return this.realtime.subscribeChatRealtime(listener)
@@ -937,7 +1004,9 @@ export class ArkmeService {
   async dshRemotePost<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemotePost<T>(path, body, undefined, signal) }
 
   clientConfig(): ArkmeClientConfig {
+    const {distribution, capabilities} = resolveHostPolicy()
     return {
+      hostPolicy: {distribution, capabilities},
       captchaId: this.config.geetestCaptchaId,
       baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,
@@ -1000,7 +1069,10 @@ export class ArkmeService {
         revisionPolling: true,
         userProfile: true,
         accountSettings: true,
+        calendarDayReview: true,
+arkoImagesV1:true,
         aiPoints: true,
+        automaticCapabilitiesV1: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,
@@ -1015,9 +1087,12 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        relationPages: true,
         recordingEntities: true,
+        recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        offlineContextV1:true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
         durableChatTimeline: true,
@@ -1065,6 +1140,7 @@ export class ArkmeService {
         arrangements: true,
         myExtensions: true,
         extensionPublish: true,
+        extensionPublishRecovery: true,
         extensionReviews: true,
         ...(this.relatedRecording.isEnabled() ? { relatedRecordings: true as const } : {}),
       },
@@ -1161,7 +1237,12 @@ export class ArkmeService {
     this.extensionReview.dispose()
     this.media.dispose()
     this.recordingEntitiesOwner.dispose()
+    this.offlineContexts.dispose()
     this.explore.dispose()
+    this.calendarDayReview.dispose()
+    this.conversationActivity.dispose()
+    this.conversationWords.dispose()
+    this.speechStatistics.dispose()
     this.recording.dispose()
     this.source.dispose()
     this.aiPolish.dispose()
@@ -1230,6 +1311,10 @@ export class ArkmeService {
   }
   async resumeRecordingPresence(): Promise<void> { await this.recordingPresenceWriter.resumeCurrent() }
   async reportRecordingPresence(accountKey: string, fact: CapturePresenceFact): Promise<void> { await this.recordingPresenceWriter.report(accountKey, fact) }
+  /** @internal Account-scoped, read-only local aggregation. */
+  async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal) { return await this.recording.recordingTotalsIndex(account, toMillis, offset, signal) }
+  /** @internal Account-scoped, read-only local aggregation. */
+  async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsBucket(account, dateStamp, signal) }
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
@@ -1243,6 +1328,8 @@ export class ArkmeService {
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
+  async speakerDirectorySimilar(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.similar(input, signal) }
+  async speakerDirectoryVoiceSamples(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.voiceSamples(input, signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }
   async speakerDirectoryAvatars(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.avatars(input, signal) }
   async speakerDirectoryList(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.list(input, signal) }
@@ -1251,6 +1338,7 @@ export class ArkmeService {
 
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.startRecordingEntities(query, signal) }
   async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntities(query, signal) }
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingPersonReferences(query, signal) }
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityOccurrences(query, signal) }
   async recordingEntityFeedback(input: RecordingEntityFeedbackInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityFeedback(input, signal) }
   async undoRecordingEntityFeedback(input: RecordingEntityFeedbackUndoInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.undoRecordingEntityFeedback(input, signal) }
@@ -1259,13 +1347,18 @@ export class ArkmeService {
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string) { return await this.recording.recordingSpeakerMembers(speakerRef, signal, expectedVersion) }
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> { return await this.recording.recordingSpeakerRecommendation(itemRef, signal) }
   async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
+  async recordingSpeakerEvidence(input: import('./types.js').ArkmeRecordingSpeakerEvidenceInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerEvidence(input, signal) }
+  async recordingSpeakerConsistency(input: import('./types.js').ArkmeRecordingSpeakerConsistencyInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerConsistency(input, signal) }
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) { return this.recording.recordingSpeakerCorrectionItems(query, signal) }
+  async recordingSpeakerCorrectionResult(query: import('./types.js').ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionResult(query, signal) }
   async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionContext(itemRef, signal) }
   async applyRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.applyRecordingSpeakerCorrection(input, signal) }
   async undoRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal) { return await this.recording.undoRecordingSpeakerCorrection(input, signal) }
   async unassignRecordingSpeaker(input: { itemRef: string; scope: 'item' | 'speaker'; expectedCount: number }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.unassignRecordingSpeaker(input, signal) }
   /** @internal Built-in loopback UI only. */ async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
   /** @internal Built-in loopback UI only. */ async recordingImportPreflight(fileNames: string[], signal?: AbortSignal): Promise<{ duplicateFileNames: string[] }> { return await this.recording.recordingImportPreflight(fileNames, signal) }
-  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async recordingImportReceipt(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null> { return await this.recording.recordingImportReceipt(taskId, expectedUserId) }
+  /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
   async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
@@ -1311,6 +1404,12 @@ export class ArkmeService {
     return profile
   }
 
+  arkoLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return this.arko.localMarks.capabilities(sourceRef, signal) }
+  arkoLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return this.arko.localMarks.list(sourceRef, refs, signal) }
+  changeArkoLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) {
+    return this.arko.localMarks.change(sourceRef, ref, change, signal)
+  }
+
   async arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession> {
     return await this.arko.arkoEnsureSession(signal)
   }
@@ -1335,8 +1434,8 @@ export class ArkmeService {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoHistoryPage(limit, offset, signal)
     if (offset === 0) {
-      const latest = [...page.items].filter(item => item.text.trim() !== '').sort((a, b) => b.createdAtMillis - a.createdAtMillis || b.messageId - a.messageId)[0]
-      if (latest !== undefined) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text, createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
+      const latest = [...page.items].filter(item => item.text.trim() !== '' || item.contentBlocks?.length).sort((a, b) => b.createdAtMillis - a.createdAtMillis || b.messageId - a.messageId)[0]
+      if (latest !== undefined) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text.trim() || '[图片]', createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
     }
     return page
   }
@@ -1350,11 +1449,17 @@ export class ArkmeService {
       modelRouteKey?: string
       replyToRunUid?: string
       replyToAssistantMsgId?: number
+      imageFileRefs?: readonly string[]
+      expectedUserId?: number
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {
     return await this.arko.arkoAsk(text, options)
   }
+
+  async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }
+  async arkoPrepareTurn(turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn) { return this.arko.arkoPrepareTurn(turn) }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number) { return this.arko.arkoAcknowledgeTurn(uid,expectedUserId) }
 
   async arkoRunStatus(sessionId: number, runUid: string, signal?: AbortSignal): Promise<ArkmeArkoRunStatus> {
     return await this.arko.arkoRunStatus(sessionId, runUid, signal)
@@ -1454,6 +1559,7 @@ export class ArkmeService {
     return await this.source.renameTopic(sourceRef, title)
   }
 
+  offlineContext(input: OfflineContextRequest,signal?:AbortSignal) { return this.offlineContexts.offlineContext(input,signal) }
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }
@@ -2138,7 +2244,14 @@ export class ArkmeService {
   async sourceMessageExtensionParent(sourceRef: string, messageActionRef: string, options: { signal?: AbortSignal } = {}) {
     return this.chat.sourceMessageExtensionParent(sourceRef, messageActionRef, options)
   }
-  async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {}) { if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403); const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
+  async sourceLocalMarkCapabilities(sourceRef: string) { return this.chat.sourceLocalMarkCapabilities(sourceRef) }
+  async sourceLocalMarks(sourceRef: string, actionRefs: readonly string[]) { return this.chat.sourceLocalMarks(sourceRef, actionRefs) }
+  async changeSourceLocalMark(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange) { return this.chat.changeSourceLocalMark(sourceRef, actionRef, change) }
+  async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceUnderlineCapabilities(sourceRef, signal) }
+  async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) { return this.chat.sourceUnderlines(sourceRef, actionRefs, signal) }
+  async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }
+  async sourceMessageExtensionCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceMessageExtensionCapabilities(sourceRef, signal) }
+  async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: { relationUid?: string; parentRecordUid?: string; quote?: import('./message-quote.js').ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {}) { if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403); if (options.quote !== undefined) await this.chat.validateQuoteReply(sourceRef, messageActionRef, options.quote, options.signal); const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options); const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''; if (requestedParentRecordUid !== '' && requestedParentRecordUid !== context.parentRecordUid && !context.extensions.some(extension => extension.recordUid === requestedParentRecordUid)) throw new ArkmePluginError('source-message-extension-target-invalid', '延展目标已变化，请刷新后重试', true, 409); const assets = fileRefs.length === 0 ? [] : await this.filesOwner().uploadRefs(fileRefs, options.signal); return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options) }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal) { return await this.chat.ownLongArticle(itemUid, expectedUserId, signal) }
   async copyNativeChatLink(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> { return await this.messageActions.copyLinkNative(snapshot, expectedUserId, signal) }
@@ -2770,6 +2883,10 @@ export class ArkmeService {
 
   async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceTarget> {
     return await this.arrangementSource.arrangementSourceOpen(arrangementRef, evidenceId, signal)
+  }
+
+  async arrangementSourceRead(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceRead> {
+    return await this.arrangementSource.arrangementSourceRead(arrangementRef, evidenceId, signal)
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {

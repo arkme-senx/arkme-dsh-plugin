@@ -327,7 +327,10 @@ export function ArkmeActionMenu(props: {
     ...(action.disabled === undefined ? {} : { disabled: action.disabled }),
     ...(action.danger === undefined ? {} : { danger: action.danger }),
   }))
-  return <span ref={root} style={{ display: props.anchor ? 'inline-flex' : 'contents' }}
+  // The native Menu still renders an empty inline-flex anchor when anchor=null.
+  // Keep pointer-only anchors out of flow so a menu cannot add a line to its list.
+  return <span ref={root} style={props.anchor ? { display: 'inline-flex' }
+    : props.point ? { position: 'fixed', width: 0, height: 0, display: 'block' } : { display: 'contents' }}
     data-arkme-command-menu={props.label}
     onContextMenu={event => { if (menu.current?.contains(event.target as Node)) event.preventDefault() }}
     onKeyDown={event => {

@@ -75,7 +75,8 @@ function consumptionLabel(businessCode: string): string {
   if (businessCode === 'agent') return 'Agent'
   if (businessCode === 'arkme') return tr('DSH 对话')
   if (businessCode === 'audio_entity') return tr('录音实体识别')
-  return tr('AI 调用')
+  const labels: Record<string,string> = { personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联（自动）', offline_context_manual: '线下交流关联（主动操作）' }
+  return tr(labels[businessCode] ?? 'AI 调用')
 }
 
 function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {

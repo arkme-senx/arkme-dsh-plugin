@@ -20,6 +20,7 @@ export interface RecordingImportUploadProgress {
 }
 
 export interface RecordingImportUploadOptions {
+  clientTaskId?: string
   batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
@@ -66,6 +67,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
     request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.clientTaskId) request.setRequestHeader('X-Arkme-Import-Task', options.clientTaskId)
     if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
       options.onProgress?.({
@@ -98,6 +100,16 @@ export async function uploadArkmeRecording(
     options.onProgress?.({ uploadedBytes: 0, totalBytes: file.size })
     request.send(file)
   })
+}
+
+/** Check durable Host receipt before reading or re-uploading a restored source. */
+export async function lookupArkmeRecordingImport(importPath: string, taskId: string, signal: AbortSignal): Promise<PublicRecordingImportJob | null> {
+  const response = await fetch(importPath, { method: 'POST', signal, headers: {
+    'X-Arkme-Import-Lookup': '1', 'X-Arkme-Import-Task': taskId,
+  } })
+  const result = await response.json() as { ok: boolean; value: PublicRecordingImportJob | null; error?: { message?: string } }
+  if (!response.ok || !result.ok) throw new Error(result.error?.message ?? '导入状态核对失败，请重试')
+  return result.value
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
@@ -146,6 +158,8 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.presence'
   | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -172,15 +186,20 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'speaker-directory.seen'
   | 'speaker-directory.open'
   | 'speaker-directory.avatars'
+  | 'speaker-directory.similar'
+  | 'speaker-directory.voice-samples'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
+  | 'recordings.speaker.evidence'
+  | 'recordings.speaker.consistency'
   | 'recordings.speaker.assign-item'
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
   | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'topic.create'
@@ -190,11 +209,17 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
   | 'arko.profile'
+  | 'arko.local-mark.capabilities'
+  | 'arko.local-mark.list'
+  | 'arko.local-mark.change'
   | 'arko.session'
   | 'arko.new-session'
   | 'arko.models'
   | 'arko.model.activate'
   | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.pending.prepare'
+  | 'arko.pending.acknowledge'
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
@@ -220,6 +245,13 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
+  | 'source.message-extension.capabilities'
+  | 'source.local-message-mark.capabilities'
+  | 'source.local-message-mark.list'
+  | 'source.local-message-mark.change'
+  | 'source.message-underline.capabilities'
+  | 'source.message-underline.list'
+  | 'source.message-underline.change'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
   | 'source.record-delete'

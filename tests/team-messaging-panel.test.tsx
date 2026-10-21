@@ -1,3 +1,11 @@
+import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
+import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
+import { ArkmeMessageSnapshotDialog } from '../src/client/ArkmeMessageSnapshotDialog.js'
+import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
+import { TeamMessageDetail } from '../src/client/TeamMessageDetail.js'
+import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
+import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
+import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
@@ -9,11 +17,12 @@ import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
 import { ArkmeAttachmentDraftTile } from '../src/client/ArkmeRichContent.js'
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
-import { ArkmeReadReceiptPanel, ArkmeReadReceiptMember } from '../src/client/ArkmeReadReceiptPanel.js'
+import { ArkmeReadReceiptPanel } from '../src/client/ArkmeReadReceiptPanel.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
@@ -48,8 +57,168 @@ describe('Team send UI recovery', () => {
     })
   })
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
-  const mount = async () => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />); await tick() }) }
+  const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="account" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('persists a reply draft across remount, enqueues the original reference and clears only the accepted reply', async () => {
+    const parent: TeamMessage = {ref:'parent-ref',key:'parent',seq:1,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'需要回复的问题',template_kind:1},media:[]}
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.timeline')return {conversation,messages:[parent],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue')return accepted()
+      return []
+    })
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onExtend())
+    expect(JSON.parse(localStorage.getItem(storageKey)!).replyTarget).toMatchObject({ref:'parent-ref',key:'parent',text:'需要回复的问题'})
+    expect(renderer!.root.findByProps({'data-arkme-composer-extension-target':'true'})).toBeDefined()
+    await act(async()=>renderer!.unmount());await mount()
+    expect(renderer!.root.findByProps({'data-arkme-composer-extension-target':'true'})).toBeDefined()
+    await send()
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')?.[1]).toMatchObject({replyToRef:'parent-ref'})
+    expect(JSON.parse(localStorage.getItem(storageKey)!).replyTarget).toBeUndefined()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+  })
+  it('locates a bounded historical window and keeps background recovery in that window', async () => {
+    const old: TeamMessage = {ref:'old-ref',key:'old',seq:10,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
+    const head = {...old,key:'new',seq:100}, later = {...old,key:'later',seq:60}
+    mocks.call.mockImplementation(async (op,p) => op === 'team.app.timeline' ? {conversation:{...conversation,lastSeq:100},messages:p.beforeSeq===86?[later]:p.beforeSeq?[old]:[head],hasMore:p.beforeSeq===86||!p.beforeSeq,beforeSeq:p.beforeSeq===86?60:p.beforeSeq?10:100} : {})
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(old,new AbortController().signal))
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    await act(async()=>{invalidateTeamMessages('account');await tick()})
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
+    const readsBefore=mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').length
+    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(later,new AbortController().signal))
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline')).toHaveLength(readsBefore+1)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('later')
+    const latestButton=renderer!.root.findAllByType('button').find(node=>node.children.includes('回到最新消息'))!
+    await act(async()=>{latestButton.props.onClick();await tick()})
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('new')
+  })
+  it('can cancel extension without clearing the existing message draft', async () => {
+    localStorage.setItem(storageKey,JSON.stringify({text:'已有草稿',assets:[],replyTarget:{ref:'parent',key:'parent',seq:1,senderName:'同事',text:'问题'}}))
+    await mount()
+    await act(async()=>renderer!.root.findByProps({'aria-label':'取消延展'}).props.onClick())
+    const saved = JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.text).toBe('已有草稿');expect(saved.replyTarget).toBeUndefined()
+  })
+  it('shows a server reply after refresh and locates an earlier parent by pagination', async () => {
+    const parent: TeamMessage = {ref:'parent-ref',key:'parent',seq:1,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'原文',template_kind:1},media:[]}
+    const reply = {...parent,key:'reply',ref:'reply-ref',seq:10,replyToKey:'parent',content:{text_content:'回复',template_kind:1}}
+    mocks.call.mockImplementation(async (op,p) => op==='team.app.timeline' ? {conversation:{...conversation,lastSeq:10},messages:p.beforeSeq?[parent]:[reply],hasMore:!p.beforeSeq,beforeSeq:p.beforeSeq?1:10} : [])
+    await mount()
+    expect(renderer!.root.findByProps({'data-team-message-reply':true})).toBeDefined()
+    await act(async()=>{await renderer!.root.findByType(TeamConversationMessage).props.onLocateReply();await tick()})
+    await vi.waitFor(()=>expect(renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key==='parent')?.props.located).toBe(true))
+  })
+  it('keeps the shared composer hint stable and preserves each draft timer across remount', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ text: '', assets: [] }))
+    await mount()
+    const input = () => renderer!.root.findByType(ArkmeRichComposerInput)
+    const stats = () => renderer!.root.findByType(ArkmeComposerInfoRow).props.children
+    expect(stats().props.visible).toBe(false)
+    await act(async () => input().props.onFocus())
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.focused).toBe(true)
+    expect(stats().props.textLength).toBe(0)
+    await act(async () => input().props.onTextChange('你好🌱'))
+    expect(stats().props.textLength).toBe(3)
+    const start = stats().props.startedAtMillis
+    expect(start).toBeGreaterThan(0)
+    await act(async () => input().props.onBlur())
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.focused).toBe(false)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).startedAtMillis).toBe(start)
+    await act(async () => renderer!.unmount()); await mount()
+    expect(stats().props.startedAtMillis).toBe(start)
+    await act(async () => stats().props.onToggle())
+    expect(localStorage.getItem('arkme.composer.show-input-time')).toBe('hidden')
+    await act(async () => input().props.onTextChange(''))
+    expect(stats().props.startedAtMillis).toBeUndefined()
+  })
+
+  it('freezes a failed attempt timer separately from the next draft and restores it on rejection', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ text: '原草稿', assets: [], startedAtMillis: 1234 }))
+    let reject!: (error: unknown) => void
+    mocks.call.mockImplementation(async (op: string) => {
+      if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.send.enqueue') return new Promise((_resolve, fail) => { reject = fail })
+      return []
+    })
+    await mount(); await send()
+    expect(JSON.parse(localStorage.getItem(storageKey)!).attempt.startedAtMillis).toBe(1234)
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.children.props.startedAtMillis).toBeUndefined()
+    await act(async () => reject({ body: { code: 'team-invalid_request' } }))
+    expect(renderer!.root.findByType(ArkmeComposerInfoRow).props.children.props.startedAtMillis).toBe(1234)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('原草稿')
+  })
+
+  it('opens the common snapshot for own messages without requesting unrelated Chat record metadata', async () => {
+    const own: TeamMessage = {key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1800000000000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'我的消息',template_kind:1},media:[]}
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[own],hasMore:false,beforeSeq:0} : [])
+    await mount()
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
+    expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
+    expect(snapshot.props.metadataUnavailable).toContain('暂未接通')
+    expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
+    expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
+    await act(async () => snapshot.props.onClose())
+    expect(renderer!.root.findAllByType(ArkmeMessageSnapshotDialog)).toHaveLength(0)
+  })
+
+  it.each(['vip', 'svip', 'free', 'unknown', undefined] as const)('shows visitor %s with the private-chat star only on the team side', async memberType => {
+    const visitor = { nickname: '访客', ...(memberType ? { memberType } : {}) }
+    for (const side of ['team', 'external'] as const) {
+      await act(async () => { renderer?.unmount(); renderer = create(<TeamConversationRow conversation={{ ...conversation, side, visitor }} onClick={() => {}} />) })
+      const badges = renderer!.root.findAll(node => node.type === 'svg' && !!node.props['data-arkme-membership'])
+      const visible = side === 'team' && (memberType === 'vip' || memberType === 'svip')
+      expect(badges).toHaveLength(visible ? 1 : 0)
+      if (visible) {
+        expect(badges[0]!.parent!.props['aria-label']).toBe(`${memberType.toUpperCase()} 会员`)
+        expect(badges[0]!.props.width).toBe('13')
+      }
+    }
+  })
+
+  it('refreshes the conversation title membership from the authorized timeline', async () => {
+    const value = { ...conversation, side: 'team' as const, visitor: { nickname: '访客', memberType: 'vip' as const } }
+    let fresh: TeamConversation = { ...value, visitor: { nickname: '访客', memberType: 'svip' } }
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: fresh, messages: [], hasMore: false, beforeSeq: 0 } : [])
+    await act(async () => { renderer = create(<TeamConversationPane conversation={value} accountKey="account" onChanged={() => {}} />); await tick() })
+    const badges = () => renderer!.root.findByType('header').findAll(node => node.type === 'svg' && !!node.props['data-arkme-membership'])
+    expect(badges()[0]!.props['data-arkme-membership']).toBe('svip')
+    fresh = { ...value, visitor: { nickname: '访客', memberType: 'free' } }
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    expect(badges()).toHaveLength(0)
+  })
+
+  it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
+    const mine: TeamMessage = { ref:'own-ref',key:'own',seq:1,revision:1,side,sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'自己的消息',template_kind:1},media:[] }
+    const other: TeamMessage = {...mine,ref:'other-ref',key:'other',seq:2,own:false,canEdit:false,canDelete:false,content:{text_content:'对方消息',template_kind:1}}
+    let messages = [mine,other]
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline' ? {conversation:{...conversation,side},messages,hasMore:false,beforeSeq:0} : [])
+    await mount()
+    const rows = () => renderer!.root.findAllByType(TeamConversationMessage)
+    await act(async () => rows()[1]!.props.onDetail())
+    expect(renderer!.root.findAllByType(ArkmeDetailShell)).toHaveLength(1)
+    await act(async () => rows()[0]!.props.onSelect())
+    expect(renderer!.root.findAllByType(ArkmeDetailShell)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeMessageSelectionBar).props.count).toBe(1)
+    expect(renderer!.root.findByProps({'data-team-composer':'message'}).props.style.display).toBe('none')
+    await act(async () => rows()[1]!.props.onToggle())
+    const bar = () => renderer!.root.findByType(ArkmeMessageSelectionBar)
+    expect(bar().props.count).toBe(2)
+    expect(bar().props.actions.map((action:any) => action.id)).toEqual(['copy','link','forward','ask-dsh','delete','close'])
+    expect(bar().props.actions.find((action:any) => action.id==='delete').disabled).toBe(true)
+    messages = messages.map(message => ({...message,ref:`rotated-${message.key}`}))
+    await act(async () => { invalidateTeamMessages('account'); await tick() })
+    expect(bar().props.count).toBe(2)
+    await act(async () => bar().props.actions.find((action:any) => action.id==='close').onSelect())
+    expect(renderer!.root.findAllByType(ArkmeMessageSelectionBar)).toHaveLength(0)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.filter(call=>/delete|edit|send.enqueue/.test(call[0]))).toHaveLength(0)
+  })
 
   for (const side of ['team', 'external'] as const) {
     it.each([
@@ -173,6 +342,7 @@ describe('Team send UI recovery', () => {
   })
 
   it.each([false, undefined, true])('requires explicit inbox authority even when the directory has cached rows: %s', async openInbox => {
+    arkmeUi.authChanged(true,true)
     mocks.call.mockImplementation(async(op:string,p:{side?:string}) => {
       if(op==='team.app.official') return conversation.channel
       if(op==='team.app.open') return {channel:conversation.channel,openInbox}
@@ -184,7 +354,8 @@ describe('Team send UI recovery', () => {
       await act(async()=>{renderer=create(<TeamMessagingPanel accountKey="account" intent={{kind:'official'}} />);await tick()})
       await act(async()=>{await refreshTeamDirectory('account');await tick()})
       expect(JSON.stringify(renderer!.toJSON()).includes('暂时无法打开对话，请重试')).toBe(openInbox!==true)
-      expect(renderer!.root.findAllByType(TeamConversationRow)).toHaveLength(openInbox===true?1:0)
+      expect(renderer!.root.findAllByType(TeamConversationRow)).toHaveLength(0)
+      expect(arkmeUi.getSnapshot().teamDirectory?.channel).toEqual(openInbox===true?conversation.channel:undefined)
     } finally { await act(async()=>stop()) }
   })
 
@@ -207,7 +378,7 @@ describe('Team send UI recovery', () => {
       release(accepted())
       await tick()
     })
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[],startedAtMillis:expect.any(Number)})
   })
 
   it.each(['idempotency_conflict', 'not_accessible'])('does not automatically retry %s after reconnect', async reason => {
@@ -289,7 +460,7 @@ describe('Team send UI recovery', () => {
     })
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.state).toBe('published')
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[]})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'下一条',assets:[],startedAtMillis:expect.any(Number)})
     expect(JSON.stringify(renderer!.toJSON())).toContain('刷新失败')
     refreshFails = false
     await act(async () => {invalidateTeamMessages('account');await tick()})
@@ -352,18 +523,83 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.receipts')).toBe(false)
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
   })
-  it('lets a team member open the shared receipt panel from the unread dot', async () => {
+  it.each(['team', 'external'] as const)('keeps all-read %s messages inspectable and separates external contact from team readers without filters',async side=>{
+    const msg:TeamMessage={key:'m',ref:'m',seq:1,revision:1,side,sender:{nickname:'发信人'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
+    mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
+      ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
+      : {visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const receiptButton = () => renderer!.root.findAllByType('button').find(button => button.props['aria-label']?.startsWith('查看阅读状态：'))!
+    await act(async()=>{receiptButton().props.onClick({currentTarget:null});await tick()})
+    expect(JSON.stringify(renderer!.toJSON())).toContain('团队已读 2/2')
+    const panel=renderer!.root.findByType(ArkmeReadReceiptPanel)
+    expect(panel.findAllByProps({className:'team-receipt-heading'})).toHaveLength(side==='team'?2:1)
+    expect(panel.findAllByProps({className:'team-receipt-filters'})).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('内部甲')
+    expect(receiptButton()).toBeDefined()
+  })
+  it('lets a team member open the shared receipt panel from its persistent status', async () => {
     const own = {key:'m',ref:'m',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],recipientRead:false}
     mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
       ? {conversation:{...conversation,side:'team'},messages:[own],hasMore:false,beforeSeq:0}
       : {teamRead:true,visitorRead:false,members:[]})
-    await mount()
-    const button = renderer!.root.findByProps({'data-arkme-read-receipt-indicator':'unread'}).parent!
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const button = renderer!.root.findAllByType('button').find(node => node.props['aria-label']?.startsWith('查看阅读状态：'))!
     expect(button.type).toBe('button')
-    await act(async () => { button.props.onClick(); await tick() })
+    await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(1)
-    await act(async () => { button.props.onClick(); await tick() })
+    await act(async () => { button.props.onClick({currentTarget:null}); await tick() })
     expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+  })
+  it('uses visitor avatar actions in the timeline and receipt panel while preserving the team draft', async () => {
+    const incoming: TeamMessage = { key: 'visitor-m', ref: 'visitor-ref', seq: 2, revision: 1, side: 'external', sender: { nickname: '访客' }, own: false,
+      state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [] }
+    const sent = { ...incoming, key: 'sent', ref: 'sent-ref', side: 'team', own: true }
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? { conversation: { ...conversation, side: 'team', visitor: { nickname: '访客' } }, messages: [incoming, sent], hasMore: false, beforeSeq: 0 }
+      : { visitorRead: true, members: [], hasMore: false, senderExcluded: true })
+    await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
+    const rows = renderer!.root.findAllByType(TeamConversationMessage)
+    const avatar = () => rows[0]!.findByProps({ 'aria-label': '访客 的用户卡片' })
+    await act(async () => avatar().props.onClick({ stopPropagation() {} }))
+    expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
+    await act(async () => renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
+    await act(async () => avatar().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 20, clientY: 20 }))
+    await act(async () => { renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect(); await tick() })
+    expect(renderer!.root.findAllByType(TeamVisitorRecords)).toHaveLength(1)
+    await act(async () => renderer!.root.findByType(TeamVisitorRecords).props.onLocate(incoming, new AbortController().signal))
+    expect(renderer!.root.findAllByType(TeamConversationMessage)[0]!.props.located).toBe(true)
+    await act(async () => renderer!.root.findByType(TeamVisitorRecords).props.onClose())
+    await act(async () => { rows[1]!.props.onReceipts(document.createElement('button')); await tick() })
+    const panel = renderer!.root.findByType(ArkmeReadReceiptPanel)
+    await act(async () => panel.findByProps({ 'aria-label': '访客 的用户卡片' }).props.onClick({ stopPropagation() {} }))
+    expect(renderer!.root.findAllByType(ArkmeReadReceiptPanel)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(1)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.send.enqueue')).toBe(false)
+  })
+  it('applies private remarks across internal message, card, records and detail without changing the draft', async () => {
+    const person = { nickname: '同事昵称', personKey: 'person-key', personRef: 'person-ref' }
+    const msg: TeamMessage = {key:'internal',ref:'internal-ref',seq:1,revision:1,side:'team',sender:person,own:false,state:'published',createdAt:Date.now(),canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'正文'}}
+    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+      ? {conversation:{...conversation,side:'team',visitor:{nickname:'访客'}},messages:[msg],hasMore:false,beforeSeq:0}
+      : op === 'team.app.people.remarks' ? {items:[{personKey:'person-key',remark:'宏顺'}]} : {})
+    await mount()
+    const row = () => renderer!.root.findByType(TeamConversationMessage)
+    expect(row().props.message.sender.nickname).toBe('宏顺')
+    await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onClick({stopPropagation(){}}))
+    expect(renderer!.root.findByType(ArkmeMemberProfileCard).props.member.displayName).toBe('宏顺')
+    await act(async()=>renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
+    await act(async()=>row().props.onDetail())
+    const detail = renderer!.root.findByType(TeamMessageDetail)
+    expect(detail.props.message.sender.nickname).toBe('宏顺')
+    await act(async()=>detail.props.onLocate())
+    expect(row().props.located).toBe(true)
+    await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:10,clientY:10}))
+    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect())
+    expect(renderer!.root.findByType(TeamVisitorRecords).props.person).toMatchObject({personKey:'person-key',nickname:'宏顺'})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
   })
   it('shows directory failure and retries without claiming there are no conversations', async () => {
     let failed = true
@@ -395,7 +631,7 @@ describe('Team send UI recovery', () => {
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('与作者的历史私聊')
-    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.home.visibility')).toBe(false)
   })
 
@@ -403,9 +639,9 @@ describe('Team send UI recovery', () => {
     const target = { ...conversation, side, channel: { ...conversation.channel, canManage: true } }
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
     await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="account" onChanged={() => {}} />); await tick() })
-    expect(renderer!.root.findAllByType(ArkmeActionMenu)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/屏蔽此用户|解除屏蔽|对话选项/)
-    expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(side === 'team')
+    expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(false)
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.block')).toBe(false)
   })
 
@@ -443,7 +679,7 @@ describe('Team send UI recovery', () => {
     await mount(); await send()
     await act(async () => { renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条'); await tick() })
     await act(async () => { reject(Object.assign(new Error('发送未接受'), { body: { code } })); await tick() })
-    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text: '问题\n\n下一条', assets: []})
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text: '问题\n\n下一条', assets: [], startedAtMillis: expect.any(Number)})
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题\n\n下一条')
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
@@ -505,7 +741,7 @@ describe('Team send UI recovery', () => {
     const click = async (label: string) => { await act(async () => { button(label).props.onClick(); await tick() }) }
     await mount()
     expect(button('屏蔽此用户')).toBeUndefined()
-    await act(async () => { renderer!.root.findByType(TeamConversationMessage).findByProps({ 'aria-label': '消息操作' }).props.onContextMenu({ preventDefault() {}, clientX: 10, clientY: 10 }); await tick() })
+    await act(async () => { renderer!.root.findByType(TeamConversationMessage).findByProps({ 'aria-label': '消息操作' }).props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 }); await tick() })
     await act(async () => { renderer!.root.findAllByType(ArkmeActionMenu).find(v => v.props.label === '消息操作')!.props.actions.find((v: {id?:string}) => v.id === 'edit').onSelect(); await tick() })
     expect(renderer!.root.findAllByType(ArkmeActionMenu).filter(v => v.props.label === '消息操作')).toHaveLength(0)
     await act(async () => { renderer!.root.findAllByType(ArkmeRichComposerInput).find(v=>v.props.ariaLabel==='修改消息内容')!.props.onTextChange('我的修改') })
@@ -552,7 +788,7 @@ describe('Team send UI recovery', () => {
       if(op==='team.app.timeline') return {conversation:{...conversation,side:'team'},messages:[message],hasMore:false,beforeSeq:0}
       if(op==='team.app.receipts') {
         if(hold) return new Promise(resolve=>{deferred=resolve})
-        return {teamRead:read,visitorRead:read,members:[{nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
+        return {teamRead:read,visitorRead:read,senderExcluded:true,members:[{key:p.cursor?'two':'one',nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
       }
       return {}
     })
@@ -560,8 +796,8 @@ describe('Team send UI recovery', () => {
     await mount();await act(async()=>{renderer!.root.findByType(TeamConversationMessage).props.onReceipts();await tick()});await click('更多成员')
     read=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
     expect(JSON.stringify(renderer!.toJSON())).toContain('two')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('用户已查看')
-    expect(renderer!.root.findAllByType(ArkmeReadReceiptMember)).toHaveLength(2)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('对方已读')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('已读 2/2')
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
     hold=true;await act(async()=>{invalidateTeamMessages('account');await tick()})
     await act(async()=>{renderer!.root.findByType(ArkmeReadReceiptPanel).props.onClose();await tick()});await act(async()=>{deferred?.({members:[],hasMore:false,teamRead:true});await tick()})

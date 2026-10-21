@@ -618,8 +618,8 @@ describe('ArkmeStateStore', () => {
     const second = recordingJob({ jobId: 'job-second', sourceHandle: '/private/second.upload' })
 
     const [left, right] = await Promise.all([
-      store.admitRecordingImportJob(10001, first, 20),
-      store.admitRecordingImportJob(10001, second, 20),
+      store.admitRecordingImportJob(10001, first),
+      store.admitRecordingImportJob(10001, second),
     ])
 
     expect(left).toEqual({ kind: 'inserted', job: expect.objectContaining({ jobId: 'job-first' }) })
@@ -638,8 +638,8 @@ describe('ArkmeStateStore', () => {
       sha256: 'b'.repeat(64),
     })
 
-    expect(await store.admitRecordingImportJob(10001, first, 20)).toMatchObject({ kind: 'inserted' })
-    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
+    expect(await store.admitRecordingImportJob(10001, first)).toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second)).resolves.toEqual({ kind: 'duplicate-file-name' })
     await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
   })
 
@@ -652,8 +652,8 @@ describe('ArkmeStateStore', () => {
       fileSize: first.fileSize + 1, sha256: 'b'.repeat(64),
     })
 
-    await expect(store.admitRecordingImportJob(10001, first, 20)).resolves.toMatchObject({ kind: 'inserted' })
-    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
+    await expect(store.admitRecordingImportJob(10001, first)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second)).resolves.toEqual({ kind: 'duplicate-file-name' })
   })
 
   it('does not let terminal local history replace the Audio owner duplicate decision', async () => {
@@ -661,7 +661,7 @@ describe('ArkmeStateStore', () => {
     const store = new ArkmeStateStore(root)
     await store.putRecordingImportJob(10001, recordingJob({ phase: 'accepted' }))
 
-    await expect(store.admitRecordingImportJob(10001, recordingJob({ jobId: 'job-new' }), 20))
+    await expect(store.admitRecordingImportJob(10001, recordingJob({ jobId: 'job-new' })))
       .resolves.toMatchObject({ kind: 'inserted', job: { jobId: 'job-new' } })
   })
 
@@ -682,11 +682,11 @@ describe('ArkmeStateStore', () => {
     expect(await reopened.listRecordingImportJobs(10001)).toHaveLength(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)
     expect(await reopened.getRecordingImportJob(10001, 'rejected-0')).toBeUndefined()
     expect(await reopened.getRecordingImportJob(10001, 'recoverable')).toBeDefined()
-    await expect(reopened.admitRecordingImportJob(10001, recordingJob({ jobId: 'new-attempt' }), 2))
+    await expect(reopened.admitRecordingImportJob(10001, recordingJob({ jobId: 'new-attempt' })))
       .resolves.toMatchObject({ kind: 'inserted' })
   })
 
-  it('atomically enforces the unresolved recording import limit across distinct concurrent jobs', async () => {
+  it('atomically admits distinct queued imports beyond the former twenty-job limit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-admission-limit-'))
     const store = new ArkmeStateStore(root)
     for (let index = 0; index < 19; index += 1) {
@@ -705,12 +705,12 @@ describe('ArkmeStateStore', () => {
     })
 
     const results = await Promise.all([
-      store.admitRecordingImportJob(10001, first, 20),
-      store.admitRecordingImportJob(10001, second, 20),
+      store.admitRecordingImportJob(10001, first),
+      store.admitRecordingImportJob(10001, second),
     ])
 
-    expect(results.map(result => result.kind).sort()).toEqual(['inserted', 'limit'])
-    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(20)
+    expect(results.map(result => result.kind).sort()).toEqual(['inserted', 'inserted'])
+    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(21)
   })
 
   it('bounds terminal import history without pruning resumable jobs', async () => {

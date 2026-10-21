@@ -1,3 +1,4 @@
+import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { mergeBotDirectorySnapshots } from '../bot-chat-directory-projection.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeChatPinProjection, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
@@ -224,7 +225,7 @@ function mergeSourceProjection(
           }
         })(),
       }
-  return applyReadWatermark(projectSourceAttention(retainNewerArkmeChatPolicy(existing, merged)), watermarks, indexes, sourceKey)
+  return applyReadWatermark(projectSourceAttention(retainNewerArkmeChatActivity(existing, retainNewerArkmeChatPolicy(existing, merged))), watermarks, indexes, sourceKey)
 }
 
 function sourceUpdate(update: ArkmeSourceItem | ArkmeChatDirectorySourceUpdate): ArkmeChatDirectorySourceUpdate {
@@ -256,6 +257,9 @@ const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> =
   displayName: true,
   avatarRef: true,
   latestPreview: true,
+  latestActivityAtMillis: true,
+  latestActivityKind: true,
+  latestPreviewUpdatedAtMillis: true,
   activeAtMillis: true,
   unreadCount: true,
   badgeUnreadCount: true,
@@ -1148,6 +1152,16 @@ export class ArkmeChatTimelineDeltaStore {
     this.changeCursorsBySource.clear()
     if (!hadScopedSnapshots && Object.keys(this.snapshot.itemsBySourceKey).length === 0) return
     this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
+    for (const listener of this.listeners) listener()
+  }
+  invalidateWindows(sourceKeys: readonly string[]): void {
+    for (const sourceKey of new Set([...this.sourceSnapshots.keys(), ...sourceKeys])) {
+      if (!sourceKey) continue
+      const previous = this.getSnapshotForSource(sourceKey)
+      this.sourceSnapshots.set(sourceKey, { ...previous, revision: previous.revision + 1, invalidationRevision: previous.invalidationRevision + 1 })
+    }
+    retainNewestMapEntries(this.sourceSnapshots)
+    this.snapshot = { ...this.snapshot, revision: this.snapshot.revision + 1 }
     for (const listener of this.listeners) listener()
   }
   localCacheUpdated(sourceKeys: readonly string[]): void {

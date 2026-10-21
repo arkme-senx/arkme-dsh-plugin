@@ -9,7 +9,7 @@ import conversationCss from './notification-conversation.css?inline'
 import { readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
 import { officialNotifications, useOfficialNotifications } from './official-notification-store.js'
 import type { OfficialNotificationSnapshot } from './official-notification-store.js'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type {
   ArkmeArrangementReminderEvent,
   ArkmeArrangementReminderPage,
@@ -377,12 +377,12 @@ function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
   return kind === 'all' ? tr('全部') : notificationKindLabel(kind)
 }
 
-export function ArkmeNotificationCenter() {
+export function ArkmeNotificationCenter({ preview = false, headerAction }: { preview?: boolean; headerAction?: ReactNode } = {}) {
   const data = useNotificationItems()
-  return <NotificationConversation key={data.scope ?? 'signed-out'} data={data} />
+  return <NotificationConversation key={`${data.scope ?? 'signed-out'}:${preview}`} data={data} preview={preview} headerAction={headerAction} />
 }
 
-function NotificationConversation({ data }: { data: ReturnType<typeof useNotificationItems> }) {
+function NotificationConversation({ data, preview, headerAction }: { data: ReturnType<typeof useNotificationItems>; preview: boolean; headerAction?: ReactNode }) {
   const { scope, snapshot, official, recording, items } = data
   const [actionError, setActionError] = useState('')
   const [busyId, setBusyId] = useState<string>()
@@ -449,10 +449,10 @@ function NotificationConversation({ data }: { data: ReturnType<typeof useNotific
     }
     await Promise.all(jobs)
   }, [scope, snapshot.loading, snapshot.worldError, snapshot.worldUnreadCount, snapshot.worldItems, snapshot.worldSeenThroughSequence])
-  useNotificationVisibleRead(listRef, filteredItems, !!scope && !filterOpen, acknowledge, viewKey)
+  useNotificationVisibleRead(listRef, filteredItems, !!scope && !filterOpen && !preview, acknowledge, viewKey)
 
   const openItem = useCallback(async (item: ArkmeNotificationItem) => {
-    if (accountScope() !== scope) return
+    if (preview || accountScope() !== scope) return
     setBusyId(item.id); setActionError('')
     try {
       if (item.kind === 'world' && item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
@@ -470,12 +470,12 @@ function NotificationConversation({ data }: { data: ReturnType<typeof useNotific
     } catch (error) {
       if (accountScope() === scope) setActionError(item.kind === 'reaction' ? tr('暂时无法打开对应消息，请稍后重试') : error instanceof Error ? error.message : tr('通知操作失败，请重试'))
     } finally { if (accountScope() === scope) setBusyId(undefined) }
-  }, [scope])
+  }, [scope, preview])
 
   return <section className="arkme-notification-conversation" aria-label={tr('通知')}>
     <style>{CONVERSATION_SELECTOR_CSS}{conversationCss}</style>
     <header className="arkme-notification-header">
-      <h2>{tr('通知')}</h2>
+      <h2>{tr('通知')}{preview && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, opacity: .6 }}>{tr('预览中')}</span>}</h2>
       <div className="arkme-notification-filter" ref={filterRef}>
         <button ref={triggerRef} type="button" data-arkme-conversation-selector="" aria-label={tr('通知类型')} aria-haspopup="menu" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>
           <span>{notificationFilterLabel(activeKind)}</span><span aria-hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
@@ -493,6 +493,7 @@ function NotificationConversation({ data }: { data: ReturnType<typeof useNotific
           </button>)}
         </div>}
       </div>
+      {headerAction}
     </header>
     {actionError && <div role="alert" className="arkme-notification-status">{actionError}</div>}
     {recording.error && (activeKind === 'all' || activeKind === 'recording') && <div role="status" className="arkme-notification-status">{tr('录音通知暂时不可用')} <button onClick={() => { void recordingNotifications.refresh() }}>{tr('重试录音通知')}</button></div>}
@@ -513,7 +514,7 @@ function NotificationConversation({ data }: { data: ReturnType<typeof useNotific
             {filteredItems.length === 0 && !filterLoading && <div className="arkme-notification-empty">{activeKind === 'all' ? tr('暂时没有通知') : `${notificationFilterLabel(activeKind)}${tr('暂时没有通知')}`}<br />{tr('新的通知会显示在这里')}</div>}
             {scope && filteredItems.map((item, index) => <ArkmeNotificationMessage key={item.id} item={item} scope={scope} category={notificationKindLabel(item.kind)}
               timeLabel={index === 0 || item.atMillis - filteredItems[index - 1]!.atMillis >= 5 * 60_000 || new Date(item.atMillis).toDateString() !== new Date(filteredItems[index - 1]!.atMillis).toDateString() ? dateLabel(item.atMillis) : ''}
-              busy={busyId === item.id} onOpen={item => { void openItem(item) }} />)}
+              readOnly={preview} busy={busyId === item.id} onOpen={item => { void openItem(item) }} />)}
           </div>
         </div>
       </div>

@@ -20,5 +20,5 @@ export function entityOccurrenceSourceLabel(context: RecordingEntityOccurrenceCo
   if (context.soundSource === 'playback') return '播放内容'
   if (context.relevance === 'self') return '你提到'
   if (context.relevance === 'conversation') return '与你交流时提到'
-  return context.soundSource === 'in_person' ? '现场提及' : '来源待确认'
+  return context.soundSource === 'in_person' ? '现场提及' : '声源待确认'
 }

@@ -22,7 +22,7 @@ function historyItem(overrides: Partial<ArkmeArkoHistoryItem>): ArkmeArkoHistory
 }
 
 describe('Arko surface', () => {
-  it('keeps the header draggable and puts context clearing before model selection in the composer', () => {
+  it('keeps the header draggable and exposes shared history tools while leaving model selection in the composer', () => {
     const dom = new JSDOM(renderToStaticMarkup(<ArkmeArkoSurface />))
     try {
       const header = dom.window.document.querySelector('header')!
@@ -30,9 +30,10 @@ describe('Arko surface', () => {
       const copy = header.querySelector('[data-arkme-window-drag-copy]')!
       expect(copy?.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
       expect(copy?.querySelector('h2')?.textContent).toBe('Arko')
-      expect(header.querySelector('button')).toBeNull()
-      const clear = dom.window.document.querySelector('footer button[aria-label="清除上下文"]')!
-      expect(clear.nextElementSibling?.getAttribute('aria-label')).toBe('选择模型')
+      expect(header.querySelector('[aria-label="按日期查看 Arko 对话"]')).not.toBeNull()
+      expect(header.querySelector('[aria-label="搜索 Arko 对话"]')).not.toBeNull()
+      expect(header.querySelector('[aria-label="更多 Arko 操作"]')).not.toBeNull()
+      expect(dom.window.document.querySelector('footer button[aria-label="选择模型"]')).not.toBeNull()
     } finally {
       dom.window.close()
     }
@@ -51,7 +52,7 @@ describe('Arko surface', () => {
     expect(markup).not.toContain('data-arkme-topic-tag="Agent"')
     expect(markup).not.toContain('aria-label="Arko 操作"')
     expect(markup).toContain('选择模型')
-    expect(markup).toContain('清除上下文')
+    expect(markup).toContain('更多 Arko 操作')
     expect(markup).not.toContain('aria-label="AI"')
     expect(markup).not.toContain('DeepSeek-R1满血版')
     expect(markup).not.toContain('状态同步失败')

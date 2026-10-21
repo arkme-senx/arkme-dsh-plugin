@@ -26,6 +26,13 @@ class MemorySessionStore {
 }
 
 class MemoryStateStore {
+ readonly arkoTurns=new Map<string,import('../src/arko-turn-contract.js').ArkmeArkoStoredTurn>()
+ async arkoPendingTurns(user:number){return [...this.arkoTurns.values()].filter(value=>value.turn.userId===user).map(value=>value.turn)}
+ async arkoTurn(user:number,uid:string){return this.arkoTurns.get(`${user}:${uid}`)}
+ async prepareArkoTurn(user:number,turn:import('../src/arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>){this.arkoTurns.set(`${user}:${turn.clientTurnUid}`,{turn,...(request ? {request} : {})})}
+ async acknowledgeArkoTurn(user:number,uid:string){this.arkoTurns.delete(`${user}:${uid}`)}
+ async arkoFileRefs(user:number){return (await this.arkoPendingTurns(user)).flatMap(turn=>turn.images?.map(file=>file.fileRef) ?? [])}
+
   readonly pending = new Map<number, ArkmePendingWrite[]>()
   readonly cached = new Map<number, ArkmeSelfRecordItem[]>()
   readonly events: string[] = []
@@ -154,7 +161,7 @@ const config: ArkmeServiceConfig = {
 }
 
 function unifiedResponse(sessionUid: string, data: { items: any[]; has_more?: boolean; next_before_seq?: number }) {
-  return { protocol_version: 1, chat_session_uid: sessionUid, complete: true,
+  return { protocol_version: 2, chat_session_uid: sessionUid, complete: true,
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'messages' ? 'ready' : 'not_applicable', item_count: source === 'messages' ? data.items.length : 0 })),
     timeline_items: data.items.map((payload, index) => {
       const relation = { ...payload.relation, rel_uid: payload.relation.rel_uid || payload.relation.record_uid }
@@ -1216,6 +1223,10 @@ describe('ArkmeService', () => {
     })
 
     expect(service.clientConfig()).toEqual({
+      hostPolicy: {
+        distribution: 'website',
+        capabilities: { clientSelfUpdate: true, runtimeSelfUpdate: true, executableExtensionInstall: true },
+      },
       captchaId: 'captcha-test-id-1234567890',
       baiduMapBrowserAk: '',
       environment: 'test',
@@ -1228,6 +1239,26 @@ describe('ArkmeService', () => {
       shareWebsite: 'https://app.arkme.ai',
       recordingWorkbenchEnabled: true,
     })
+  })
+
+  it('publishes MAS capabilities without exposing the credential namespace', () => {
+    vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
+      schemaVersion: 1,
+      distribution: 'mas',
+      capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      credentialServicePrefix: 'com.senqisi.dsh-arkme.mas',
+    }))
+    try {
+      const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), async () => {
+        throw new Error('not used')
+      })
+      expect(service.clientConfig().hostPolicy).toEqual({
+        distribution: 'mas',
+        capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
@@ -2901,7 +2932,7 @@ describe('ArkmeService', () => {
           { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [
           {
             relation: { rel_uid: 'chat-relation-1', record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
@@ -4079,7 +4110,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chat/timeline/unified')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'record-history-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 500, seq: 8 },
           record: {
@@ -4114,7 +4145,7 @@ describe('ArkmeService', () => {
         itemUid: 'record-history-1', textContent: '历史润色文', recordVersion: 2,
         aiPolish: { state: 'polished', originalText: '历史原文', polishedText: '历史润色文' },
       }],
-      unified: { protocolVersion: 1, complete: true },
+      unified: { protocolVersion: 2, complete: true },
     })
   })
 
@@ -4191,7 +4222,7 @@ describe('ArkmeService', () => {
         display_name: '海底捞',
         version: 2,
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'agent-record-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 1787036400000, seq: 11 },
           record: { status: 1, payload: { text_content: '缓存名字代发', creation_source: 1 } },
@@ -4504,7 +4535,7 @@ describe('ArkmeService', () => {
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
         ],
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
       throw new Error(`unexpected ${url}`)
     })
 
@@ -5149,7 +5180,7 @@ describe('ArkmeService', () => {
     })
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
-    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: 'turn-1', waitMillis: 1000 }))
+    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: '11111111-1111-4111-8111-111111111111', waitMillis: 1000 }))
       .resolves.toEqual({
         sessionId: 88,
         userMsgId: 1001,
@@ -5176,7 +5207,7 @@ describe('ArkmeService', () => {
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
-      client_turn_uid: 'turn-1',
+      client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
       model_route_key: 'dashscope/qwen3.8-max',
     })
@@ -5266,7 +5297,7 @@ describe('ArkmeService', () => {
       ],
     })
     expect(bodies).toContainEqual({ route_key: 'dashscope/qwen3.8-max' })
-    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2 })
+    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2,client_capabilities:['dsh.arko.images.v1'] })
   })
 
   it('continues a waiting Arko run without switching its model', async () => {
@@ -6234,7 +6265,7 @@ describe('ArkmeService', () => {
         const url = String(input)
         if (url === signedUrl) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } })
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-        if (url.endsWith('/api/v1/chat/timeline/unified')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+        if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
           items: [{
             relation: { record_uid: 'record-media', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 100, seq: 3 },
             record: { status: 1, payload: {
@@ -6584,7 +6615,7 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     const deleteBodies: unknown[] = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/timeline/unified')) {
+      if (url.endsWith('/timeline/unified/v2')) {
         return json({ code: 200, data: unifiedResponse('chat-delete', { items, has_more: false }) })
       }
       if (url.endsWith('/api/v1/records/delete')) {

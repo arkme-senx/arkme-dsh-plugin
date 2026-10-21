@@ -15,6 +15,7 @@ export interface RecordRevisionContentProjector {
 function invalid(): never {
   throw new ArkmePluginError('record-edit-history-invalid', '编辑记录暂不可用，请刷新后重试', true, 502)
 }
+const revisionKinds: Record<number, ArkmeRecordRevision['kind']> = { 1: 'manual', 2: 'transcription', 3: 'polish', 4: 'rewrite', 5: 'original' }
 
 export class RecordEditHistoryService {
   constructor(private readonly runtime: Pick<ServiceRuntime, 'requireSession' | 'authenticatedPost' | 'authenticatedChatPost'>,
@@ -38,7 +39,9 @@ export class RecordEditHistoryService {
     const snapshots = data.items.flatMap((raw): Record<string, unknown>[] => {
       const revision = objectValue(raw)
       if (revision.record_uid !== target.recordUid || typeof revision.revision_uid !== 'string' || revision.revision_uid.trim() === '') invalid()
-      if (revision.revision_type !== 1 && revision.revision_type !== 5) return []
+      // Automatic revisions are comparison baselines too. Dropping them would
+      // attribute their changes to the next manual edit.
+      if (!Number.isSafeInteger(revision.revision_type)) invalid()
       if (typeof revision.edit_at !== 'number' || !Number.isSafeInteger(revision.edit_at) || revision.edit_at <= 0 || !Number.isFinite(new Date(revision.edit_at).getTime()) || typeof revision.text_content !== 'string') invalid()
       if (seen.has(revision.revision_uid)) return []
       seen.add(revision.revision_uid)
@@ -47,7 +50,8 @@ export class RecordEditHistoryService {
     const contents = snapshots.length === 0 ? [] : await this.projector.projectPage(snapshots, target, signal)
     if (signal?.aborted || (await this.runtime.requireSession()).userId !== session.userId || contents.length !== snapshots.length) invalid()
     const items = snapshots.map((revision, index): ArkmeRecordRevision => ({
-      revisionUid: revision.revision_uid as string, kind: revision.revision_type === 5 ? 'original' : 'manual',
+      revisionUid: revision.revision_uid as string,
+      kind: revisionKinds[revision.revision_type as number] ?? 'other',
       editAtMillis: revision.edit_at as number, content: contents[index]!,
     }))
     items.sort((a, b) => b.editAtMillis - a.editAtMillis)

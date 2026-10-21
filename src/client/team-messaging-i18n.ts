@@ -1,5 +1,22 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '团队已读 {v0}/{v1}': 'Team read {v0}/{v1}',
+  '团队阅读状态': 'Team read status',
+  '阅读状态待更新': 'Read status needs updating',
+  '对方状态待同步': 'Contact status pending',
+  '对方已读': 'Contact has read',
+  '对方未读': 'Contact has not read',
+  '外部联系人': 'External contact',
+  '阅读状态筛选': 'Filter read status',
+  '状态待同步': 'Status pending',
+  '人数暂不可用': 'Count unavailable',
+  '已读 {v0}/{v1}': 'Read {v0}/{v1}',
+  '已加载 {v0} 人': '{v0} members loaded',
+  '更新失败，点击重试': 'Update failed. Retry',
+  '暂无未读成员': 'No unread members shown',
+  '暂无已读成员': 'No read members shown',
+  '暂无其他成员': 'No other members',
+
   '无法连接本机插件，请确认插件正在运行后重试': 'Cannot reach the local plugin. Check that it is running and retry.',
   '暂时无法打开对话，请重试': 'Unable to open the conversation. Please retry.',
   '发送状态暂时无法确认，请重试': 'Unable to confirm delivery. Please retry.',

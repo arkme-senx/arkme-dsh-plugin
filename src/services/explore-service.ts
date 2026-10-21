@@ -1,3 +1,7 @@
+import { projectPersonReferences } from './person-reference-projection.js'
+import { CapabilityService } from './capability-service.js'
+import { mergeExploreEvidence } from '../explore-evidence.js'
+import type { ExploreDetailPart, ExploreEnrichment } from '../explore-contract.js'
 import { createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { EXPLORE_MODULES, type ExploreModule, type ExploreItem, type ExplorePage, type ExploreDetail, type ExploreEvidence, type ExploreQuery, type ExploreMutation, type ExploreSource, type ExploreAction, type ExploreSettings } from '../explore-contract.js'
@@ -20,15 +24,16 @@ export class ExploreService {
   private epoch = 0
   private readonly unsubscribe: () => void
   private relationCache: { scope: string; until: number; value: Doc } | undefined
+  private remarksCache = new Map<number, { until: number; value: string }>()
   constructor(private readonly runtime: ServiceRuntime,
     private readonly recording: Pick<RecordingService,'exploreRecordingEvidence'>,
     private readonly records: Pick<RecordService,'personalRecordDetail'>,
     private readonly sources: Pick<SourceService,'searchTargetSource'|'privateRemarksByUserIds'>,
     private readonly privacy: Pick<ArkmePrivacyVisibilityService,'lockedRecordUids'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), missing)
-    this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++; this.relationCache = undefined })
+    this.unsubscribe = runtime.subscribeAccountScope(() => { this.epoch++; this.relationCache = undefined; this.remarksCache.clear() })
   }
-  dispose(): void { this.epoch++; this.relationCache = undefined; this.unsubscribe() }
+  dispose(): void { this.epoch++; this.relationCache = undefined; this.remarksCache.clear(); this.unsubscribe() }
   private async guard(session: ArkmeSessionCredentials, epoch: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw missing()
@@ -59,12 +64,77 @@ export class ExploreService {
     if (module === 'profile') return this.request(module,'/api/v1/personal-profile/v3/experience/home',{},session,signal)
     return this.request(module,'/api/v1/insight/anniversary/home',{source_type:0},session,signal)
   }
+  private async analysisEnabled(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<boolean> {
+    const result = await new CapabilityService(this.runtime).query(`${this.runtime.config.environment}:${session.userId}`, signal)
+    const setting = result.settings.find(x => x.key === (module === 'profile' ? 'personal_profile' : 'goal_insight'))
+    if (!setting) throw new ArkmePluginError('capability-contract-invalid', '暂时无法确认额度设置，请重试', true, 502)
+    return setting.enabled
+  }
+  private async requireAnalysis(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<void> {
+    if (!await this.analysisEnabled(module, session, signal)) throw new ArkmePluginError('capability-disabled', '请先在「自动使用额度」中开启此功能', false, 409)
+  }
   private async relationHome(session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Doc> {
     const scope = `${this.runtime.config.environment}:${session.userId}`, epoch = this.epoch
     if (this.relationCache?.scope === scope && this.relationCache.until > Date.now()) return this.relationCache.value
     const value = await this.runtime.authenticatedRelationGet<Doc>('/api/v1/relation/list?limit=10000&offset=0',session,signal)
     await this.guard(session,epoch,signal)
     this.relationCache = {scope,until:Date.now()+30_000,value}; return value
+  }
+  private async versionedPage(path: string, body: Doc, session: ArkmeSessionCredentials, required: boolean, signal?: AbortSignal): Promise<Doc | undefined> {
+    try {
+      const result = await this.request('relations', path, body, session, signal)
+      if (result.protocol_version === 2) {
+        if (typeof result.has_more !== 'boolean' || !Number.isSafeInteger(result.snapshot) || number(result.snapshot) <= 0 || (result.has_more && !text(result.next_cursor))) throw missing()
+        return result
+      }
+      if (required || result.protocol_version !== undefined) throw missing()
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || ![404,405].includes(error.upstreamStatus ?? error.httpStatus) || required) throw error
+    }
+    return undefined
+  }
+  private async relationRecords(ref: Doc, cursor: Doc, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Doc> {
+    if (!cursor.offset) {
+      const value = await this.versionedPage('/api/v1/entity/records/page', {entity_id:ref.id,limit:30,...(cursor.backendCursor?{cursor:cursor.backendCursor}:{})}, session, cursor.protocol===2, signal)
+      if(value) {
+        if(!Array.isArray(value.records) || (cursor.snapshot && cursor.snapshot!==value.snapshot)) throw missing()
+        return value
+      }
+    }
+    return this.request('relations','/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal)
+  }
+  private cachedRelation(session: ArkmeSessionCredentials, id: unknown): Doc {
+    if (this.relationCache?.scope !== `${this.runtime.config.environment}:${session.userId}`) return {}
+    return list(this.relationCache.value.entities).find(x => x.entity_id === id) ?? {}
+  }
+  async personEntries(signal?: AbortSignal) {
+    const session = await this.runtime.requireSession(), epoch = this.epoch
+    const rows = list((await this.relationHome(session, signal)).entities).filter(row => number(row.type) === 1)
+    const result = await Promise.all(rows.map(async row => ({ entityId: text(row.entity_id), linkedUserId: number(row.linked_user_id), aliases: strings(row.aliases),
+      item: await this.item('relations', row, session, { linkedUserId: number(row.linked_user_id) }) })))
+    await this.guard(session, epoch, signal)
+    return result
+  }
+  private async relationRemarks(ids: number[], session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Map<number,string>> {
+    const epoch=this.epoch
+    const missingIds=[...new Set(ids)].filter(id=>id>0&&id!==session.userId&&(this.remarksCache.get(id)?.until??0)<Date.now())
+    if(missingIds.length) {
+      const remarks=await this.sources.privateRemarksByUserIds(missingIds,{...(signal?{signal}:{})})
+      await this.guard(session,epoch,signal)
+      for(const id of missingIds)this.remarksCache.set(id,{until:Date.now()+120_000,value:remarks.get(id)??''})
+    }
+    return new Map(ids.map(id=>[id,this.remarksCache.get(id)?.value??'']))
+  }
+  async enrich(refs: unknown, signal?: AbortSignal): Promise<ExploreEnrichment> {
+    if(!Array.isArray(refs)||refs.length>50)throw missing()
+    const session=await this.runtime.requireSession(),epoch=this.epoch
+    const items=await Promise.all(refs.map(async value=>{
+      const ref=await this.open(value,session,'item');if(ref.module!=='relations')throw missing()
+      return {id:ref.id,linked:number(ref.linkedUserId)}
+    }))
+    const remarks=await this.relationRemarks(items.map(x=>x.linked),session,signal)
+    const result={items:await Promise.all(items.map(async x=>({key:await this.key(session,'relations',x.id),linkedContactName:remarks.get(x.linked)??''})))}
+    await this.guard(session,epoch,signal);return result
   }
   private async item(module: ExploreModule, raw: Doc, session: ArkmeSessionCredentials, extra: Doc = {}): Promise<ExploreItem> {
     const id = first(raw.fact_key,raw.entity_id,raw.event_record_id,raw.goal_id,raw.id)
@@ -81,6 +151,12 @@ export class ExploreService {
     }
   }
   async page(input: ExploreQuery, signal?: AbortSignal): Promise<ExplorePage> {
+    return this.readPage(input, signal, true)
+  }
+  async relationPage(input: Omit<ExploreQuery, 'module'>, signal?: AbortSignal): Promise<ExplorePage> {
+    return this.readPage({...input, module: 'relations'}, signal, false)
+  }
+  private async readPage(input: ExploreQuery, signal: AbortSignal | undefined, restoreWindow: boolean): Promise<ExplorePage> {
     const module = this.module(input.module), session = await this.runtime.requireSession(), epoch = this.epoch
     const filter = bounded(input.filter ?? '',100), query = bounded(input.query ?? '',200)
     const cursor = input.cursor ? await this.open(input.cursor,session,'cursor') : {}
@@ -109,18 +185,81 @@ export class ExploreService {
       }
       page.notice = '当前分析范围：'+list(home.sources).filter(x=>x.enabled===true).map(x=>text(x.display_name)).join('、')
     } else if (module === 'relations') {
+      // A refresh restores only the window the reader already loaded. Every owner
+      // request stays bounded; a cold read never downloads the whole directory.
+      const target = Math.min(restoreWindow && !input.cursor ? 10000 : 100, Math.max(1,Math.trunc(number(input.limit))||PAGE))
+      const requestPage = (backendCursor: unknown, limit: number, required: boolean) => this.versionedPage('/api/v1/relation/entities/list', {
+        protocol_version:2,limit,query,
+        ...(filter?{entity_types:[Number(filter)]}:{}),...(backendCursor?{cursor:backendCursor}:{})
+      },session,required,signal)
+      let paged = !input.cursor || cursor.protocol===2 ? await requestPage(cursor.backendCursor, Math.min(100,target), cursor.protocol===2) : undefined
+      let summary: Doc | undefined
+      if(paged&&(restoreWindow||input.includeCounts===true)) {
+        summary=cursor.summary?doc(cursor.summary):undefined
+        if(!summary) {
+          try {
+            summary=await this.request('relations','/api/v1/relation/entities/summary',{
+              snapshot:paged.snapshot,query,...(filter?{entity_types:[Number(filter)]}:{})
+            },session,signal)
+          } catch(error) {
+            // Older owners cannot preserve the existing page's exact counters.
+            // Only protocol absence uses the legacy compatibility path.
+            if(!(error instanceof ArkmePluginError)||![404,405].includes(error.upstreamStatus??error.httpStatus)||cursor.protocol===2)throw error
+            paged=undefined
+          }
+        }
+        if(paged&&(!summary||summary.protocol_version!==2||summary.snapshot!==paged.snapshot
+          ||!Number.isSafeInteger(summary.total)||number(summary.total)<0
+          ||!summary.type_counts||typeof summary.type_counts!=='object'||Array.isArray(summary.type_counts)
+          ||Object.values(summary.type_counts).some(value=>!Number.isSafeInteger(value)||number(value)<0)))throw missing()
+      }
+      if (paged) {
+        if(!Array.isArray(paged.entities) || (cursor.snapshot&&cursor.snapshot!==paged.snapshot)) throw missing()
+        const snapshot=paged.snapshot, rows=list(paged.entities), seen=new Set(rows.map(row=>text(row.entity_id))), cursors=new Set<string>()
+        // Empty search progress pages are legal. Keep a finite per-call budget;
+        // the existing continuation cursor carries any remaining search work.
+        for(let reads=1;rows.length<target&&paged.has_more===true&&(restoreWindow&&target>100||paged.search_pending===true)&&reads<200;reads++){
+          const backendCursor=text(paged.next_cursor)
+          if(cursors.has(backendCursor))throw missing()
+          cursors.add(backendCursor)
+          await this.guard(session,epoch,signal)
+          const following=await requestPage(backendCursor,Math.min(100,target-rows.length),true)
+          if(!following||following.snapshot!==snapshot||!Array.isArray(following.entities))throw missing()
+          for(const row of list(following.entities)){
+            const id=text(row.entity_id)
+            if(!id||seen.has(id))throw missing()
+            seen.add(id);rows.push(row)
+          }
+          paged=following
+        }
+        page.filters=[{key:'',label:'全部'},...Object.entries(ENTITY_TYPES).map(([key,label])=>({key,label}))]
+        page.items=await Promise.all(rows.map(row=>this.item(module,{...row,last_mention_at:row.last_mentioned_at},session,{linkedUserId:number(row.linked_user_id),aliases:strings(row.aliases)})))
+        page.totalKnown=paged.has_more!==true;page.total=number(cursor.loadedCount)+page.items.length;page.searchPending=paged.search_pending===true
+        if(summary) {
+          const counts=doc(summary.type_counts),all=Object.values(counts).reduce<number>((sum,value)=>sum+number(value),0)
+          page.filters=[{key:'',label:'全部',count:all},...Object.entries(ENTITY_TYPES).filter(([key])=>number(counts[key])>0).map(([key,label])=>({key,label,count:number(counts[key])}))]
+          page.total=number(summary.total);page.totalKnown=true
+        }
+        page.needsEnrichment=rows.some(row=>number(row.linked_user_id)>0)
+        if(paged.has_more===true)next={protocol:2,backendCursor:paged.next_cursor,snapshot,loadedCount:number(cursor.loadedCount)+page.items.length,...(summary?{summary}:{})}
+      } else {
       const raw = await this.relationHome(session,signal)
       const all = list(raw.entities), counts = new Map<number,number>()
       all.forEach(x => counts.set(number(x.type),(counts.get(number(x.type)) ?? 0)+1))
       page.filters = [{key:'',label:'全部',count:all.length},...Object.entries(ENTITY_TYPES).filter(([k]) => counts.has(Number(k))).map(([k,label])=>({key:k,label,count:counts.get(Number(k))!}))]
-      const remarks = await this.sources.privateRemarksByUserIds(all.map(x=>number(x.linked_user_id)),{...(signal ? {signal} : {})})
+      // Preserve global remark search, but never block the ordinary list on optional contact reads.
+      const remarks = query ? await this.relationRemarks(all.map(x=>number(x.linked_user_id)),session,signal)
+        : new Map(all.map(x=>{const id=number(x.linked_user_id);return [id,this.remarksCache.get(id)?.value??''] as const}))
       const rows = all.filter(x => (!filter || number(x.type) === Number(filter)) && (!query || [text(x.name),remarks.get(number(x.linked_user_id))??'',...strings(x.aliases)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase())))
       const version = await this.key(session,rows.map(x=>[x.entity_id,x.last_mention_at,x.mention_count,x.name]))
       if (cursor.version && cursor.version !== version) throw missing()
-      const selected = rows.slice(offset,offset+PAGE)
-      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session)))
+      const limit = Math.max(PAGE, Math.min(10000, Math.trunc(number(input.limit)) || PAGE))
+      const selected = rows.slice(offset,offset+limit)
+      page.items = await Promise.all(selected.map(x => this.item(module,{...x,linked_contact_name:remarks.get(number(x.linked_user_id))},session,{linkedUserId:number(x.linked_user_id),aliases:strings(x.aliases)})))
+      page.needsEnrichment=selected.some(x=>number(x.linked_user_id)>0&&(this.remarksCache.get(number(x.linked_user_id))?.until??0)<Date.now())
       page.total = rows.length
-      if (offset+PAGE < rows.length) next={offset:offset+PAGE,version}
+      if (offset+limit < rows.length) next={offset:offset+limit,version}
+      }
     } else if (module === 'events') {
       const raw = await this.request(module,'/api/v1/event/stream',{filter:'all',scope:'all',limit:PAGE,offset},session,signal)
       page.items = await Promise.all(list(raw.items).map(x=>this.item(module,x,session,{eventId:text(x.event_id)})))
@@ -155,27 +294,51 @@ export class ExploreService {
         if(progress){page.progress=progress;if(progress.active)page.actions=[action('stop','停止本次分析')]}
       } catch(error) { signal?.throwIfAborted(); page.notice=[page.notice,'分析进度暂不可用，已有结果仍可查看。'].filter(Boolean).join(' ');page.actions=[] }
     }
+    if (module === 'profile' || module === 'goals') {
+      try { page.analysisEnabled = await this.analysisEnabled(module, session, signal) }
+      catch { signal?.throwIfAborted(); page.analysisEnabled = null }
+      if (page.analysisEnabled !== true) {
+        // Reading saved results must not depend on optional billing settings.
+        page.actions = page.actions.filter(x => x.id === 'pause' || x.id === 'stop')
+        delete page.progress
+        page.emptyMessage = '还没有相关内容'
+      }
+    }
     page.contextRef=await this.seal(session,{kind:'context',module,...context})
     if(next)page.nextCursor=await this.seal(session,{kind:'cursor',module,filter,query,...next})
     await this.guard(session,epoch,signal);return page
   }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
-    return Promise.all(rows.map(async (row,index)=>{
-      const owner=doc(row.owner_ref),fields=doc(row.fields)
+    const result = await Promise.all(rows.map(async (row,index)=>{
+      const owner=doc(row.owner_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
       const uid=first(row.record_uid,row.source_record_uid,owner.record_uid,strings(fields.record_uids)[0])
-      const content=first(row.content,row.text,row.summary,row.value)
+      const content=row.content_status==='unavailable'?'':first(row.content,row.text,row.summary,row.value)
       const date=number(row.event_at||row.send_at||row.created_at||row.occurred_at||owner.start_at)
-      const canOpen=!!uid || module==='anniversaries' && !!row.message_id
-      return {key:await this.key(session,module,parent.id,first(row.event_record_id,row.message_id,uid)||`${date}:${index}`),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
+      // The existing detail owner addresses core records only. An equal UID in
+      // another provider must never fall through to that route.
+      const canOpen=(!!uid && row.content_status!=='unavailable' && (!sourceIdentity.provider || sourceIdentity.provider==='core_record')) || module==='anniversaries' && !!row.message_id
+      const identity=module==='relations'&&uid ? [uid,text(sourceIdentity.provider||owner.provider)] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
+      const start=number(row.start_position),end=number(row.end_position)
+      return {key:await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
         speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,anchor:row.is_anchor===true||row.is_primary_anchor===true,
-        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:'这条结果尚未提供可定位的原文'})}
+        ...(module==='relations'?{...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
+        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider:sourceIdentity.provider,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
     }))
+    return module==='relations'?mergeExploreEvidence(result):result
   }
-  async detail(itemRef: string, cursorValue?: string, signal?: AbortSignal): Promise<ExploreDetail> {
+  async relationRecordsPage(ref: string, cursor?: string, signal?: AbortSignal): Promise<ExploreDetail> {
+    const session=await this.runtime.requireSession()
+    if((await this.open(ref,session,'item')).module!=='relations')throw missing()
+    return this.detail(ref,cursor,signal,'records')
+  }
+  async detail(itemRef: string, cursorValue?: string, signal?: AbortSignal, part?: ExploreDetailPart): Promise<ExploreDetail> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(itemRef,session,'item'),module=this.module(ref.module)
     const cursor=cursorValue?await this.open(cursorValue,session,'detail-cursor'):{}
     if(cursorValue && (cursor.module!==module || cursor.id!==ref.id))throw missing()
+    if(part&&module!=='relations')throw missing()
+    if(!Number.isSafeInteger(number(cursor.offset))||number(cursor.offset)<0||number(cursor.offset)>100000)throw missing()
     let raw:Doc={},evidence:Doc[]=[],next:Doc|undefined,fields:ExploreDetail['fields']=[],actions:ExploreAction[]=[],notice:string|undefined
+    let snapshot:string|undefined
     let reclassifyTargets:ExploreDetail['reclassifyTargets']
     if(module==='profile') {
       const page=await this.request(module,'/api/v1/personal-profile/v3/section/get',{snapshot_id:ref.version,section_id:ref.section,page:ref.page,page_size:PAGE},session,signal)
@@ -185,16 +348,17 @@ export class ExploreService {
       actions=[action('correct','纠正内容'),action('delete','删除这条档案',true)]
     } else if(module==='relations') {
       const [entity,records]=await Promise.all([
-        this.request(module,'/api/v1/entity/detail-full',{entity_id:ref.id},session,signal),
-        this.request(module,'/api/v1/entity/records/list',{entity_id:ref.id,limit:30,offset:number(cursor.offset)},session,signal),
+        part==='records'?Promise.resolve({entity_id:ref.id} as Doc):this.request(module,'/api/v1/entity/detail',{entity_id:ref.id},session,signal),
+        part==='overview'?Promise.resolve({} as Doc):this.relationRecords(ref,cursor,session,signal),
       ])
       raw=Object.keys(doc(entity.entity)).length?doc(entity.entity):entity
       if(raw.entity_id!==ref.id)throw missing()
-      const cached=list((await this.relationHome(session,signal)).entities).find(x=>x.entity_id===ref.id)
-      const linked=number(cached?.linked_user_id)
-      if(linked>0){const remarks=await this.sources.privateRemarksByUserIds([linked],{...(signal?{signal}:{})});raw={...raw,linked_contact_name:remarks.get(linked)}}
-      evidence=list(records.records);fields=[{label:'关联联系人',value:text(raw.linked_contact_name)},{label:'内容概述',value:text(raw.ai_summary)},{label:'别名',value:strings(raw.aliases).join('、')}]
-      if(records.has_more===true && number(records.next_offset)>number(cursor.offset))next={offset:number(records.next_offset)}
+      const cached=this.cachedRelation(session,ref.id)
+      raw={...cached,...raw,linked_contact_name:this.remarksCache.get(number(ref.linkedUserId??cached.linked_user_id))?.value??''}
+      const locked=part==='overview'?new Set<string>():await this.privacy.lockedRecordUids(session,signal)
+      evidence=list(records.records).map(row=>locked.has(text(row.record_uid))?{...row,content:'',text:'',summary:'',mention_text:'',mentions:[],person_references:[],person_reference_status:'unavailable',content_status:'unavailable'}:row);fields=[{label:'关联联系人',value:text(raw.linked_contact_name)},{label:'内容概述',value:text(raw.ai_summary)},{label:'别名',value:strings(raw.aliases).join('、')}]
+      if(records.protocol_version===2){snapshot=String(records.snapshot);if(records.has_more===true)next={protocol:2,backendCursor:records.next_cursor,snapshot:records.snapshot}}
+      else if(records.has_more===true && number(records.next_offset)>number(cursor.offset))next={offset:number(records.next_offset)}
       actions=[action('delete','删除识别实体',true)]
       notice='同一实体的来源在这里汇总。涉及的人物身份以已确认的信息为准。'
     } else if(module==='events') {
@@ -229,9 +393,10 @@ export class ExploreService {
       actions=[action('confirm',raw.status==='pending'?'确认纪念日':'修改纪念日'),...(raw.status==='pending'?[action('dismiss','忽略这条识别')]:[])]
     }
     if(!Object.keys(raw).length)throw missing()
-    const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,ref),actions,...(notice?{notice}:{})}
+    const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,{...ref,offset:number(cursor.offset)}),actions,...(notice?{notice}:{})}
     // Keep the originally selected identity even when a detail page contains a different chronological anchor.
     result.item.ref=itemRef
+    if(snapshot)result.snapshot=snapshot
     if(reclassifyTargets)result.reclassifyTargets=reclassifyTargets
     if(next)result.nextCursor=await this.seal(session,{kind:'detail-cursor',module,id:ref.id,...next})
     if(module==='anniversaries')result.dateInput={calendarType:raw.calendar_type==='lunar'?'lunar':'solar',year:number(raw.origin_year),month:number(raw.origin_month),day:number(raw.origin_day),leapMonth:raw.is_lunar_leap_month===true}
@@ -248,6 +413,7 @@ export class ExploreService {
         await this.detail(input.ref,undefined,signal)
         await request('/api/v1/personal-profile/v3/fact/override',{fact_key:ref.id,action:input.action,...(input.action==='correct'?{value:value()}:{})})
       } else if(kind==='context'&&['activate','refresh','pause','resume'].includes(input.action)) {
+        if (input.action !== 'pause') await this.requireAnalysis(module,session,signal)
         const current=await this.home(module,session,signal),p=doc(current.processing)
         if(input.action==='pause'||input.action==='resume') {
           if(p[input.action==='pause'?'can_pause':'can_resume']!==true||!p.rebuild_run_id)throw missing()
@@ -266,6 +432,7 @@ export class ExploreService {
       else if(kind==='context'&&input.action==='refresh')await request('/api/v1/event/process/trigger',{force:false})
       else throw missing()
     } else if(kind==='context'&&(module==='goals'||module==='anniversaries')&&['refresh','stop'].includes(input.action)) {
+      if (module === 'goals' && input.action === 'refresh') await this.requireAnalysis(module,session,signal)
       await request(input.action==='stop'?'/api/v1/insight/terminate':`/api/v1/insight/${module==='goals'?'goal':'anniversary'}/refresh`,input.action==='stop'?{section_type:module==='goals'?3:4}:{source_type:0})
     } else if(module==='anniversaries'&&kind==='item'&&['confirm','dismiss'].includes(input.action)) {
       await this.detail(input.ref,undefined,signal)
@@ -282,30 +449,36 @@ export class ExploreService {
   }
   async settings(moduleValue: unknown, signal?: AbortSignal): Promise<ExploreSettings> {
     const module=this.module(moduleValue),session=await this.runtime.requireSession(),epoch=this.epoch
-    if(module==='relations')throw missing()
-    const path=module==='profile'?'/api/v1/personal-profile/v3/model/list':module==='events'?'/api/v1/event-model/list':module==='goals'?'/api/v1/insight/goal/model/list':'/api/v1/insight/model-panel/get'
+    if(module==='relations'||module==='goals')throw missing()
+    if(module==='profile') {
+      const home=await this.home(module,session,signal)
+      const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),models:[],sources:list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true}))}
+      await this.guard(session,epoch,signal);return result
+    }
+    const path=module==='events'?'/api/v1/event-model/list':'/api/v1/insight/model-panel/get'
     const raw=await this.runtime.authenticatedIntelligentPost<Doc>(path,module==='anniversaries'?{section_type:4,source_type:0,history_limit:20}:{},session,signal,{lane:'interactive-read',bypassCache:true,cacheMs:0})
     const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.current_route_key,config.active_route_key)
     const options=list(config.items??config.allowed_route_options)
-    const home=module==='profile'?await this.home(module,session,signal):{}
     const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),
       models:await Promise.all(options.map(x=>this.seal(session,{kind:'model',module,route:text(x.route_key)}).then(ref=>({ref,label:first(x.display_name,x.model_key),selected:x.route_key===current})))),
-      sources:list(home.sources).map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true}))}
+      sources:[]}
     await this.guard(session,epoch,signal);return result
   }
   async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true}> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(input.ref,session,'settings'),module=this.module(ref.module)
     if(input.modelRef && input.sources!==undefined)throw missing()
     if(input.modelRef) {
+      if(module==='profile'||module==='goals')throw missing()
       const model=await this.open(input.modelRef,session,'model');if(model.module!==module)throw missing()
       const current=await this.settings(module,signal)
       const available=await Promise.all(current.models.map(x=>this.open(x.ref,session,'model')))
       if(!available.some(x=>x.route===model.route))throw missing()
-      const path=module==='profile'?'/api/v1/personal-profile/v3/model/activate':module==='events'?'/api/v1/event-model/activate':module==='goals'?'/api/v1/insight/goal/model/activate':'/api/v1/insight/anniversary/model/activate'
+      const path=module==='events'?'/api/v1/event-model/activate':'/api/v1/insight/anniversary/model/activate'
       await this.guard(session,epoch,signal)
-      await this.runtime.authenticatedIntelligentPost(path,{route_key:model.route,...(module==='goals'?{trigger_refresh:true}:{})},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+      await this.runtime.authenticatedIntelligentPost(path,{route_key:model.route},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
     } else if(module==='profile'&&Array.isArray(input.sources)) {
-      const home=await this.home(module,session,signal),allowed=list(home.sources).map(x=>x.source)
+      await this.requireAnalysis(module,session,signal)
+      const home=await this.home(module,session,signal),allowed=list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>x.source)
       if(input.sources.some(x=>typeof x!=='string'||!allowed.includes(x))||new Set(input.sources).size!==input.sources.length)throw missing()
       await this.guard(session,epoch,signal)
       await this.request(module,'/api/v1/personal-profile/v3/experience/sources/set',{sources:input.sources},session,signal,true)
@@ -315,6 +488,7 @@ export class ExploreService {
   async source(evidenceRef: string, signal?: AbortSignal): Promise<ExploreSource> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(evidenceRef,session,'evidence'),module=this.module(ref.module)
     let uid=text(ref.uid),result:ExploreSource
+    if(ref.provider&&ref.provider!=='core_record')throw new ArkmePluginError('explore-source-unsupported','此来源暂不支持打开详情',false,400)
     if(module==='anniversaries') {
       const raw=await this.request(module,'/api/v1/insight/anniversary/evidence/open',{candidate_id:ref.parentId,message_id:ref.messageId,source_type:0,result_version:ref.version},session,signal)
       if(raw.available!==true)throw new ArkmePluginError('explore-source-unavailable','原文已删除或当前不可访问',false,404)

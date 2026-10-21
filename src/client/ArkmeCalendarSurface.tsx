@@ -283,7 +283,7 @@ interface ScopedResource<T> {
   value?: T
 }
 
-type CalendarIndex = CalendarMonthSnapshot & { retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
 
 /** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
 function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
@@ -486,7 +486,7 @@ function ConversationCalendarMonths({ getReadingDate, ...props }: Omit<Parameter
 }
 
 export function ArkmeSelfCalendarPopover({
-  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, index, getReadingDate,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, onSelectIndexedDay, index, getReadingDate,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
@@ -496,6 +496,8 @@ export function ArkmeSelfCalendarPopover({
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
   onSelectDate?(selection: SelfCalendarDateSelection): void
+  /** Locally indexed non-record conversations retain their own message identity. */
+  onSelectIndexedDay?(bucketDate: string): void
   index?: CalendarIndex
   getReadingDate?: (() => string | undefined) | undefined
 }) {
@@ -527,9 +529,10 @@ export function ArkmeSelfCalendarPopover({
     const key = dateKey(normalized)
     selectionControllerRef.current?.abort()
     if ((day?.count ?? 0) <= 0) {
-      setSelectionStatus('这一天没有发给自己的记录')
+      setSelectionStatus(index ? '这一天没有已加载的对话记录' : '这一天没有发给自己的记录')
       return
     }
+    if (onSelectIndexedDay !== undefined) { onSelectIndexedDay(key); onClose(); return }
     if (index && !day?.anchor && !day?.momentAnchor) { setSelectionStatus('当天定位信息暂不可用，请刷新日历后重试'); return }
     if (onSelectDate !== undefined) {
       onSelectDate({ bucketDate: key, timezone, ...(day?.anchor ? { anchor: day.anchor } : {}),
@@ -682,7 +685,10 @@ export function ArkmeCalendarCell({
   const markers = meta?.activityMarkers
   const tooltip = breakdown ? [breakdown.messages > 0 ? tr("私聊 {v0} 条", { v0: breakdown.messages }) : '',
     breakdown.interactions > 0 ? tr("群聊互动 {v0} 条", { v0: breakdown.interactions }) : ''].filter(Boolean).join(' · ') : ''
-  const tooltipText = tooltip || (markers ? tr('多来源活动') : '')
+  const activityLabels = [hasRecordingIndex || markers?.recording ? tr('录音') : '', markers?.chat ? tr('对话') : '',
+    markers?.call ? tr('通话') : '', markers?.arko ? 'Arko' : '', markers?.bot ? 'Bot' : ''].filter(Boolean)
+  const activityHint = activityLabels.length ? tr('有{v0}', { v0: activityLabels.join('、') }) : ''
+  const tooltipText = [tooltip || (!breakdown && count > 0 ? tr('{v0} 条记录', { v0: count }) : ''), activityHint].filter(Boolean).join(' · ')
   const buttonRef = useRef<HTMLButtonElement>(null)
   const tooltipId = useId()
   const cellKey = dateKey(date)
@@ -691,7 +697,7 @@ export function ArkmeCalendarCell({
   const showHint = !disabled && !unknown && hintDate === cellKey && tooltipText !== ''
   return <><button ref={buttonRef} data-arkme-feedback={selected ? 'primary' : 'neutral'}
     type="button"
-    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : tr("暂无记录")}${hasRecordingIndex ? ' · 录音索引有内容' : ''}`}
+    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : activityHint ? '' : tr("暂无记录")}${activityHint ? ` · ${activityHint}` : ''}`}
     aria-describedby={showHint ? tooltipId : undefined}
     data-selected={selected ? 'true' : 'false'}
     data-arkme-hover="button"

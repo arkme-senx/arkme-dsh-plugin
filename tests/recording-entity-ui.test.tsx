@@ -17,6 +17,26 @@ const day = (overrides: Partial<RecordingEntityDay> = {}): RecordingEntityDay =>
 beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); host = document.createElement('div'); document.body.append(host); root = createRoot(host); mocks.call.mockReset() })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
+
+it('opens a dated exact source preview for midnight continuation without navigating to another same-name row', async () => {
+  const onLocate = vi.fn(() => false), onClose = vi.fn()
+  const at = new Date(2026, 9, 13, 0, 52, 7).getTime()
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'midnight', startAtMillis: at,
+    observedText: '武汉', text: '武汉', target: { identityHash: 'hash', transcriptVersion: 'v', transcriptSource: 'system', start: 2, length: 2, sourceText: '抵达武汉，原文还在。' } }] })
+  const render = (version = 'v1') => root.render(<RecordingEntityPanel data={day({ version, status: 'succeeded' })} loading={false} error={false} paused={false} compact
+    onClose={onClose} onRefresh={() => {}} onLocate={onLocate} />)
+  await act(async () => { render(); await tick() })
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  const button = host.querySelector<HTMLButtonElement>('.arkme-entity-occurrence')!
+  expect(button.disabled).toBe(false)
+  expect(button.querySelector('time')?.textContent).toContain('2026')
+  await act(async () => button.click())
+  expect(host.querySelector('[aria-label="提及原文"]')?.textContent).toContain('抵达武汉，原文还在。')
+  expect(host.querySelector('[data-recording-entity-highlight]')?.textContent).toBe('武汉')
+  expect(onLocate).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled()
+  await act(async () => render('v2'))
+  expect(host.querySelector('[aria-label="提及原文"]')).toBeNull()
+})
 let owner: ReturnType<typeof useRecordingEntities>
 function Harness({ account = 'test:42', date = 123, active = true }) { owner = useRecordingEntities(account, date, active, '0'); return <div>{owner.data?.entities?.map(e => e.name).join(',')}</div> }
 
@@ -530,4 +550,29 @@ it('summarizes everyone in one entity, filters only its mentions and resets on o
   await act(async () => { render({ key: 'place', sequence: 1 }); await tick() })
   expect(mocks.call.mock.calls.at(-1)![1]).not.toHaveProperty('participantKey')
   expect(host.textContent).toContain('所有人的原文')
+})
+
+it('keeps opening, refreshing and changing days read-only; only an explicit retry starts recognition', async () => {
+  mocks.call.mockResolvedValue(day({status:'not_started',canStart:true,pollable:false}))
+  await act(async()=>{root.render(<Harness />);await tick()})
+  await act(async()=>{owner.setOpen(true);owner.refresh();await tick()})
+  await act(async()=>{root.render(<Harness date={456}/>);await tick()})
+  expect(mocks.call.mock.calls.filter(([operation])=>operation.endsWith('.start'))).toHaveLength(0)
+  const start=vi.fn()
+  await act(async()=>{root.render(<RecordingEntityPanel data={day({status:'failed',canStart:true})} loading={false} error={false} paused={false} compact={false} onStart={start} onClose={()=>{}} onRefresh={()=>{}} onLocate={()=>true}/>)})
+  expect(host.textContent).toContain('仅支持手动识别，并且会消耗AI额度的积分')
+  expect(start).not.toHaveBeenCalled()
+  await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='重试识别')!.click()})
+  expect(start).toHaveBeenCalledOnce()
+})
+
+it('shows system speaker number separately from unknown sound source without inferring presence', async () => {
+  mocks.call.mockResolvedValue({ version: 'v1', offset: 0, total: 1, hasMore: false, items: [{ key: 'mention', startAtMillis: 123,
+    text: '提到老钱', context: { speakerLabel: '说话人 3', relevance: 'unknown', soundSource: 'unknown', accuracy: 'unverified' } }] })
+  await act(async () => { root.render(<RecordingEntityPanel data={day({ status: 'succeeded' })} loading={false} error={false} paused={false}
+    onClose={() => {}} onRefresh={() => {}} onLocate={() => false} />); await tick() })
+  await act(async () => { host.querySelector<HTMLButtonElement>('.arkme-entity-item-title')!.click(); await tick() })
+  const mention = host.querySelector('.arkme-entity-occurrence')!
+  expect(mention.textContent).toContain('说话人 3 · 声源待确认')
+  expect(mention.textContent).not.toMatch(/现场提及|与你交流|你提到/)
 })

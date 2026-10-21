@@ -101,7 +101,7 @@ export class UnifiedTimelineCache {
         : this.prepare('SELECT request,metadata,ticket FROM pages WHERE scope=? AND request=?').get(scope, request)) as PageRow | undefined
     if (!row) return undefined
     const page = JSON.parse(row.metadata) as ArkmeTimelinePage
-    if (!page.unified) return undefined
+    if (page.unified?.protocolVersion !== 2) return undefined
     const rows = this.prepare('SELECT c.payload,e.token FROM entries e JOIN contents c ON c.scope=e.scope AND c.event_id=e.event_id WHERE e.scope=? AND e.request=? ORDER BY e.ordinal LIMIT 2000').all(scope, row.request) as unknown as Array<{ payload: string; token: string }>
     // Coverage belongs to the window reference, while the body is shared.
     page.unified.events = rows.map(row => ({ ...JSON.parse(row.payload), ...(row.token ? { windowToken: row.token } : {}) }) as ArkmeUnifiedTimelineEvent)
