@@ -206,6 +206,7 @@ describe('registerArkmeTools', () => {
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
       'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update',
+      'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_ai_points',

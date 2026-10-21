@@ -35,6 +35,26 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it('opens private matching references for maximum-size Team text without cloud IO', async () => {
+ const text = '长'.repeat(60_000) + ' end'
+ const f = fixture(() => ({ channel, conversation, messages: [{ ...message, record: { ...message.record, text_content: text } }] }))
+ const db = new DatabaseSync(':memory:')
+ const store = new LocalMessageMarkStore(db, work => { db.exec('BEGIN IMMEDIATE'); try { work(); db.exec('COMMIT') } catch (error) { db.exec('ROLLBACK'); throw error } })
+ Object.assign(f.runtime.stateStore, { messageMarks: store })
+ try {
+  const conversationRef = (await open(f)).conversation!.ref
+  const page = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+  const markRef = page.messages[0]!.localMarkRef!
+  expect(markRef.length).toBeLessThan(16_384)
+  expect(markRef.length).toBeLessThan(512 * 1024)
+  const calls = f.requests.length
+  const anchor = { version: 1, projection: 'arkme-text-v1', recordVersion: 3, sourceDigest: createHash('sha256').update(quoteSourceContent({ textContent: text })).digest('hex'), start: 0, end: 1, text: '长', prefix: '', suffix: '长'.repeat(32) }
+  const result = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'long', anchor, canonical: text } }) as MessageUnderlineSnapshot
+  expect(result.items[0]?.anchor).toEqual(anchor)
+  expect(f.requests).toHaveLength(calls)
+ } finally { db.close() }
+})
+
 it('persists private Team marks across refreshed references without cloud writes or Chat authority', async () => {
   let rawConversation = conversation, rawMessage = message
   const f = fixture(() => ({ channel, conversation: rawConversation, messages: [rawMessage] }))
@@ -49,15 +69,15 @@ it('persists private Team marks across refreshed references without cloud writes
       sourceDigest: createHash('sha256').update(quoteSourceContent({ textContent: '已收到' })).digest('hex'),
       start: 0, end: 2, text: '已收', prefix: '', suffix: '到' }
     const calls = f.requests.length
-    expect(await f.service.execute('team.app.local-mark.capabilities', { conversationRef })).toEqual({ supported: true, maxLength: 2000, storage: 'local' })
-    const first = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'add', anchor } }) as MessageUnderlineSnapshot
+    expect(await f.service.execute('team.app.local-mark.capabilities', { conversationRef })).toEqual({ supported: true, maxLength: 2000, storage: 'local', maxBatchSize: 4 })
+    const first = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'add', anchor, canonical: '已收到' } }) as MessageUnderlineSnapshot
     expect(first.items[0]).toMatchObject({ mine: true, actorId: 90, anchor })
     expect(f.requests).toHaveLength(calls)
     const fresh = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
     const read = async (ref: string) => await f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [ref] }) as { snapshot: MessageUnderlineSnapshot }[]
     expect((await read(fresh.messages[0]!.localMarkRef!))[0]!.snapshot).toEqual(first)
     await expect(f.service.execute('team.app.local-mark.change', { conversationRef, markRef,
-      change: { kind: 'add', operationId: 'invalid', anchor: { ...anchor, text: '错字' } } })).rejects.toMatchObject({ code: 'team-local-mark-source-changed' })
+      change: { kind: 'add', operationId: 'invalid', canonical: '已收到', anchor: { ...anchor, text: '错字' } } })).rejects.toMatchObject({ code: 'team-local-mark-source-changed' })
     await expect(f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [page.messages[0]!.ref] })).rejects.toThrow()
     rawMessage = { ...message, record: { ...message.record, version: 4, text_content: '已经修改' } }
     const edited = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
@@ -472,4 +492,67 @@ describe('Team profile owner adapter',()=>{
   await expect(f.service.execute('team.app.profile.avatar.upload',{teamRef:ref,uploadUid:'image',contentBase64:'invalid'})).rejects.toMatchObject({code:'team-not_owner'})
   expect(f.requests).toHaveLength(2)
  })
+})
+
+it('validates Team reply context, transports the quote and masks the parent locator',async()=>{
+ const rawParent={message_uid:'parent-private',seq:1,record_version:3,state:'available',sender:{nickname:'成员'},text:'已收到',quote:{version:1,projection:'arkme-text-v1',recordVersion:3,sourceDigest:'a'.repeat(64),start:0,end:2,text:'已收',prefix:'',suffix:'到'}}
+ const f=fixture(path=>({channel,conversation,messages:[{...message,reply:rawParent}],...(path.endsWith('/send')?{...message}: {})}))
+ const opened=await open(f),ref=opened.conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const parent=page.messages[0]!.reply!
+ expect(parent).toMatchObject({seq:1,version:3,state:'available',quote:rawParent.quote})
+ expect(JSON.stringify(parent)).not.toContain('parent-private')
+ await f.service.execute('team.app.send',{conversationRef:ref,clientUid:'client',content:{text_content:'回复',template_kind:1},replyToRef:parent.ref,replyRecordVersion:3,quote:parent.quote})
+ expect(f.requests.at(-1)!.body).toMatchObject({reply_to:'parent-private',reply_record_version:3,quote:rawParent.quote})
+ await f.service.execute('team.app.locate',{conversationRef:ref,messageRef:parent.ref})
+ expect(f.requests.at(-1)).toMatchObject({path:'/api/v1/team/conversations/timeline/locate',body:{message_uid:'parent-private'}})
+ f.changeAccount()
+ await expect(f.service.execute('team.app.send',{conversationRef:ref,replyToRef:parent.ref})).rejects.toMatchObject({code:'team-reference-invalid'})
+})
+
+it('reports exact authorized Team occurrences without trusting body, owner or reviewer input',async()=>{
+ let current=conversation
+ const f=fixture(path=>path.endsWith('/reports/create')?{report_uid:'accepted-report'}:{channel,conversation:current,messages:[message]})
+ const opened=await open(f),ref=opened.conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const command={conversationRef:ref,messageRef:page.messages[0]!.ref,version:3,reason:'privacy',description:'个人信息'}
+ expect(await f.service.execute('team.app.report',command)).toEqual({reportUid:'accepted-report'})
+ expect(f.requests.at(-1)?.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',message_uid:message.message_uid,expected_record_version:3,reason:'privacy',description:'个人信息'})
+ const calls=f.requests.length
+ await expect(f.service.execute('team.app.report',{...command,version:3.5})).rejects.toThrow()
+ expect(f.requests).toHaveLength(calls)
+ current={...conversation,conversation_uid:'foreign'}
+ const other=await open(f)
+ await expect(f.service.execute('team.app.report',{...command,conversationRef:other.conversation!.ref})).rejects.toThrow()
+ f.changeAccount()
+ await expect(f.service.execute('team.app.report',command)).rejects.toThrow()
+})
+
+it('creates the existing SID share from exact Team occurrences and never exposes raw owner input',async()=>{
+ const f=fixture((path,body)=>path==='/api/v1/chats/messages/copy-link/get-or-create'
+  ? new Response(JSON.stringify({code:200,data:{sid:'share-sid',url:'https://share.test/s/share-sid'}}),{headers:{'content-type':'application/json'}})
+  : {channel,conversation,messages:[message]})
+ const conversationRef=(await open(f)).conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const selections=[{messageRef:page.messages[0]!.ref,version:3}]
+ expect(await f.service.execute('team.app.copy-link',{conversationRef,selections})).toEqual({sid:'share-sid',url:'https://share.test/s/share-sid'})
+ expect(f.requests.at(-1)?.body).toEqual({sources:[{kind:'team_message',team_source:{conversation_uid:conversation.conversation_uid,message_uid:message.message_uid,side:'external',expected_record_version:3}}]})
+ const count=f.requests.length
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections:[...selections,...selections]})).rejects.toThrow()
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections:[{...selections[0],version:3.5}]})).rejects.toThrow()
+ expect(f.requests).toHaveLength(count)
+ f.changeAccount()
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections})).rejects.toThrow()
+ expect(f.requests).toHaveLength(count)
+})
+
+it('binds a frozen Team card to owner-blind target media and removes source actor actions',async()=>{
+ const forward={source_type:'team_message',render_kind:'forward_records',title:'卡片',items:[{owner_name:'原作者',text:'冻结正文',files:[{file_asset_uid:'physical',media_key:'forward-owner-blind',name:'frozen.png'}]}]}
+ const full={...message,record:{...message.record,content_payload:{payload_kind:1,forward_records:forward},media:[{file_asset_uid:'forward-owner-blind',file_name:'frozen.png',mime_type:'image/png',file_kind:1,size:42}]}}
+ const f=fixture(()=>({channel,conversation,messages:[full]}))
+ const conversationRef=(await open(f)).conversation!.ref,page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const card=page.messages[0]!
+ expect(card.forwardRecords?.items[0]).toMatchObject({senderName:'原作者',textContent:'冻结正文',contentBlocks:[{mediaRef:card.media[0]?.ref}]})
+ expect(card.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
+ expect(JSON.stringify(card.forwardRecords)).not.toContain('private-signed')
 })

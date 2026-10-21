@@ -1,3 +1,4 @@
+import type {TeamMessagePort} from '../../team-message-contract.js'
 import type {ArkmeTeamProfileToolPort} from '../../team-profile-contract.js'
 import type { ArkmeOfficialNotificationPort } from '../../official-notification-contract.js'
 import type { ArkmeSelfRolePort } from '../../self-role-contract.js'
@@ -25,6 +26,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  TeamMessagePort,
   ArkmeTeamProfileToolPort,
   ArkmeOfficialNotificationPort,
   ArkmeSelfRolePort,

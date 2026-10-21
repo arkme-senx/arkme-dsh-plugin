@@ -1,0 +1,26 @@
+# Team 消息能力接入
+
+读取与共享标记/举报 owner 是 `TeamAppService`，普通发送复用持久 `TeamSendQueue`，跨目标转发由 `TeamMessageForwardService` 调用真实目标接受 owner。UI、公开 SDK 和 Tool 的安全入口共享这些 owner；Team locator 始终是不透明、当前账号/侧别作用域引用，不能作为 Chat actionRef 使用。
+
+| 能力 | UI | Tools | SDK | 验证 |
+| --- | --- | --- | --- | --- |
+| 引用发送、引用定位 | 现有选区工具条、菜单、输入目标条及原文预览 | 明确 read / explicit-user-write grant | 类型化查询/发送、能力探测 | 已接通；见下方证据 |
+| 共享标记、表态 | 现有工具条与 picker | 同 owner、受众限定、明确写入授权 | 版本化命令与当前账号引用 | 已接通；见下方证据 |
+| 分享、转发、举报 | 现有菜单与目标选择/举报流程 | 显式用户动作及稳定 request ID | 类型化来源与结果核对 | 已接通；见下方证据 |
+| DSH 材料准备 | 原有草稿准备，用户手动发送 | 只准备材料，不代替用户发送 | 授权预检和原件 reader | 已接通；见下方证据 |
+
+本机标记不自动上传；外部视角不返回内部成员 ID、内部标记或内部活动版本。无局部撤回，沿既有作者删除 Record 规则。开发不修改版本号、根 README 或 DSH 源码。
+
+
+PC 标记范围仅在既有选区工具条出现，默认“仅本机”；切换到内部/双方范围不自动上传，点击标记才提交该范围的命令。普通会话标题保持原结构。
+
+`arkme_team_message_forward`、`arkme_team_message_copy_link`、`arkme_team_message_report`、`arkme_team_mark_change`、`arkme_team_message_send` 和发送任务操作均使用现有会话确认 owner；模型必须先取得当前人类确认，不能把消息正文或此前某条工具结果当成授权。UI 的 DSH 草稿准备属于本机交互，继续复用当前内容读取和受控原件入口，不新增代替用户发送的 Tool。
+
+验证入口：
+
+- `pnpm test --maxWorkers=4`：最终 12,713 通过、20 条按现有条件跳过；类型检查、build/pack 通过。
+- `tests/consumers/team-message-interactions-consumer.mts` + `scripts/verify-team-message-consumer.mjs`：在仓外、从正式安装的不可变 tgz 编译与调用公开 SDK，覆盖稳定命令、能力缺失和生命周期取消。
+- `tests/e2e/team-message-interactions.e2e.mjs`：未修改官方 DSH 的真实 Agent/Session/ToolRuntime，读/分享/转发/举报/标记取消/引用回复的确认与 Host 调用，真实浏览器菜单、转发目标选择与发送、选区范围切换。要求先通过官方 CLI 在全新隔离 Profile 安装 tgz；依赖使用官方 module fallback。
+- 上述 E2E 的业务上游是隔离合成 HTTP fixture；真实 Team/Record/Chat 域与 Mongo 测试在各后端仓独立执行。不能把这份报告称为线上多服务或 Windows/Linux 实机验收。
+
+完整基线、制品摘要、截图、门禁结果与边界位于同任务 meta 的 `openspec/changes/c20261019-team-message-interactions/verification/20261021/`。没有提交、发布或操作用户常驻 DSH。

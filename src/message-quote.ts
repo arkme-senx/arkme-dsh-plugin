@@ -41,8 +41,15 @@ export function readMessageQuote(value: unknown): ArkmeMessageQuote | undefined 
 }
 export function quoteMatchesCanonical(quote: ArkmeMessageQuote, text: string): boolean {
   return text.slice(quote.start, quote.end) === normalizeQuoteText(quote.text)
-    && text.slice(Math.max(0, quote.start - 32), quote.start) === quote.prefix
-    && text.slice(quote.end, quote.end + 32) === quote.suffix
+    && wellFormedQuoteContext(text.slice(Math.max(0, quote.start - 32), quote.start)) === wellFormedQuoteContext(quote.prefix)
+    && wellFormedQuoteContext(text.slice(quote.end, quote.end + 32)) === wellFormedQuoteContext(quote.suffix)
+}
+// A 32-unit hint may split a surrogate pair. Go's JSON decoder represents
+// that lone unit as U+FFFD; context matching uses the same scalar projection.
+function wellFormedQuoteContext(value:string):string {
+  let result=''
+  for(const scalar of value){const unit=scalar.charCodeAt(0);result+=scalar.length===1&&unit>=0xd800&&unit<=0xdfff?'\uFFFD':scalar}
+  return result
 }
 export function quoteCapabilitiesFromWire(value: unknown): ArkmeQuoteReplyCapabilities {
   const q = value as Record<string, unknown> | null

@@ -67,6 +67,28 @@ async function fixture() {
   }
 }
 
+it('persists an immutable quote through upload, lost ACK, restart and stable retries',async()=>{
+  const f=await fixture(),file=await f.stage(),reply={messageRef:'parent-ref',messageKey:'parent-key',version:7,text:'😀',senderName:'成员',quote:{version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:7,start:1,end:3,text:'😀',prefix:'中',suffix:'文'}}
+  const command=input({fileRefs:[file.fileRef],reply:structuredClone(reply)})
+  f.setOnline(false);await f.queue.enqueue(command)
+  command.reply!.text='mutated after enqueue';command.reply!.quote!.text='坏'
+  f.restart();f.setOnline(true);f.loseAck();await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  f.restart();vi.setSystemTime(Date.now()+10_000);await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends=f.execute.mock.calls.filter(([operation])=>operation==='team.app.send')
+  expect(sends.length).toBeGreaterThanOrEqual(2)
+  for(const [,body] of sends)expect(body).toMatchObject({clientUid:command.clientUid,replyToRef:reply.messageRef,replyRecordVersion:7,quote:reply.quote})
+  const tasks=await f.queue.list(command.conversationRef);expect(tasks[0]).toMatchObject({state:'sent',reply})
+  await expect(f.queue.enqueue({...command,reply:{...reply,version:8,quote:{...reply.quote,recordVersion:8}}})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+})
+
+it('rejects mismatched selection versions before durable admission',async()=>{
+  const f=await fixture()
+  await expect(f.queue.enqueue(input({reply:{messageRef:'source',messageKey:'key',version:1,text:'a',senderName:'',quote:{version:1,projection:'arkme-text-v1',sourceDigest:'a'.repeat(64),recordVersion:2,start:0,end:1,text:'a',prefix:'',suffix:''}}}))).rejects.toMatchObject({code:'team-invalid_request'})
+  expect(await f.files.teamSends(42)).toEqual([])
+})
+
 describe('Team delivery with the shared FileTransfers owner', () => {
   it('a slow upload does not delay consecutive text sends in another conversation',async()=>{
     const f=await fixture(),file=await f.stage()

@@ -28,7 +28,9 @@ export async function readAskDshOriginal(block: ArkmeContentBlock, signal: Abort
   return blob
 }
 
-export function useAskDsh(scopeKey: string, onComplete: () => void) {
+export type AskDshPreparation = (sourceRef:string,items:readonly ArkmeTimelineItem[],signal:AbortSignal,progress:(text:string)=>void)=>Promise<File[]>
+
+export function useAskDsh(scopeKey: string, onComplete: () => void, prepare?:AskDshPreparation) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const running = useRef<AbortController | undefined>(undefined)
@@ -61,7 +63,7 @@ export function useAskDsh(scopeKey: string, onComplete: () => void) {
     if (attempt.current?.key !== key) attempt.current = { key, id: crypto.randomUUID() }
     setBusy(true); setStatus('正在准备快记及附件…')
     try {
-      const files = await prepareAskDshNotes(items, {
+      const files = prepare ? await prepare(sourceRef,items,signal,setStatus) : await prepareAskDshNotes(items, {
         detail: (item, readSignal) => callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail', {
           sourceRef, actionRef: item.messageActionRef ?? '', includeAttachments: true,
         }, readSignal),

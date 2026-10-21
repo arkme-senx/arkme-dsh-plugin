@@ -4,7 +4,7 @@ import { createHash, webcrypto } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { captureQuoteAnchor, quoteHighlightRange, quoteDomProjection } from '../src/client/message-quote-selection.js'
-import { quoteCanonicalText, quoteSourceContent, readMessageQuote, projectedMessageQuote, quoteCapabilitiesFromWire, type ArkmeMessageQuote } from '../src/message-quote.js'
+import { quoteCanonicalText, quoteSourceContent, readMessageQuote, projectedMessageQuote, quoteCapabilitiesFromWire, quoteMatchesCanonical, type ArkmeMessageQuote } from '../src/message-quote.js'
 import { ArkmeMessageTextSelectionToolbar } from '../src/client/ArkmeMessageTextSelection.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeQuotePreview } from '../src/client/ArkmeQuotePreview.js'
@@ -112,4 +112,14 @@ it('keeps self topic quote drafts separate and preserves body when cancelling', 
   expect(restored.get(topic).extensionTarget?.quote).toEqual(quote)
   expect(restored.get(other).extensionTarget).toBeUndefined()
   restored.setExtensionTarget(topic, undefined); expect(restored.get(topic).text).toBe('延展正文')
+})
+
+it('matches Go JSON scalar context when a 32-unit hint splits an emoji',()=>{
+ const text='a😀'+'x'.repeat(31)+'Z'
+ const quote:ArkmeMessageQuote={version:1,projection:'arkme-text-v1',sourceDigest:'a'.repeat(64),recordVersion:3,start:34,end:35,text:'Z',prefix:'\uFFFD'+'x'.repeat(31),suffix:''}
+ expect(quoteMatchesCanonical(quote,text)).toBe(true)
+ expect(quoteMatchesCanonical({...quote,prefix:'wrong'},text)).toBe(false)
+ const after='Z'+'x'.repeat(31)+'😀a'
+ expect(quoteMatchesCanonical({...quote,start:0,end:1,prefix:'',suffix:'x'.repeat(31)+'\uFFFD'},after)).toBe(true)
+ expect(quoteMatchesCanonical({...quote,text:'wrong'},text)).toBe(false)
 })

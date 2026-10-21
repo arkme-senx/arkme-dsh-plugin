@@ -1491,6 +1491,7 @@ export interface ArkmeProviderCapabilities {
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    teamMessageInteractions?: 1
     teamProfiles?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -2245,7 +2246,7 @@ export interface ArkmeForwardRecordPreviewItem {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   contentLabel?: string
-  sourceType?: 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  sourceType?: 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
@@ -4162,6 +4163,9 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
+  | 'team.messages.marks-read' | 'team.messages.marks-change'
+  | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

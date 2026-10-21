@@ -1,3 +1,4 @@
+import { readMessageQuote } from '../message-quote.js'
 import { randomUUID } from 'node:crypto'
 import { ArkmePluginError } from './service.js'
 import type { FileTransfers } from './file-transfers.js'
@@ -73,15 +74,18 @@ export class TeamSendQueue {
       || !Array.isArray(input.fileRefs) || input.fileRefs.length > 9 || new Set(input.fileRefs).size !== input.fileRefs.length
       || input.fileRefs.some(ref => typeof ref !== 'string')
       || JSON.stringify(input.content).length > 128_000) throw fail('invalid_request', '发送内容或附件无效')
+    if (input.reply && (typeof input.reply.messageRef !== 'string' || !input.reply.messageRef || !Number.isSafeInteger(input.reply.version) || input.reply.version <= 0
+      || input.reply.quote && (!readMessageQuote(input.reply.quote) || input.reply.quote.recordVersion !== input.reply.version))) throw fail('invalid_request', '引用消息或选区无效')
     const conversationKey = await this.ports.identify(input.conversationRef, user)
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
-    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs})
+    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.reply ? {reply:input.reply} : {})})
     const tasks = await this.ports.files().mutateTeamSends(user, tasks => {
       const prior = tasks.find(task => task.clientUid === input.clientUid)
       if (prior) {
         if (prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
-          || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)) {
+          || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
+          || JSON.stringify(prior.reply) !== JSON.stringify(input.reply)) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
         }
         return
@@ -164,7 +168,8 @@ export class TeamSendQueue {
   }
   private command(task: TeamSendTask): Record<string, unknown> {
     return { conversationRef: task.conversationRef, clientUid: task.clientUid,
-      expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content }
+      expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content,
+      ...(task.reply ? {replyToRef:task.reply.messageRef,replyRecordVersion:task.reply.version,...(task.reply.quote ? {quote:task.reply.quote} : {})} : {}) }
   }
   private async save(user: number, task: TeamSendTask): Promise<void> {
     await this.ports.files().mutateTeamSends(user, tasks => {

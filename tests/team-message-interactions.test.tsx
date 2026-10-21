@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
@@ -18,8 +18,8 @@ let root: Root, host: HTMLDivElement
 const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
-function Fixture({ msg = message, includeToolbar = true, selecting = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean }) {
-  return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage="local" />}
+function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean }) {
+  return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
       selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
@@ -107,11 +107,11 @@ it('dismisses on Escape and does not register deleted or pending messages for ma
   expect(host.querySelector('[data-arkme-text-selection]')).toBeNull()
 })
 
-it('enters multiselect from the shared menu and keeps unsupported Team operations disabled', async () => {
+it('enters multiselect and gates commands that need an injected owner', async () => {
   await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
-  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '消息详情', '查看阅读状态'])
-  expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队通道暂未支持此操作')
+  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '举报', '消息详情', '查看阅读状态'])
+  expect(buttons.find(button => button.textContent === '转发')?.disabled).toBe(true)
   await act(async () => buttons.find(button => button.textContent === '多选')!.click())
   expect(selectMessage).toHaveBeenCalledOnce()
   expect(document.querySelector('[role="menu"]')).toBeNull()
@@ -131,4 +131,21 @@ it('clicks into details but never opens details when selecting prose', async () 
   expect(detail).toHaveBeenCalledOnce(); detail.mockClear()
   const p = await select(); await mouse(p, 'click')
   expect(detail).not.toHaveBeenCalled()
+})
+
+it('offers mark audience only inside the established selection toolbar and preserves the selection while switching', async () => {
+  function ScopedFixture() {
+    const [shared,setShared] = useState(false)
+    return <Fixture msg={message} cloud={shared} scopeControl={<div role="group" aria-label="标记范围"><button type="button" aria-pressed={shared} onClick={()=>setShared(true)}>团队内部</button></div>} />
+  }
+  await act(async()=>root.render(<ScopedFixture/>))
+  expect(document.querySelector('[aria-label="标记范围"]')).toBeNull()
+  await select()
+  const audience=toolbar()!.querySelector<HTMLButtonElement>('[aria-label="标记范围"] button')!
+  await mouse(audience,'mousedown');await act(async()=>audience.click())
+  expect(document.getSelection()!.toString()).toBe('选中的文字')
+  expect(toolbar()!.querySelector('[aria-label="标记范围"] button')?.getAttribute('aria-pressed')).toBe('true')
+  const markButton=[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='标记')!
+  await act(async()=>markButton.click())
+  await waitForMark(()=>expect(mark).toHaveBeenCalledWith(expect.objectContaining({cloudMarkRef:message.ref}),expect.objectContaining({text:'选中的文字'})))
 })

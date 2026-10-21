@@ -6,7 +6,7 @@ import { arkmeTheme } from './arkme-theme.js'
 export function ArkmeQuotePreview({ parent, onOpen }: { parent: ArkmeTimelineExtensionParent; onOpen?: (() => void) | undefined }) {
   const [expanded, setExpanded] = useState(false)
   const unavailable = parent.quoteState === 'unavailable'
-  const text = unavailable ? '原消息已撤回或不可查看' : parent.quote?.text ?? ''
+  const text = unavailable ? '原消息已撤回或不可查看' : parent.quote?.text ?? parent.textContent
   return <div data-arkme-quote-preview style={{ minWidth: 0, borderLeft: `2px solid ${arkmeTheme.accent}`, padding: '3px 8px', background: arkmeTheme.extensionSource, borderRadius: 4, fontSize: 12, lineHeight: '18px' }}>
     <button type="button" aria-label="定位引用原文" disabled={unavailable || !onOpen} onClick={event => { event.stopPropagation(); onOpen?.() }}
       style={{ display: 'block', width: '100%', padding: 0, border: 0, textAlign: 'left', font: 'inherit', background: 'transparent', color: arkmeTheme.secondary, cursor: unavailable || !onOpen ? 'default' : 'pointer' }}>

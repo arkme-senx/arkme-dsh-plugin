@@ -1,3 +1,4 @@
+import {projectTeamForward} from '../team-forward-presentation.js'
 import { projectedMessageQuote, readMessageQuote, type ArkmeMessageQuote } from '../message-quote.js'
 import type { SelfRoleService } from './self-role-service.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
@@ -1866,7 +1867,7 @@ export class RecordService {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     const extensionProjection = this.recordExtensionProjection(raw, userId)
-    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload)
+    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload) ?? projectTeamForward(item.content_payload ?? core.content_payload,(files,longArticle)=>this.media.forwardContentBlocks(files,userId ?? 0,{longArticle}))
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
     const callRecord = projectCallRecord(raw, userId)
     return {
@@ -1907,7 +1908,7 @@ export class RecordService {
     const recordUid = stringValue(item.record_uid ?? core.record_uid).trim()
     if (recordUid === '') return undefined
     const extensionProjection = userId === undefined ? undefined : this.recordExtensionProjection(raw, userId)
-    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload)
+    const forwardRecords = projectRecordRecordingForward(item.content_payload ?? core.content_payload) ?? projectTeamForward(item.content_payload ?? core.content_payload,(files,longArticle)=>this.media.forwardContentBlocks(files,userId ?? 0,{longArticle}))
     const contentBlocks = userId === undefined ? undefined : this.media.richContentBlocks(raw, userId, options.displayItems)
     return {
       recordUid,

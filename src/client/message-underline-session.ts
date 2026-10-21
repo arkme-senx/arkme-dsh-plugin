@@ -5,7 +5,7 @@ import { messageSelectionReference, type MessageSelectionTarget } from './ArkmeM
 export interface MessageMarkTransport {
   capabilities(sourceRef: string, signal: AbortSignal): Promise<MessageUnderlineCapabilities>
   list(sourceRef: string, refs: string[], signal: AbortSignal): Promise<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>
-  change(sourceRef: string, ref: string, change: MessageUnderlineChange, signal: AbortSignal): Promise<MessageUnderlineSnapshot>
+  change(sourceRef: string, ref: string, change: MessageUnderlineChange, signal: AbortSignal, target?: MessageSelectionTarget): Promise<MessageUnderlineSnapshot>
 }
 
 export function underlineTargetKey(target: MessageSelectionTarget) {
@@ -50,15 +50,16 @@ export class MessageUnderlineSession {
   }
   async read(targets: MessageSelectionTarget[]) {
     if (this.loading || !this.capability?.supported || this.controller.signal.aborted) return
-    const unique = new Map(targets.filter(target => target.sourceRef === this.sourceRef && messageSelectionReference(target)).map(target => [messageSelectionReference(target)!, target]))
+    const unique = new Map(targets.filter(target => target.sourceRef === this.sourceRef && messageSelectionReference(target,this.storage)).map(target => [messageSelectionReference(target,this.storage)!, target]))
     if (!unique.size) return
     this.loading = true
     const epochs = new Map(this.epochs)
     try {
       const refs = [...unique.keys()]
-      for (let i = 0; i < refs.length; i += 40) {
-        const result = await (this.transport ? this.transport.list(this.sourceRef, refs.slice(i, i + 40), this.controller.signal)
-          : callArkme<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>(this.storage === 'local' ? 'source.local-message-mark.list' : 'source.message-underline.list', { sourceRef: this.sourceRef, actionRefs: refs.slice(i, i + 40) }, this.controller.signal))
+      const batchSize = Math.max(1, Math.min(40, this.capability.maxBatchSize ?? 40))
+      for (let i = 0; i < refs.length; i += batchSize) {
+        const result = await (this.transport ? this.transport.list(this.sourceRef, refs.slice(i, i + batchSize), this.controller.signal)
+          : callArkme<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>(this.storage === 'local' ? 'source.local-message-mark.list' : 'source.message-underline.list', { sourceRef: this.sourceRef, actionRefs: refs.slice(i, i + batchSize) }, this.controller.signal))
         if (this.controller.signal.aborted) return
         for (const row of result) {
           const target = unique.get(row.actionRef)
@@ -81,7 +82,7 @@ export class MessageUnderlineSession {
     } finally { this.loading = false }
   }
   async change(target: MessageSelectionTarget, change: MessageUnderlineChange): Promise<void> {
-    const reference = messageSelectionReference(target)
+    const reference = messageSelectionReference(target,this.storage)
     if (this.controller.signal.aborted || target.sourceRef !== this.sourceRef || !reference || target.item.status !== 1) throw new Error('会话已变化，请重新选择')
     if (!this.capability?.supported) throw new Error(this.notice || '正在确认标记支持情况，请稍后重试')
     const key = underlineTargetKey(target), before = this.snapshots.get(key)
@@ -97,7 +98,7 @@ export class MessageUnderlineSession {
         : [...(before?.items ?? []), { id: change.operationId, actorId: this.viewerId, actorName: '你', mine: true, anchor: change.anchor, state: 'available', pending: true }] })
     this.notice = (this.storage === 'local' ? '正在保存本机标记…' : '正在同步标记…'); this.retry = undefined; this.publish()
     try {
-      const result = await (this.transport ? this.transport.change(this.sourceRef, reference, change, this.controller.signal)
+      const result = await (this.transport ? this.transport.change(this.sourceRef, reference, change, this.controller.signal, target)
         : callArkme<MessageUnderlineSnapshot>(this.storage === 'local' ? 'source.local-message-mark.change' : 'source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: reference, change }, this.controller.signal))
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
