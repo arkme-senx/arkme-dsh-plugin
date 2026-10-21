@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createHarnessDraftBridge, type DraftSessions, type DraftConversation, type NativeDraft } from '../src/client/harness-attachment-draft.js'
 function fixture() {
   let current = 'old', created = 0, seq = 0, account = true
@@ -14,13 +14,22 @@ function fixture() {
     releaseDraftAttachments: drafts => { for (const draft of drafts) files.delete(draft.id) },
     fileUploads: store(() => uploads),
   }
+  const retained = new Set<string>()
+  const release = vi.fn((id: string) => retained.delete(id))
+  const ready = vi.fn(async () => {})
   const sessions: DraftSessions = {
     list: store(() => ({ current, byId: { old: { workspaceId: 'work' } } })),
     async create({ sessionId, workspaceId }) { expect(workspaceId).toBe('default-work'); created++; inputs.set(sessionId, { draft: '', draftRev: 0, attachmentIds: [], phase: 'plain' }); return sessionId },
-    open(id) { current = id }, scope(id) { return { id, get: () => conversation } },
+    retain(id, options) {
+      expect(options.source).toBe('controllerOperation')
+      options.signal.throwIfAborted()
+      retained.add(id)
+      return { ready: ready(), release: () => release(id) }
+    },
+    open(id) { current = id }, scope(id) { return id === current || retained.has(id) ? { id, get: () => conversation } : undefined },
     binding: () => ({ session: { projections: { faceOf: () => store(() => ({ maxImagesPerMessage: 1, maxImageBytes: 10, maxMessageImageBytes: 10, mediaTypes: ['image/png'] })) } } }),
   }
-  return { bridge: createHarnessDraftBridge(sessions, () => account, async () => 'default-work'), inputs, files, uploads, sessions, setFail: (value: boolean) => { fail = value }, changeAccount: () => { account = false }, created: () => created, current: () => current }
+  return { retained, release, ready, bridge: createHarnessDraftBridge(sessions, () => account, async () => 'default-work'), inputs, files, uploads, sessions, setFail: (value: boolean) => { fail = value }, changeAccount: () => { account = false }, created: () => created, current: () => current }
 }
 const request = () => ({ operationId: 'operation', files: [new File(['正文'], '快记摘录.md')], signal: new AbortController().signal })
 describe('原生 DSH 附件草稿', () => {
@@ -35,7 +44,7 @@ describe('原生 DSH 附件草稿', () => {
   it('cleans partial drafts and retries in the same newly created session', async () => {
     const f = fixture(); f.setFail(true)
     await expect(f.bridge.prepare(request())).rejects.toThrow('上传失败')
-    expect(f.files.size).toBe(0); expect(f.current()).toBe('old')
+    expect(f.files.size).toBe(0); expect(f.current()).toBe('old'); expect(f.release).toHaveBeenCalledOnce()
     f.setFail(false); await f.bridge.prepare(request()); expect(f.created()).toBe(1)
   })
   it('refuses edited retry targets, account changes and unsupported versions', async () => {
@@ -90,4 +99,45 @@ it('waits for workspace confirmation before opening or attaching, and retries wi
   expect(f.created()).toBe(1)
   expect(ids).toEqual([undefined, result.sessionId, result.sessionId])
   expect(f.inputs.get(result.sessionId)?.attachmentIds).toEqual(['1'])
+})
+
+
+it('retains a catalog-only session before accessing its draft and releases the temporary owner', async () => {
+  const f = fixture()
+  const result = await f.bridge.prepare({ ...request(), files: [new File(['PNG'], '截图.png', { type: 'image/png' })] })
+  expect(f.inputs.get(result.sessionId)?.attachmentIds).toEqual(['1'])
+  expect(f.release).toHaveBeenCalledExactlyOnceWith(result.sessionId)
+  expect(f.retained.size).toBe(0)
+  expect(f.current()).toBe(result.sessionId)
+})
+
+it('waits for native session readiness before opening or registering attachments', async () => {
+  const f = fixture(), gate = Promise.withResolvers<void>()
+  f.ready.mockReturnValueOnce(gate.promise)
+  const pending = f.bridge.prepare(request())
+  await vi.waitFor(() => expect(f.ready).toHaveBeenCalledOnce())
+  expect(f.files.size).toBe(0)
+  expect(f.current()).toBe('old')
+  gate.resolve()
+  await pending
+  expect(f.release).toHaveBeenCalledOnce()
+})
+
+it.each(['abort', 'dispose', 'failure', 'navigation'] as const)('releases ownership on native readiness %s', async kind => {
+  const f = fixture(), gate = Promise.withResolvers<void>(), controller = new AbortController()
+  f.ready.mockReturnValueOnce(gate.promise)
+  const pending = f.bridge.prepare({ ...request(), signal: controller.signal })
+  const rejected = expect(pending).rejects.toThrow()
+  await vi.waitFor(() => expect(f.ready).toHaveBeenCalledOnce())
+  if (kind === 'abort') controller.abort()
+  else if (kind === 'dispose') f.bridge.dispose()
+  else if (kind === 'failure') gate.reject(new Error('Session.open failed'))
+  else f.sessions.open('user-selected')
+  if (kind === 'navigation') gate.resolve()
+  await rejected
+  expect(f.release).toHaveBeenCalledOnce()
+  expect(f.retained.size).toBe(0)
+  expect(f.files.size).toBe(0)
+  expect(f.current()).toBe(kind === 'navigation' ? 'user-selected' : 'old')
+  if (kind === 'abort' || kind === 'dispose') gate.reject(new Error('late failure'))
 })
