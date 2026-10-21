@@ -10,8 +10,9 @@ import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, type Service
 
 const ROOT = '/api/v1/chats/offline-context/'
 const JOURNAL = 'arkme-offline-context-journal-v1'
+const MAX_CONTEXT_ID_LENGTH = 200
 const invalid = () => new ArkmePluginError('offline-context-invalid', '上下文数据无效，请刷新后重试', false, 409)
-function text(value: unknown, max = 200): string {
+function text(value: unknown, max = MAX_CONTEXT_ID_LENGTH): string {
   if (typeof value !== 'string' || !value || value.length > max) throw invalid()
   return value
 }
@@ -57,8 +58,11 @@ export class OfflineContextService implements OfflineContextPort {
     return text(identity.id)
   }
 
-  async messageReference(chat: string, relation: string, record: string, owner: RecordOwnerId): Promise<string> {
+  async messageReference(chat: string, relation: string, record: string, owner: RecordOwnerId): Promise<string | undefined> {
     const session = await this.runtime.requireSession()
+    // Chat IDs can exceed the offline-context backend's identifier limit.
+    // Such messages remain readable without an optional association reference.
+    if ([chat, relation, record].some(id => id.length > MAX_CONTEXT_ID_LENGTH)) return undefined
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
     return codec.seal(JSON.stringify({ chat: text(chat), relation: text(relation), record: text(record), owner: messageOwner(owner) }), 'message')
   }
