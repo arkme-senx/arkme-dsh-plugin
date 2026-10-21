@@ -28,6 +28,19 @@ it('keeps a Bot owner exact across timeline references, association reads and me
   await expect(f.service.messageReference('private-chat-id', 'private-relation', 'private-record', Number(owner))).rejects.toThrow()
   f.service.dispose()
 })
+it('keeps the offline-context identifier boundary without blocking readable messages', async () => {
+  const f = await fixture()
+  try {
+    const boundary = 'x'.repeat(200)
+    const ref = await f.service.messageReference('private-chat-id', boundary, boundary, 8)
+    expect(await f.service.messageAnchor(ref!, 'private-chat-id')).toEqual({ record_uid: boundary, record_owner_user_id: 8 })
+    for (const ids of [['private-chat-id', 'r'.repeat(201), boundary], ['private-chat-id', boundary, 'm'.repeat(201)]]) {
+      expect(await f.service.messageReference(ids[0]!, ids[1]!, ids[2]!, 8)).toBeUndefined()
+    }
+    await expect(f.service.messageReference('private-chat-id', '', boundary, 8)).rejects.toMatchObject({ code: 'offline-context-invalid' })
+    await expect(f.service.messageReference('private-chat-id', boundary, boundary, 0)).rejects.toMatchObject({ code: 'offline-context-invalid' })
+  } finally { f.service.dispose() }
+})
 async function fixture(invalidateProjection?: (userId: number) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'offline context scope ')); directories.push(directory)
   const store = new ArkmeStateStore(directory)

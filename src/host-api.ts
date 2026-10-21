@@ -975,6 +975,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
+      if (['arko.ask', 'arko.pending.prepare', 'arko.pending.acknowledge'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', 'Arko 输入必须由当前 DSH 页面发起', false, 403)
+      }
       if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
@@ -1778,6 +1781,9 @@ export async function dispatchArkmeHostOperation(
       return await service.markAiLettersRead(letterIds, requestSignal)
     }
     case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
+    case 'arko.pending.read': return await service.arkoPendingTurns(optionalPositiveIntegerParam(params,'expectedUserId'))
+    case 'arko.pending.prepare': await service.arkoPrepareTurn(params.turn as import('./arko-turn-contract.js').ArkmeArkoPendingTurn); return {saved:true}
+    case 'arko.pending.acknowledge': await service.arkoAcknowledgeTurn(stringParam(params,'clientTurnUid'),optionalPositiveIntegerParam(params,'expectedUserId'));return {saved:true}
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.local-mark.capabilities': return await service.arkoLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'arko.local-mark.list': return await service.arkoLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)

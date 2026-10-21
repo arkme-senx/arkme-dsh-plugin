@@ -98,6 +98,35 @@ describe('unified timeline owner contract', () => {
         .toEqual({ record_uid: 'record', record_owner_user_id: owner })
     } finally { service.dispose(); contexts.dispose() }
   })
+  it.each(['initial', 'older'] as const)('keeps %s history readable when Bot IDs exceed offline-context limits', async mode => {
+    const record = 'r'.repeat(210), relation = 'm'.repeat(215), owner = '6690025278483443577'
+    const items = [{ itemUid: record, timelineItemKey: relation, senderName: 'Bot', isMe: false,
+      sendAtMillis: 10, title: '', textContent: 'build notification', status: 1, sequence: 9 },
+    { itemUid: 'ordinary-record', timelineItemKey: 'ordinary-relation', senderName: '同事', isMe: false,
+      sendAtMillis: 9, title: '', textContent: 'previous message', status: 1, sequence: 8 }]
+    const raw = { ...response(), older_has_more: true, has_more: true, older_cursor: 'next', next_cursor: 'next',
+      timeline_items: items.map(item => ({ event_id: item.timelineItemKey, kind: 'message', source: 'messages',
+        occurred_at: item.sendAtMillis, order_tie: item.timelineItemKey, content_status: 'available',
+        payload: { relation: { rel_uid: item.timelineItemKey, record_uid: item.itemUid, record_owner_user_id: owner } } })) }
+    const runtime = { requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, subscribeAccountScope: () => () => {}, authenticatedChatPost: vi.fn(async () => raw) }
+    const source = { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }),
+      sourceItem: async () => ({ kind: 'group_chat' }), chatTimelineItemKey: async (_user: number, _chat: string, id: string) => id }
+    const contexts = new OfflineContextService(runtime as never, source as never)
+    const service = new UnifiedChatTimelineService(runtime as never, source as never,
+      { projectChatTimelineItems: async () => items } as never, {} as never, undefined, contexts)
+    try {
+      const initial = await service.read('ref')
+      const page = mode === 'older' ? await service.read('ref', { mode, cursor: initial.unified!.olderCursor }) : initial
+      expect(page.unified?.complete).toBe(true)
+      expect(page.items.map(item => item.itemUid)).toEqual(['ordinary-record', record])
+      expect(page.items[1]).not.toHaveProperty('offlineContextMessageRef')
+      expect(page.items[0]?.offlineContextMessageRef).toBeTruthy()
+      expect(page.unified?.olderHasMore).toBe(true)
+      expect(page.unified?.olderCursor).toBeTruthy()
+      expect(runtime.authenticatedChatPost.mock.calls).toHaveLength(mode === 'older' ? 2 : 1)
+    } finally { service.dispose(); contexts.dispose() }
+  })
   it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
     const post = vi.fn().mockResolvedValue(raw)

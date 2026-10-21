@@ -88,17 +88,28 @@ export function ArkoImageDraftStrip({ attachments, draftKey, disabled }: {
   </>
 }
 
+function ArkoMessageImage({ block, single, onOpen }: { block: ArkmeContentBlock; single: boolean; onOpen(): void }) {
+  const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  if (failed) return <button type="button" onClick={event => {
+    event.stopPropagation()
+    setAttempt(value => value + 1)
+    setFailed(false)
+  }}>{block.fileName} · {tr('加载失败，点击重试')}</button>
+  return <button type="button" aria-label={tr('预览图片：{v0}', { v0: block.fileName })}
+    onClick={event => { event.stopPropagation(); onOpen() }} style={{ padding: 0, border: 0, background: 'transparent', cursor: 'pointer', maxWidth: '100%' }}>
+    <img src={`${arkmeContentMediaUrl(block)}&retry=${attempt}`} alt={block.fileName} loading="lazy" onError={() => { setFailed(true) }}
+      style={{ display: 'block', borderRadius: 8, maxWidth: '100%', width: single ? 280 : 132, maxHeight: 260, objectFit: 'contain' }} />
+  </button>
+}
+
 export function ArkoMessageImages({ blocks = [] }: { blocks?: readonly ArkmeContentBlock[] }) {
   const [preview, setPreview] = useState<ArkmeContentBlock>()
   if (!blocks.length) return null
   return <div aria-label={tr('消息图片')} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
     {blocks.map((block, index) => block.mediaRef === ''
-      ? <span key={block.fileAssetUid ?? index} style={{ padding: 12, color: arkmeTheme.secondary }}>{tr('图片暂不可用')} · {block.fileName}</span>
-      : <button key={block.fileAssetUid ?? block.mediaRef} type="button" aria-label={tr('预览图片：{v0}', { v0: block.fileName })}
-          onClick={event => { event.stopPropagation(); setPreview(block) }} style={{ padding: 0, border: 0, background: 'transparent', cursor: 'pointer', maxWidth: '100%' }}>
-          <img src={arkmeContentMediaUrl(block)} alt={block.fileName} loading="lazy"
-            style={{ display: 'block', borderRadius: 8, maxWidth: '100%', width: blocks.length === 1 ? 280 : 132, maxHeight: 260, objectFit: 'contain' }} />
-        </button>)}
+      ? <span key={`${index}:${block.fileAssetUid}`} style={{ padding: 12, color: arkmeTheme.secondary }}>{tr('图片暂不可用')} · {block.fileName}</span>
+      : <ArkoMessageImage key={`${index}:${block.mediaRef}`} block={block} single={blocks.length === 1} onOpen={() => { setPreview(block) }} />)}
     {preview && createPortal(<ArkmeMediaPreview selected={preview} blocks={[...blocks].filter(block => block.mediaRef !== '')}
       onSelect={setPreview} onClose={() => setPreview(undefined)} openLocalFile={false} />, document.body)}
   </div>

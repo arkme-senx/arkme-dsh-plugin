@@ -70,8 +70,13 @@ beforeEach(() => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
   ask = vi.fn().mockResolvedValue(result)
   history = []
+  const pending=new Map<string,unknown>()
   vi.mocked(callArkme).mockImplementation(async (method, input) => {
-    if (method === 'arko.ask') return ask(input)
+    if(method==='arko.pending.read')return [...pending.values()].filter((turn:any)=>input?.expectedUserId===undefined || turn.userId===input.expectedUserId) as never
+    if(method==='arko.pending.prepare'){const turn=input?.turn as any;pending.set(turn.clientTurnUid,structuredClone(turn));return {saved:true} as never}
+    if(method==='arko.pending.acknowledge'){pending.delete(String(input?.clientTurnUid));return {saved:true} as never}
+
+    if (method === 'arko.ask') { const result=await ask(input);pending.delete(String(input?.clientTurnUid));return result }
     if (method === 'arko.session') return { sessionId: 88 } as never
     if (method === 'arko.history') return { items: history } as never
     if (method === 'arko.models') return { options: [{ routeKey: 'model-a', displayName: 'Model A', selected: true }, { routeKey: 'model-b', displayName: 'Model B', selected: false }], effectiveRouteKey: 'model-a' } as never
@@ -118,7 +123,7 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).not.toHaveBeenCalled()
     expect(host.textContent).toContain('图片能力尚未接通')
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it('renders image-only bubbles and clears their draft only after server acceptance', async () => {
@@ -140,7 +145,7 @@ describe('Arko emoji input and send boundary', () => {
     await send()
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
     expect(host.querySelector('[aria-label="消息图片"]')).toBeNull()
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it('recovers image retry identity across a remount without losing the draft', async () => {
@@ -148,13 +153,13 @@ describe('Arko emoji input and send boundary', () => {
     ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'network', message: '超时', retryable: true }))
     await send()
     const first = ask.mock.calls[0]![0]
-    expect(readArkoPendingTurn(10001)?.images).toEqual([imageFile])
+    expect((await readArkoPendingTurn(10001))?.images).toEqual([imageFile])
     await act(async () => { root.render(null) })
     await mount()
     expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
     await click([...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === '重试确认')!)
     expect(ask.mock.calls[1]![0]).toMatchObject({ clientTurnUid: first.clientTurnUid, imageFileRefs: first.imageFileRefs })
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
   })
 
@@ -627,7 +632,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await chooseEmoji()
     await send()
-    expect(readArkoPendingTurn(10001)?.text).toBe(emoji.token)
+    expect((await readArkoPendingTurn(10001))?.text).toBe(emoji.token)
     expect(button('选择表情').disabled).toBe(true)
     expect(editor().getAttribute('contenteditable')).toBe('false')
     expect(document.querySelector('[data-arkme-emoji-panel]')).toBeNull()
@@ -638,7 +643,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await chooseEmoji()
     await send()
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     expect(button('选择表情').disabled).toBe(false)
     expect(host.querySelector('[data-arkme-rich-emoji]')).not.toBeNull()
     expect(host.textContent).toContain('当前不可发送')
@@ -754,7 +759,7 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).toHaveBeenCalledTimes(2)
     expect(ask.mock.calls[1]![0]).toEqual(first)
     expect(first.text).toBe(emoji.token)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it('closes on Escape and keeps active-run stop control separate from emoji editing', async () => {
