@@ -155,7 +155,7 @@ it('registers the configured default workspace before creating an attachment con
   const createWorkspace = vi.fn(async () => ({ workspaceId: 'default-id' }))
   const createSession = vi.fn(async () => { throw new Error('stop after create') })
   apply({ effect: (effect: () => () => void) => { stop = effect() }, get: (key: string) => key === 'workspaces' ? { create: createWorkspace } : undefined,
-    sessions: { create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
+    sessions: { retain: vi.fn(), create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
   } as unknown as ClientContext)
   const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
   await expect(bridge.prepare({ operationId: 'default-workspace', files: [], signal: new AbortController().signal })).rejects.toThrow('stop after create')
@@ -178,6 +178,7 @@ it.each(['stale', 'ready', 'missing'] as const)('confirms composer workspace mem
   apply({ effect: (effect: () => () => void) => { stop = effect() },
     get: () => ({ create: createWorkspace, list: { getSnapshot: () => ({ items }) } }),
     sessions: {
+      retain: () => ({ ready: Promise.resolve(), release: vi.fn() }),
       create: async (options: { sessionId: string }) => {
         id = options.sessionId
         if (state === 'ready') items = [{ workspaceId: 'default', sessionIds: [id] }]
