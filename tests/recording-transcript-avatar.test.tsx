@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', async original => ({
-  ...await original<typeof import('../src/client/api.js')>(), callArkme: mocks.call,
+// Importing the real API here recursively initializes conversation bootstrap and
+// the avatar runtime before its mocked transport is installed.
+vi.mock('../src/client/api.js', async () => ({
+  ArkmeClientError: (await import('../src/sdk/index.js')).ArkmeClientError,
+  callArkme: mocks.call,
 }))
 import { ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingTimeline } from '../src/client/recordings/ArkmeRecordingTimeline.js'
