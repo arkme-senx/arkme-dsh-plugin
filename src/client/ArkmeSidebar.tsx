@@ -106,7 +106,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  IconCheckOutline16, IconLoadingOutline16, IconWarningOutline16, IconPaperclipOutline16, IconEditOutline16, Toast,
+  IconCheckOutlineMedium, IconLoadingOutlineMedium, IconWarningOutlineMedium, IconPaperclipOutlineMedium, IconEditOutlineMedium, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { invalidateDirectMessageAdmission, requireDirectMessageSendAllowed, useDirectMessageAdmission } from './direct-message-admission.js'
 import {
@@ -8807,7 +8807,7 @@ export function ArkmeSurface({
           data-arkme-conversation-export-progress="true"
           style={styles.conversationExportProgress}
         >
-          <IconLoadingOutline16 className="arkme-icon-spin" />
+          <IconLoadingOutlineMedium className="arkme-icon-spin" />
           <span style={styles.conversationExportProgressName}>{conversationExport.sourceName}</span>
           <span style={styles.conversationExportProgressCount}>{conversationExport.processed > 0
             ? tr("已处理 {v0} 条", { v0: String(conversationExport.processed) })
@@ -8818,8 +8818,8 @@ export function ArkmeSurface({
           text={conversationExportToast.text}
           anchor={panelRef.current}
           icon={conversationExportToast.kind === 'success'
-            ? <span style={{ color: 'var(--dsw-alias-state-success-primary, #16a34a)' }}><IconCheckOutline16 /></span>
-            : <span style={{ color: 'var(--dsw-alias-state-error-primary, #ef4444)' }}><IconWarningOutline16 /></span>}
+            ? <span style={{ color: 'var(--dsw-alias-state-success-primary, #16a34a)' }}><IconCheckOutlineMedium /></span>
+            : <span style={{ color: 'var(--dsw-alias-state-error-primary, #ef4444)' }}><IconWarningOutlineMedium /></span>}
           onDone={() => {
             setConversationExportToast(current => current?.sequence === conversationExportToast.sequence ? undefined : current)
           }}
@@ -9139,13 +9139,13 @@ export function ArkmeSurface({
             {addMenuOpen && <ArkmeActionMenu label={tr("添加内容")} side="top"
               getAnchorRect={() => addMenuTriggerRef.current?.getBoundingClientRect() ?? null}
               onClose={() => setAddMenuOpen(false)} actions={[
-                { id: 'files', label: '添加附件', icon: <IconPaperclipOutline16 />, onSelect: () => { setAddMenuOpen(false); fileInputRef.current?.click() } },
-                activeRecordReeditComposer === undefined && { id: 'article', label: sourceIsChat ? '添加长文' : '写长文', icon: <IconEditOutline16 />, disabled: pendingArticle?.sending === true, onSelect: () => { if (pendingArticle?.sending) return; if (sourceIsChat) setArticlePickerScope(captureComposerAsyncScope()); else void createLongArticle(); setAddMenuOpen(false) } },
+                { id: 'files', label: '添加附件', icon: <IconPaperclipOutlineMedium />, onSelect: () => { setAddMenuOpen(false); fileInputRef.current?.click() } },
+                activeRecordReeditComposer === undefined && { id: 'article', label: sourceIsChat ? '添加长文' : '写长文', icon: <IconEditOutlineMedium />, disabled: pendingArticle?.sending === true, onSelect: () => { if (pendingArticle?.sending) return; if (sourceIsChat) setArticlePickerScope(captureComposerAsyncScope()); else void createLongArticle(); setAddMenuOpen(false) } },
               ]} />}
             <input ref={fileInputRef} type="file" multiple hidden onChange={event => { void selectFiles(event.currentTarget.files) }} />
             <div className="arkme-conversation-input-card">
             {pendingArticle && <div data-arkme-pending-article="true" style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 12px', padding: '10px 12px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.layer1, color: arkmeTheme.text }}>
-              <IconEditOutline16 />
+              <IconEditOutlineMedium />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>{pendingArticle.article.kind === 'existing' ? pendingArticle.article.detail.title : pendingArticle.article.draft.title}</div>
                 <div style={{ color: arkmeTheme.secondary, fontSize: 12, marginTop: 4 }}>{pendingArticle.sending ? '长文发送中…' : '长文将单独发送，原文字和附件保留'}</div>

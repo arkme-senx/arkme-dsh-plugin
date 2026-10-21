@@ -1,6 +1,6 @@
 import { migrationDownloadProgress } from '../app-migration-shared.js'
 import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
-import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
 import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
@@ -1186,7 +1186,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
 
       {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>
-    {emailBoundToast && <Toast text={tr('邮箱绑定成功')} anchor={surfaceRef.current} icon={<IconCheckOutline16 />} onDone={() => { setEmailBoundToast(false) }} />}
+    {emailBoundToast && <Toast text={tr('邮箱绑定成功')} anchor={surfaceRef.current} icon={<IconCheckOutlineMedium />} onDone={() => { setEmailBoundToast(false) }} />}
     {activeAccountDialog === 'qr' && profile !== undefined
       ? <ProfileQrDialog profile={profile} shareWebsite={clientConfig?.shareWebsite} onClose={() => { setActiveAccountDialog(null) }} />
       : null}

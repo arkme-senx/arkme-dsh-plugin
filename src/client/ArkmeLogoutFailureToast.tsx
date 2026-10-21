@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Toast, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconWarningOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ArkmeLogoutFeedback } from '../types.js'
 import { callArkme } from './api.js'
 
@@ -45,5 +45,5 @@ export function ArkmeLogoutFailureToast() {
     }
   }, [])
   return notice === undefined ? null : <Toast key={notice.id} text={notice.message}
-    anchor={document.body} icon={<IconWarningOutline16 />} onDone={() => { setNotice(undefined) }} />
+    anchor={document.body} icon={<IconWarningOutlineMedium />} onDone={() => { setNotice(undefined) }} />
 }

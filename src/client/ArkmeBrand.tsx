@@ -1,27 +1,8 @@
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { CSSProperties } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { useArkmeBrand } from './product-brand.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
-
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap {
-    'sidebar.brand.mark': {
-      kind: 'single'
-      scope: 'root'
-      owner: { size: number }
-    }
-    'sidebar.brand.name': {
-      kind: 'single'
-      scope: 'root'
-      owner: Record<string, never>
-    }
-    'conversation.hero.brand.mark': {
-      kind: 'single'
-      scope: 'root'
-      owner: { size: number; className?: string }
-    }
-  }
-}
 
 type SidebarMarkProps = PropsRuntime<'sidebar.brand.mark'>
 type HeroMarkProps = PropsRuntime<'conversation.hero.brand.mark'>

@@ -1,7 +1,7 @@
 import { tr, useArkmeLocale } from './locale.js'
 import { useMemo, useRef, useState } from 'react'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
-import { IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconLoadingOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeConversationHeaderIconButton } from './ArkmeGroupChatControls.js'
 import { useCalendarMonth } from './use-calendar-month.js'
@@ -38,7 +38,7 @@ export function ArkmeChatCalendar({ sourceRef, scopeKey, accountScope, getReadin
         setOpen(value => !value)
       }}>
       {index.loading && !index.value
-        ? <span role="status" aria-label={tr("正在加载日历")} style={{ display: 'inline-flex' }}><IconLoadingOutline16 className="arkme-icon-spin" /></span>
+        ? <span role="status" aria-label={tr("正在加载日历")} style={{ display: 'inline-flex' }}><IconLoadingOutlineMedium className="arkme-icon-spin" /></span>
         : <CalendarBlank size={16} aria-hidden />}
     </ArkmeConversationHeaderIconButton>
     <ArkmeSelfCalendarPopover open={open} anchor={anchor} sourceRef={sourceRef} scopeKey={scopeKey}

@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { vi } from 'vitest'
 

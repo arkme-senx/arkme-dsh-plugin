@@ -52,6 +52,7 @@ it('loads through the real Cordis service boundary declared by onboarding', asyn
   const root = new Context()
   root.reflect.provide('slots', {})
   root.reflect.provide('sessions', {})
+  root.reflect.provide('uiWorkspace', {})
   root.reflect.provide('modules', { import: async () => ({ install: () => () => {} }) })
   let dispose: (() => void) | undefined
   const fiber = root.plugin({ inject, apply(ctx) { dispose = loadNativeSelection(ctx as unknown as ClientContext, document, '/selection.js') } })

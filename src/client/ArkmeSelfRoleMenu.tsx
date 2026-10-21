@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconEllipsisOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeActionMenu, type ArkmeMenuAction } from './ArkmeDshMenu.js'
 import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
 
@@ -79,7 +79,7 @@ export function ArkmeSelfRoleMenu({ open, anchor, actions, selectedIds, onClose 
           autoFocus onClose={() => setManagedId('')} actions={action.managementActions}
           anchor={<button type="button" style={styles.manage} aria-label={`管理${String(action.label)}`}
             title="管理角色" aria-haspopup="menu" aria-expanded={managedId === action.id}
-            onClick={() => setManagedId(managedId === action.id ? '' : action.id)}><IconEllipsisOutline16 /></button>} />}
+            onClick={() => setManagedId(managedId === action.id ? '' : action.id)}><IconEllipsisOutlineMedium /></button>} />}
       </div>
     })}
   </div>

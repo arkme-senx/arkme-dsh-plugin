@@ -1,6 +1,6 @@
 import { tr, useArkmeLocale } from './locale.js'
 import {
-  IconCheckOutline16, IconEllipsisOutline16, IconPersonalizationOutline16, Menu, Tooltip, type MenuEntry,
+  IconCheckOutlineMedium, IconEllipsisOutlineMedium, IconPersonalizationOutlineMedium, Menu, Tooltip, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
@@ -60,7 +60,7 @@ export function ArkmeDshRowActionsMenu(props: {
     anchor={<button type="button" className="arkme-dsh-row-actions-button"
       title={tr("主题操作")} aria-label={props.label} aria-haspopup="menu" aria-expanded={props.open}
       onClick={event => { event.stopPropagation(); props.onToggle() }}
-    ><IconEllipsisOutline16 /></button>}
+    ><IconEllipsisOutlineMedium /></button>}
   />
 }
 
@@ -124,7 +124,7 @@ export function ArkmeDshMenu(props: {
         return <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled}
           aria-label={typeof entry.label === 'string' ? entry.label : undefined}
           onClick={() => { if (!entry.disabled) props.onSelect(entry.id) }}>
-          {entry.icon}<span>{entry.label}</span>{selected ? <IconCheckOutline16 /> : null}
+          {entry.icon}<span>{entry.label}</span>{selected ? <IconCheckOutlineMedium /> : null}
         </button>
       })}
     </div>}
@@ -399,7 +399,7 @@ export function ArkmeDshViewOptionsMenu(props: {
         aria-expanded={props.open}
         data-arkme-self-topic-sort-trigger={props.dataArkmeSelfTopicSortTrigger}
         onClick={() => { props.open ? props.onClose() : props.onOpen() }}
-      ><IconPersonalizationOutline16 /></button>
+      ><IconPersonalizationOutlineMedium /></button>
     </Tooltip>}
   />
 }

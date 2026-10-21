@@ -141,7 +141,7 @@ export function createArkmeImageToolDefinition(ctx: Context, service: ArkmeImage
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: imageToolContent(value),
-          source: { kind: 'plugin', plugin: 'dsh-arkme' },
+          source: { kind: 'tool', callId: exec.callId },
         }))
       }
       return value
