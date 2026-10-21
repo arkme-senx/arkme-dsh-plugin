@@ -70,7 +70,6 @@ describe('official DSH client adapter', () => {
       inject?: () => unknown
     }> = []
     const inject = vi.fn((key: string, register: () => unknown) => {
-      if (key === 'main.conversation') return () => {}
       register()
       return () => {}
     })
@@ -106,9 +105,10 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).toEqual([
       'arkme.topic.actions',
       'arkme.send-to-self.entry',
+      'settings.launcher',
       'sidebar',
-      'conversation',
-      'details',
+      'main',
+      'rightbar',
       'settings.section',
       'settings.section',
       'settings.section',
@@ -129,10 +129,11 @@ describe('official DSH client adapter', () => {
         },
       }),
       expect.objectContaining({
-        name: 'conversation',
+        name: 'main',
+        key: 'conversation',
         priority: -100,
       }),
-      expect.objectContaining({ name: 'details', priority: -100 }),
+      expect.objectContaining({ name: 'rightbar', priority: -100 }),
       expect.objectContaining({
         name: 'shell.overlay',
         id: 'arkme-web-login-overlay',
@@ -164,11 +165,11 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
     expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
     expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: expect.any(Function) }))
-    expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
+    expect(registered.find(item => item.name === 'main')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })
 
-  it('uses the DSH 0.1.5 rightbar API when the legacy details API is unavailable', () => {
+  it('uses the DSH 0.2 rightbar API when the legacy details API is unavailable', () => {
     let sidebarFace: { closeDetails(): void } | undefined
     const registeredNames: string[] = []
     const closeRightbar = vi.fn()
@@ -178,7 +179,6 @@ describe('official DSH client adapter', () => {
       return vi.fn()
     })
     const inject = vi.fn((key: string, registerEntry: () => unknown) => {
-      if (key === 'conversation' || key === 'details') return () => {}
       return registerEntry()
     })
     const effect = vi.fn((factory: () => unknown, label: string) => {
@@ -195,7 +195,7 @@ describe('official DSH client adapter', () => {
 
     sidebarFace?.closeDetails()
     expect(closeRightbar).toHaveBeenCalledOnce()
-    expect(registeredNames).toContain('main.conversation')
+    expect(registeredNames).toContain('main')
   })
 
   it('tracks the official settings trigger instead of mistaking an unrelated dialog for settings', () => {
@@ -292,7 +292,7 @@ describe('official DSH client adapter', () => {
 
     expect(disposed).toEqual([])
     expect(register.mock.calls.map(([options]) => (options as { name: string }).name))
-      .toEqual(expect.arrayContaining(['sidebar', 'conversation', 'details']))
+      .toEqual(expect.arrayContaining(['sidebar', 'main', 'rightbar']))
     cleanups.forEach(cleanup => { cleanup() })
     arkmeUi.showConversations()
   })

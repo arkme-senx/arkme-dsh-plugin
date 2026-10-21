@@ -336,7 +336,10 @@ export function ArkmeActionMenu(props: {
     onKeyDown={event => {
       if (!open) return
       if (event.key === 'Escape') {
-        event.preventDefault(); event.stopPropagation(); props.onClose()
+        // DSH 0.2 handles Escape at document capture before React's portal event.
+        const closedByNative = event.defaultPrevented
+        event.preventDefault(); event.stopPropagation()
+        if (!closedByNative) props.onClose()
         const trigger = root.current?.querySelector<HTMLButtonElement>('button')
         if (trigger) trigger.focus()
         else returnFocus.current?.focus()

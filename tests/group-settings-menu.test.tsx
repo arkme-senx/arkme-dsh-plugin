@@ -1,6 +1,17 @@
 // @vitest-environment jsdom
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer'
+// Native MenuSurface portals its material backing; refs must be DOM Nodes.
+const create: typeof createRenderer = (element, options) => createRenderer(element, {
+  ...options,
+  createNodeMock: node => {
+    const ref = options?.createNodeMock?.(node)
+      ?? (typeof node.type === 'string' ? document.createElement(node.type) : null)
+    if (ref instanceof HTMLElement && 'data-menu-backing' in node.props) ref.setAttribute('data-menu-backing', '')
+    return ref
+  },
+})
+afterEach(() => { document.querySelectorAll('[data-menu-backing]').forEach(node => node.remove()) })
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeGroupActionTarget, ArkmeSourceItem } from '../src/types.js'
 
