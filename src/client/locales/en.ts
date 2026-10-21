@@ -1,5 +1,6 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+同步失败，已有内容仍可阅读|Sync failed. Existing content is still available.
 尚未开启分析|Analysis is off
 暂时无法确认分析设置|Analysis settings are temporarily unavailable
 「探索 → 个人档案」|Explore → Personal profile

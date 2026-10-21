@@ -1,3 +1,4 @@
+import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
 import { OfflineContextMessageLink, useOfflineContextMessageLinks } from './offline-context/OfflineContextMessageLink.js'
 import { ArkmeMessageSelectionBar } from './ArkmeMessageSelectionBar.js'
@@ -386,6 +387,7 @@ export interface ArkmeSurfaceProps {
   t?: ArkmeLoginTranslate
   floating?: boolean
   productNavigation?: boolean
+  conversationBootstrap?: ConversationWindowBootstrap | undefined
   initialAuth?: ArkmeAuthSnapshot | undefined
   currentSessionId?: string | undefined
   renderSlot?: ArkmeNavigationProps['renderSlot']
@@ -1421,7 +1423,7 @@ export function arkmeTimelineSenderName(item: ArkmeTimelineItem, profile?: Arkme
   return profile.displayName.trim() || profile.nickname.trim() || item.senderName
 }
 
-export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: ArkmeUserProfile): string | undefined {
+export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: Pick<ArkmeUserProfile, 'avatarRef'>): string | undefined {
   const itemAvatarRef = item.avatarRef?.trim()
   if (itemAvatarRef !== undefined && itemAvatarRef !== '') return itemAvatarRef
   if (item.avatarSnapshot === true) return undefined
@@ -2036,6 +2038,7 @@ export function ArkmeSurface({
   t = defaultArkmeLoginTranslate,
   floating = false,
   initialAuth,
+  conversationBootstrap,
   currentSessionId,
   renderSlot,
   productChrome = true,
@@ -3026,6 +3029,17 @@ export function ArkmeSurface({
     [authenticatedAccountKey],
   )
   const cacheAccountKeyRef = useRef<string>()
+  useEffect(() => {
+    if (!authenticatedAccountKey) return
+    return registerConversationWindowContent(authenticatedAccountKey, sourceKey => {
+      if (cacheAccountKeyRef.current !== authenticatedAccountKey) return
+      if (active && sourceKey === conversationKey && bodyRef.current) {
+        conversationCacheRef.current.storeViewport(sourceKey, arkmeConversationViewport(bodyRef.current))
+      }
+      const content = readConversationWindowContent(conversationCacheRef.current, sourceKey)
+      return content && selfProfile?.avatarRef.trim() ? {...content, selfAvatarRef: selfProfile.avatarRef.trim()} : content
+    })
+  }, [active, authenticatedAccountKey, conversationKey, selfProfile?.avatarRef])
   const timelineGenerationRef = useRef(0)
   const timelineWindowRevisionRef = useRef(0)
   const appliedTimelineInvalidationsRef = useRef(new Map<string, number>())
@@ -4333,6 +4347,10 @@ export function ArkmeSurface({
       conversationCacheRef.current.clear()
       appliedTimelineInvalidationsRef.current.clear()
       cacheAccountKeyRef.current = authenticatedAccountKey
+      if (conversationBootstrap && conversationBootstrap.accountKey === authenticatedAccountKey && conversationBootstrap.sourceKey === conversationKey
+        && conversationBootstrap.content) {
+        restoreConversationWindowContent(conversationCacheRef.current, conversationKey, conversationBootstrap.content)
+      }
     }
     const sourceKey = authenticated && conversationKey !== '' ? conversationKey : undefined
     const cachedTimeline = sourceKey === undefined
@@ -4595,7 +4613,7 @@ export function ArkmeSurface({
       if (generation === timelineGenerationRef.current) {
         setTimelineLoadingKey(current => current === conversationKey ? '' : current)
         setTimelineSkeletonKey(current => current === conversationKey ? '' : current)
-        if (!hasCachedTimeline) setTimelineError(errorMessage(caught))
+        if (!hasCachedTimeline || conversationWindowRequested()) setTimelineError(errorMessage(caught))
       }
     })
   }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler])
@@ -6641,6 +6659,7 @@ export function ArkmeSurface({
     [unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
+  const cachedWindowSyncFailed = conversationWindowRequested() && error === '' && timelineError !== '' && liveDisplayRows.length > 0
   const displayRows = liveDisplayRows
   useLayoutEffect(() => {
     const pending = pendingConversationTargetLocateRef.current
@@ -8089,9 +8108,11 @@ export function ArkmeSurface({
                 const role = arkmeSelfRoleForPresentation(item, source.kind)
                 const presentationIsMe = item.isMe && role === undefined
                 const roleFallback = role === undefined ? undefined : arkmeSelfRoleAvatarFallback(role)
+                const avatarProfile = selfProfile ?? (conversationBootstrap && conversationBootstrap.accountKey === authenticatedAccountKey
+                  && conversationBootstrap.content?.selfAvatarRef ? {avatarRef: conversationBootstrap.content.selfAvatarRef} : undefined)
                 const avatarRef = selfWorkspace
-                  ? arkmePersonalAvatarRef(item, selfProfile)
-                  : arkmeTimelineAvatarRef(item, selfProfile)
+                  ? arkmePersonalAvatarRef(item, avatarProfile)
+                  : arkmeTimelineAvatarRef(item, avatarProfile)
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
@@ -8361,7 +8382,7 @@ export function ArkmeSurface({
                   </li>
                 </Fragment>
               })
-  }, [offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, selfConversationMember, conversationMemberByRef, resolveReactionActor,
+  }, [offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, conversationBootstrap, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
@@ -8904,7 +8925,13 @@ export function ArkmeSurface({
             ...styles.body,
             ...(displayRows.length === 0 && interwovenWindow.prelude.length === 0 ? { display: 'flex', flexDirection: 'column' as const } : {}),
           }} onScroll={handleConversationScroll}>
-            {conversationError !== '' && <div role="alert" style={styles.error}>{conversationError}</div>}
+            {conversationError !== '' && <div role="alert" style={cachedWindowSyncFailed ? styles.notice : styles.error}>
+              {cachedWindowSyncFailed ? tr('同步失败，已有内容仍可阅读') : conversationError}
+              {cachedWindowSyncFailed && <button type="button" style={styles.retry} onClick={() => {
+                setTimelineError('')
+                void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setTimelineError(errorMessage(caught)))
+              }}>{tr('重试')}</button>}
+            </div>}
             {unifiedWindow && !unifiedWindow.complete && <div role="status" style={styles.notice}>
               部分时间线内容暂未加载，已确认内容仍可阅读。
               <button type="button" style={styles.retry} onClick={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(caught => setTimelineError(errorMessage(caught))) }}>重试</button>

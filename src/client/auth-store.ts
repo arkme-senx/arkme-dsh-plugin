@@ -54,6 +54,12 @@ export class ArkmeAuthStore {
     this.publish({ ...this.state, auth, checked: true, busy: false, error: '', revision: nextRevision(this.state) })
   }
 
+  /** Restore only a broker-validated same-account display session; Host APIs still authorize every action. */
+  restoreWindowSession(auth: ArkmeAuthSnapshot, config?: ArkmeClientConfig): void {
+    this.setAuth(auth)
+    if (config) this.publish({ ...this.state, config, revision: nextRevision(this.state) })
+  }
+
   setError(error: string): void {
     this.publish({ ...this.state, checked: true, busy: false, error, revision: nextRevision(this.state) })
   }
