@@ -11,7 +11,7 @@ const target: MessageSelectionTarget = { sourceRef: 'self', item: { itemUid: 'no
 const mark = { id: 'mine', actorId: 42, actorName: '你', mine: true, anchor, state: 'available' as const }
 const initial: MessageUnderlineSnapshot = { revision: 1, accessible: true, items: [mark, { ...mark, id: 'other', actorId: 7, actorName: '宏顺', mine: false }] }
 const deferred = <T,>() => { let resolve!: (v:T)=>void, reject!: (e:unknown)=>void; const promise = new Promise<T>((r,j)=>{resolve=r;reject=j}); return {promise,resolve,reject} }
-beforeEach(() => vi.mocked(callArkme).mockReset())
+beforeEach(() => { vi.mocked(callArkme).mockReset() })
 it('requires a versioned capability and derives mine from authenticated viewer', () => {
   expect(underlineCapabilities({ enabled:true })).toMatchObject({supported:false})
   expect(underlineCapabilities({ enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:9000 })).toEqual({supported:true,maxLength:2000})
@@ -206,4 +206,68 @@ it('retains one queued invalidation while an older snapshot is still reading', a
  stale.resolve([{actionRef:'ref',snapshot:{revision:1,accessible:true,items:[]}}]);await read
  expect(callArkme).toHaveBeenCalledTimes(2);expect(session.snapshots.get(underlineTargetKey(target))?.revision).toBe(2)
  session.dispose()
+})
+it('switches between shared and existing local marks without uploading or changing either store', async () => {
+  const { act, useState } = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { webcrypto } = await import('node:crypto')
+  const { useMessageUnderlines } = await import('../src/client/ArkmeMessageUnderlines.js')
+  const { ArkmeMessageTextSelectionToolbar } = await import('../src/client/ArkmeMessageTextSelection.js')
+  const { ArkmeMessageContent } = await import('../src/client/ArkmeRichContent.js')
+  const { quoteDigest } = await import('../src/client/message-quote-selection.js')
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 50, 200, 60))
+  const clientRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
+  Range.prototype.getClientRects = () => [new DOMRect(20, 50, 100, 20)] as unknown as DOMRectList
+  const originalPoint = document.elementFromPoint
+  document.elementFromPoint = () => null
+  const actual = { ...anchor, sourceDigest: await quoteDigest(target.item) }
+  const local = { ...initial, items: [{ ...mark, anchor: actual }] }
+  const cloud = { ...initial, items: [] }
+  vi.mocked(callArkme).mockImplementation(async (operation: string) => {
+    if (operation.endsWith('.capabilities')) return { supported: true, maxLength: 2000 }
+    if (operation.endsWith('.list')) return [{ actionRef: 'ref', snapshot: operation.startsWith('source.local-') ? local : cloud }]
+    throw new Error('Switching storage must not write')
+  })
+  function Fixture() {
+    const [storage, setStorage] = useState<'local' | 'cloud'>('cloud')
+    const marks = useMessageUnderlines('scope', 'self', 42, undefined, storage)
+    return <><ArkmeMessageContent item={target.item} sourceRef="self" />{marks.layer}
+      <ArkmeMessageTextSelectionToolbar replySourceRef="self" markStorage={storage} onMarkStorageChange={setStorage}
+        onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} /></>
+  }
+  const dom = document.createElement('div'); document.body.append(dom)
+  const root = createRoot(dom)
+  const settle = async (check: () => void) => vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); check()
+  })
+  try {
+    await act(async () => root.render(<Fixture />))
+    const text = dom.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+    const node = document.createTreeWalker(text, NodeFilter.SHOW_TEXT).nextNode()!
+    const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 2)
+    document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
+    await act(async () => text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    const localButton = document.querySelector<HTMLButtonElement>('[aria-label="查看仅本机标记"]')!
+    expect(localButton).not.toBeNull()
+    await act(async () => localButton.click())
+    await settle(() => expect(document.querySelector('[role="toolbar"]')?.textContent).toContain('取消标记'))
+    const sharedButton = document.querySelector<HTMLButtonElement>('[aria-label="切换到跨设备同步标记，不上传本机标记"]')!
+    expect(sharedButton).not.toBeNull()
+    await act(async () => sharedButton.click())
+    await settle(() => expect(document.querySelector('[role="toolbar"]')?.textContent).not.toContain('取消标记'))
+    expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation.startsWith('source.local-') && operation.endsWith('.list'))).toBe(true)
+    expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation === 'source.message-underline.list')).toBe(true)
+    expect(vi.mocked(callArkme).mock.calls.every(([operation]) => operation.endsWith('.list') || operation.endsWith('.capabilities'))).toBe(true)
+    expect(local.items).toHaveLength(1)
+    expect(cloud.items).toHaveLength(0)
+  } finally {
+    await act(async () => root.unmount()); dom.remove(); document.getSelection()?.removeAllRanges()
+    rect.mockRestore(); document.elementFromPoint = originalPoint
+    if (clientRects) Object.defineProperty(Range.prototype, 'getClientRects', clientRects)
+    else Reflect.deleteProperty(Range.prototype, 'getClientRects')
+    vi.unstubAllGlobals()
+  }
 })
