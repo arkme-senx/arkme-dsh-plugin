@@ -214,3 +214,25 @@ it('keeps later detail pages visible when refreshing the first page and persists
   expect(mocks.call.mock.calls.filter(c => c[1]?.part === 'records')).toHaveLength(calls)
   expect(host.textContent).toContain('later-page')
 })
+
+it.each([0,60_000])('preserves the saved overview and renews only its reference on return (age %d)',async age=>{
+  const account='test:'+ ++scope,at=Date.now()-age
+  const selected={...items[0],ref:'fresh-ref',title:'列表标题',summary:'列表概述'}
+  const saved={...items[0],ref:'old-ref',title:'已经读过的详情标题',summary:'已经读过的完整详情概述'}
+  relationViewCache.write(account,'view',{filter:'',query:'',page:{...page,module:'relations',items:[selected]},selected,listTop:0,detailTop:200,savedAt:at},at)
+  relationViewCache.write(account,'relations:a',{detail:{item:saved,fields:[{label:'别名',value:'已读别名'}],evidence:[{key:'saved',label:'来源',speaker:'',text:'已读原文',date:0,anchor:false}],actions:[]},recordsAt:at,overviewAt:at,firstKeys:['saved']},at)
+  const pending:Array<{input:any;resolve:(v:any)=>void;reject:(e:Error)=>void}>=[]
+  mocks.call.mockImplementation(async(_op,input)=>new Promise((resolve,reject)=>pending.push({input,resolve,reject})))
+  await act(async()=>root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  expect(host.querySelector('h1')?.textContent).toBe(saved.title)
+  expect(host.querySelector('.explore-detail-summary')?.textContent).toBe(saved.summary)
+  expect(host.textContent).toContain('已读原文')
+  expect(host.querySelector('.explore-detail')?.scrollTop).toBe(200)
+  const cached=relationViewCache.read(account,'relations:a',()=>true)?.value as any
+  expect(cached.detail.item.ref).toBe('fresh-ref')
+  if(age){
+    expect(pending.filter(r=>r.input.part==='overview').map(r=>r.input.ref)).toEqual(['fresh-ref'])
+    await act(async()=>{for(const r of pending)r.reject(new Error('离线'))})
+    expect(host.querySelector('.explore-detail-summary')?.textContent).toBe(saved.summary)
+  }
+})
