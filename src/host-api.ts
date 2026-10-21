@@ -936,6 +936,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('device.lock.') && !isLoopback(req.socket.remoteAddress)) throw new ArkmePluginError('loopback-required', '电脑锁定仅允许本机访问', false, 403)
       if (request.operation.startsWith('app.migration.') && (origin === undefined || !isLoopback(req.socket.remoteAddress))) {
         throw new ArkmePluginError('local-desktop-required', '迁移下载仅允许本机桌面访问', false, 403)
       }
@@ -1063,6 +1064,7 @@ export async function dispatchArkmeHostOperation(
   teamCodex?: TeamCodexService,
   migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
+  if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
@@ -1132,6 +1134,9 @@ export async function dispatchArkmeHostOperation(
       }
       return await requireUpdateManager(updateManager).acknowledge(snoozeHours)
     }
+    case 'device.lock.status': return await service.deviceLockStatus()
+    case 'device.lock.lock': return await service.lockDevice()
+    case 'device.lock.unlock': return await service.requestDeviceUnlock()
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()

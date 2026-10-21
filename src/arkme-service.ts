@@ -1,4 +1,5 @@
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
+import { DeviceLockService } from './services/device-lock-service.js'
 import { PeopleService } from './services/people-service.js'
 import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
@@ -389,6 +390,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
   private readonly media: MediaService
@@ -716,6 +718,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
       new BackgroundSoundMembershipService(this.runtime),
@@ -988,8 +991,13 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async deviceLockStatus() { return await this.deviceLock.refresh() }
+  async lockDevice() { return await this.deviceLock.lock() }
+  async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
+
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     const snapshot = await this.auth.authStatus()
+    void this.deviceLock.refresh().catch(() => undefined)
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
   }
@@ -1225,6 +1233,7 @@ arkoImagesV1:true,
     this.unmarkedSpeaker.dispose()
     this.realtime.dispose()
     this.arko.dispose()
+    this.deviceLock.dispose()
     this.auth.dispose()
     this.bot.dispose()
     this.extensionReview.dispose()
@@ -2704,7 +2713,11 @@ arkoImagesV1:true,
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.logoutFeedback.run(async () => {
       this.recordingPresenceWriter.revoke()
-      return await this.auth.logout()
+      const expected = await this.runtime.accountScopedSession()
+      const revoke = await this.deviceLock.beforeLogout(expected)
+      const result = await this.auth.logout(expected)
+      if (revoke) await this.deviceLock.afterLogout()
+      return result
     })
   }
 

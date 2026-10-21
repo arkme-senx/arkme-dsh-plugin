@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
@@ -87,6 +88,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
+  if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
   if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'

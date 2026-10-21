@@ -89,10 +89,11 @@ export class AuthService {
     }
   }
 
-  async logout(): Promise<ArkmeAuthSnapshot> {
+  async logout(expected?: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
     this.pendingCancellationLogin = undefined
     this.pendingPhoneUnbindSession = undefined
     const activeSession = await this.runtime.sessionStore.read()
+    if (expected !== undefined && (activeSession?.userId !== expected.userId || activeSession?.refreshToken !== expected.refreshToken)) throw this.loginContextChanged()
     const pendingSession = await this.runtime.readPendingBindingSession()
     const userIds = [...new Set([activeSession?.userId, pendingSession?.userId]
       .filter((userId): userId is number => userId !== undefined))]
@@ -100,7 +101,9 @@ export class AuthService {
       this.runtime.invalidateScope(this.runtime.requestScope(userId))
       this.runtime.clearRefreshForUser(userId)
     }
-    await this.runtime.deleteSession()
+    if (expected !== undefined) {
+      if (!await this.runtime.deleteSessionIfCurrent(expected)) throw this.loginContextChanged()
+    } else await this.runtime.deleteSession()
     await this.runtime.clearPendingBindingSession()
     this.profile.invalidate()
     this.jiwoAttemptGeneration += 1

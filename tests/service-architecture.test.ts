@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceMessageExtensionCapabilities',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
@@ -117,6 +118,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'device-control-realtime.ts', 'device-lock-service.ts',
   'conversation-activity-service.ts',
   'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
   'capability-service.ts',
