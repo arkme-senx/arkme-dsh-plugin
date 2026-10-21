@@ -1,3 +1,4 @@
+import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 // @vitest-environment jsdom
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
@@ -42,6 +43,7 @@ beforeEach(async () => {
     if (method === 'user.profile') return { profile: {} } as never
     throw new Error(`unexpected ${method}`)
   })
+  installArkoPendingHostMock(vi.mocked(callArkme))
   host = document.createElement('div'); document.body.append(host)
   root = createRoot(host)
   await act(async () => { root.render(<ArkmeArkoSurface />) })

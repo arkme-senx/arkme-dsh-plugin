@@ -6,11 +6,13 @@ export const recordingEntityToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.recordings.entities.v1', toolName: 'arkme_recording_entities', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
     name: 'arkme_recording_entities',
-    description: 'Read entities already recognized from the current account’s recording day. list takes the selected day’s start as Unix milliseconds and transcript source. occurrences takes an unchanged entity_ref from list, with offset/limit pagination. Provisional results may change; refresh list on stale references. Missing or failed recognition is not an empty successful result. This tool never starts recognition. Do not continuously poll.',
+    description: 'Read entities already recognized from the current account’s recording day. list takes the selected day’s start as Unix milliseconds and transcript source. occurrences takes an unchanged entity_ref from list, with offset/limit pagination. Provisional results may change; refresh list on stale references. Missing or failed recognition is not an empty successful result. person_references reads every pronoun status for one exact transcript item using date_stamp, identity_hash and transcript_version; unknown identity remains pending, and resolved names are AI inferences. This tool never starts recognition. Do not continuously poll.',
     parameters: {
-      action: { type: 'string', enum: ['list', 'occurrences'], required: true },
+      action: { type: 'string', enum: ['list', 'occurrences', 'person_references'], required: true },
       date_stamp: { type: 'integer', description: 'List only: owner day start, Unix milliseconds.' },
       transcript_source: { type: 'string', enum: ['system', 'doubao'] },
+      identity_hash: { type: 'string', description: 'Person references: exact searchIdentityHash from a public recording transcript item.' },
+      transcript_version: { type: 'string', description: 'Person references: exact searchVersion of that transcript item.' },
       entity_ref: { type: 'string', description: 'Occurrences only: unchanged opaque entityRef from list.' },
       offset: { type: 'integer', description: '0–10000; defaults to 0.' },
       limit: { type: 'integer', description: '1–50; defaults to 50.' },
@@ -19,6 +21,11 @@ export const recordingEntityToolModule = defineArkmeCoreToolModule({
     isConcurrencySafe: () => true,
     execute: async (args, exec) => {
       exec.signal?.throwIfAborted()
+      if (args.action === 'person_references') {
+        if (args.date_stamp === undefined || !args.identity_hash || !args.transcript_version || args.entity_ref !== undefined || args.offset !== undefined || args.limit !== undefined) throw new TypeError('人物指代需要日期和准确原文定位')
+        return taggedJSON('人物指代', await ports.recordingPersonReferences({ dateStamp: args.date_stamp, transcriptSource: args.transcript_source ?? 'system', identityHash: args.identity_hash, transcriptVersion: args.transcript_version }, exec.signal))
+      }
+      if (args.identity_hash !== undefined || args.transcript_version !== undefined) throw new TypeError('原文定位参数仅用于人物指代')
       if (args.action === 'list') {
         if (args.date_stamp === undefined || args.entity_ref !== undefined || args.offset !== undefined || args.limit !== undefined) throw new TypeError('实体列表需要日期，不接受提及分页参数')
         return taggedJSON('录音实体', await ports.recordingEntities({ dateStamp: args.date_stamp, transcriptSource: args.transcript_source ?? 'system' }, exec.signal))

@@ -129,13 +129,16 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   }
 }
 
-function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse): void {
+function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number): void {
   const encoded = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(encoded),
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    // Standard timing metadata separates Host execution from browser queueing
+    // and transport. No request parameters, identity or upstream URL is exposed.
+    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}` }),
   })
   res.end(encoded)
 }
@@ -906,6 +909,7 @@ export interface ArkmeHostApiOptions {
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const started = performance.now()
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
       if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
@@ -933,6 +937,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation.startsWith('device.lock.') && !isLoopback(req.socket.remoteAddress)) throw new ArkmePluginError('loopback-required', '电脑锁定仅允许本机访问', false, 403)
       if (request.operation.startsWith('app.migration.') && (origin === undefined || !isLoopback(req.socket.remoteAddress))) {
         throw new ArkmePluginError('local-desktop-required', '迁移下载仅允许本机桌面访问', false, 403)
       }
@@ -971,6 +976,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
+      }
+      if (['arko.ask', 'arko.pending.prepare', 'arko.pending.acknowledge'].includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', 'Arko 输入必须由当前 DSH 页面发起', false, 403)
       }
       if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
@@ -1026,7 +1034,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamCodex,
         options.migrationManager,
       ))
-      writeJson(res, 200, { ok: true, value })
+      writeJson(res, 200, { ok: true, value }, started)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
@@ -1048,7 +1056,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           ...(known.imageFailures === undefined ? {} : { imageFailures: known.imageFailures }),
           ...(known.publishReceipt === undefined ? {} : { publishReceipt: known.publishReceipt }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
-      })
+      }, started)
     } finally {
       res.off('close', abortDisconnectedRequest)
     }
@@ -1076,13 +1084,16 @@ export async function dispatchArkmeHostOperation(
   teamCodex?: TeamCodexService,
   migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
+  if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
-  if (operation === 'people.list') return service.peopleList(params.source, requestSignal)
+  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor)
   if (operation === 'people.open-chat') return service.peopleOpenChat(stringParam(params, 'ref'), requestSignal)
+  if (operation === 'relations.list') return service.relationPage(params as Omit<ExploreQuery,'module'>, requestSignal)
+  if (operation === 'relations.records') return service.relationRecords({ref:typeof params.ref==='string'?params.ref:'',...(typeof params.cursor==='string'?{cursor:params.cursor}:{})},requestSignal)
   if (operation === 'explore.list') return service.explorePage(params as unknown as ExploreQuery, requestSignal)
   if (operation === 'explore.detail') return service.exploreDetail(stringParam(params, 'ref'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal, params.part === 'overview' || params.part === 'records' ? params.part : undefined)
   if (operation === 'explore.enrich') return service.exploreEnrich(params.refs, requestSignal)
@@ -1143,6 +1154,9 @@ export async function dispatchArkmeHostOperation(
       }
       return await requireUpdateManager(updateManager).acknowledge(snoozeHours)
     }
+    case 'device.lock.status': return await service.deviceLockStatus()
+    case 'device.lock.lock': return await service.lockDevice()
+    case 'device.lock.unlock': return await service.requestDeviceUnlock()
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
@@ -1517,6 +1531,11 @@ export async function dispatchArkmeHostOperation(
       knownProjectionRevision: numberParam(params, 'knownProjectionRevision', 0),
       ...(params.knownPersonalizationRevision === undefined ? {} : { knownPersonalizationRevision: numberParam(params, 'knownPersonalizationRevision', 0) }),
     }, requestSignal)
+    case 'recordings.person-references': return await service.recordingPersonReferences({
+      dateStamp: numberParam(params, 'dateStamp', Number.NaN),
+      transcriptSource: (params.transcriptSource ?? 'system') as 'system' | 'doubao',
+      identityHash: stringParam(params, 'identityHash'), transcriptVersion: stringParam(params, 'transcriptVersion'),
+    }, requestSignal)
     case 'recordings.entities.occurrences': return await service.recordingEntityOccurrences({
       entityRef: stringParam(params, 'entityRef'), offset: numberParam(params, 'offset', 0), limit: numberParam(params, 'limit', 50),
       ...(params.participantKey === undefined ? {} : { participantKey: stringParam(params, 'participantKey') }),
@@ -1716,6 +1735,7 @@ export async function dispatchArkmeHostOperation(
     case 'calendar.day-review.create': return await service.createDayReview(params, requestSignal)
     case 'calendar.day-review.result': return await service.dayReviewResult(params, requestSignal)
     case 'calendar.day-review.source': return await service.dayReviewSource(params, requestSignal)
+    case 'calendar.day-review.models': return await service.dayReviewModels(params, requestSignal)
     case 'calendar.day-review.prompts': return await service.dayReviewPrompts(params, requestSignal)
     case 'calendar.record-location': return await service.calendarRecordLocation(stringParam(params, 'locationRef'), requestSignal)
     case 'calendar.records': {
@@ -1793,6 +1813,9 @@ export async function dispatchArkmeHostOperation(
       return await service.markAiLettersRead(letterIds, requestSignal)
     }
     case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'), requestSignal)
+    case 'arko.pending.read': return await service.arkoPendingTurns(optionalPositiveIntegerParam(params,'expectedUserId'))
+    case 'arko.pending.prepare': await service.arkoPrepareTurn(params.turn as import('./arko-turn-contract.js').ArkmeArkoPendingTurn); return {saved:true}
+    case 'arko.pending.acknowledge': await service.arkoAcknowledgeTurn(stringParam(params,'clientTurnUid'),optionalPositiveIntegerParam(params,'expectedUserId'));return {saved:true}
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.local-mark.capabilities': return await service.arkoLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'arko.local-mark.list': return await service.arkoLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)
@@ -2647,6 +2670,9 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'directory.preferences.read': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), undefined, false, requestSignal)
+    case 'directory.preferences.set': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, false, requestSignal)
+    case 'directory.preferences.migrate': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, true, requestSignal)
     case 'conversation.viewport.read': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), undefined, requestSignal)
     case 'conversation.viewport.write': return await service.conversationViewports(stringParam(params, 'accountKey'), stringParam(params, 'surface'), params.entries ?? [], requestSignal)
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)

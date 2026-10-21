@@ -211,6 +211,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     try { await session.change(popup.target, { kind: 'remove', annotationId: mark.id, operationId: crypto.randomUUID() }); forceRead.current?.() }
     catch (error) { session.notice = error instanceof Error ? error.message : '取消失败'; setPopup(undefined) }
   }
+  if (typeof document === 'undefined' || !document.body) return null
   return createPortal(<div data-arkme-underline-layer onClick={event => event.stopPropagation()}>
     <style>{`
       ::highlight(${highlightName}) { background-color: rgba(233, 180, 47, .28); }

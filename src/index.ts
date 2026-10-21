@@ -297,6 +297,8 @@ export function resolveDshRemoteProfileRef(
 }
 
 export function apply(ctx: Context, config: Config): void {
+  const webPort = ctx.webServer.port
+  if (webPort === undefined) throw new Error('Arkme requires a listening DSH web server')
   const hostPolicy = resolveHostPolicy()
   config = resolveArkmeConfig(ctx, config)
   if (hostPolicy.credentialServicePrefix !== undefined) config = {...config, keychainServicePrefix:hostPolicy.credentialServicePrefix}
@@ -396,7 +398,7 @@ export function apply(ctx: Context, config: Config): void {
     installRuntime: {
       dshHome,
       profileName: 'web',
-      healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+      healthUrl: `http://127.0.0.1:${String(webPort)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
       disabledProfilePackages: () => extensionStore.list().flatMap(item =>
         !item.enabled && item.profilePackageName !== undefined ? [item.profilePackageName] : []),
@@ -413,7 +415,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   })
   const extensionShareDiscovery = new ArkmeExtensionShareDiscoveryRelay({
-    actualPort: ctx.webServer.port,
+    actualPort: webPort,
     discoveryPort: config.extensionShareDiscoveryPort ?? DEFAULT_EXTENSION_SHARE_DISCOVERY_PORT,
     enabled: config.extensionShareDiscoveryEnabled !== false,
     logger: ctx.logger,
@@ -426,7 +428,7 @@ export function apply(ctx: Context, config: Config): void {
     dshBinPath,
     execArgv: process.execArgv,
     stateDirectory,
-    healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+    healthUrl: `http://127.0.0.1:${String(webPort)}${config.routePath}`,
     restartArgv: [...process.execArgv, ...process.argv.slice(1)],
     helperPath: fileURLToPath(new URL('../lib/extension-profile-restart-helper.js', import.meta.url)),
     installStoreDirectory: extensionDirectory,
@@ -474,6 +476,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.accountScope.start()
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
+  ctx.effect(() => service.accountScope.subscribe(() => { void service.deviceLockStatus().catch(() => undefined) }), 'dsh-arkme: desktop device lock lifecycle')
   ctx.inject(['llm'], modelCtx => {
     const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
@@ -738,7 +741,7 @@ export function apply(ctx: Context, config: Config): void {
     ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, apiCtx.get('connection') as DshConnectionLike))
   })
   const handler = createArkmeHostApi(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
     migrationManager,
@@ -762,10 +765,11 @@ export function apply(ctx: Context, config: Config): void {
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'uploads'),
     maxUploadBytes: config.maxUploadBytes,
+    requestTimeoutMs: config.requestTimeoutMs,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)
@@ -773,18 +777,18 @@ export function apply(ctx: Context, config: Config): void {
   const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
   const recordingImportHandler = createArkmeRecordingImportHandler(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
   const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
   const extensionIconOptions = {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     manager: () => extensionManager,
   }
@@ -793,7 +797,7 @@ export function apply(ctx: Context, config: Config): void {
   const extensionPreviewUploadHandler = createArkmeExtensionPreviewUploadHandler(extensionIconOptions)
   const extensionPreviewReadHandler = createArkmeExtensionPreviewReadHandler(extensionIconOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
   const sessionClient = {
@@ -887,7 +891,7 @@ export function apply(ctx: Context, config: Config): void {
     installedPackageNames: () => extensionStore.list().flatMap(item =>
       item.profilePackageName === undefined ? [] : [item.profilePackageName]),
     readRootHtml: async request => {
-      const response = await fetch(`http://127.0.0.1:${String(ctx.webServer.port)}/`, {
+      const response = await fetch(`http://127.0.0.1:${String(webPort)}/`, {
         headers: dshRootDocumentHeaders(request),
         signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 5_000)),
       })
@@ -1022,7 +1026,7 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 'dsh-arkme: local realtime events route')
   ctx.effect(() => {
-    const carrier = new DshNativeSocket(() => accountSessions, ctx.webServer.port, config.allowNonLoopback)
+    const carrier = new DshNativeSocket(() => accountSessions, webPort, config.allowNonLoopback)
     const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/native-streams`, handler: carrier.handler })
     return () => { remove(); carrier.close() }
   }, 'dsh-arkme: native subscription carrier')
@@ -1068,7 +1072,7 @@ function validateConfig(ctx: Context, config: Config): void {
       ...(config.memoryCoreBaseUrl ? [config.memoryCoreBaseUrl] : []),
       config.audioBaseUrl,
       config.openApiBaseUrl,
-      ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
+      ...(config.dshRemoteRealtimeBaseUrl.trim() !== '' ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
       throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
@@ -1108,7 +1112,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['audioBaseUrl', config.audioBaseUrl],
     ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],
-    ...(config.dshRemoteFeatureEnabled
+    ...(config.dshRemoteRealtimeBaseUrl.trim() !== ''
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
       : []),
   ] as const) {

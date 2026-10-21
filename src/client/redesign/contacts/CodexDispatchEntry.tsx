@@ -11,7 +11,7 @@ function ScopedEntry({ scopeKey, mode }: { scopeKey: string; mode: 'local' | 're
   useArkmeLocale()
   const [open, setOpen] = useState(false)
   if (mode !== 'local') return <p className="arkme-codex-dispatch-readonly">{tr(mode === 'remote'
-    ? '这项任务来自其他电脑，云端派发尚未接通' : '仅查看成员对话，不开放操作对方电脑')}</p>
+    ? '当前查看云端副本，本地派发连接尚未接通' : '仅查看成员对话，不开放操作对方电脑')}</p>
   return <>
     <CodexDispatchComposer scopeKey={scopeKey} availability="integration_pending" onConnect={() => setOpen(true)}/>
     {open && <CodexHelperGuide onClose={() => setOpen(false)}/>}

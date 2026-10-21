@@ -191,20 +191,16 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
       schema_version: 1,
       text_state: 1,
       forward_records: {
-        render_kind: 'forward_records', schema_version: 1, forward_id: requestId,
+        render_kind: 'forward_records', forward_id: requestId,
         source_type: ['agent', 'dsh_native'].includes(references[0]?.ownerKind ?? '') ? 'agent' : 'quick_records',
         title: '转发快记', source_record_uids: sourceRecordUids, created_at: sendAtMillis,
         summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits')}`),
-        items: references.map((reference, index) => ({
-          item_order: index,
-          source_kind: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent_message' : reference.ownerKind === 'bot_chat' ? 'chat_relation' : 'record',
-          source_type: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent' : reference.ownerKind === 'bot_chat' ? 'chat_record' : 'record',
+        items: references.map(reference => ({
           ...(reference.ownerKind === 'dsh_native' ? {
-            render_format: 'markdown', source_identity_kind: 'agent_message', source_identity_id: this.nativeIdentity(reference),
+            text_format: 'markdown',
             ...(reference.role === 'assistant' ? { source_avatar_kind: 'deepseek' } : {}),
           } : reference.ownerKind === 'agent' ? {
-            render_format: 'markdown', source_identity_kind: 'agent_message',
-            source_identity_id: `${String(reference.agentSessionId)}:${reference.messageIdentity}`,
+            text_format: 'markdown',
             ...(reference.entryRecordUid === undefined ? {} : { record_uid: reference.entryRecordUid }),
           } : { record_uid: reference.recordUid }),
           ...(reference.ownerKind === 'bot_chat' ? {
@@ -217,9 +213,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
           owner_name: reference.senderName,
           send_at: reference.createdAtMillis,
           template_kind: 1,
-          display_kind: 0,
           text: reference.textContent,
-          text_preview: arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits'),
         })),
       },
     }

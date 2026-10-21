@@ -11,7 +11,11 @@ import { AddMembersDrawer, InviteCollaboratorsDialog } from '../src/client/Arkme
 
 // Use the actual installed DSH palettes, not hand-picked "dark enough" fixtures.
 const require = createRequire(import.meta.url)
-const palette = readFileSync(require.resolve('@deepseek-ai/dsh-client-ui-theme/styles/design-platform.css'), 'utf8')
+// 0.2 ships its palette inline in the browser factory instead of a CSS subpath.
+const themeFactory = readFileSync(require.resolve('@deepseek-ai/dsh-client-ui-theme/client'), 'utf8')
+const paletteLiteral = /var design_platform_css_default = ("(?:\\.|[^"\\])*");/.exec(themeFactory)?.[1]
+if (!paletteLiteral) throw new Error('Installed DSH theme bundle has no native palette')
+const palette: string = JSON.parse(paletteLiteral)
 function tokens(dark: boolean) {
   const result = new Map<string, string>()
   // Static colors and semantic aliases each have separate light/dark blocks.
@@ -21,7 +25,7 @@ function tokens(dark: boolean) {
   }
   return result
 }
-function color(value: string, dark: boolean): number[] {
+function color(value: string, dark: boolean, backing?: number[]): number[] {
   const vars = tokens(dark)
   let result = value
   for (let i = 0; i < 20 && result.startsWith('var('); i++) {
@@ -29,15 +33,30 @@ function color(value: string, dark: boolean): number[] {
     expect(name && vars.has(name), `Missing DSH token: ${result}`).toBe(true)
     result = vars.get(name!)!
   }
-  expect(result, `Unresolved color: ${value}`).toMatch(/^rgb/)
-  return result.match(/[\d.]+/g)!.slice(0,3).map(Number)
+  let rgba: number[]
+  if (/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(result)) {
+    rgba = [1, 3, 5].map(offset => Number.parseInt(result.slice(offset, offset + 2), 16))
+    rgba.push(result.length === 9 ? Number.parseInt(result.slice(7, 9), 16) / 255 : 1)
+  } else if (/^#[0-9a-f]{3,4}$/i.test(result)) {
+    rgba = [...result.slice(1, 4)].map(part => Number.parseInt(part + part, 16))
+    rgba.push(result.length === 5 ? Number.parseInt(result[4]! + result[4]!, 16) / 255 : 1)
+  } else {
+    expect(result, `Unresolved color: ${value}`).toMatch(/^rgba?\(/)
+    rgba = result.match(/[\d.]+/g)!.map(Number)
+  }
+  // Native 0.2 menu materials are translucent. Test their painted contrast,
+  // compositing the surface on the canvas and the foreground on that surface.
+  const alpha = rgba[3] ?? 1
+  const under = alpha < 1 ? backing ?? color('var(--dsw-alias-bg-base)', dark) : [0, 0, 0]
+  return rgba.slice(0, 3).map((channel, i) => channel * alpha + under[i]! * (1 - alpha))
 }
 function luminance(rgb: number[]) {
   const values = rgb.map(value => value / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
   return values[0]! * .2126 + values[1]! * .7152 + values[2]! * .0722
 }
 function contrast(foreground: string, background: string, dark: boolean) {
-  const a = luminance(color(foreground, dark)), b = luminance(color(background, dark))
+  const surface = color(background, dark)
+  const a = luminance(color(foreground, dark, surface)), b = luminance(surface)
   return (Math.max(a,b) + .05) / (Math.min(a,b) + .05)
 }
 

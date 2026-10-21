@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PEOPLE_SOURCES, PEOPLE_SOURCE_LABELS, personMatches, type PersonFacet, type UnifiedPerson } from '../../people-contract.js'
 import type { ExploreDetail, ExploreEvidence, ExploreSource } from '../../explore-contract.js'
 import type { ArkmeOpenPrivateChatResult, ArkmeRecordingSpeakerMembers } from '../../types.js'
@@ -11,6 +11,7 @@ import { ArkmeTimelineDetailDrawer } from '../ArkmeNoteDetails.js'
 import { ExploreRecordingSource } from './ExploreSurface.js'
 import { usePeopleDirectory, type PeopleReadState } from './usePeopleDirectory.js'
 import { tr, arkmeIntlLocale } from '../locale.js'
+import { isPeopleView, peopleViewCache } from './people-view-cache.js'
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : tr('读取失败，请重试')
 const date = (value: number) => value > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : ''
@@ -18,20 +19,39 @@ const date = (value: number) => value > 0 ? new Intl.DateTimeFormat(arkmeIntlLoc
 export function PeopleLoading({ reads, onRetry }: { reads: ReturnType<typeof usePeopleDirectory>['reads']; onRetry(): void }) {
   return <div className="people-loading">
     {PEOPLE_SOURCES.map(source => <span key={source} className="explore-muted" role={reads[source].loading ? 'status' : undefined}>
-      {tr(PEOPLE_SOURCE_LABELS[source])} · {reads[source].loading ? tr('加载中…') : reads[source].error ? tr('暂不可用') : reads[source].page!.items.length}
+      {tr(PEOPLE_SOURCE_LABELS[source])} · {reads[source].page?.items.length ?? ''}{reads[source].loading ? ` ${tr('加载中…')}` : reads[source].error ? `${reads[source].page ? ' ' : ''}${tr(reads[source].page ? '暂未更新' : '暂不可用')}` : ''}
     </span>)}
     {PEOPLE_SOURCES.some(source => reads[source].error) && <button className="explore-source-link" onClick={onRetry}>{tr('重新读取')}</button>}
   </div>
 }
 
 export function PeopleSurface({ accountScope, onBack }: { accountScope: string; onBack(): void }) {
+  return <PeopleAccountSurface key={accountScope} accountScope={accountScope} onBack={onBack}/>
+}
+function PeopleAccountSurface({ accountScope, onBack }: { accountScope: string; onBack(): void }) {
   const { people, reads, refresh } = usePeopleDirectory(accountScope)
-  const [query, setQuery] = useState(''), [selected, setSelected] = useState(''), [limit, setLimit] = useState(50)
-  const [filter, setFilter] = useState('')
-  const listRoot = useRef<HTMLDivElement>(null), sentinel = useRef<HTMLDivElement>(null)
+  const [initial] = useState(() => peopleViewCache.read(accountScope, 'view', isPeopleView)?.value)
+  const [query, setQuery] = useState(initial?.query ?? ''), [selected, setSelected] = useState(initial?.selected ?? ''), [limit, setLimit] = useState(initial?.limit ?? 50)
+  const [filter, setFilter] = useState(initial?.filter ?? '')
+  const listRoot = useRef<HTMLDivElement>(null), detailRoot = useRef<HTMLElement>(null), sentinel = useRef<HTMLDivElement>(null)
+  const position = useRef({ listTop: initial?.listTop ?? 0, detailTop: initial?.detailTop ?? 0 })
+  const view = useRef({ query, selected, filter, limit }); view.current = { query, selected, filter, limit }
+  const restoring = useRef(true), detailRestoring = useRef(true)
+  useEffect(() => {
+    const save = () => peopleViewCache.write(accountScope, 'view', { ...view.current, ...position.current }, Date.now())
+    window.addEventListener('pagehide', save)
+    return () => { window.removeEventListener('pagehide', save); save() }
+  }, [accountScope])
   const visible = useMemo(() => people.filter(person => personMatches(person, query) && (!filter || person.sources.includes(filter as PersonFacet['source']))), [people, query, filter])
   const person = people.find(x => x.key === selected)
-  useEffect(() => { setLimit(50); if (listRoot.current) listRoot.current.scrollTop = 0 }, [query, filter])
+  useLayoutEffect(() => {
+    if (restoring.current) { restoring.current = false; if (listRoot.current) listRoot.current.scrollTop = position.current.listTop; return }
+    setLimit(50); position.current.listTop = 0; if (listRoot.current) listRoot.current.scrollTop = 0
+  }, [query, filter])
+  useLayoutEffect(() => {
+    if (!person || !detailRoot.current) return
+    if (detailRestoring.current) { detailRoot.current.scrollTop = position.current.detailTop; detailRestoring.current = false }
+  }, [person?.key])
   useEffect(() => {
     if (!sentinel.current || limit >= visible.length) return
     const observer = new IntersectionObserver(entries => { if (entries.some(x => x.isIntersecting)) setLimit(value => value + 50) }, { root: listRoot.current, rootMargin: '180px' })
@@ -44,8 +64,8 @@ export function PeopleSurface({ accountScope, onBack }: { accountScope: string; 
       <aside className="explore-list-pane" aria-label={tr('人物列表')}>
         <div className="explore-filters">{['', ...PEOPLE_SOURCES].map(value => <button key={value} className="explore-filter" aria-pressed={filter === value} onClick={() => setFilter(value)}>{tr(value ? PEOPLE_SOURCE_LABELS[value as PersonFacet['source']] : '全部')}</button>)}</div>
         <input className="explore-search" aria-label={tr('搜索人物')} placeholder={tr('搜索姓名、备注或别名')} value={query} onChange={event => setQuery(event.target.value)}/>
-        <div className="explore-list" ref={listRoot}>
-          {visible.slice(0, limit).map(row => <button className="explore-row people-row" aria-current={row.key === selected} key={row.key} onClick={() => setSelected(row.key)}>
+        <div className="explore-list" ref={listRoot} onScroll={event => { position.current.listTop = event.currentTarget.scrollTop }}>
+          {visible.slice(0, limit).map(row => <button className="explore-row people-row" aria-current={row.key === selected} key={row.key} onClick={() => { if (row.key !== selected) { position.current.detailTop = 0; detailRestoring.current = true }; setSelected(row.key) }}>
             {row.avatarRef ? <ArkmeUserAvatar avatarRef={row.avatarRef} size={32} label={row.name}/> : <span className="people-avatar">{row.name.slice(0, 1)}</span>}
             <span className="people-row-copy"><span className="explore-row-title">{row.name}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span className="explore-row-meta">{row.sources.map(source => tr(PEOPLE_SOURCE_LABELS[source])).join(' · ')}</span></span>
           </button>)}
@@ -53,7 +73,7 @@ export function PeopleSurface({ accountScope, onBack }: { accountScope: string; 
           <div ref={sentinel} className="explore-more">{visible.length > limit ? tr('向下滚动继续加载') : ''}</div>
         </div>
       </aside>
-      <main className="explore-detail" key={person?.key ?? 'empty'}>
+      <main className="explore-detail" ref={detailRoot} onScroll={event => { position.current.detailTop = event.currentTarget.scrollTop }} key={person?.key ?? 'empty'}>
         {person ? <><button className="explore-mobile-back explore-button" onClick={() => setSelected('')}>{tr('返回列表')}</button><PersonProfile person={person} accountScope={accountScope} reads={reads}/></>
           : <div className="explore-empty">{tr('选择人物，查看联系人、录音身份和相关记录')}<span className="explore-muted">{tr('已明确关联同一账号的资料合并展示；同名人物仍分别保留。')}</span></div>}
       </main>
@@ -89,7 +109,7 @@ function PersonProfile({ person, accountScope, reads }: { person: UnifiedPerson;
       <button className="explore-filter" aria-pressed={tab === 'records'} onClick={() => setTab('records')}>{tr('提及与相关记录')}</button>
       <button className="explore-filter" aria-pressed={tab === 'speakers'} onClick={() => setTab('speakers')}>{tr('录音身份')}</button>
     </div>
-    {tab === 'records' ? <PersonRecords relations={relations} loading={reads.relations.loading} unavailable={!!reads.relations.error}/>
+    {tab === 'records' ? <PersonRecords accountScope={accountScope} relations={relations} loading={reads.relations.loading} unavailable={!!reads.relations.error}/>
       : <>{speakers.map(facet => <PersonSpeaker key={facet.key} facet={facet}/>)}{!speakers.length && <p className="explore-muted">{tr(reads.speakers.loading ? '正在读取录音身份…' : reads.speakers.error ? '录音身份暂不可用，请重试' : '暂无已明确关联的录音身份。同名说话人需要确认后才能归入。')}</p>}</>}
     {identities && <ArkmeDetailShell title={tr('关联身份')} label={tr('关联身份')} onClose={() => setIdentities(false)}><div className="arkme-explore-dialog">
       {person.facets.map(facet => <div className="people-identity" key={facet.key}><strong>{facet.name}</strong><span className="explore-muted">{tr(PEOPLE_SOURCE_LABELS[facet.source])} · {tr(facet.accountLinked ? '已有账号关联' : '独立身份')}</span></div>)}
@@ -113,33 +133,59 @@ function PersonSpeaker({ facet }: { facet: PersonFacet }) {
   </section>
 }
 
-type RecordRead = { facet: PersonFacet; items: ExploreEvidence[]; nextCursor?: string | undefined; loading: boolean; error?: string | undefined }
-function PersonRecords({ relations, loading, unavailable }: { relations: PersonFacet[]; loading: boolean; unavailable: boolean }) {
-  const [rows, setRows] = useState<RecordRead[]>([]), [source, setSource] = useState<ExploreSource>(), [original, setOriginal] = useState(false)
+type RecordRead = { facet: PersonFacet; items: ExploreEvidence[]; nextCursor?: string | undefined; firstKeys: string[]; readAt: number; cacheAt: number; loading: boolean; retryCursor?: string | undefined; error?: string | undefined }
+const isRecords = (v: unknown): v is RecordRead => {
+  const row = v as RecordRead | undefined
+  return !!row && Array.isArray(row.items) && row.items.every(item => typeof item.key === 'string' && typeof item.text === 'string')
+    && Array.isArray(row.firstKeys) && row.firstKeys.every(key => typeof key === 'string') && Number.isFinite(row.readAt) && Number.isFinite(row.cacheAt)
+}
+function PersonRecords({ accountScope, relations, loading, unavailable }: { accountScope: string; relations: PersonFacet[]; loading: boolean; unavailable: boolean }) {
+  const restore = (facet: PersonFacet): RecordRead => ({ ...(peopleViewCache.read(accountScope, `records:${facet.key}`, isRecords)?.value
+    ?? { items: [], firstKeys: [], readAt: 0, cacheAt: 0 }), facet, loading: false, error: undefined })
+  const [rows, setRows] = useState<RecordRead[]>(() => relations.map(restore)), [source, setSource] = useState<ExploreSource>(), [original, setOriginal] = useState(false)
+  const rowsRef = useRef(rows); rowsRef.current = rows
   const [opening, setOpening] = useState(''), [error, setError] = useState('')
   const controller = useRef<AbortController>(), sourceRequest = useRef<AbortController>()
   const moreSentinel = useRef<HTMLDivElement>(null)
   const inFlight = useRef(new Map<string, AbortSignal>())
-  const refs = relations.map(x => x.relation!.ref).join('|'), latest = useRef(relations); latest.current = relations
+  const refs = relations.map(x => `${x.key}:${x.relation!.date}:${x.relation!.count ?? ''}`).join('|'), latest = useRef(relations); latest.current = relations
   const read = async (facet: PersonFacet, signal: AbortSignal, cursor?: string) => {
     const previousRequest = inFlight.current.get(facet.key)
     if (signal.aborted || (previousRequest && !previousRequest.aborted)) return
     inFlight.current.set(facet.key, signal)
     setRows(previous => previous.map(x => x.facet.key === facet.key ? { ...x, loading: true, error: undefined } : x))
-    try { const value = await callArkme<ExploreDetail>('explore.detail', { ref: facet.relation!.ref, part: 'records', ...(cursor ? { cursor } : {}) }, signal)
-      if (!signal.aborted) setRows(previous => previous.map(x => x.facet.key === facet.key ? { facet, items: mergeExploreEvidence(cursor ? x.items : [], value.evidence), nextCursor: value.nextCursor, loading: false } : x))
-    } catch (e) { if (!signal.aborted) setRows(previous => previous.map(x => x.facet.key === facet.key ? { ...x, loading: false, error: errorText(e) } : x)) }
+    try { const currentFacet = latest.current.find(x => x.key === facet.key) ?? facet
+      const value = await callArkme<ExploreDetail>('explore.detail', { ref: currentFacet.relation!.ref, part: 'records', ...(cursor ? { cursor } : {}) }, signal)
+      if (!signal.aborted) setRows(previous => previous.map(x => {
+        if (x.facet.key !== facet.key) return x
+        const tail = !cursor && value.nextCursor ? x.items.filter(item => !x.firstKeys.includes(item.key)) : []
+        const now = Date.now()
+        return { facet: currentFacet, items: cursor ? mergeExploreEvidence(x.items, value.evidence) : mergeExploreEvidence(value.evidence, tail),
+          firstKeys: cursor ? x.firstKeys : value.evidence.map(item => item.key), readAt: cursor ? x.readAt : now,
+          cacheAt: cursor || tail.length ? x.cacheAt || now : now,
+          nextCursor: tail.length ? x.nextCursor ?? value.nextCursor : value.nextCursor, loading: false }
+      }))
+    } catch (e) { if (!signal.aborted) setRows(previous => previous.map(x => x.facet.key === facet.key ? { ...x, loading: false, error: errorText(e), retryCursor: cursor } : x)) }
     finally { if (inFlight.current.get(facet.key) === signal) inFlight.current.delete(facet.key) }
   }
   useEffect(() => {
     const c = new AbortController(); controller.current = c
-    const pending = [...latest.current]; setRows(pending.map(facet => ({ facet, items: [], loading: true })))
+    const retained = latest.current.map(facet => {
+      const previous = rowsRef.current.find(row => row.facet.key === facet.key) ?? restore(facet)
+      const changed = previous.facet.relation?.date !== facet.relation?.date || previous.facet.relation?.count !== facet.relation?.count
+      return { ...previous, facet, loading: false, readAt: changed ? 0 : previous.readAt }
+    })
+    const pending = retained.filter(row => !row.readAt || Date.now() - row.readAt > 30_000).map(row => row.facet)
+    setRows(retained)
     // Bound concurrency while publishing every completed entity's records independently.
     const worker = async () => { while (pending.length && !c.signal.aborted) await read(pending.shift()!, c.signal) }
     const workers = Math.min(3, pending.length)
     for (let i = 0; i < workers; i++) void worker()
     return () => { c.abort(); sourceRequest.current?.abort() }
-  }, [refs])
+  }, [refs, accountScope])
+  useEffect(() => {
+    for (const row of rows) if (row.readAt && !row.loading && !row.error) peopleViewCache.write(accountScope, `records:${row.facet.key}`, row, row.cacheAt)
+  }, [rows, accountScope])
   useEffect(() => {
     if (!moreSentinel.current || rows.some(x => x.loading)) return
     const next = rows.find(x => x.nextCursor && !x.error)
@@ -159,7 +205,7 @@ function PersonRecords({ relations, loading, unavailable }: { relations: PersonF
     <p className="explore-muted">{tr('这里是提及或关联此人的原文，不代表都是本人说的话。')}</p>
     {evidence.map(row => <article className="explore-evidence" key={row.key}><div className="explore-muted">{row.label} · {date(row.date)}</div><p>{row.text}</p>{row.mentions && row.mentions.length > 1 && <div className="explore-muted">{tr('此原文提及')} {row.mentions.length} {tr('处')}</div>}{row.ref ? <button className="explore-source-link" disabled={!!opening} onClick={() => void open(row.ref!)}>{tr(opening === row.ref ? '正在打开…' : '定位原文')} ↗</button> : <span className="explore-muted">{tr(row.unavailableReason ?? '来源暂不可定位')}</span>}</article>)}
     {(loading || rows.some(x => x.loading)) && <div className="explore-loading" role="status"><div className="explore-more"><span className="explore-loading-dot"/>{tr('正在读取相关记录…')}</div><div className="explore-skeleton"><i/><i/></div></div>}
-    {rows.map(row => row.error ? <p className="explore-error" role="alert" key={row.facet.key}>{row.error} <button className="explore-source-link" onClick={() => void read(row.facet, controller.current!.signal, row.nextCursor)}>{tr('重试')}</button></p>
+    {rows.map(row => row.error ? <p className="explore-error" role="alert" key={row.facet.key}>{row.error} <button className="explore-source-link" onClick={() => void read(row.facet, controller.current!.signal, row.retryCursor)}>{tr('重试')}</button></p>
       : null)}
     <div ref={moreSentinel} className="explore-more">{evidence.length > 0 ? `${tr('已显示')} ${evidence.length} ${tr('条原始记录')}` : ''}</div>
     {!loading && !rows.some(x => x.loading) && !evidence.length && <p className="explore-muted">{tr(unavailable || rows.some(x => x.error) ? '相关记录暂不可用' : '暂无已明确关联的关系记录。独立人物的历史关联需要后端补齐。')}</p>}

@@ -78,6 +78,7 @@ export class MessageActionService {
   }
 
   private agentReference(item: ArkmeArkoHistoryItem, userId: number): AgentMessageActionReference | undefined {
+    if (item.role === 'user' && item.contentBlocks?.some(block => block.kind === 'image')) return undefined
     if (item.text.trim() === '' || item.messageId <= 0 || item.sessionId <= 0 || item.status !== 1) return undefined
     const entryRecordUid = item.entryRecordUid?.trim() ?? ''
     return {

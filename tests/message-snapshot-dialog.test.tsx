@@ -114,3 +114,15 @@ describe('message snapshot dialog', () => {
     expect(unknown).not.toContain('去开启')
   })
 })
+
+it('keeps unavailable Team metadata unknown and distinguishes creation from completion', () => {
+  const markup = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} createdAtMillis={item.sendAtMillis}
+    metadataUnavailable="团队消息元数据暂未接通" />)
+  expect(markup).toContain('创建时间')
+  expect(markup).toContain('团队消息元数据暂未接通')
+  expect(markup).not.toContain('00:00')
+  expect(markup).not.toContain('0次')
+  expect(markup).not.toContain('去开启')
+  expect(markup).toMatch(/完成时间<\/span><div[^>]*>未记录<\/div>/)
+  expect(markup).toMatch(/终端<\/span><div[^>]*>未记录<\/div>/)
+})

@@ -9,11 +9,14 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeArkoToolPort extends ArkmeArkoHistoryPort {
+ arkoModelCatalog(signal?:AbortSignal):Promise<import('../../types.js').ArkmeArkoModelCatalog>
+ arkoPendingTurns():Promise<import('../../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
   arkoProfile(signal?: AbortSignal): Promise<ArkmeArkoProfile>
   arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession>
   arkoAsk(
     text: string,
     options: {
+      imageFileRefs?: readonly string[]
       sessionId?: number
       clientTurnUid?: string
       waitMillis?: number

@@ -11,7 +11,7 @@ const ANCHOR = '[data-arkme-width-anchor]'
 const css = `
 [data-arkme-wide-conversation="true"] [data-arkme-width-viewport] {
   box-sizing:border-box;
-  padding-inline:max(22px, calc((100% - var(--dsh-chat-content-width)) / 2)) !important;
+  padding-inline:max(22px, calc((100% - var(--dsh-chat-content-width, 920px)) / 2)) !important;
 }
 [data-arkme-wide-conversation="true"] [data-arkme-width-composer] {
   box-sizing:border-box;

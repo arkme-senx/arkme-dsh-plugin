@@ -48,7 +48,7 @@ import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-stor
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft, type ArkmeComposerDraftSnapshot } from './composer-draft-store.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
   arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
@@ -402,6 +402,14 @@ function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
   return catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.displayName ?? '模型目录暂不可用'
 }
 
+function isImageTurnDraft(draft: ArkmeComposerDraftSnapshot, turn: ArkmeArkoPendingTurn): boolean {
+  const images = turn.images
+  return images !== undefined && images.length > 0
+    && serializeArkmeComposerDraft(draft).text.trim() === turn.text
+    && draft.attachments.length === images.length
+    && draft.attachments.every((attachment, index) => attachment.localFile?.fileRef === images[index]!.fileRef)
+}
+
 export function ArkmeArkoSurface() {
   useArkmeLocale()
   const shellRef = useRef<HTMLDivElement>(null)
@@ -496,6 +504,10 @@ export function ArkmeArkoSurface() {
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
+  // The pending message owns the visible send. Keep the editor document mounted
+  // and unchanged so failure recovery preserves its undo/redo history.
+  const imageDraftSending = sending && pendingTurn?.userId === profileUserId
+    && pendingTurn !== undefined && isImageTurnDraft(draftSnapshot, pendingTurn)
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const detailBodyRef = useRef<HTMLDivElement>(null)
   const detailScope = `${authSnapshot.auth?.environment ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
@@ -583,7 +595,9 @@ export function ArkmeArkoSurface() {
       setPendingTurn(undefined)
       return
     }
-    const restored = readArkoPendingTurn(profileUserId)
+    let active=true
+    void readArkoPendingTurn(profileUserId).then(restored=>{
+    if (!active) return
     setPendingTurn(restored)
     if (restored === undefined) return
     setMessages(current => {
@@ -606,6 +620,8 @@ export function ArkmeArkoSurface() {
       }]
     })
     scrollToBottom()
+    }).catch(caught=>{if(active)setError(errorMessage(caught))})
+    return ()=>{active=false}
   }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
@@ -853,12 +869,10 @@ export function ArkmeArkoSurface() {
       if (turn.images?.length) {
         const key = arkmeArkoComposerDraftKey(turn.userId)
         const current = arkmeComposerDraftStore.get(key)
-        if (serializeArkmeComposerDraft(current).text.trim() === turn.text
-          && JSON.stringify(current.attachments.map(attachment => attachment.localFile?.fileRef)) === JSON.stringify(turn.images.map(file => file.fileRef))) {
+        if (isImageTurnDraft(current, turn)) {
           arkmeComposerDraftStore.clear(key)
         }
       }
-      removeArkoPendingTurn(turn.userId)
       setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
       setSession(current => current === undefined ? current : { ...current, sessionId: result.sessionId })
       if (result.profile !== undefined && profileUserId !== undefined) {
@@ -918,13 +932,13 @@ export function ArkmeArkoSurface() {
       const retryable = !(caught instanceof ArkmeClientError) || caught.body.retryable
       if (retryable) {
         setPendingTurn(turn)
-        writeArkoPendingTurn(turn)
+        await writeArkoPendingTurn(turn)
         setError(`Arko 发送结果暂未确认：${message}。请重试确认，系统会复用同一次请求，不会重复执行。`)
         setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
           ...item, role: 'assistant', text: '', status: 'error',
         } : item))
       } else {
-        removeArkoPendingTurn(turn.userId)
+        await removeArkoPendingTurn(turn.userId,turn.clientTurnUid)
         setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
         setError(message)
         setMessages(current => turn.images?.length
@@ -963,11 +977,9 @@ export function ArkmeArkoSurface() {
       return
     }
     if (attachments.length !== images.length) { setError('图片草稿无效，请重新添加图片'); return }
-    const imageError = arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images)
+    const imageError = latestContinuation(messages, session.sessionId) === undefined ? arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images) : undefined
     if (imageError !== undefined) { setError(imageError); return }
-    if (images.length && latestContinuation(messages, session.sessionId) !== undefined) {
-      setError('当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留'); return
-    }
+
     sendInFlightRef.current = true
     setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
     try {
@@ -989,7 +1001,7 @@ export function ArkmeArkoSurface() {
           replyToAssistantMsgId: continuation.assistantMsgId,
         }),
       }
-      writeArkoPendingTurn(turn)
+      await writeArkoPendingTurn(turn)
       pendingComposerFocusRef.current = true
       shortcutFocusOriginRef.current = focusOrigin
       setPendingTurn(turn)
@@ -1071,6 +1083,7 @@ export function ArkmeArkoSurface() {
   }, [clearing, pendingTurn, scrollToBottom, sending])
 
   const displayName = arkoPresentationName(profile)
+  const composerPlaceholder = tr("问问 {v0}...", { v0: displayName })
   const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
   const canChooseModel = (catalog?.options.length ?? 0) > 0
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
@@ -1344,17 +1357,18 @@ export function ArkmeArkoSurface() {
         data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
         style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
           ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
-      {draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
+      {!imageDraftSending && draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
         attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled || imageDraft.preparing !== ''} /></div>}
+      {imageDraftSending && <div aria-hidden style={{ ...styles.textarea, color: colors.secondary }}>{composerPlaceholder}</div>}
       <ArkmeDocumentComposerInput
         format="text"
         key={accountKey}
         ref={textareaRef}
-        style={styles.textarea!}
+        style={imageDraftSending ? { ...styles.textarea, display: 'none' } : styles.textarea!}
         value={draft}
         emojis={draftSnapshot.emojis}
         maxLength={arkoQuestionMaxLength}
-        placeholder={tr("问问 {v0}...", { v0: displayName })}
+        placeholder={composerPlaceholder}
         ariaLabel={tr("发送给 {v0}", { v0: displayName })}
         disabled={inputDisabled || messageActions.selecting}
         onFocus={() => { setComposerInputFocused(true) }}

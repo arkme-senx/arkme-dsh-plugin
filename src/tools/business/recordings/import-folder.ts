@@ -48,6 +48,9 @@ function directoryPreviewResult(prepared: PreparedRecordingDirectory): string {
 function directoryResult(result: RecordingDirectoryResult): string {
   return taggedJSON('Arkme 目录录音导入结果', {
     total: result.total, skipped: result.skipped, remaining: result.remaining,
+    ...(result.workflow ? { workflow: { supported: result.workflow.supported, batch_ids: result.workflow.batchIds,
+      untracked_uploads: result.workflow.untrackedUploads,
+      state: !result.workflow.supported ? 'unsupported' : result.workflow.batchIds.length ? 'awaiting_processing' : 'no_new_batch' } } : {}),
     counts: {
       uploaded: result.counts.uploaded, matched_uploaded: result.counts.matched_uploaded,
       in_progress: result.counts.in_progress, failed: result.counts.failed, cancelled: result.counts.cancelled, conflict: result.counts.conflict,
@@ -56,6 +59,7 @@ function directoryResult(result: RecordingDirectoryResult): string {
     items: result.items.map(item => ({
       relative_path: item.relativePath, outcome: item.outcome,
       ...(item.importRef === undefined ? {} : { import_ref: item.importRef }),
+      ...(item.batchId === undefined ? {} : { batch_id: item.batchId }),
       ...(item.revision === undefined ? {} : { revision: item.revision }),
       ...(item.errorCode === undefined ? {} : {
         error_code: /^[a-zA-Z][a-zA-Z0-9_-]{0,127}$/.test(item.errorCode)
@@ -81,7 +85,7 @@ function directoryConfirmation(input: RecordingDirectoryInput, prepared: Prepare
     .map(item => ({ relative_path: item.relativePath, outcome: item.outcome }))
   const details = issues.length === 0 ? '' : `\n需处理文件：${JSON.stringify(issues)}\n`
   const timeHint = count('time_required') === 0 ? '' : '可先补充时间待补文件的真实开始时间。'
-  return `目录“${directory}”${input.recursive ? '及其子目录' : '本层'}已核对：待上传 ${upload} 个，待核对恢复 ${resume} 个，已匹配上传 ${count('matched_uploaded')} 个，同名冲突 ${count('conflict')} 个，时间待补 ${count('time_required')} 个，无效文件 ${count('invalid')} 个。${details}${timeHint}是否确认上传本次待处理录音，归属为“${input.ownership === 'other' ? '其他' : '自己'}”？`
+  return `目录“${directory}”${input.recursive ? '及其子目录' : '本层'}已核对：待上传 ${upload} 个，待核对恢复 ${resume} 个，已匹配上传 ${count('matched_uploaded')} 个，同名冲突 ${count('conflict')} 个，时间待补 ${count('time_required')} 个，无效文件 ${count('invalid')} 个。${details}${timeHint}是否确认上传本次待处理录音，归属为“${input.ownership === 'other' ? '其他' : '自己'}”？服务支持时，新录音处理完成后将发送通知，并自动生成对应日期的日总结和时间轴；已有的无批次录音不会自动补入。`
 }
 
 export const recordingImportFolderToolModule = defineArkmeCoreToolModule({
@@ -91,7 +95,7 @@ export const recordingImportFolderToolModule = defineArkmeCoreToolModule({
   },
   create: ports => withArkmeConfirmationContext<PreparedRecordingDirectory>(defineTool({
     name: 'arkme_recording_import_folder',
-    description: 'Import WAV, MP3 and M4A recordings from a human-selected local absolute or ~/ directory. Use action=prepare to check or refresh cloud matches without uploading, directly once the directory is known. The preflight returns one final confirmation with upload counts, exceptional file paths and ownership, which defaults to self. Only after a later human confirmation use action=upload with the same directory, scope, ownership and recording times; missing, expired or changed confirmation scope requires a fresh confirmation. Includes subdirectories by default and does not follow symlinks. Filename YYYYMMDD-HHMMSS uses the host local timezone; use start_times for unknown recording times. matched_uploaded means metadata match and upload finalization, not content hash verification. Returns after Audio receives the uploads; transcription is separate.',
+    description: 'Import WAV, MP3 and M4A recordings from a human-selected local absolute or ~/ directory. Use action=prepare to check or refresh cloud matches without uploading, directly once the directory is known. The preflight returns one final confirmation with upload counts, exceptional file paths and ownership, which defaults to self. Only after a later human confirmation use action=upload with the same directory, scope, ownership and recording times; missing, expired or changed confirmation scope requires a fresh confirmation. Includes subdirectories by default and does not follow symlinks. Filename YYYYMMDD-HHMMSS uses the host local timezone; use start_times for unknown recording times. matched_uploaded means metadata match and upload finalization, not content hash verification. New uploads share a durable import batch: after processing, the server notifies the user and automatically generates daily summaries and timelines for actual recording dates. Do not run additional generation yourself. Repeating the same directory resumes saved batch membership. Legacy uploads without a batch cannot gain notifications retroactively; untracked_uploads reports these. Explicit unsupported capability means no automatic workflow. Returns after Audio receives the uploads; transcription is separate.',
     parameters: {
       action: { type: 'string', enum: ['prepare', 'upload'], required: true, description: 'Use prepare for read-only preflight or refresh; use upload after the human confirms the returned scope.' },
       directory_path: { type: 'string', required: true, description: 'Exact local absolute or ~/ recording directory selected by the human.' },

@@ -4,6 +4,7 @@ import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
+import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
 import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
@@ -1095,14 +1096,11 @@ export function ArkmeTimelineDetailDrawer({
   }
   return <ArkmeDetailShell title={historyOpen ? tr("编辑记录") : tr("快记详情")} label={historyOpen ? tr("编辑记录") : tr("快记详情")}
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
-    headerContent={historyOpen ? undefined : <div data-arkme-detail-author style={{ ...styles.row, alignItems: 'center', ...(item.senderKind === 'bot' ? { gap: 10 } : {}) }}>
-      <ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
+    headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis} bot={item.senderKind === 'bot'}
+      name={item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}
+      avatar={<ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
         {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
-        size={40} label={tr("作者头像")} />
-      <div style={styles.content}><div style={styles.name}>{item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}</div>
-        <div style={{ ...styles.time, marginTop: item.senderKind === 'bot' ? 2 : 4, ...(item.senderKind === 'bot' ? { fontSize: 12 } : {}) }}>{[dateLabel(item.sendAtMillis), timeLabel(item.sendAtMillis)].filter(Boolean).join(' ')}</div>
-      </div>
-    </div>}
+        size={40} label={tr("作者头像")} />} /> }
     {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
       : onBackToExtension === undefined ? {} : { onBack: onBackToExtension, backLabel: tr('返回延展快记') })}>
     {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>

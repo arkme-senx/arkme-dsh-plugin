@@ -4,13 +4,15 @@ import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { offlineContextSummaryLines, type OfflineContextEntry } from '../offline-context.js'
 import type { OfflineContextCommand, OfflineContextCommandResult, OfflineContextPort, OfflineContextRequest, OfflineContextJournalEntry } from '../offline-context-contract.js'
 import { TimelineTokenCodec } from './timeline-token.js'
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, type ServiceRuntime } from './service.js'
 
 const ROOT = '/api/v1/chats/offline-context/'
 const JOURNAL = 'arkme-offline-context-journal-v1'
+const MAX_CONTEXT_ID_LENGTH = 200
 const invalid = () => new ArkmePluginError('offline-context-invalid', '上下文数据无效，请刷新后重试', false, 409)
-function text(value: unknown, max = 200): string {
+function text(value: unknown, max = MAX_CONTEXT_ID_LENGTH): string {
   if (typeof value !== 'string' || !value || value.length > max) throw invalid()
   return value
 }
@@ -21,6 +23,11 @@ function number(value: unknown, zero = false): number {
 function revision(value: unknown): number {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/u.test(value)) throw invalid()
   return number(Number(value))
+}
+function messageOwner(value: unknown): RecordOwnerId {
+  const owner = recordOwnerId(value)
+  if (!owner) throw invalid()
+  return owner
 }
 const fingerprint = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
 
@@ -51,17 +58,20 @@ export class OfflineContextService implements OfflineContextPort {
     return text(identity.id)
   }
 
-  async messageReference(chat: string, relation: string, record: string, owner: number): Promise<string> {
+  async messageReference(chat: string, relation: string, record: string, owner: RecordOwnerId): Promise<string | undefined> {
     const session = await this.runtime.requireSession()
+    // Chat IDs can exceed the offline-context backend's identifier limit.
+    // Such messages remain readable without an optional association reference.
+    if ([chat, relation, record].some(id => id.length > MAX_CONTEXT_ID_LENGTH)) return undefined
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
-    return codec.seal(JSON.stringify({ chat: text(chat), relation: text(relation), record: text(record), owner: number(owner) }), 'message')
+    return codec.seal(JSON.stringify({ chat: text(chat), relation: text(relation), record: text(record), owner: messageOwner(owner) }), 'message')
   }
-  async messageAnchor(ref: string, chat: string): Promise<{ record_uid: string; record_owner_user_id: number }> {
+  async messageAnchor(ref: string, chat: string): Promise<{ record_uid: string; record_owner_user_id: RecordOwnerId }> {
     const session = await this.runtime.requireSession()
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
     const identity = objectValue(JSON.parse(codec.open(text(ref, 32768), 'message')))
     if (identity.chat !== chat) throw invalid()
-    return { record_uid: text(identity.record), record_owner_user_id: number(identity.owner) }
+    return { record_uid: text(identity.record), record_owner_user_id: messageOwner(identity.owner) }
   }
 
   async offlineContext(input: OfflineContextRequest, signal?: AbortSignal): ReturnType<OfflineContextPort['offlineContext']> {
@@ -153,7 +163,7 @@ export class OfflineContextService implements OfflineContextPort {
       }
       for (const value of messages) {
         const m = objectValue(value)
-        entry.messages.push({ messageRef: seal({ chat: text(m.chat_session_uid), relation: text(m.relation_uid), record: text(m.record_uid), owner: number(m.record_owner) }, 'message'), label: '关联消息', excerpt: typeof m.quote === 'string' ? m.quote : '', occurredAtMillis: number(m.occurred_at) })
+        entry.messages.push({ messageRef: seal({ chat: text(m.chat_session_uid), relation: text(m.relation_uid), record: text(m.record_uid), owner: messageOwner(m.record_owner) }, 'message'), label: '关联消息', excerpt: typeof m.quote === 'string' ? m.quote : '', occurredAtMillis: number(m.occurred_at) })
       }
       return entry
     }
@@ -162,13 +172,20 @@ export class OfflineContextService implements OfflineContextPort {
       if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw invalid()
       const state = input.state ?? 'suggested'
       if (!['suggested', 'linked', 'dismissed'].includes(state)) throw invalid()
+      if (input.messageRefs !== undefined && (!Array.isArray(input.messageRefs) || input.messageRefs.length < 1 || input.messageRefs.length > 100)) throw invalid()
+      const relations = input.messageRefs?.map(ref => {
+        const message = open(ref, 'message')
+        if (message.chat !== source.ownerRef) throw invalid()
+        return text(message.relation)
+      }).sort()
+      const filter = relations ? fingerprint(relations) : undefined
       const cursor = input.cursor ? open(input.cursor, 'page') : undefined
-      if (cursor && (cursor.chat !== source.ownerRef || cursor.state !== state)) throw invalid()
-      const raw = await post('list', { chat_session_uid: source.ownerRef, state, limit: 20, descending: true, ...(cursor ? { after: cursor.after } : {}) })
+      if (cursor && (cursor.chat !== source.ownerRef || cursor.state !== state || cursor.filter !== filter)) throw invalid()
+      const raw = await post('list', { chat_session_uid: source.ownerRef, state, limit: 20, descending: true, ...(relations ? { message_uids: relations } : {}), ...(cursor ? { after: cursor.after } : {}) })
       if (!Array.isArray(raw.items) || raw.items.length > 20 || typeof raw.has_more !== 'boolean') throw invalid()
       const entries = await Promise.all(raw.items.map(v => project(objectValue(v), input.sourceRef, source.displayName, source.kind as 'private_chat' | 'group_chat')))
       await current()
-      return { entries, hasMore: raw.has_more, ...(raw.has_more ? { nextCursor: seal({ chat: source.ownerRef, state, after: raw.next }, 'page') } : {}) }
+      return { entries, hasMore: raw.has_more, ...(raw.has_more ? { nextCursor: seal({ chat: source.ownerRef, state, ...(filter ? { filter } : {}), after: raw.next }, 'page') } : {}) }
     }
     if (input.operation === 'range-options') {
       const identity = open(input.entryRef, 'entry')

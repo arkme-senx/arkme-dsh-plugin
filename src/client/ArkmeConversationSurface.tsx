@@ -1,6 +1,8 @@
+import { currentHarnessSession } from './harness-session-state.js'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { tr, useArkmeLocale } from './locale.js'
 import type { CSSProperties } from 'react'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ArkmeAuthSnapshot } from '../types.js'
@@ -11,7 +13,7 @@ export interface ArkmeConversationSurfaceProps {
   close(): void
   initialAuth: ArkmeAuthSnapshot | undefined
   openedFromSession: SessionId | undefined
-  useSessions: PropsRuntime<'conversation'>['useSessions']
+  useSessions: PropsRuntime<'main'>['useSessions']
   renderSlot: PropsRenderSlots<'arkme.directory.entry'>['renderSlot']
 }
 
@@ -27,7 +29,7 @@ export function ArkmeConversationSurface({
   initialAuth, openedFromSession, useSessions, renderSlot,
 }: ArkmeConversationSurfaceProps) {
   useArkmeLocale()
-  const currentSession = useSessions(state => state.current)
+  const currentSession = useSessions(currentHarnessSession)
   return <section data-arkme-owned="persistent-conversation-compat" style={root} aria-label={tr("Arkme 客户端")}>
     <ArkmeSurface
       productNavigation={false}

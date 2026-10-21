@@ -1,4 +1,6 @@
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { useSyncExternalStore, type ComponentProps } from 'react'
 import { ArkmeModelSelect, type ArkmeModelDirectory } from './ArkmeModelSelect.js'
 import css from './arkme-model-select.css?inline'

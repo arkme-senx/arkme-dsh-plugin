@@ -1,3 +1,4 @@
+import { sameArkoTurnIntent, isValidArkoPendingTurn, validArkoStoredTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from './arko-turn-contract.js'
 import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
 import { validRecordingImportBatch } from './recording-workflow-contract.js'
@@ -31,6 +32,8 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingToolBatches?: unknown
+arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
  offlineContextJournal?: unknown
   cancellationCompletion?: ArkmeCancellationCompletion
@@ -358,6 +361,7 @@ function parseState(raw: string): PersistedState {
     }
   }
   return {
+    arkoTurnsByUser: source.arkoTurnsByUser ?? {},
     version: 2,
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
@@ -374,6 +378,7 @@ function parseState(raw: string): PersistedState {
         ? Math.max(source.recordReeditDraftRevision as number, legacyRecordReeditRevision(recordReeditDraftsByUser, recordReeditSubmissionsByUser))
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
+    recordingToolBatches: source.recordingToolBatches,
     dayReviewPending: source.dayReviewPending ?? {},
   }
 }
@@ -458,6 +463,60 @@ export class ArkmeStateStore {
   constructor(directory: string) {
     this.path = join(directory, 'state.json')
     this.boardCache = new ArrangementBoardCacheStore(directory)
+  }
+
+  private arkoTurns(state: PersistedState, userId: number): Record<string, ArkmeArkoStoredTurn> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Arko 账号无效')
+    const root = state.arkoTurnsByUser ?? {}
+    if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('Arko 发送恢复数据损坏')
+    const accounts = root as Record<string, unknown>
+    const values = accounts[String(userId)] ?? {}
+    if (!values || typeof values !== 'object' || Array.isArray(values)
+      || Object.entries(values).some(([uid, entry]) => !validArkoStoredTurn(entry, userId, uid))) {
+      throw new Error('Arko 发送恢复数据损坏')
+    }
+    accounts[String(userId)] = values
+    state.arkoTurnsByUser = root
+    return values as Record<string, ArkmeArkoStoredTurn>
+  }
+
+  async arkoPendingTurns(userId: number): Promise<ArkmeArkoPendingTurn[]> {
+    return this.read(state => Object.values(this.arkoTurns(state, userId))
+      .map(value => structuredClone(value.turn))
+      .sort((left, right) => left.createdAtMillis - right.createdAtMillis))
+  }
+
+  async arkoTurn(userId: number, uid: string): Promise<ArkmeArkoStoredTurn | undefined> {
+    return this.read(state => structuredClone(this.arkoTurns(state, userId)[uid]))
+  }
+
+  async prepareArkoTurn(userId: number, turn: ArkmeArkoPendingTurn, request?: Record<string, unknown>): Promise<void> {
+    if (!isValidArkoPendingTurn(turn, userId)) throw new Error('Arko 发送恢复参数无效')
+    await this.update(state => {
+      const values = this.arkoTurns(state, userId)
+      const existing = values[turn.clientTurnUid]
+      if (existing && !sameArkoTurnIntent(existing.turn, turn)) throw new Error('Arko 轮次标识已用于其他内容')
+      if (existing?.request && request && JSON.stringify(existing.request) !== JSON.stringify(request)) {
+        throw new Error('Arko 请求已冻结，不能修改')
+      }
+      if (!existing && Object.keys(values).length >= 20) throw new Error('Arko 待确认消息过多，请先处理原消息')
+      const frozenRequest = request ?? existing?.request
+      const next = {
+        turn: structuredClone(existing?.turn ?? turn),
+        ...(frozenRequest === undefined ? {} : { request: structuredClone(frozenRequest) }),
+      }
+      if (!validArkoStoredTurn(next, userId, turn.clientTurnUid)) throw new Error('Arko 请求恢复数据无效')
+      values[turn.clientTurnUid] = next
+    })
+  }
+
+  async acknowledgeArkoTurn(userId: number, uid: string): Promise<void> {
+    await this.update(state => { delete this.arkoTurns(state, userId)[uid] })
+  }
+
+  async arkoFileRefs(userId: number): Promise<string[]> {
+    return this.read(state => Object.values(this.arkoTurns(state, userId))
+      .flatMap(value => value.turn.images?.map(file => file.fileRef) ?? []))
   }
 
   private reviewPending(state: PersistedState): Record<string, unknown> {
@@ -680,6 +739,22 @@ export class ArkmeStateStore {
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
       .map(cloneRecordingImportJob))
+  }
+
+  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal) {
+    const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
+    let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
+    await this.update(state => {
+      if (!/^[a-z_-]+:[1-9][0-9]*$/.test(scope)) throw new Error('录音批次账号无效')
+      const root = state.recordingToolBatches ?? {}
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('录音导入批次记录损坏，已保留原记录')
+      const accounts = root as Record<string, unknown>
+      const plan = planRecordingToolBatch(accounts[scope], candidates, timeZone)
+      accounts[scope] = plan.journal
+      state.recordingToolBatches = accounts
+      members = structuredClone(plan.members)
+    }, signal)
+    return members
   }
 
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {

@@ -17,6 +17,7 @@ import { arkoHistoryDate } from './arko-history-browser.js'
 import { tr } from './locale.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
+import { useSelectedMessageSearch } from './message-selection-search.js'
 
 const button: CSSProperties = { border: 0, padding: '6px 8px', borderRadius: 6, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 12 }
 const feedbackStyle: CSSProperties = { maxWidth: '100%', boxSizing: 'border-box', overflowWrap: 'anywhere', padding: '8px 12px', borderRadius: 8, background: arkmeTheme.layer2, color: arkmeTheme.secondary, border: `1px solid ${arkmeTheme.border}`, fontSize: 12 }
@@ -116,6 +117,10 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     return { days: result.daily_data.map(day => ({ bucketDate: day.date, count: day.count, hasRecords: day.has_items, protectedCount: 0 })) }
   }, [])
   const toggle = (next: 'calendar' | 'search' | 'menu') => { if (open === next) { setOpen(undefined); return }; if (next !== 'menu') { cancelLocation(); onOpenPanel() }; setOpen(next) }
+  useSelectedMessageSearch(accountScope ? `arko:${accountScope}` : undefined, text => {
+    cancelLocation(); setQuery(text); onOpenPanel(); setOpen('search')
+    requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
+  })
   const exportMessages = async () => {
     if (exportController.current && !exportController.current.signal.aborted) return
     const controller = new AbortController(); exportController.current = controller

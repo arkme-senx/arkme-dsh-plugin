@@ -1,3 +1,4 @@
+import { joinedBundle } from '../fixtures/member-joined.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'
@@ -15,6 +16,39 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('uses the same latest activity for first paint and detail refresh without extra roster reads', async () => {
+    const bundle = joinedBundle()
+    const session = { userId: 1, accessToken: 'access', refreshToken: 'refresh' }
+    const post = vi.fn(async () => ({ items: [bundle], has_more: false }))
+    const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+      stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const source = new SourceService(runtime, {} as ProfileService, {} as never)
+    const listed = (await source.listSources('root', { refresh: true, firstPaint: true })).items[0]!
+    expect(listed).toMatchObject({ latestPreview: '你 添加 李四 加入群聊', latestActivityAtMillis: 200,
+      latestActivityKind: 'member_joined', latestSequence: 7, unreadCount: 0 })
+    expect(post).toHaveBeenCalledOnce()
+    expect(await source.chatSourceFromBundle(bundle, session, listed, [], { previewSnapshot: true }))
+      .toMatchObject({ latestPreview: listed.latestPreview, latestActivityAtMillis: 200 })
+    const surviving = { ...bundle, latest_activity: { kind: 2, activity_uid: 'surviving', activity_at: 100 },
+      latest_preview: { record: { payload: { text_content: '撤回后的上一条' } } } }
+    const staleTail = { itemUid: 'deleted', title: '', textContent: '已撤回内容', senderName: '李四', isMe: false, status: 1, sendAtMillis: 200, sequence: 7 }
+    const priorRecord = { ...listed, latestActivityKind: 'record' as const, latestPreview: '已撤回内容' }
+    expect((await source.chatSourceFromBundle(surviving, session, priorRecord, [staleTail], { previewSnapshot: true })).latestPreview)
+      .toBe('撤回后的上一条')
+    const priorMessage = { ...priorRecord, latestActivityAtMillis: 300, activeAtMillis: 300 }
+    const restoredJoin = await source.chatSourceFromBundle(bundle, session, priorMessage, [], { previewSnapshot: true, previewUpdatedAtMillis: 400 })
+    expect(restoredJoin).toMatchObject({ latestPreview: listed.latestPreview, latestActivityAtMillis: 200, latestPreviewUpdatedAtMillis: 400 })
+    expect((await source.chatSourceFromBundle(surviving, session, restoredJoin, [], { previewSnapshot: true })).latestPreview).toBe(listed.latestPreview)
+    const item = { itemUid: 'new', title: '', textContent: '后续消息', senderName: '李四', isMe: false, status: 1,
+      sendAtMillis: 201, sequence: 8 }
+    const arrived = await source.chatSourceFromBundle(bundle, session, listed, [item])
+    expect(arrived).toMatchObject({ latestPreview: '后续消息', latestActivityAtMillis: 201, latestActivityKind: 'record' })
+    expect(await source.chatSourceFromBundle(bundle, session, arrived, [], { previewSnapshot: true }))
+      .toMatchObject({ latestPreview: '后续消息', latestActivityAtMillis: 201, latestSequence: 8 })
+    bundle.latest_activity.member_joined.member_display_name_snapshot = '2'
+    expect((await source.listSources('root', { refresh: true, firstPaint: true })).items[0]?.latestPreview).toBe('上一条消息')
+  })
+
   it('admits automatic directory continuation as background without changing explicit reads', async () => {
     const post = vi.fn(async () => ({ items: [], has_more: false }))
     const runtime = { config, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as unknown as ServiceRuntime
@@ -106,6 +140,39 @@ describe('SourceService', () => {
       status: 1, sendAtMillis: 1, sequence: 8, conversationPreview: '视频通话 已接听 00:59',
     }])
     expect(updated.latestPreview).toBe('视频通话 已接听 00:59')
+  })
+
+  it.each(['previous', 'empty'] as const)('replaces a deleted latest preview from an authoritative snapshot: %s', async kind => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事',
+      activeAtMillis: 100, unreadCount: 1, latestSequence: 9, latestPreview: '已删除消息' }
+    const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: 9 },
+      unread_snapshot: { unread_count: 0, session_last_seq: 9 },
+      ...(kind === 'previous' ? { latest_preview: { relation: { seq: 8 }, record: { payload: { text_content: '上一条消息' } } } } : {}) }
+    const updated = await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })
+    expect(updated.latestPreview ?? '').toBe(kind === 'previous' ? '上一条消息' : '')
+    expect(updated.latestSequence).toBe(9)
+    expect(updated.unreadCount).toBe(0)
+    // Lightweight display snapshots cannot claim that the preview is empty.
+    expect((await service.chatSourceFromBundle({ session: bundle.session }, session, cached, [])).latestPreview).toBe('已删除消息')
+  })
+
+  it('does not let a lifecycle snapshot overwrite a newer confirmed arrival', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = { config, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+    const service = new SourceService(runtime, {} as ProfileService, {} as never)
+    const cached: ArkmeSourceItem = { sourceRef: 'old', kind: 'private_chat', displayName: '同事', activeAtMillis: 100, unreadCount: 0, latestSequence: 10, latestPreview: '新消息' }
+    const bundle = { session: { chat_session_uid: 'chat', session_kind: 1, last_seq: 9 }, latest_preview: { record: { payload: { text_content: '旧摘要' } } } }
+    expect((await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })).latestPreview).toBe('新消息')
+    const item = { itemUid: 'new', title: '', textContent: '更新消息', senderName: '同事', isMe: false, status: 1, sendAtMillis: 101, sequence: 11 }
+    expect((await service.chatSourceFromBundle(bundle, session, cached, [item], { previewSnapshot: true })).latestPreview).toBe('更新消息')
+    for (const status of ['unavailable', 'missing']) {
+      const updated = await service.chatSourceFromBundle({ ...bundle, session: { ...bundle.session, last_seq: 10 },
+        latest_preview: { record: { status, payload: { text_content: '不得使用的正文' } } } }, session, cached, [], { previewSnapshot: true })
+      expect(updated.latestPreview ?? '').toBe(status === 'missing' ? '' : '新消息')
+    }
   })
 
   it('keeps the signed conversation binding stable across activity updates but retains fresh directory evidence', async () => {

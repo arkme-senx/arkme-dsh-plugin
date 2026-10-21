@@ -1,5 +1,5 @@
 import { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { CallId, createAssistantMessage, createMessage, createUserMessage, LlmError } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId, createAssistantMessage, createMessage, createUserMessage, createToolResultMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
@@ -68,6 +68,22 @@ function images(messages: WireMessage[]): Part[] {
 }
 
 describe('managed tool-result images', () => {
+  it('serializes 0.2.1 tool-role messages without turning tool text into user input', async () => {
+    const f = await fixture()
+    await f.run([
+      assistant(['first', 'second']),
+      createToolResultMessage({ callId: CallId('first'), content: [text('image result'), f.image] }),
+      createToolResultMessage({ callId: CallId('second'), content: [text('second result')] }),
+      user([text('continue')]),
+    ])
+    expect(f.bodies[0]!.messages.slice(1, 3)).toEqual([
+      { role: 'tool', tool_call_id: 'first', content: 'image result' },
+      { role: 'tool', tool_call_id: 'second', content: 'second result' },
+    ])
+    expect(f.bodies[0]!.messages.map(message => message.role)).toEqual(['assistant', 'tool', 'tool', 'user', 'user'])
+    expect(images(f.bodies[0]!.messages)).toHaveLength(1)
+  })
+
   it('keeps the whole parallel tool group together, correlates images, and preserves durable history', async () => {
     const f = await fixture()
     const second: ContentBlock = { type: 'image', attachment: { ...f.ref, attachmentId: AttachmentId('second-image') } }

@@ -19,6 +19,7 @@ export interface ArkmeRecordingToolPort extends RecordingEntityPort {
   prepareRecordingDirectory(input: RecordingDirectoryInput, signal?: AbortSignal): Promise<PreparedRecordingDirectory>
   importRecordingDirectory(input: RecordingDirectoryInput, prepared: PreparedRecordingDirectory, signal?: AbortSignal): Promise<RecordingDirectoryResult>
   importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob>
+  importRecordingFiles(inputs: RecordingFileImportInput[], signal?: AbortSignal): Promise<import('../../recording-tool-import.js').RecordingFileBatchResult>
   recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob>
   retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
 }

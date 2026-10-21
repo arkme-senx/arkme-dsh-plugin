@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { CallId, createAssistantMessage, createUserMessage, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId, createAssistantMessage, createUserMessage, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import {

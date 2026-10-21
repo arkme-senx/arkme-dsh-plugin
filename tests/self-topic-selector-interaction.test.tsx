@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
-import { IconEllipsisOutline16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutlineMedium, IconNewChatOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeSourceItem } from '../src/types.js'
 import { CONVERSATION_HEADER_COLUMNS } from '../src/client/conversation-header-layout.js'
@@ -140,7 +140,7 @@ it('uses the native horizontal icon and portaled action menu, retaining it acros
   await act(async () => row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
   const trigger = row.querySelector<HTMLButtonElement>('[aria-label="工作主题操作"]')!
   const glyph = document.createElement('div')
-  glyph.innerHTML = renderToStaticMarkup(<IconEllipsisOutline16 />)
+  glyph.innerHTML = renderToStaticMarkup(<IconEllipsisOutlineMedium />)
   expect(trigger.querySelector('svg')?.outerHTML).toBe(glyph.querySelector('svg')?.outerHTML)
   await clickButton('工作主题操作')
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
@@ -248,7 +248,7 @@ it('keeps the DSH-style topic actions in a seamless solid footer outside the scr
   const create = footer?.querySelector('button[aria-label="新主题"]')
   expect(create?.textContent).toBe('新主题')
   const glyph = document.createElement('div')
-  glyph.innerHTML = renderToStaticMarkup(<IconNewChatOutline16 size={14} />)
+  glyph.innerHTML = renderToStaticMarkup(<IconNewChatOutlineMedium size={14} />)
   expect(create?.querySelector('svg')?.outerHTML).toBe(glyph.querySelector('svg')?.outerHTML)
   expect(footer?.querySelector('button[data-arkme-self-topic-sort-trigger="true"]')).not.toBeNull()
   const fade = host.querySelector<HTMLElement>('[data-arkme-self-topic-fade]')!

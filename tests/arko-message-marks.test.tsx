@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 import { webcrypto } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -39,10 +40,10 @@ async function select(element: HTMLElement, phrase: string) {
   expect(node).not.toBeNull()
   const start = node!.textContent!.indexOf(phrase)
   await act(async () => {
-    // A real pointer selection first moves focus out of the contenteditable.
-    // Without this browser default, ProseMirror correctly restores its own caret.
-    element.closest<HTMLElement>('[role="button"]')?.focus()
-    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 30, clientY: 55 }))
+    // jsdom does not perform the browser's pointer-driven blur. Without it,
+    // the still-focused ProseMirror editor reclaims this native selection.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     const range = document.createRange(); range.setStart(node!, start); range.setEnd(node!, start + phrase.length)
     document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
     element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 30, clientY: 55 }))
@@ -83,6 +84,7 @@ beforeEach(async () => {
     }
     throw new Error(`unexpected ${method}`)
   })
+  installArkoPendingHostMock(vi.mocked(callArkme))
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => { root.render(<ArkmeArkoSurface />) })
 })
@@ -98,7 +100,7 @@ afterEach(async () => {
 it('marks both roles, preserves rendered Markdown, and restores the same local marks after remount', async () => {
   await select(body(1), '我的问题')
   expect(toolbar()!.textContent).toContain('仅本机')
-  expect([...toolbar()!.querySelectorAll('button')].map(button => button.textContent)).toEqual(['复制', '全选', '标记'])
+  expect([...toolbar()!.querySelectorAll('button')].map(button => button.textContent)).toEqual(['复制', '全选', '标记', '查找'])
   await mark()
   await waitForUi(() => expect(markedTexts()).toContain('我的问题'))
   await select(body(2), '重点结论'); await mark()
@@ -140,12 +142,14 @@ it('enables marking a newly completed synchronous reply without reloading or mov
   })
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
   await click([...document.querySelectorAll('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!)
-  // Wait for both the completed message target and the scheduled composer focus.
-  await waitForUi(() => {
-    expect(registeredMessageTargets('arko:test:10001').some(({ target }) => target.localMarkRef === 'mark-4')).toBe(true)
-    expect(body(4)).not.toBeNull()
-    expect(document.activeElement?.getAttribute('role')).toBe('textbox')
-  })
+  // The synchronous receipt renders before history supplies the owner-local mark
+  // authority. Select only after that real presentation refresh has registered it.
+  await waitForUi(() => expect(registeredMessageTargets('arko:test:10001')
+    .some(entry => entry.element === body(4) && entry.target.localMarkRef === 'mark-4')).toBe(true))
+  // Shortcut completion restores composer focus on the next animation frame.
+  // A real pointer selection happens after that frame; selecting in the same
+  // synchronous receipt tick lets the scheduled focus clear jsdom's range.
+  await waitForUi(() => expect(document.activeElement).toBe(host.querySelector('[data-arkme-rich-composer]')))
   const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
   Object.defineProperty(viewport, 'scrollHeight', { value: 1000 })
   Object.defineProperty(viewport, 'clientHeight', { value: 300 })

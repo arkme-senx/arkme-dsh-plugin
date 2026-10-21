@@ -21,8 +21,21 @@ def write(path, value):
     os.replace(str(tmp), str(path))
 
 def live(control):
-    active = read(ROOT / 'active.json')
-    return active.get('userId') == control['userId'] and 0 <= time.time()*1000-active.get('at', 0) < 15000
+    try:
+        active = read(ROOT / 'active.json')
+        return active.get('userId') == control['userId'] and 0 <= time.time()*1000-active.get('at', 0) < 15000
+    except (OSError, ValueError): return False
+
+def capture_allowed(control):
+    if live(control): return True
+    # An explicit logout/account fence removes this short lease synchronously. It is not
+    # an invitation, cloud permission, or permission to keep collecting indefinitely.
+    try:
+        if (ROOT / 'active.json').exists() and read(ROOT / 'active.json').get('userId') != control['userId']: return False
+        lease = read(ROOT / 'capture-lease.json')
+        now = time.time()*1000
+        return lease.get('userId') == control['userId'] and 0 <= now-lease['at'] <= 600000 and now <= lease['expiresAt']
+    except (OSError, ValueError, KeyError, TypeError): return False
 
 def connect(folder, args):
     control = read(folder / 'control.json')
@@ -75,7 +88,7 @@ def record(folder, event):
     claim = read(folder / 'claim.json')
     if event.get('session_id') != claim['sessionId']: return
     control = read(folder / 'control.json')
-    if control['status'] not in ('pending', 'active') or not live(control): return
+    if control['status'] not in ('pending', 'active') or not capture_allowed(control): return
     if control['status'] == 'pending' and time.time()*1000 > control['expiresAt']: return
     kind = event.get('hook_event_name')
     turn = event.get('turn_id')

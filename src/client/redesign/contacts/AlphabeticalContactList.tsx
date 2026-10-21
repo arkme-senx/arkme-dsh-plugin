@@ -78,6 +78,7 @@ function rowContent(item: ArkmeDirectoryItem) {
           : <span className="arkme-contact-directory-avatar">
               <ArkmeUserAvatar
                 {...(avatarRef === undefined ? {} : { avatarRef })}
+                {...(item.avatarFallback === undefined ? {} : { fallback: item.avatarFallback })}
                 size={38}
                 label={tr("{v0}的头像", { v0: item.displayName })}
               />
