@@ -1,3 +1,4 @@
+import { arkmeChatActivityPreview } from '../chat-activity-preview.js'
 import {
   ArkmeChatRealtimeRuntime,
   type ArkmeChatRealtimeNotice,
@@ -82,6 +83,8 @@ export interface PendingChatProjection {
   refreshPreview?: boolean | undefined
   accountUserId?: number | undefined
   accountOwnerGeneration?: number | undefined
+  minimumActivityAtMillis?: number | undefined
+  previewUpdatedAtMillis?: number | undefined
 }
 
 interface ArkmeTimelineNotificationIdentity {
@@ -143,6 +146,7 @@ export class ChatRealtimeService {
   private disposed = false
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
+  private readonly memberJoinEvents = new Set<string>()
   private readonly pendingChatProjections = new Map<string, PendingChatProjection>()
   private readonly projectionRetryCounts = new Map<string, number>()
   private readonly localReadCursors = new Map<string, { confirmed: number; pending: Map<symbol, number> }>()
@@ -225,6 +229,7 @@ export class ChatRealtimeService {
     this.projectionInFlight = undefined
     this.preferredProjectionInFlight = undefined
     this.pendingChatProjections.clear()
+    this.memberJoinEvents.clear()
     this.projectionRetryCounts.clear()
     this.projectionRetryAt.clear()
     this.notificationBaselineSequences.clear()
@@ -266,6 +271,7 @@ export class ChatRealtimeService {
       this.projectionInFlight = undefined
       this.preferredProjectionInFlight = undefined
       this.pendingChatProjections.clear()
+      this.memberJoinEvents.clear()
       this.projectionRetryCounts.clear()
       this.projectionRetryAt.clear()
       this.notificationBaselineSequences.clear()
@@ -506,7 +512,7 @@ export class ChatRealtimeService {
           eventAtMillis: hint.eventAtMillis,
         })
       } else {
-        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.latestSequence, undefined, false, true)
+        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.latestSequence, undefined, false, true, 0, hint.eventAtMillis)
       }
       void this.refreshAttentionSummary()
     } catch (error) {
@@ -516,13 +522,21 @@ export class ChatRealtimeService {
 
   private async handleMemberEvent(notice: ArkmeChatRealtimeNotice): Promise<void> {
     const hint = notice.memberJoined ?? notice.memberEvent
-    if (hint === undefined || notice.connectionSignal?.aborted) return
+    if (this.disposed || hint === undefined || notice.connectionSignal?.aborted) return
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return
       this.runtime.invalidateMemberCache?.()
       const sourceKey = await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid)
-      if (notice.connectionSignal?.aborted || (await this.runtime.sessionStore.read())?.userId !== session.userId) return
+      if (this.disposed || notice.connectionSignal?.aborted || (await this.runtime.sessionStore.read())?.userId !== session.userId) return
+      if (notice.memberJoined !== undefined) {
+        this.activateAttentionOwner(session.userId)
+        const key = `${session.userId}:${hint.eventUid}`
+        if (this.memberJoinEvents.has(key)) return
+        this.memberJoinEvents.add(key)
+        if (this.memberJoinEvents.size > 1024) this.memberJoinEvents.delete(this.memberJoinEvents.values().next().value!)
+        this.scheduleChatSessionProjection(hint.chatSessionUid, 0, undefined, false, true, hint.joinAtMillis ?? hint.eventAtMillis)
+      }
       if (notice.memberJoined !== undefined) this.emitChatClientEvent({ type: 'members-invalidated', revision: this.nextChatClientRevision(), sourceKey })
       else this.emitChatClientEvent({ type:'member-events-invalidated', revision:this.nextChatClientRevision(),
         sourceKey, eventId:hint.eventUid, occurredAtMillis:hint.eventAtMillis })
@@ -793,6 +807,7 @@ export class ChatRealtimeService {
     this.projectionInFlight = undefined
     this.preferredProjectionInFlight = undefined
     this.pendingChatProjections.clear()
+    this.memberJoinEvents.clear()
     this.projectionRetryCounts.clear()
     this.projectionRetryAt.clear()
     this.notificationBaselineSequences.clear()
@@ -935,6 +950,8 @@ export class ChatRealtimeService {
     notificationHint?: PendingChatNotificationHint,
     refreshTimeline = true,
     refreshPreview = false,
+    minimumActivityAtMillis = 0,
+    previewUpdatedAtMillis = 0,
   ): void {
     const uid = chatSessionUid.trim()
     if (uid === '') return
@@ -955,8 +972,10 @@ export class ChatRealtimeService {
       refreshSource: true,
       refreshTimeline: refreshTimeline || current !== undefined && current.refreshTimeline !== false,
       refreshPreview: refreshPreview || current?.refreshPreview === true,
-      accountUserId: notificationHint?.accountUserId ?? current?.accountUserId,
-      accountOwnerGeneration: notificationHint?.accountOwnerGeneration ?? current?.accountOwnerGeneration,
+      minimumActivityAtMillis: Math.max(minimumActivityAtMillis, current?.minimumActivityAtMillis ?? 0),
+      previewUpdatedAtMillis: Math.max(previewUpdatedAtMillis, current?.previewUpdatedAtMillis ?? 0),
+      accountUserId: notificationHint?.accountUserId ?? current?.accountUserId ?? this.attentionOwnerUserId,
+      accountOwnerGeneration: notificationHint?.accountOwnerGeneration ?? current?.accountOwnerGeneration ?? (this.attentionOwnerUserId === undefined ? undefined : this.attentionOwnerGeneration),
     })
     this.pendingBodyWaiters.get(uid)?.()
     this.scheduleProjectionFlush(0)
@@ -1131,6 +1150,8 @@ export class ChatRealtimeService {
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
         refreshPreview: incoming.refreshPreview,
+        minimumActivityAtMillis: incoming.minimumActivityAtMillis,
+        previewUpdatedAtMillis: incoming.previewUpdatedAtMillis,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -1144,6 +1165,8 @@ export class ChatRealtimeService {
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
         refreshPreview: incoming.refreshPreview,
+        minimumActivityAtMillis: incoming.minimumActivityAtMillis,
+        previewUpdatedAtMillis: incoming.previewUpdatedAtMillis,
         accountUserId: incoming.accountUserId,
         accountOwnerGeneration: incoming.accountOwnerGeneration,
       })
@@ -1169,6 +1192,8 @@ export class ChatRealtimeService {
       refreshSource: current.refreshSource !== false || incoming.refreshSource !== false,
       refreshTimeline: current.refreshTimeline !== false || incoming.refreshTimeline !== false,
       refreshPreview: current.refreshPreview === true || incoming.refreshPreview === true,
+      minimumActivityAtMillis: Math.max(current.minimumActivityAtMillis ?? 0, incoming.minimumActivityAtMillis ?? 0),
+      previewUpdatedAtMillis: Math.max(current.previewUpdatedAtMillis ?? 0, incoming.previewUpdatedAtMillis ?? 0),
       accountUserId: current.accountUserId ?? incoming.accountUserId,
       accountOwnerGeneration: current.accountOwnerGeneration ?? incoming.accountOwnerGeneration,
     })
@@ -1250,7 +1275,11 @@ export class ChatRealtimeService {
       if (previewBundle !== undefined && stringValue(objectValue(previewBundle.session).chat_session_uid) !== uid) {
         throw new Error('Chat preview snapshot identity is invalid')
       }
-      if (ownerGeneration !== this.attentionOwnerGeneration) return []
+      if (ownerGeneration !== this.attentionOwnerGeneration || this.disposed
+        || (await this.runtime.sessionStore.read())?.userId !== session.userId) return []
+      if ((projection.minimumActivityAtMillis ?? 0) > (arkmeChatActivityPreview(previewBundle ?? {}, session.userId).latestActivityAtMillis ?? 0)) {
+        throw new Error('Chat activity snapshot does not cover the member join')
+      }
       const cached = this.source.cachedChatSourceByKey(`${String(session.userId)}:${uid}`)
       const earlySource = uid === preferredUid && cached?.kind === 'private_chat'
         && cached.directMessageAdmissionApplicable === true ? cached : undefined
@@ -1385,12 +1414,13 @@ export class ChatRealtimeService {
           const cachedSource = this.source.cachedChatSourceByKey(cacheKey)
           const source = projection.refreshSource === false
             ? cachedSource
-            : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems, { previewSnapshot: previewBundle !== undefined })
+            : await this.source.chatSourceFromBundle(bundle!, session, cachedSource, timelineItems, { previewSnapshot: previewBundle !== undefined, ...(projection.previewUpdatedAtMillis ? { previewUpdatedAtMillis: projection.previewUpdatedAtMillis } : {}) })
           if (source === undefined) {
             this.mergePendingChatProjection(uid, { ...projection, refreshSource: true })
             return [[uid, projection] as [string, PendingChatProjection]]
           }
-          if (ownerGeneration !== this.attentionOwnerGeneration) return []
+          if (this.disposed || ownerGeneration !== this.attentionOwnerGeneration
+            || (await this.runtime.sessionStore.read())?.userId !== session.userId) return []
           if (projection.refreshSource !== false) this.source.setChatSourceByKey(cacheKey, source)
           const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
           if (ownerGeneration !== this.attentionOwnerGeneration) return []

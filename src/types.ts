@@ -1772,6 +1772,11 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
+  latestActivityAtMillis?: number
+  latestActivityKind?: 'member_joined' | 'record'
+  /** Server mutation time when a lifecycle change reselects an earlier activity. */
+  latestPreviewUpdatedAtMillis?: number
   activeAtMillis: number
   unreadCount: number
   /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */

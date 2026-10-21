@@ -31,6 +31,20 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
 }
 
 describe('local-first directory', () => {
+  it('persists and restores member activity while rejecting same-sequence older pages', async () => {
+    const activity = row(1, { kind: 'group_chat', latestSequence: 7, activeAtMillis: 200,
+      latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' })
+    const cached = { ...page([activity]), projection: { revision: 8, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    const older = row(1, { kind: 'group_chat', latestSequence: 7, latestPreview: '旧消息', latestActivityAtMillis: 100, latestActivityKind: 'record' })
+    const test = setup(async () => page([older]), cached)
+    expect((await test.owner.read()).items[0]).toMatchObject(activity)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]).toMatchObject({ latestPreview: activity.latestPreview, latestActivityAtMillis: 200 })
+    expect(test.write).toHaveBeenLastCalledWith(1, expect.objectContaining({ items: [expect.objectContaining({ latestActivityAtMillis: 200 })] }))
+    const next = { ...activity, latestPreview: '新消息', latestActivityAtMillis: 201, latestActivityKind: 'record' as const, latestSequence: 8 }
+    expect(mergeDirectorySource(activity, next).latestPreview).toBe('新消息')
+  })
+
   it('refreshes a persisted generic card preview even when the last message sequence is unchanged', async () => {
     const cached = { ...page([row(1, { latestSequence: 8, latestPreview: '[卡片]' })]),
       projection: { revision: 8, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }

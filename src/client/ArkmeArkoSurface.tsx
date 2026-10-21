@@ -46,7 +46,7 @@ import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-stor
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft, type ArkmeComposerDraftSnapshot } from './composer-draft-store.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
   arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
@@ -394,6 +394,14 @@ function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
   return catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.displayName ?? '模型目录暂不可用'
 }
 
+function isImageTurnDraft(draft: ArkmeComposerDraftSnapshot, turn: ArkmeArkoPendingTurn): boolean {
+  const images = turn.images
+  return images !== undefined && images.length > 0
+    && serializeArkmeComposerDraft(draft).text.trim() === turn.text
+    && draft.attachments.length === images.length
+    && draft.attachments.every((attachment, index) => attachment.localFile?.fileRef === images[index]!.fileRef)
+}
+
 export function ArkmeArkoSurface() {
   useArkmeLocale()
   const shellRef = useRef<HTMLDivElement>(null)
@@ -483,6 +491,10 @@ export function ArkmeArkoSurface() {
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
+  // The pending message owns the visible send. Keep the editor document mounted
+  // and unchanged so failure recovery preserves its undo/redo history.
+  const imageDraftSending = sending && pendingTurn?.userId === profileUserId
+    && pendingTurn !== undefined && isImageTurnDraft(draftSnapshot, pendingTurn)
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const detailBodyRef = useRef<HTMLDivElement>(null)
   const detailScope = `${authSnapshot.auth?.environment ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
@@ -804,8 +816,7 @@ export function ArkmeArkoSurface() {
       if (turn.images?.length) {
         const key = arkmeArkoComposerDraftKey(turn.userId)
         const current = arkmeComposerDraftStore.get(key)
-        if (serializeArkmeComposerDraft(current).text.trim() === turn.text
-          && JSON.stringify(current.attachments.map(attachment => attachment.localFile?.fileRef)) === JSON.stringify(turn.images.map(file => file.fileRef))) {
+        if (isImageTurnDraft(current, turn)) {
           arkmeComposerDraftStore.clear(key)
         }
       }
@@ -1019,6 +1030,7 @@ export function ArkmeArkoSurface() {
   }, [clearing, pendingTurn, scrollToBottom, sending])
 
   const displayName = arkoPresentationName(profile)
+  const composerPlaceholder = tr("问问 {v0}...", { v0: displayName })
   const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
   const canChooseModel = (catalog?.options.length ?? 0) > 0
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
@@ -1283,17 +1295,18 @@ export function ArkmeArkoSurface() {
         data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
         style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
           ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
-      {draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
+      {!imageDraftSending && draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
         attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled || imageDraft.preparing !== ''} /></div>}
+      {imageDraftSending && <div aria-hidden style={{ ...styles.textarea, color: colors.secondary }}>{composerPlaceholder}</div>}
       <ArkmeDocumentComposerInput
         format="text"
         key={accountKey}
         ref={textareaRef}
-        style={styles.textarea!}
+        style={imageDraftSending ? { ...styles.textarea, display: 'none' } : styles.textarea!}
         value={draft}
         emojis={draftSnapshot.emojis}
         maxLength={arkoQuestionMaxLength}
-        placeholder={tr("问问 {v0}...", { v0: displayName })}
+        placeholder={composerPlaceholder}
         ariaLabel={tr("发送给 {v0}", { v0: displayName })}
         disabled={inputDisabled || messageActions.selecting}
         onFocus={() => { setComposerInputFocused(true) }}

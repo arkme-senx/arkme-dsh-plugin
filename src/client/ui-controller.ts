@@ -22,6 +22,8 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
     && left.chatPolicyUpdatedAtMillis === right.chatPolicyUpdatedAtMillis
     && left.chatNotificationPolicyUpdatedAtMillis === right.chatNotificationPolicyUpdatedAtMillis
+    && left.latestActivityAtMillis === right.latestActivityAtMillis && left.latestActivityKind === right.latestActivityKind
+    && left.latestPreviewUpdatedAtMillis === right.latestPreviewUpdatedAtMillis
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
