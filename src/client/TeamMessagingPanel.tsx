@@ -187,18 +187,24 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') {
-        teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
-        if (intent.conversation.side === 'team') teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
+        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
+        controller.signal.throwIfAborted()
+        if (intent.conversation.side === 'team') await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
+        controller.signal.throwIfAborted()
         setSelected(intent.conversation); return
       }
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') { if (intent.channel) teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
+      if (intent.kind === 'team') { if (intent.channel) await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
       const publicRef = intent.kind === 'official'
         ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
       const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
-      if (value.conversation) { teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation)); setSelected(value.conversation) }
+      if (value.conversation) {
+        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation))
+        controller.signal.throwIfAborted()
+        setSelected(value.conversation)
+      }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
       else throw new Error(tr('暂时无法打开对话，请重试'))
       void refreshTeamDirectory(accountKey)

@@ -3,6 +3,7 @@ import { MAX_RECORDING_IMPORT_BYTES, RecordingImportContractError, sameRecording
   type RecordingDirectorySource, type RecordingDirectoryEntry, type RecordingDirectorySelection,
   type PublicRecordingImportJob } from './recording-import-contract.js'
 import { recordingImportFileNameKey } from './recording-import-shared.js'
+import { recordingToolMemberKey, type RecordingToolBatchPlanner, type RecordingToolBatchMember } from './recording-tool-batch.js'
 
 export interface RecordingDirectoryInput {
   directoryPath: string
@@ -26,11 +27,13 @@ export interface RecordingDirectoryItem {
   revision?: number
   errorCode?: string
   message?: string
+  batchId?: string
 }
 export type RecordingDirectoryPreviewItem = Omit<RecordingDirectoryItem, 'outcome'> & {
   outcome: 'pending_upload' | 'pending_resume' | 'matched_uploaded' | 'conflict' | 'time_required' | 'invalid'
 }
 export interface RecordingDirectoryResult {
+  workflow?: { supported: boolean; batchIds: string[]; untrackedUploads: number }
   total: number
   skipped: number
   remaining: number
@@ -41,7 +44,7 @@ export interface RecordingDirectoryResult {
 interface DirectoryRecordingOwner {
   recordingImportUserId(): Promise<number>
   recordingDirectorySnapshot(candidates: readonly RecordingDirectoryCandidate[], expectedUserId: number, signal?: AbortSignal): Promise<RecordingDirectorySnapshot>
-  acceptRecordingImport(sourceHandle: string, metadata: Omit<RecordingImportIdentity, 'userId'> & { mimeType: string; recordingKind: 3 }, expectedUserId: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
+  acceptRecordingImport(sourceHandle: string, metadata: Omit<RecordingImportIdentity, 'userId'> & { mimeType: string; recordingKind: 3 } & Partial<RecordingToolBatchMember>, expectedUserId: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
   retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
   waitRecordingImport(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob>
 }
@@ -172,6 +175,7 @@ function accountStopReason(code: string | undefined): RecordingDirectoryResult['
 export async function importRecordingDirectory(
   owner: DirectoryRecordingOwner, source: RecordingDirectorySource, input: RecordingDirectoryInput,
   prepared: PreparedRecordingDirectory, signal?: AbortSignal,
+  planner?: RecordingToolBatchPlanner,
 ): Promise<RecordingDirectoryResult> {
   validateInput(input)
   await assertAccount(owner, prepared.expectedUserId, signal)
@@ -183,6 +187,24 @@ export async function importRecordingDirectory(
   }
   const namedCount = nameCounts(scan)
   const approved = new Map(prepared.preview.map(item => [item.relativePath, item]))
+  const memberKeys = new Map(scan.files.map(file => [file.relativePath, recordingToolMemberKey([
+    'directory', file.sourceSnapshot, file.relativePath, file.fileName, file.fileSize, file.startAtMillis, belongUserId,
+  ])]))
+  let members: Record<string, RecordingToolBatchMember> = {}
+  if (planner) {
+    // Refresh the frozen selection, not the filesystem selection: avoid assigning slots to known duplicates.
+    const snapshot = await owner.recordingDirectorySnapshot(scan.files.filter(file => validStart(file.startAtMillis))
+      .map(file => ({ fileName: file.fileName, startAtMillis: file.startAtMillis! })), prepared.expectedUserId, signal)
+    for (const file of scan.files) {
+      if (!['pending_upload', 'pending_resume'].includes(approved.get(file.relativePath)?.outcome ?? '')) continue
+      approved.set(file.relativePath, await previewFile(source, file, file.startAtMillis, belongUserId, snapshot, namedCount, signal))
+    }
+    const plan = await planner(prepared.expectedUserId, scan.files.map(file => ({ key: memberKeys.get(file.relativePath)!,
+      isNew: approved.get(file.relativePath)?.outcome === 'pending_upload' })), signal)
+    members = plan.members
+    result.workflow = { supported: plan.supported, batchIds: [...new Set(Object.values(members).map(row => row.batch.batchId))], untrackedUploads: 0 }
+    await assertAccount(owner, prepared.expectedUserId, signal)
+  }
   for (const file of scan.files) {
     let sourceHandle: string | undefined
     let admitted: PublicRecordingImportJob | undefined
@@ -251,11 +273,15 @@ export async function importRecordingDirectory(
             item = { ...item, outcome: uploaded ? 'matched_uploaded' : 'conflict',
               message: uploaded ? '已有元数据匹配且上传已收尾的录音' : '已有同名录音，但无法确认与该文件匹配且上传完成' }
           } else {
-            admitted = await owner.acceptRecordingImport(sourceHandle, { ...metadata, recordingKind: 3 }, prepared.expectedUserId, signal)
+            admitted = await owner.acceptRecordingImport(sourceHandle, { ...metadata, recordingKind: 3,
+              ...members[memberKeys.get(file.relativePath)!] }, prepared.expectedUserId, signal)
             sourceHandle = undefined // The existing coordinator owns the admitted copy.
           }
           if (admitted !== undefined) {
-            item = { ...item, outcome: 'in_progress', importRef: admitted.importRef, revision: admitted.revision }
+            item = { ...item, outcome: 'in_progress', importRef: admitted.importRef, revision: admitted.revision,
+              ...(admitted.batch ? { batchId: admitted.batch.batchId } : {}) }
+            if (result.workflow && !admitted.batch) result.workflow.untrackedUploads++
+            if (result.workflow && admitted.batch && !result.workflow.batchIds.includes(admitted.batch.batchId)) result.workflow.batchIds.push(admitted.batch.batchId)
             const completed = await owner.waitRecordingImport(admitted.importRef, signal)
             item = { ...item, outcome: completed.phase === 'accepted' ? 'uploaded'
               : completed.phase === 'failed' ? 'failed' : completed.phase === 'cancelled' ? 'cancelled' : 'in_progress', revision: completed.revision }

@@ -42,6 +42,7 @@ arkoFileRefs(userId:number):Promise<string[]>
  readOfflineContextJournal?(scope:string):Promise<Record<string,import('../offline-context-contract.js').OfflineContextJournalEntry>>
  putOfflineContextJournal?(scope:string,id:string,entry:import('../offline-context-contract.js').OfflineContextJournalEntry):Promise<void>
  deleteOfflineContextJournal?(scope:string,id:string,fingerprint:string):Promise<void>
+  localDirectoryPreferences?(accountKey: string, entries?: import('../local-directory-preferences.js').LocalDirectoryPreferences, migrate?: boolean): Promise<import('../local-directory-preferences.js').LocalDirectoryPreferences>
   readConversationViewports?(accountKey: string, surface: string): Promise<import('../conversation-viewport-state.js').ConversationViewportEntries>
   writeConversationViewports?(accountKey: string, surface: string, entries: import('../conversation-viewport-state.js').ConversationViewportEntries): Promise<void>
   arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>
@@ -111,6 +112,7 @@ arkoFileRefs(userId:number):Promise<string[]>
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>

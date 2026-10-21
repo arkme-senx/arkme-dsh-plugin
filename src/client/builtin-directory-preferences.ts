@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { localDirectoryPreferences, useLocalDirectoryPreferenceHydration } from './local-directory-preferences.js'
 
 export type BuiltinConversation = 'self' | 'arko' | 'harness'
 export type BuiltinPins = Partial<Record<BuiltinConversation, number>>
@@ -8,15 +9,26 @@ const entries: BuiltinConversation[] = ['self', 'arko', 'harness']
 /** Local display preferences only; never persist message contents or access references. */
 export class BuiltinDirectoryPreferences {
   private listeners = new Set<() => void>()
-  constructor(private storage: () => Pick<Storage, 'getItem' | 'setItem'> | undefined) {}
+  constructor(private storage: () => Pick<Storage, 'getItem' | 'setItem'> | undefined, private durable = false) {
+    if (durable) localDirectoryPreferences.subscribe(this.invalidate)
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   invalidate = () => { for (const listener of this.listeners) listener() }
   snapshot = (account: string): string => {
+    if (this.durable) {
+      const pins: BuiltinPins = {}
+      for (const entry of entries) { const value = localDirectoryPreferences.read(account)[`builtin:${entry}`]; if (value?.pinned) pins[entry] = Math.max(1, value.pinnedAt) }
+      return JSON.stringify(pins)
+    }
     try { return account ? this.storage()?.getItem(prefix + account) ?? '{}' : '{}' } catch { return '{}' }
   }
   read(account: string): BuiltinPins { return parseBuiltinPins(this.snapshot(account)) }
-  pin(account: string, entry: BuiltinConversation, pinned: boolean): void {
+  pin(account: string, entry: BuiltinConversation, pinned: boolean): void | Promise<void> {
     if (!account) throw new Error('请先登录')
+    if (this.durable) {
+      const nextTime = Math.max(Date.now(), ...Object.values(localDirectoryPreferences.read(account)).map(value => value.pinnedAt + 1))
+      return localDirectoryPreferences.set(account, `builtin:${entry}`, { pinned, pinnedAt: pinned ? nextTime : 0 })
+    }
     const next = this.read(account)
     if (pinned) next[entry] = Math.max(Date.now(), ...Object.values(next).map(value => value + 1))
     else delete next[entry]
@@ -35,12 +47,8 @@ export function parseBuiltinPins(value: string): BuiltinPins {
     return result
   } catch { return {} }
 }
-export const builtinDirectoryPreferences = new BuiltinDirectoryPreferences(() => {
-  try { return typeof window === 'undefined' ? undefined : window.localStorage } catch { return undefined }
-})
-if (typeof window !== 'undefined') window.addEventListener('storage', event => {
-  if (event.key === null || event.key.startsWith(prefix)) builtinDirectoryPreferences.invalidate()
-})
-export const useBuiltinDirectoryPins = (account: string) => useSyncExternalStore(
-  builtinDirectoryPreferences.subscribe, () => builtinDirectoryPreferences.snapshot(account), () => '{}',
-)
+export const builtinDirectoryPreferences = new BuiltinDirectoryPreferences(() => undefined, true)
+export function useBuiltinDirectoryPins(account: string) {
+  useLocalDirectoryPreferenceHydration(account)
+  return useSyncExternalStore(builtinDirectoryPreferences.subscribe, () => builtinDirectoryPreferences.snapshot(account), () => '{}')
+}

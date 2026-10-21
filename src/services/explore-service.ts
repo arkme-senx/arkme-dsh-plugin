@@ -115,6 +115,17 @@ export class ExploreService {
     await this.guard(session, epoch, signal)
     return result
   }
+  /** Bounded directory read; publish every page instead of downloading unrelated entity types. */
+  async personPage(cursor?: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession(), epoch = this.epoch
+    const page = await this.readPage({ module: 'relations', filter: '1', limit: PAGE, ...(cursor ? { cursor } : {}) }, signal, false)
+    const items = await Promise.all(page.items.map(async item => {
+      const ref = await this.open(item.ref, session, 'item')
+      return { entityId: text(ref.id), linkedUserId: number(ref.linkedUserId), aliases: strings(ref.aliases), item }
+    }))
+    await this.guard(session, epoch, signal)
+    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }
+  }
   private async relationRemarks(ids: number[], session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Map<number,string>> {
     const epoch=this.epoch
     const missingIds=[...new Set(ids)].filter(id=>id>0&&id!==session.userId&&(this.remarksCache.get(id)?.until??0)<Date.now())
