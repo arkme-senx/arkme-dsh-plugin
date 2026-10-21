@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 import { webcrypto } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
+import { registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
 import { arkoMessageMarkTarget, arkoMessageMarkTransport } from '../src/client/arko-message-marks.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -38,6 +40,10 @@ async function select(element: HTMLElement, phrase: string) {
   expect(node).not.toBeNull()
   const start = node!.textContent!.indexOf(phrase)
   await act(async () => {
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 30, clientY: 55 }))
+    // jsdom does not perform the browser's pointer-driven blur. Without it,
+    // the still-focused ProseMirror editor reclaims this native selection.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     const range = document.createRange(); range.setStart(node!, start); range.setEnd(node!, start + phrase.length)
     document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
     element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 30, clientY: 55 }))
@@ -78,6 +84,7 @@ beforeEach(async () => {
     }
     throw new Error(`unexpected ${method}`)
   })
+  installArkoPendingHostMock(vi.mocked(callArkme))
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => { root.render(<ArkmeArkoSurface />) })
 })
@@ -135,12 +142,14 @@ it('enables marking a newly completed synchronous reply without reloading or mov
   })
   await click(host.querySelector('[aria-label="更多 Arko 操作"]')!)
   await click([...document.querySelectorAll('[role="menu"] button')].find(node => node.textContent === 'Arko 能干什么')!)
-  // A real send restores composer focus on the next frame. Finish that transition
-  // before simulating a user's new selection; otherwise jsdom can steal the range.
-  await waitForUi(() => {
-    expect(body(4)).not.toBeNull()
-    expect(document.activeElement?.getAttribute('role')).toBe('textbox')
-  })
+  // The synchronous receipt renders before history supplies the owner-local mark
+  // authority. Select only after that real presentation refresh has registered it.
+  await waitForUi(() => expect(registeredMessageTargets('arko:test:10001')
+    .some(entry => entry.element === body(4) && entry.target.localMarkRef === 'mark-4')).toBe(true))
+  // Shortcut completion restores composer focus on the next animation frame.
+  // A real pointer selection happens after that frame; selecting in the same
+  // synchronous receipt tick lets the scheduled focus clear jsdom's range.
+  await waitForUi(() => expect(document.activeElement).toBe(host.querySelector('[data-arkme-rich-composer]')))
   const viewport = host.querySelector<HTMLElement>('[data-arko-message-viewport]')!
   Object.defineProperty(viewport, 'scrollHeight', { value: 1000 })
   Object.defineProperty(viewport, 'clientHeight', { value: 300 })

@@ -18,7 +18,7 @@ export function createArkmeFileTransfers(options: {
   if (options.directory === undefined) return undefined
   return new FileTransfers(options.directory, {
     currentUser: async () => (await options.runtime.requireSession()).userId,
-    retainedFileRefs: async userId => await options.runtime.stateStore.recordReeditFileRefs(userId),
+    retainedFileRefs: async userId => [...await options.runtime.stateStore.recordReeditFileRefs(userId), ...await options.runtime.stateStore.arkoFileRefs(userId)],
     validateSource: async sourceRef => { await options.source.openSourceRef(sourceRef, (await options.runtime.requireSession()).userId) },
     upload: async (path, metadata, onProgress, expectedUserId, signal) => await options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal }),
     send: async (input, assets, backgroundSound, expectedUserId, signal): Promise<FileTransferSendOutcome> => {
