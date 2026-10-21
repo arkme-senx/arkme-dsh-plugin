@@ -12,6 +12,22 @@ import {
 } from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
+
+  it('applies same-sequence joins and ignores older activity while allowing the next message', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const row = { sourceRef: 'ref', sourceKey: 'group', kind: 'group_chat' as const, displayName: '讨论群',
+      activeAtMillis: 100, latestSequence: 7, latestPreview: '旧消息', latestActivityAtMillis: 100,
+      latestActivityKind: 'record' as const, unreadCount: 0 }
+    store.publish([row])
+    const joined = { ...row, latestPreview: '李四 加入了群聊', latestActivityKind: 'member_joined' as const, latestActivityAtMillis: 200, activeAtMillis: 200 }
+    store.upsert(joined)
+    expect(store.getSnapshot().sources[0]?.latestPreview).toBe(joined.latestPreview)
+    store.upsert(row)
+    expect(store.getSnapshot().sources[0]?.latestPreview).toBe(joined.latestPreview)
+    store.upsert({ ...row, latestSequence: 8, latestPreview: '后续消息', latestActivityAtMillis: 201, activeAtMillis: 201 })
+    expect(store.getSnapshot().sources[0]?.latestPreview).toBe('后续消息')
+    expect(store.totalUnreadCount()).toBe(0)
+  })
   it('replaces or clears a same-sequence preview after a lifecycle snapshot', () => {
     const store = new ArkmeChatDirectoryStore()
     const source = { sourceRef: 'ref', sourceKey: 'chat:preview', kind: 'private_chat' as const,

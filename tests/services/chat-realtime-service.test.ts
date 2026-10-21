@@ -136,7 +136,7 @@ describe('ChatRealtimeService', () => {
     })
     const timeline = vi.fn(async () => [])
     const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: timeline })
-    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection')
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => {})
     const attention = vi.spyOn(service, 'refreshAttentionSummary')
     const events: unknown[] = []
     service.subscribeChatRealtime(event => { events.push(event) })
@@ -149,7 +149,8 @@ describe('ChatRealtimeService', () => {
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./) })
     expect(JSON.stringify(events[0])).not.toContain('raw-group')
     expect(timeline).not.toHaveBeenCalled()
-    expect(schedule).not.toHaveBeenCalled()
+    if (kind === 'memberJoined') expect(schedule).toHaveBeenCalledExactlyOnceWith('raw-group', 0, undefined, false, true, 1234)
+    else expect(schedule).not.toHaveBeenCalled()
     expect(attention).not.toHaveBeenCalled()
     service.dispose()
   })
@@ -266,7 +267,7 @@ describe('ChatRealtimeService', () => {
     })
     expect(JSON.stringify(events[0])).not.toContain('raw-chat-session')
     expect(JSON.stringify(events[0])).not.toContain('raw-relation')
-    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9, undefined, false, true)
+    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9, undefined, false, true, 0, 123457)
     service.dispose()
   })
 
