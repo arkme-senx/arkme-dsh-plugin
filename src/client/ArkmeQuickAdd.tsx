@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { IconNewChatOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
@@ -101,7 +101,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
       {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
-        onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
+        onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutlineMedium />, onSelect: onNewDshSession },
         { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
         { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
@@ -219,7 +219,7 @@ export function ArkmeQuickAddButton({
         // Re-entering the trigger must never demote a pinned menu to hover mode.
         onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
         onClick={() => { setMenuError(''); setMenuMode('pinned') }}
-      ><IconPlusOutline16 size={20} aria-hidden /></button>}
+      ><IconPlusOutlineMedium size={20} aria-hidden /></button>}
       error={menuError}
       recordingAction={recordingAccountKey === undefined ? undefined : {
         label: recordingPhase === 'recording' ? '查看录音' : recordingPhase === 'starting' ? '正在准备录音…'

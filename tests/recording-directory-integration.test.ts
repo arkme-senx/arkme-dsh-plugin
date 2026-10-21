@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import { appendToolResult, sessionEvents } from './helpers/tool-session.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareRecordingDirectory, importRecordingDirectory } from '../src/recording-directory-import.js'

@@ -44,8 +44,9 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   const open = vi.fn()
   apply({
     effect: (effect: () => () => undefined) => { stop = effect() },
-    sessions: { open, list: {
-      getSnapshot: () => ({ current }),
+    uiWorkspace: { openSession: open },
+    sessions: { subagentAddress: () => undefined, list: {
+      getSnapshot: () => ({ phase: 'ready', byId: current ? { [current]: { id: current, retainedBy: { mainView: 1 } } } : {} }),
       subscribe: (callback: () => undefined) => { changed = callback; return unsubscribe },
     } },
   } as unknown as ClientContext)
@@ -116,7 +117,8 @@ it('mounts local navigation without remote reporting and removes it on dispose',
   vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
   const fetcher = vi.fn()
   vi.stubGlobal('fetch', fetcher)
-  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, uiWorkspace: { openSession: open },
+    sessions: { subagentAddress: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
   const navigation = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   navigation.open('local-task')
   expect(open).toHaveBeenCalledExactlyOnceWith('local-task')

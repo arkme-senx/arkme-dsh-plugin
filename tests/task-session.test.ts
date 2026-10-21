@@ -33,7 +33,7 @@ describe('Arkme task session resolution', () => {
   it('adopts a browsed directory and opens a real DSH session when no workspace exists', async () => {
     const runtime = runtimeState({ workspaces: [] })
 
-    await expect(resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions, { path: '/tmp/project' })).resolves.toBe('session:new')
+    await expect(resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions, { path: '/tmp/project' }, runtime.workspaceRuntime)).resolves.toBe('session:new')
     expect(runtime.create).toHaveBeenCalledWith({ path: '/tmp/project' })
     expect(runtime.connectWorkspace).toHaveBeenCalledWith('workspace:new')
     expect(runtime.open).toHaveBeenCalledWith('session:new')
@@ -48,14 +48,14 @@ describe('Arkme task session resolution', () => {
       ],
     })
 
-    await resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions)
+    await resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions, {}, runtime.workspaceRuntime)
     expect(runtime.connectWorkspace).toHaveBeenCalledWith('workspace:current')
   })
 
   it('requests the browser flow when there is no usable workspace yet', async () => {
     const runtime = runtimeState({ workspaces: [] })
 
-    await expect(resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions)).resolves.toBeUndefined()
+    await expect(resolveArkmeTaskSession(runtime.workspaceRuntime, runtime.sessions, {}, runtime.workspaceRuntime)).resolves.toBeUndefined()
     expect(runtime.create).not.toHaveBeenCalled()
     expect(runtime.connectWorkspace).not.toHaveBeenCalled()
     expect(runtime.open).not.toHaveBeenCalled()

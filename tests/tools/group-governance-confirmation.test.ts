@@ -1,7 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import CodeRuntime, { type CodeRunRequest } from '@deepseek-ai/dsh-code-runtime'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from '../helpers/session-input.js'
+import CodeRuntime, { type PtcRunRequest as CodeRunRequest } from '@deepseek-ai/dsh-ptc-runtime'
+import { ToolCallId as CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -11,13 +12,15 @@ import { ArkmeConversationalConfirmation } from '../../src/tools/shared/conversa
 
 async function fixture(name: string, code = false) {
   const ctx = new Context()
+  ctx.provide('workingDirectory', { ensure: async () => process.cwd() })
   await ctx.plugin(SystemPrompt)
-  await ctx.plugin(ToolRuntime, code ? { mode: 'both' } : {})
+  await ctx.plugin(ToolRuntime, code ? { mode: 'ptc' } : {})
   const runtimeState = { failRoot: false }
   if (code) {
     class OfflineRuntime extends CodeRuntime {
       readonly language = 'typescript'
       readonly isolation = 'test'
+      resolve(request: CodeRunRequest) { return { ...request, cwd: process.cwd(), timeoutMs: 30_000 } }
       async run(request: CodeRunRequest) {
         let text: string
         try { text = JSON.stringify(await request.bindings[0]!.functions[name]!(JSON.parse(request.program))) }
@@ -38,8 +41,8 @@ async function fixture(name: string, code = false) {
   const currentAccount = vi.fn(async (): Promise<number | undefined> => 1001)
   registerGroupGovernanceConfirmation(ctx, new ArkmeConversationalConfirmation(), { withGroupMemberInvalidation: invalidate, currentAccount })
   const session = Session.create(SessionId('group-confirmation'))
-  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
-  const agent = { id: session.id, session, inbox } as unknown as Agent
+  const inbox = createSessionInput(session)
+  const agent = { ctx, id: session.id, session, inbox } as unknown as Agent
   let count = 0
   const invoke = async (args: unknown = { items: [{ item_id: 'member', chat_session_uid: 'group-a', ...(name.endsWith('withdraw_group_messages') ? { sequence: 1 } : { target_user_ref: 'target-a' }), ...(name.endsWith('set_group_join_restrictions') ? { restricted: true } : {}) }] }) => {
     const toolName = code ? 'run_code' : name
@@ -69,7 +72,7 @@ describe('group governance tools preserve conversational confirmation', () => {
       f.user()
       await f.invoke()
       expect(f.execute).toHaveBeenCalledOnce()
-      expect(f.session.events.some(event => event.type === 'tool/code-dispatch')).toBe(true)
+      expect(f.session.snapshotEvents().some(event => event.type === 'tool/ptc-dispatch')).toBe(true)
     } finally { await f.ctx.fiber.dispose() }
   })
 

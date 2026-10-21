@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement, type ComponentType } from 'react'
+import { act, createElement, useSyncExternalStore, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AccountSessionBrowser, reconcileAccountSessions, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
@@ -139,6 +139,34 @@ it('reuses the native component, view store and picker through owned child decla
   expect(native.component).toBe(component)
   stop(); expect(registrations.every(item => item.disposed)).toBe(true); expect(listeners.size).toBe(0)
 })
+it('preserves the 0.2 row action and hover children through separately owned seats', () => {
+  const picker = () => null, action = () => null, hover = () => null
+  const native = { component: () => null, store: {}, inject: () => ({}), options: {}, children: {
+    'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
+    'sidebar.workspaces.session.menu.item': { kind: 'list', scope: 'root', inject: { hooks: {} } },
+    'sidebar.session.row.hover': { kind: 'list', scope: 'root' },
+  } }
+  const rows = new Map<string, any[]>([
+    ['sidebar.workspaces.directoryFlow', [{ component: picker, options: {} }]],
+    ['sidebar.workspaces.session.menu.item', [{ component: action, options: { id: 'archive', order: 400 } }]],
+    ['sidebar.session.row.hover', [{ component: hover, options: { id: 'location' } }]],
+  ])
+  const registrations: any[] = [], listeners = new Map<string, () => void>()
+  const slots = { entries: () => [native], entriesOfSlot: (name: string) => rows.get(name) ?? [],
+    subscribe: (name: string, fn: () => void) => { listeners.set(name, fn); return () => { listeners.delete(name) } },
+    register: (options: any, component: any) => { const item = { options, component, disposed: false }; registrations.push(item); return () => { item.disposed = true } },
+  }
+  const stop = installHarnessAccountSessions({ slots } as never, document.body)
+  expect(registrations).toHaveLength(4)
+  expect(registrations[0].options.children['arkme.accountSessions.native.sidebar.workspaces.session.menu.item']).toMatchObject({ kind: 'list', scope: 'root' })
+  expect(registrations[2]).toMatchObject({ component: action, options: { name: 'arkme.accountSessions.native.sidebar.workspaces.session.menu.item', id: 'archive', order: 400 } })
+  rows.set('sidebar.session.row.hover', [])
+  listeners.get('sidebar.session.row.hover')!()
+  expect(registrations[3].disposed).toBe(true)
+  stop()
+  expect(registrations.every(item => item.disposed)).toBe(true)
+  expect(listeners.size).toBe(0)
+})
 it('falls back to the unchanged native list when the registered UI face is unsupported', () => {
   const register = vi.fn()
   const stop = installHarnessAccountSessions({ slots: { entries: () => [{ component: () => null, options: {} }], subscribe: () => () => {}, register } } as never, document.body)
@@ -225,7 +253,7 @@ it('preloads the account catalog before the native menu mounts and retains it ac
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
   const Native = (p: Record<string, any>) => createElement('div', null, p.useSessions((state: any) => state.ids.map((id: string) => state.byId[id].displayTitle).join(',')))
-  const element = createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open: vi.fn(), useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => s(local), useWorkspaces: (s: any) => s(ws) })
+  const element = createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open: vi.fn(), useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => useSyncExternalStore(() => () => {}, () => s(local)), useWorkspaces: (s: any) => s(ws) })
   act(() => root.render(element))
   expect(container.textContent).toContain('Windows 对话')
   act(() => root.render(null))

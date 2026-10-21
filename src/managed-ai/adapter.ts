@@ -853,9 +853,14 @@ class ManagedAiLlmAdapter extends LlmAdapter {
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     assertManagedProvider(provider)
     await this.catalog.refreshForListing()
-    const models = await this.delegate.listModels(provider)
+    // The managed backend owns discovery. DSH 0.2.1's direct adapter no longer
+    // advertises configured models without its provider-owned discovery hook.
+    const models = this.catalog.connection().models
     return models.filter(model => this.catalog.isListed(model.id)).map(model => ({
-      ...model,
+      provider,
+      id: model.id,
+      name: model.name ?? model.id,
+      ...(model.description === undefined ? {} : { description: model.description }),
       inputModalities: this.catalog.capability(model.id).inputModalities,
     }))
   }
@@ -906,11 +911,14 @@ function managedAiAdapter(options: ManagedAiLlmAdapterOptions): { adapter: LlmAd
     options.credentialOwner,
     fetchImpl,
   )
-  const delegate = new DeepSeekAdapter({
+  const delegateOptions = {
     options: () => catalog.connection(),
     resolveApiKey: async () => await resolveBearer(options.credentialOwner),
     resolveUserId: resolveAnonymousUserId,
-  })
+    resolveAuth: async () => ({ headers: { Authorization: `Bearer ${await resolveBearer(options.credentialOwner)}` } }),
+    prepareExtensions: async () => ({ fields: {}, accept: async () => {} }),
+  }
+  const delegate = new DeepSeekAdapter(delegateOptions)
   const transport = new ManagedAiTransport({
     baseUrl: managedAiBaseUrl(options.intelligentBaseUrl),
     resolveAttachmentReader: options.resolveAttachmentReader ?? (() => undefined),

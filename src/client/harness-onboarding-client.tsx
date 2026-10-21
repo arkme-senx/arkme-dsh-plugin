@@ -1,14 +1,15 @@
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { harnessSessions } from './harness-session-state.js'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { useEffect } from 'react'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { loadNativeSelection } from './harness-native-selection-loader.js'
 
-export const inject = ['slots', 'sessions', 'modules']
+export const inject = ['uiWorkspace', 'slots', 'sessions', 'modules']
 
 /** Runs in the native iframe. The settings coordinator owns when this step mounts. */
 export function apply(ctx: ClientContext): void {
-  const sessions = (ctx as unknown as { sessions: ISessions }).sessions
+  const sessions = harnessSessions(ctx)
   let completed = false
   let wasActive: boolean | undefined
   let selectionStarted = false

@@ -6,7 +6,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  IconEllipsisOutline16, type MenuEntry,
+  IconEllipsisOutlineMedium, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
@@ -302,7 +302,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
 }
 
 export function ArkmeConversationMoreIcon() {
-  return <IconEllipsisOutline16 size={24} />
+  return <IconEllipsisOutlineMedium size={24} />
 }
 
 function MagicWandIcon() {

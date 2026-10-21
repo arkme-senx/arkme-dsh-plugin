@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { ARKME_NATIVE_SELECTION_CLIENT_ID } from '../harness-embed-contract.js'
 
 /** Called after native readiness. This resource is deliberately absent from the boot graph. */
