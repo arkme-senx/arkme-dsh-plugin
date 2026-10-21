@@ -57,8 +57,8 @@ async function send() { await click(host.querySelector('button[aria-label="发�
 beforeEach(() => {
   arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0 })
-  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16))
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id))
   vi.spyOn(window, 'scrollBy').mockImplementation(() => {})
   // jsdom supplies DOM selection but has no layout implementation.
   Range.prototype.getBoundingClientRect = () => new DOMRect(20, 100, 1, 21)
@@ -356,7 +356,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await act(async () => { arkmeArkoProfileStore.setProfile(10001, { displayName: '我的助手', version: 2 }) })
     await click(host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!)
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     expect(host.querySelector('[data-arkme-composer-destination-hint]')?.textContent).toBe('💡正在给 我的助手 发消息')
     expect(editor().getAttribute('aria-label')).toBe('发送给 我的助手')
     expect(ask).not.toHaveBeenCalled()
@@ -597,7 +597,7 @@ describe('Arko emoji input and send boundary', () => {
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
     expect(editor().querySelectorAll('[data-arkme-editable-emoji]')).toHaveLength(2)
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     expect(button('收藏表情')).toBeNull()
     expect(vi.mocked(callArkme).mock.calls.some(([method]) => method.startsWith('favorite-stickers.'))).toBe(false)
     await send()
@@ -808,7 +808,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     button('更多 Arko 操作').focus()
     await capabilities()
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     let complete!: (value: unknown) => void
     ask.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
     await capabilities()

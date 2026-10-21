@@ -24,7 +24,7 @@ function renderFooter(patch: Partial<ArkmeFooterActionProps> = {}): string {
     wide: true,
     toggle: () => undefined,
     activate: () => undefined,
-    useSessions: ((selector: (state: { current: string }) => unknown) => selector({ current: 'session-1' })),
+    useSessions: ((selector: (state: { ids: string[]; byId: Record<string, { id: string; retainedBy: { mainView: number } }> }) => unknown) => selector({ ids: ['session-1'], byId: { 'session-1': { id: 'session-1', retainedBy: { mainView: 1 } } } })),
     ...patch,
   } as ArkmeFooterActionProps
   return renderToStaticMarkup(<ArkmeFooterAction {...props} />)

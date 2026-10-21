@@ -74,14 +74,14 @@ async function click(renderer: ReactTestRenderer, label: string): Promise<void> 
 async function mountProductionContacts(): Promise<ReactTestRenderer> {
   const seats = productionSeats()
   const Sidebar = seats.get('sidebar')
-  const Workspace = seats.get('conversation')
+  const Workspace = seats.get('main')
   if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
     renderer = create(<>
       <Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-      <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+      <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
     </>)
     mountedRenderers.add(renderer)
     await Promise.resolve()
