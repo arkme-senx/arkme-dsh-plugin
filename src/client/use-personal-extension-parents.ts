@@ -4,6 +4,12 @@ import { subscribeMessageQuoteInvalidations } from './message-quote-invalidation
 import { callArkme } from './api.js'
 const EMPTY_PARENTS: ReadonlyMap<string, ArkmeTimelineExtensionParent> = new Map()
 
+function unavailableQuote(parent?: ArkmeTimelineExtensionParent): ArkmeTimelineExtensionParent | undefined {
+  if (!parent?.quote && parent?.quoteState === undefined) return undefined
+  const { quote: _quote, ...safe } = parent
+  return { ...safe, textContent: '', title: '', contentBlocks: [], quoteState: 'unavailable' }
+}
+
 /** Topic projections can omit a cross-topic edge. Enrich visible rows, not the whole history. */
 export function usePersonalExtensionParents(
   scope: string, sourceRef: string | undefined, items: readonly ArkmeTimelineItem[], sourceKey?: string, isChat = false,
@@ -16,9 +22,8 @@ export function usePersonalExtensionParents(
     // Clear reference text immediately; an unavailable re-read cannot leave an old quote visible.
     setSnapshot(current => ({ scope, parents: new Map(items.flatMap(item => {
       const parent = current.scope === scope ? current.parents.get(item.itemUid) ?? item.extensionParent : item.extensionParent
-      if (!parent?.quote && parent?.quoteState === undefined) return []
-      const { quote: _quote, ...safe } = parent
-      return [[item.itemUid, { ...safe, textContent: '', title: '', contentBlocks: [], quoteState: 'unavailable' as const }] as const]
+      const safe = unavailableQuote(parent)
+      return safe ? [[item.itemUid, safe] as const] : []
     })) }))
     setEpoch(value => value + 1)
   }), [scope, sourceKey, items])
@@ -46,19 +51,32 @@ export function usePersonalExtensionParents(
             })
           : callArkme<{ recordUid: string; extensionParent?: ArkmeTimelineExtensionParent }>('source.message-extension.parent', { sourceRef, messageActionRef: item.messageActionRef }, controller.signal)
         void read.then(result => {
-          if (controller.signal.aborted || result.recordUid !== item.itemUid) return
+          if (controller.signal.aborted) return
+          if (result.recordUid !== item.itemUid) throw new Error('Quoted occurrence mismatch')
           done.add(keyOf(item))
           setSnapshot(current => {
-            if (result.extensionParent === undefined && !current.parents.has(item.itemUid)) return current
+            if (controller.signal.aborted) return current
+            const previous = current.scope === scope ? current.parents.get(item.itemUid) ?? item.extensionParent : item.extensionParent
+            const parent = result.extensionParent ?? unavailableQuote(previous)
+            if (parent === undefined && !current.parents.has(item.itemUid)) return current
             const parents = new Map(current.scope === scope ? current.parents : [])
-            if (result.extensionParent === undefined && item.extensionParent?.quoteState !== undefined) { const { quote: _quote, ...safe } = item.extensionParent; parents.set(item.itemUid, { ...safe, title: '', textContent: '', contentBlocks: [], quoteState: 'unavailable' }) }
-            else if (result.extensionParent === undefined) parents.delete(item.itemUid)
-            else parents.set(item.itemUid, result.extensionParent)
+            if (parent === undefined) parents.delete(item.itemUid)
+            else parents.set(item.itemUid, parent)
             return { scope, parents }
           })
         }).catch(() => {
-          // A failed optional preview never hides the message. Opening its full
-          // detail performs a fresh read with an explicit retry affordance.
+          // The reply body remains usable, but an unverified cached quotation
+          // cannot survive a failed current-source read.
+          if (controller.signal.aborted) return
+          setSnapshot(current => {
+            if (controller.signal.aborted) return current
+            const previous = current.scope === scope ? current.parents.get(item.itemUid) ?? item.extensionParent : item.extensionParent
+            const safe = unavailableQuote(previous)
+            if (!safe) return current
+            const parents = new Map(current.scope === scope ? current.parents : [])
+            parents.set(item.itemUid, safe)
+            return { scope, parents }
+          })
         }).finally(() => { active -= 1; drain() })
       }
     }

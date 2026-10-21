@@ -37,8 +37,8 @@ it('keeps the same message in list and detail as independent hit-test surfaces',
   expect(merged).toHaveLength(2)
   expect(merged[0]?.element).not.toBe(merged[1]?.element)
 })
-it('removes only mine immediately and rolls back failure with the same retry id', async () => {
-  const session = new MessageUnderlineSession('self',42,vi.fn()); session.capability = {supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
+it('local cancellation removes only mine and rolls back failure with the same retry id', async () => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'local'); session.capability = {supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
   const response = deferred<MessageUnderlineSnapshot>(); vi.mocked(callArkme).mockReturnValueOnce(response.promise)
   const mutation = session.change(target,{kind:'remove',annotationId:'mine',operationId:'stable'})
   expect(session.snapshots.get(underlineTargetKey(target))?.items.map(i=>i.id)).toEqual(['other'])
@@ -65,6 +65,21 @@ it('does not write when unsupported, and ignores completion after scope disposal
   session.capability={supported:true,maxLength:2000}; const response=deferred<unknown>(); vi.mocked(callArkme).mockReturnValueOnce(response.promise)
   const writing=session.change(target,{kind:'add',anchor,operationId:'op'}); session.dispose(); response.resolve(initial); await writing
   expect(session.snapshots.size).toBe(0)
+})
+it.each(['arkme-code-2001', 'arkme-network-error'])('cloud cancellation clears unverified text on %s and retries its original operation after a fresh read', async code => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target),initial)
+  vi.mocked(callArkme).mockRejectedValueOnce(Object.assign(new Error('source unavailable'),{body:{code,httpStatus:502}}))
+  await session.change(target,{kind:'remove',annotationId:'mine',operationId:'original'})
+  expect(session.snapshots.size).toBe(0)
+  vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:initial}])
+    .mockResolvedValueOnce({...initial,revision:2,items:[initial.items[1]!]})
+  await session.retry?.()
+  expect(vi.mocked(callArkme).mock.calls[1]?.[0]).toBe('source.message-underline.list')
+  expect(vi.mocked(callArkme).mock.calls[2]?.[1]).toMatchObject({change:{operationId:'original'}})
+  expect(session.snapshots.get(underlineTargetKey(target))?.items.map(item=>item.id)).toEqual(['other'])
+  session.dispose()
 })
 it.each([false,true])('paints background (native=%s) and opens the shared toolbar with exact own cancellation', async (native) => {
   const {act}=await import('react'),{createRoot}=await import('react-dom/client'),{webcrypto}=await import('node:crypto')

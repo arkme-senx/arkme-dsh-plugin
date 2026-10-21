@@ -110,3 +110,16 @@ it('revalidates only visible quoted chat occurrences and clears cached text befo
   await act(async () => visible(['a']))
   expect(current.get('a')?.quote).toBeUndefined()
 })
+
+it.each(['denied', 'missing-edge'])('closes a supplied cached quote when its initial visible reread is %s without requiring an invalidation hint', async failure => {
+  const quote = { version:1 as const, projection:'arkme-text-v1' as const, sourceDigest:'a'.repeat(64), start:0, end:2, text:'私密', prefix:'', suffix:'' }
+  const child = { ...item('a'), recordOwnerUserId:7, sequence:4, extensionParent:{ ...parent('a'), quote, quoteState:'available' as const } }
+  if (failure === 'denied') callArkme.mockRejectedValue({httpStatus:403,code:'permission-denied'})
+  else callArkme.mockResolvedValue({items:[{...child,extensionParent:undefined}]})
+  await act(async () => { renderer = create(<Harness items={[child]} isChat />) })
+  await act(async () => visible(['a']))
+  const rendered = current.has('a') ? current.get('a') : child.extensionParent
+  expect(rendered?.quote).toBeUndefined()
+  expect(rendered?.quoteState).toBe('unavailable')
+  expect(child.textContent).toBe('a')
+})
