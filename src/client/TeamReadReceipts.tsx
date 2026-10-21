@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { TeamIdentity, TeamMessage, TeamReceiptMember } from '../team-app-contract.js'
-import { ArkmeReadReceiptStatus, readReceiptStyles } from './ArkmeReadReceiptPanel.js'
+import { ArkmeReadReceiptMember, ArkmeReadReceiptStatus, readReceiptStyles } from './ArkmeReadReceiptPanel.js'
 import { ArkmeReadReceiptControl } from './ArkmeReadReceiptControl.js'
 import { TeamReceiptStore, emptyTeamReceipt, teamReceiptCounts, type TeamReceiptState } from './team-read-receipts.js'
 import { teamText as tr } from './team-messaging-i18n.js'
-import { arkmeTheme } from './arkme-theme.js'
 
 export function TeamReceiptBadge({ message, store, onClick }: {
   message: TeamMessage; store: TeamReceiptStore; onClick(anchor: HTMLElement): void
@@ -31,49 +30,53 @@ export function TeamReceiptBadge({ message, store, onClick }: {
     const indicator = counts && counts.total > 0
       ? counts.read === 0 ? 'unread' : counts.unread === 0 ? 'all-read' : 'partial-read'
       : state.error ? 'error' : 'placeholder'
-    return <ArkmeReadReceiptControl buttonRef={node} placement="after" state={indicator}
+    return <ArkmeReadReceiptControl buttonRef={node} placement={message.own ? 'before' : 'after'} state={indicator}
       status={state.error ? 'error' : state.loading ? 'loading' : counts ? 'ready' : 'unknown'}
       {...(indicator === 'partial-read' && counts ? { count: counts.read } : {})}
       label={`${tr('查看阅读状态')}：${label}`}
       onClick={() => { if (node.current) onClick(node.current) }} />
   }
-  return <button type="button" ref={node} className="team-receipt-badge" aria-label={`${tr('查看阅读状态')}：${label}`}
-    onClick={event => onClick(event.currentTarget)}>{label}</button>
+  // A complete team count never implies that the external contact has read it.
+  const known = counts !== undefined && typeof visitor === 'boolean'
+  return <ArkmeReadReceiptControl buttonRef={node} placement={message.own ? 'before' : 'after'}
+    state={known ? 'count' : state.error ? 'error' : 'placeholder'}
+    status={state.error ? 'error' : state.loading ? 'loading' : known ? 'ready' : 'unknown'}
+    {...(known ? { count: counts.read, tone: visitor ? 'info' as const : 'neutral' as const } : {})}
+    label={`${tr('查看阅读状态')}：${label}`}
+    onClick={() => { if (node.current) onClick(node.current) }} />
 }
 
 function Member({ member, renderAvatar }: { member: TeamReceiptMember; renderAvatar(identity: TeamIdentity): ReactNode }) {
+  const name = member.isMe ? tr('你') : member.nickname || tr('用户')
+  if (typeof member.read === 'boolean') return <ArkmeReadReceiptMember name={name} avatar={renderAvatar(member)} read={member.read} readAt={member.readAt} />
   return <div style={readReceiptStyles.member}>
-    <span style={readReceiptStyles.memberIdentity}>{renderAvatar(member)}<span style={readReceiptStyles.memberName}>{member.isMe ? tr('你') : member.nickname || tr('用户')}</span></span>
-    <span style={{ ...readReceiptStyles.memberStatus, color: member.read === false ? arkmeTheme.info : arkmeTheme.secondary }}>
-      {tr(member.read === true ? '已读' : member.read === false ? '未读' : '状态待同步')}
-    </span>
+    <span style={readReceiptStyles.memberIdentity}>{renderAvatar(member)}<span style={readReceiptStyles.memberName}>{name}</span></span>
+    <span style={readReceiptStyles.memberStatus}>{tr('状态待同步')}</span>
   </div>
 }
 
-export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, renderAvatar }: {
+export function TeamReceiptDetails({ message, state, visitor, onRetry, onMore, renderAvatar, renderVisitorAvatar }: {
   message: TeamMessage; state: TeamReceiptState; visitor?: TeamIdentity | undefined
   onRetry(): void; onMore(): void; renderAvatar(identity: TeamIdentity): ReactNode
+  renderVisitorAvatar?(identity: TeamIdentity): ReactNode
 }) {
-  const [filter, setFilter] = useState<'all' | 'read' | 'unread'>('all')
   const value = state.value, counts = teamReceiptCounts(value)
-  const members = value?.members.filter(m => filter === 'all' || (filter === 'read' ? m.read === true : m.read === false)) ?? []
+  // Keep source order for ties and unknown states; known readers are newest first.
+  const members = [...(value?.members ?? [])].sort((a, b) => Number(b.read === true) - Number(a.read === true)
+    || (a.read === true && b.read === true ? (b.readAt ?? 0) - (a.readAt ?? 0) : 0))
+  const visitorRead = value?.visitorRead ?? (message.own ? message.recipientRead : undefined)
   return <>
     {message.side === 'team' && <>
       <div className="team-receipt-heading">{tr('外部联系人')}</div>
       <Member member={{ nickname: visitor?.nickname || tr('用户'), ...visitor,
-        ...(typeof value?.visitorRead === 'boolean' ? {read: value.visitorRead} : {}) }} renderAvatar={renderAvatar} />
+        ...(typeof visitorRead === 'boolean' ? {read: visitorRead} : {}) }} renderAvatar={renderVisitorAvatar ?? renderAvatar} />
     </>}
     <div className="team-receipt-heading">{tr('团队成员')}<span>{counts ? tr('已读 {v0}/{v1}', {v0:counts.read, v1:counts.total})
       : value?.hasMore ? tr('已加载 {v0} 人', {v0:value.members.length}) : value ? tr('人数暂不可用') : ''}</span></div>
-    <div role="group" aria-label={tr('阅读状态筛选')} className="team-receipt-filters">
-      {(['all', 'read', 'unread'] as const).map(key => <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>
-        {tr(key === 'all' ? '全部' : key === 'read' ? '已读' : '未读')}{counts ? ` ${key === 'all' ? counts.total : counts[key]}` : ''}
-      </button>)}
-    </div>
     {state.error && <ArkmeReadReceiptStatus onClick={onRetry}>{tr('更新失败，点击重试')}</ArkmeReadReceiptStatus>}
     {!value && !state.error && <ArkmeReadReceiptStatus>{tr('加载中...')}</ArkmeReadReceiptStatus>}
     {members.map((member, i) => <Member key={member.key ?? `unknown-${i}`} member={member} renderAvatar={renderAvatar} />)}
-    {value && !members.length && <ArkmeReadReceiptStatus>{tr(value.hasMore ? '已加载成员中暂无符合条件的成员' : filter === 'unread' ? '暂无未读成员' : filter === 'read' ? '暂无已读成员' : '暂无其他成员')}</ArkmeReadReceiptStatus>}
+    {value && !members.length && <ArkmeReadReceiptStatus>{tr('暂无其他成员')}</ArkmeReadReceiptStatus>}
     {value?.hasMore && <ArkmeReadReceiptStatus {...(!state.loading ? {onClick:onMore} : {})}>{tr(state.loading ? '加载中...' : '更多成员')}</ArkmeReadReceiptStatus>}
   </>
 }

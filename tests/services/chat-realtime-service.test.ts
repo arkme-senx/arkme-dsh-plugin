@@ -136,7 +136,7 @@ describe('ChatRealtimeService', () => {
     })
     const timeline = vi.fn(async () => [])
     const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: timeline })
-    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection')
+    const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => {})
     const attention = vi.spyOn(service, 'refreshAttentionSummary')
     const events: unknown[] = []
     service.subscribeChatRealtime(event => { events.push(event) })
@@ -149,7 +149,8 @@ describe('ChatRealtimeService', () => {
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./) })
     expect(JSON.stringify(events[0])).not.toContain('raw-group')
     expect(timeline).not.toHaveBeenCalled()
-    expect(schedule).not.toHaveBeenCalled()
+    if (kind === 'memberJoined') expect(schedule).toHaveBeenCalledExactlyOnceWith('raw-group', 0, undefined, false, true, 1234)
+    else expect(schedule).not.toHaveBeenCalled()
     expect(attention).not.toHaveBeenCalled()
     service.dispose()
   })
@@ -266,7 +267,7 @@ describe('ChatRealtimeService', () => {
     })
     expect(JSON.stringify(events[0])).not.toContain('raw-chat-session')
     expect(JSON.stringify(events[0])).not.toContain('raw-relation')
-    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9)
+    expect(schedule).toHaveBeenCalledWith('raw-chat-session', 9, undefined, false, true, 0, 123457)
     service.dispose()
   })
 
@@ -1264,4 +1265,41 @@ it.each(['held', 'reset', 'dispose', 'stop', 'multiple-sessions'] as const)('kee
     }
     await vi.waitFor(() => expect(internals.nativeNotificationFlights.size).toBe(0))
   } finally { release(); service.dispose() }
+})
+
+
+it('coalesces lifecycle preview reads, clears deleted content, and keeps the existing three-worker bound', async () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  let active = 0, maxActive = 0
+  const post = vi.fn(async (path: string, body: { chat_session_uid: string }) => {
+    expect(path).toBe('/api/v1/chats/detail')
+    active++; maxActive = Math.max(maxActive, active)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    active--
+    return { session: { chat_session_uid: body.chat_session_uid, session_kind: 1, last_seq: 9 },
+      unread_snapshot: { unread_count: 0, session_last_seq: 9 },
+      latest_preview: { record: { status: 'missing', payload: {} } } }
+  })
+  const runtime = { config, requireSession: async () => session, authenticatedChatPost: post,
+    stateStore: { uniqueCode: async () => 'fixture-key' }, requestScope: () => 'scope', invalidateKey() {}, invalidateCalendarDates() {}, sessionStore: { read: async () => session } }
+  const source = new SourceService(runtime as never, {} as never, {} as never)
+  for (let i = 0; i < 10; i++) source.setChatSource(42, `chat-${i}`, { sourceRef: `ref-${i}`, kind: 'private_chat', displayName: '同事', activeAtMillis: 1, unreadCount: 1, latestSequence: 9, latestPreview: '已删除消息' })
+  const reader = { chatTimelineItems: vi.fn(async () => []) }
+  const service = new ChatRealtimeService(runtime as never, source, reader)
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  const events: ArkmeChatClientEvent[] = []
+  service.subscribeChatRealtime(event => events.push(event))
+  try {
+    for (let i = 0; i < 10; i++) for (let duplicate = 0; duplicate < 3; duplicate++) {
+      service.scheduleChatSessionProjection(`chat-${i}`, 9, undefined, false, true)
+    }
+    await vi.waitFor(() => expect(events.filter(event => event.type === 'sessions-delta')).toHaveLength(10))
+    expect(post).toHaveBeenCalledTimes(10)
+    expect(maxActive).toBe(3)
+    expect(reader.chatTimelineItems).not.toHaveBeenCalled()
+    for (let i = 0; i < 10; i++) expect(source.cachedChatSource(42, `chat-${i}`)?.latestPreview ?? '').toBe('')
+    expect(events.some(event => event.type === 'message-notification')).toBe(false)
+    const options = (post.mock.calls as unknown as Array<unknown[]>).map(call => call[4])
+    expect(options).toEqual(Array.from({ length: 10 }, () => expect.objectContaining({ traffic: 'message-sync', bypassCache: true })))
+  } finally { service.dispose() }
 })

@@ -178,7 +178,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
-  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
+  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
 export interface ArkmeDirectoryPage {
   section: ArkmeDirectorySectionKind
@@ -280,6 +280,7 @@ export interface ArkmeDirectoryContactProfile {
   remark: string
   accountName?: string
   avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
 }
 
 export type ArkmeUnmarkedSpeakerInferenceState = 'pending' | 'ready' | 'failed' | 'unavailable'
@@ -1477,6 +1478,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     imageRead: true
@@ -1497,6 +1499,8 @@ export interface ArkmeProviderCapabilities {
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    relationPages?: true
+    recordingPersonReferences?: true
     recordingEntities?: true
     recordingEntityStart?: true
     speakerPresence?: true
@@ -1770,6 +1774,11 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
+  latestActivityAtMillis?: number
+  latestActivityKind?: 'member_joined' | 'record'
+  /** Server mutation time when a lifecycle change reselects an earlier activity. */
+  latestPreviewUpdatedAtMillis?: number
   activeAtMillis: number
   unreadCount: number
   /** Attention count after applying mute/notification policy; raw unreadCount remains authoritative. */
@@ -3861,6 +3870,7 @@ export interface ArkmeArkoAskResult {
 }
 
 export interface ArkmeArkoRunStatus {
+imageInputSupported?:boolean
   sessionId: number
   runUid: string
   status: string
@@ -4096,12 +4106,19 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'arko.models'
+  | 'arko.ask'
+  | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
+  | 'relations.list' | 'relations.records'
   | 'people.list' | 'people.open-chat'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
   | 'recordings.entities.occurrences'
+  | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.workflow'
   | 'recordings.speaker.options'
@@ -4157,6 +4174,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.preview'
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
+  | 'device.lock.status' | 'device.lock.lock' | 'device.lock.unlock'
   | 'auth.logout'
   | 'auth.logout.feedback'
   | 'user-ban.status'
@@ -4269,6 +4287,7 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'
   | 'calendar.day-review.source'
+  | 'calendar.day-review.models'
   | 'calendar.day-review.prompts'
   | 'calendar.record-location'
   | 'user.profile'
@@ -4326,6 +4345,9 @@ export type ArkmePluginOperation =
   | 'extensions.audit.check'
   | 'sources.list'
   | 'sources.self-target'
+  | 'directory.preferences.read'
+  | 'directory.preferences.set'
+  | 'directory.preferences.migrate'
   | 'conversation.directory.bot-pin'
   | 'conversation.directory.visibility.query'
   | 'conversation.directory.visibility.set'
@@ -4577,6 +4599,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.models'
   | 'arko.model.activate'
   | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.pending.prepare'
+  | 'arko.pending.acknowledge'
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'

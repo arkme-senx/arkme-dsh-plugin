@@ -120,3 +120,24 @@ it('receipt invalidation reads only cursor metadata and retains previews, identi
   revoke=true;invalidateTeamMessages('a',true)
   await vi.waitFor(()=>expect(readTeamDirectory('a').items).toEqual([]))
 })
+
+it('receipt hints cannot reread hidden-folder message bodies or restore removed entries', async () => {
+  const {teamDirectoryPreferences,teamFolderEntryKey,teamEntryHidden}=await import('../src/client/team-directory-preferences.js')
+  const c=item('team',30),target={kind:'folder' as const,group:groupTeamConversations([c])[0]!}
+  const preferences={[teamFolderEntryKey(channel.jotmoId)]:{pinned:false,removal:{at:20,sequences:{}}}}
+  const read=vi.spyOn(teamDirectoryPreferences,'read').mockReturnValue(preferences)
+  try {
+    mock.mockImplementation(async (op,p)=>{
+      if(op==='team.app.timeline') throw new Error('Unverified new-message evidence')
+      if(op==='team.app.read-states') return [{key:c.key,accessible:true,lastSeq:1,myReadSeq:1,unread:0}]
+      return {items:p.side==='team'?[c]:[],hasMore:false}
+    })
+    stops.push(startTeamDirectory('hidden-folder'))
+    await vi.waitFor(()=>expect(mock.mock.calls.some(([op])=>op==='team.app.timeline')).toBe(true))
+    mock.mockClear()
+    await refreshTeamDirectory('hidden-folder',false,true)
+    expect(mock.mock.calls.map(([op])=>op)).toEqual(['team.app.read-states'])
+    expect(teamEntryHidden(preferences,target)).toBe(true)
+    expect(readTeamDirectory('hidden-folder').items[0]?.unread).toBe(0)
+  } finally { read.mockRestore() }
+})

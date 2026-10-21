@@ -19,7 +19,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 }
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
-export function TeamMessageContent({ message, conversationRef }: { message: TeamMessage; conversationRef?: string | undefined }) {
+export function TeamMessageContent({ message, conversationRef, presentation }: { message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail' }) {
   // Keep mounted media and its URL across equivalent authorized snapshots.
   // Keys include viewer, message, Record version and asset. Changed content or
   // lost access replaces/unmounts this scope; byte reads still reauthorize.
@@ -29,7 +29,7 @@ export function TeamMessageContent({ message, conversationRef }: { message: Team
   const urls = new Map(snapshot.current.media.map(media => [media.ref, media.url]))
   const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
   return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '' }}>
-    <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit
+    <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(presentation ? { presentation } : {})}
       selectionTarget={conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
         ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef } : undefined} />
   </ArkmeMediaAccessContext.Provider>

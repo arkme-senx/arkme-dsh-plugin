@@ -14,20 +14,24 @@ const id = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0 
 export class PeopleService {
   private readonly codec: EncryptedReferenceCodec
   constructor(private readonly runtime: ServiceRuntime,
-    private readonly explore: Pick<ExploreService, 'personEntries'>,
+    private readonly explore: Pick<ExploreService, 'personPage'>,
     private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directoryUserSpeakerRef'>,
     private readonly contacts: Pick<ContactDirectoryService, 'listRecordingSpeakerUsers'>,
     private readonly chat: Pick<ChatService, 'openPrivateChatFromUser'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), unavailable)
   }
-  async list(sourceValue: unknown, signal?: AbortSignal): Promise<PeoplePage> {
+  async list(sourceValue: unknown, signal?: AbortSignal, cursor?: unknown): Promise<PeoplePage> {
     if (!PEOPLE_SOURCES.includes(sourceValue as PeopleSource)) throw unavailable()
     const source = sourceValue as PeopleSource, session = await this.runtime.requireSession()
+    if (cursor !== undefined && (source !== 'relations' || typeof cursor !== 'string' || !cursor || cursor.length > 16384)) throw unavailable()
     const keySecret = await this.runtime.stateStore.uniqueCode()
     const key = (kind: string, value: string | number) => createHmac('sha256', keySecret).update(JSON.stringify([this.runtime.config.environment, session.userId, 'people-v1', kind, value])).digest('hex')
     let items: PersonFacet[]
+    let nextCursor: string | undefined
     if (source === 'relations') {
-      items = (await this.explore.personEntries(signal)).map(row => ({
+      const page = await this.explore.personPage(cursor as string | undefined, signal)
+      nextCursor = page.nextCursor
+      items = page.items.map(row => ({
         key: key('entity', row.entityId), personKey: key(id(row.linkedUserId) ? 'user' : 'entity', id(row.linkedUserId) || row.entityId),
         source, name: row.item.title, aliases: row.aliases, relation: row.item,
         accountLinked: row.linkedUserId > 0, isSelf: row.linkedUserId === session.userId,
@@ -56,7 +60,7 @@ export class PeopleService {
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()
     if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw unavailable()
-    return { source, items }
+    return { source, items, ...(nextCursor ? { nextCursor } : {}) }
   }
   async openChat(value: string, signal?: AbortSignal) {
     const session = await this.runtime.requireSession()

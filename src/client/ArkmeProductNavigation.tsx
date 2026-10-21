@@ -1,3 +1,4 @@
+import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -154,6 +155,17 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const lockAvailable = typeof window !== 'undefined'
+    && (window as Window & { arkmeDesktop?: { deviceLock?: { version?: number } } }).arkmeDesktop?.deviceLock?.version === 1
+  const [lockBusy, setLockBusy] = useState(false)
+  const [lockError, setLockError] = useState('')
+  const lockCurrentDevice = async () => {
+    if (lockBusy) return
+    setLockBusy(true); setLockError('')
+    try { await callArkme('device.lock.lock'); setProfileOpen(false) }
+    catch (error) { setLockError(error instanceof Error ? error.message : '锁定失败，请重试') }
+    finally { setLockBusy(false) }
+  }
   const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
@@ -373,6 +385,8 @@ export function ArkmeProductNavigation({
           </button>
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
+            {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr('锁定')}</strong></span><CaretRight size={15} /></button>}
+            {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>

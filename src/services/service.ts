@@ -31,12 +31,18 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
+arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
+prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>
+acknowledgeArkoTurn(userId:number,uid:string):Promise<void>
+arkoFileRefs(userId:number):Promise<string[]>
   readDayReviewPending?(scope: string, day: string): Promise<unknown>
   prepareDayReview?(scope: string, day: string, request: Record<string, unknown>): Promise<void>
   acknowledgeDayReview?(scope: string, day: string, requestId: string): Promise<void>
  readOfflineContextJournal?(scope:string):Promise<Record<string,import('../offline-context-contract.js').OfflineContextJournalEntry>>
  putOfflineContextJournal?(scope:string,id:string,entry:import('../offline-context-contract.js').OfflineContextJournalEntry):Promise<void>
  deleteOfflineContextJournal?(scope:string,id:string,fingerprint:string):Promise<void>
+  localDirectoryPreferences?(accountKey: string, entries?: import('../local-directory-preferences.js').LocalDirectoryPreferences, migrate?: boolean): Promise<import('../local-directory-preferences.js').LocalDirectoryPreferences>
   readConversationViewports?(accountKey: string, surface: string): Promise<import('../conversation-viewport-state.js').ConversationViewportEntries>
   writeConversationViewports?(accountKey: string, surface: string, entries: import('../conversation-viewport-state.js').ConversationViewportEntries): Promise<void>
   arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>
@@ -106,6 +112,7 @@ export interface StateStore extends RecentEmojiStore {
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
@@ -120,6 +127,7 @@ export interface StateStore extends RecentEmojiStore {
 
 export interface ArkmeServiceConfig {
   environment: ArkmeEnvironment
+  dshRemoteRealtimeBaseUrl?: string
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
@@ -662,7 +670,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)
@@ -750,7 +758,11 @@ export class ServiceRuntime {
     // budget. Keep its receipt reachable instead of aborting at the 30s default.
     const publishing = baseUrl === this.config.extensionPublishBaseUrl?.trim()
       && ['/api/v1/extensions/publish-session/complete', '/api/v1/extensions/publish-session/resume'].includes(path)
-    const timeout = setTimeout(() => controller.abort(), publishing ? Math.max(100_000, this.config.requestTimeoutMs) : this.config.requestTimeoutMs)
+    const imageIntake = baseUrl === this.config.intelligentBaseUrl && path === '/api/v1/qa/new-msg-v3'
+    // Intake verifies the owned originals before acceptance (a two-minute
+    // server budget). Keep that receipt reachable without a new user setting.
+    const requestBudget = imageIntake ? 150_000 : publishing ? 100_000 : 0
+    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, this.config.requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {

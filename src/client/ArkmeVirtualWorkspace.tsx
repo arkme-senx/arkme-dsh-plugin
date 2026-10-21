@@ -1,3 +1,4 @@
+import { localDirectoryPreferences, useDirectoryPreferenceError } from './local-directory-preferences.js'
 import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
 import { ArkmeDraftPreviewText, useSelfConversationDraftPreview, useConversationDraftPresentation } from './ArkmeConversationDraftPreview.js'
 import { arkmeComposerDraftStore } from './composer-draft-store.js'
@@ -6,6 +7,8 @@ import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionNotificationPreview } from './ArkmeReactionNotification.js'
 import { TeamConversationDirectory, TeamConversationGroupRow } from './TeamConversationDirectory.js'
 import { TeamConversationRow } from './TeamMessagingPanel.js'
+import { useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { readOfficialTeamMembership, subscribeOfficialTeamMembership, shouldShowOfficialContact } from './official-team-membership.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
@@ -62,6 +65,10 @@ import { selfTopicDirectory } from './self-topic-directory-cache.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import { useArkmeNotificationSummary } from './ArkmeNotificationCenter.js'
+import { useBuiltinEntryActions } from './BuiltinConversationEntryActions.js'
+import { useBuiltinDirectoryPins, parseBuiltinPins, type BuiltinConversation } from './builtin-directory-preferences.js'
+import { useNotificationEntryActions } from './NotificationEntryActions.js'
+import { useNotificationDirectoryPin } from './notification-directory-preferences.js'
 import { startEmbeddedHarnessSession } from './harness-new-session.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
@@ -496,19 +503,24 @@ export function ArkmeNotificationsRow({ selected, onClick }: { selected: boolean
   return <ArkmeNotificationRowContent selected={selected} onClick={onClick} summary={summary} />
 }
 
-function ArkmeNotificationRowContent({ selected, onClick, summary }: {
+function ArkmeNotificationRowContent({ selected, onClick, summary, active = true }: {
   selected: boolean
   onClick(): void
   summary: ReturnType<typeof useArkmeNotificationSummary>
+  active?: boolean
 }) {
   useArkmeLocale()
+  const { auth } = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const account = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  const actions = useNotificationEntryActions(account, active, onClick)
   if (!summary.ready || !summary.hasNotifications) return null
   const time = timeLabel(summary.atMillis)
-  return <button
+  return <><button
     type="button" role="treeitem" aria-selected={selected} data-arkme-directory-row="notifications"
     aria-label={summary.unreadCount > 0 ? tr("通知，{v0} 条未读", { v0: String(summary.unreadCount) }) : tr("通知")}
-    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick} onContextMenu={actions.onContextMenu}
   >
+    {actions.pinned && <ArkmePinnedCorner />}
     <span style={{ ...styles.sourceAvatarWrap, overflow: 'visible' }}>
       <NotificationAvatar />
       {summary.unreadCount > 0 && <span style={styles.mentionUnread}>{summary.unreadCount > 99 ? '99+' : summary.unreadCount}</span>}
@@ -522,7 +534,7 @@ function ArkmeNotificationRowContent({ selected, onClick, summary }: {
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText text={summary.preview} presentation="preview" emojiSize={20} /></span></span>
     </span>
-  </button>
+  </button>{actions.overlays}</>
 }
 
 export function ArkmeContactAddRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
@@ -543,8 +555,10 @@ export function ArkmeArkoRow({
   displayName = 'Arko',
   latestPreview = ARKO_CONVERSATION_PREVIEW_FALLBACK,
   latestAtMillis,
-  onClick,
+  onClick, onContextMenu, pinned = false,
 }: {
+  pinned?: boolean
+  onContextMenu?: React.MouseEventHandler<HTMLElement>
   selected: boolean
   displayName?: string
   latestPreview?: string
@@ -562,10 +576,13 @@ export function ArkmeArkoRow({
     data-arkme-home-tour-target="arko"
     role="treeitem"
     aria-label={displayName}
+    data-arkme-builtin-entry="arko"
+    onContextMenu={onContextMenu}
     aria-selected={selected}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
+    {pinned && <ArkmePinnedCorner />}
     <span style={styles.avatar} aria-hidden><ArkmeArkoAvatar size={38} /></span>
     <span data-arkme-conversation-content style={styles.chatContent}>
       <span style={styles.chatTop}>
@@ -582,7 +599,7 @@ export function ArkmeArkoRow({
   </button>
 }
 
-export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabled = true }: { selected: boolean; onClick(): void; accountScope?: string | undefined; hoverEnabled?: boolean }) {
+export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabled = true, onContextMenu, pinned = false }: { selected: boolean; onClick(): void; accountScope?: string | undefined; hoverEnabled?: boolean; pinned?: boolean; onContextMenu?: React.MouseEventHandler<HTMLElement> }) {
   useArkmeLocale()
   const rowRef = useRef<HTMLButtonElement>(null)
   const activateRef = useRef(onClick)
@@ -607,12 +624,15 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
     ref={rowRef}
     type="button"
     data-arkme-home-tour-target="harness"
+    data-arkme-builtin-entry="harness"
+    onContextMenu={onContextMenu}
     role="treeitem"
     aria-selected={selected}
     aria-label={[heading, summary].filter(Boolean).join('，')}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
+    {pinned && <ArkmePinnedCorner />}
     <span style={{ ...styles.avatar, overflow: 'visible' }} aria-hidden>
       <img src="/favicon.svg" alt="" width={28} height={28} />
       {total > 0 && <span data-arkme-harness-badge data-idle={!running ? 'true' : undefined} data-kind={statuses[0]!.kind === 'pending' ? 'pending' : activity!.unread.length > 0 ? 'unread' : 'running'}>{total > 99 ? '99+' : total}</span>}
@@ -1039,6 +1059,12 @@ export function ArkmeNavigation({
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
+  const localPreferenceError = useDirectoryPreferenceError(currentAccountKey ?? '')
+  const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
+  const officialMembership = useSyncExternalStore(subscribeOfficialTeamMembership, () => readOfficialTeamMembership(currentAccountKey ?? ''), () => readOfficialTeamMembership(currentAccountKey ?? ''))
+  const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
+  const builtinPinSnapshot = useBuiltinDirectoryPins(currentAccountKey ?? '')
+  const builtinPins = parseBuiltinPins(builtinPinSnapshot)
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     authenticated && directory === 'root' && chatDirectory.baselineReady)
   useEffect(() => {
@@ -1048,7 +1074,7 @@ export function ArkmeNavigation({
       activateNativeEntry()
       onActivateSurface?.()
     })
-  }, [activateNativeEntry, active, authenticated, directory, onActivateSurface])
+  }, [activateNativeEntry, active, authenticated, directory, onActivateSurface, builtinPinSnapshot])
   useEffect(() => { setChatPreview(undefined) }, [currentAccountKey, active])
   const [traceNavigation] = useState(createHomeTourTrace)
   useEffect(() => {
@@ -1171,11 +1197,12 @@ export function ArkmeNavigation({
     scope: currentAccountKey,
     enabled: active && directory === 'root',
   })
-  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error)
-  const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications' }> = [...mergedConversationRows]
+  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
+  const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications'; pinned: boolean; activeAtMillis: number }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
-    const index = mergedConversationRows.findIndex(row => !row.pinned && row.activeAtMillis < notificationSummary.atMillis)
-    rootDirectoryRows.splice(index < 0 ? rootDirectoryRows.length : index, 0, { kind: 'notifications' })
+    const index = mergedConversationRows.findIndex(row => Number(notificationPinned) > Number(row.pinned)
+      || row.pinned === notificationPinned && row.activeAtMillis < notificationSummary.atMillis)
+    rootDirectoryRows.splice(index < 0 ? rootDirectoryRows.length : index, 0, { kind: 'notifications', pinned: notificationPinned, activeAtMillis: notificationSummary.atMillis })
   }
   const directoryContextMenu = useMemo(() => {
     if (directoryContextTarget === undefined) return undefined
@@ -1200,6 +1227,9 @@ export function ArkmeNavigation({
   if (selfDraft && selfDraft.activityAtMillis > (effectiveSelfSource?.activeAtMillis ?? 0)) sendToSelfPresentation.time = timeLabel(selfDraft.activityAtMillis)
   const showSelfInSearch = true
   const showHarnessInSearch = true
+  const builtinActions = useBuiltinEntryActions(currentAccountKey, active && directory === 'root', builtinPins,
+    { self: tr('发给自己'), arko: arkoPresentationName(arkoProfile), harness: 'DeepSeek Harness' },
+    () => arkmeUi.getRememberedSelfSource() ?? effectiveSelfSource ?? sources.find(source => source.kind === 'send_to_self'))
 
   const stopCreatedHighlightAnimation = useCallback(() => {
     createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
@@ -1990,6 +2020,8 @@ export function ArkmeNavigation({
           title={tr('双击在独立窗口打开')}
           aria-label={tr("发给自己")}
           data-arkme-home-tour-target="send-to-self"
+          data-arkme-builtin-entry="self"
+          onContextMenu={event => builtinActions.open('self', event)}
           aria-haspopup="tree"
           aria-expanded="false"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
@@ -2001,6 +2033,7 @@ export function ArkmeNavigation({
             onActivateSurface?.()
           })}
         >
+          {builtinPins.self && <ArkmePinnedCorner />}
           <SelfAvatar />
           <span data-arkme-conversation-content style={styles.chatContent}>
             <span style={styles.chatTop}>
@@ -2014,169 +2047,29 @@ export function ArkmeNavigation({
           </span>
         </button>)
 
-  if (!wide) {
-    return <div style={styles.rail}><button data-arkme-feedback="neutral"
-      type="button" style={styles.railButton} aria-label={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'}
-      title={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'} onClick={() => { if (!authenticated) showLogin() }}
-    ><ArkmeMark size={20} /></button></div>
+  const renderBuiltinEntry = (entry: BuiltinConversation) => {
+    if (entry === 'self') return renderSlot ? renderSlot('arkme.send-to-self.entry', { renderEntry: renderSelfEntry, openTopicDirectory: () => { changeDirectory('send_to_self'); onActivateSurface?.() } }) : renderSelfEntry()
+    if (entry === 'arko') return <ArkmeArkoRow selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'} displayName={arkoPresentationName(arkoProfile)}
+      {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })} {...(arkoLatestAtMillis === undefined ? {} : { latestAtMillis: arkoLatestAtMillis })}
+      onClick={showArko} pinned={!!builtinPins.arko} onContextMenu={event => builtinActions.open('arko', event)} />
+    return <DeepSeekHarnessRow selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'} accountScope={currentAccountKey} hoverEnabled={active && authenticated}
+      pinned={!!builtinPins.harness} onContextMenu={event => builtinActions.open('harness', event)} onClick={() => { activateNativeEntry(); arkmeUi.showHarness(); onActivateSurface?.() }} />
   }
-
-  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <TeamConversationDirectory
-    accountKey={currentAccountKey} folder={ui.teamDirectory}
-    {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
-    onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />
-
-  return <section
-    style={styles.shell}
-    aria-label={tr("Arkme 会话列表")}
-    data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
-    data-arkme-directory-compact={compactDirectory && directory === 'root' ? 'true' : undefined}
-  >
-    {directory === 'send_to_self' && <header data-arkme-window-drag-region="conversation" style={styles.header}>
-      <button data-arkme-feedback="neutral"
-        type="button" style={styles.headerButton} aria-label={tr("返回 Arkme 会话列表")} title={tr("返回")}
-        onClick={() => { changeDirectory('root') }}
-      >‹</button>
-      <h2 style={styles.sendToSelfHeaderTitle}>{tr("发给自己")}</h2>
-      <ArkmeSourceSortControl value={sourceSort} onChange={value => {
-        setSourceSort(value)
-        setHoveredSourceRef(undefined)
-      }} />
-      {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.headerButton} aria-label={tr("关闭 Arkme")} title={tr("关闭 Arkme")} onClick={onClose}>×</button>}
-    </header>}
-    {directory === 'root' && embeddedProductShell && <div className="arkme-directory-search-toolbar" data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
-      <button data-arkme-feedback="neutral" type="button" data-arkme-directory-search style={{ ...directorySearchLayout.field, ...styles.embeddedSearchField }}
-        aria-label={tr("搜索对话或消息")} title={tr("搜索对话或消息")} aria-haspopup="dialog"
-        onClick={() => { if (lockedDirectory) showLogin(); else setGlobalSearchOpen(true) }}
-      >
-        <MagnifyingGlass size={16} style={directorySearchLayout.icon} aria-hidden />
-        <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
-      </button>
-      {active && authenticated && <ArkmeQuickAddButton
-        recordingAccountKey={currentAccountKey}
-        onNewDshSession={showHarnessEntry ? () => startEmbeddedHarnessSession(() => {
-          activateNativeEntry()
-          arkmeUi.showHarness()
-          onActivateSurface?.()
-        }) : undefined}
-        notificationActivationRevision={ui.notificationActivationRevision ?? 0}
-        onBlockingOverlayChange={setQuickAddBlockingOpen}
-        onContactAdd={showContactAdd}
-        onSourceCreated={createdQuickAddSource}
-        onBotCreated={createdQuickAddBot}
-      />}
-      {lockedDirectory && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("添加联系人、群聊或 Bot")} onClick={showLogin}><Plus size={19} /></button>}
-      {onCreateTask !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("新任务")} onClick={onCreateTask}><Plus size={19} /></button>}
-    </div>}
-    {lockedDirectory ? <>
-      <ArkmeOverlayScrollArea style={{ ...styles.list, ...styles.conversationList }} role="tree" aria-label={tr("Arkme 会话")}>
-        {showHarnessEntry && <DeepSeekHarnessRow
-          selected
-          onClick={() => {
-            activateNativeEntry()
-            arkmeUi.showHarness()
-            onActivateSurface?.()
-          }}
-        />}
-        <ArkmeDSHBetaCommunityEntryContent avatarUrls={[]} joining={false} onActivate={showLogin} />
-        <ArkmeOfficialAuthorRow onClick={showLogin} />
-      </ArkmeOverlayScrollArea>
-      <button data-arkme-feedback="neutral" type="button" style={styles.loginButton} onClick={showLogin}>{tr("登录解锁更多功能")}</button>
-    </> : !authenticated && auth !== undefined ? <button data-arkme-feedback="neutral" type="button" style={styles.loginButton} onClick={showLogin}>
-      {bindingRequired ? '完成登录' : '登录 Arkme'}
-    </button> : <>
-    {directory === 'root' && embeddedProductShell && directoryLead}
-    {directory === 'root' && embeddedProductShell && authenticated && <ArkmeMessageSyncBanner />}
-    <ArkmeOverlayScrollArea
-      ref={directoryScrollRef}
-      {...arkmeHomeTourDirectoryAttributes({
-        directory,
-        accountKey: currentAccountKey,
-        accountScopeMatches: directoryAccountKey === currentAccountKey,
-        authenticated,
-        active,
-        embeddedProductShell,
-        baselineReady: chatDirectory.baselineReady,
-      })}
-      data-arkme-home-tour-scroll-container="directory"
-      onScroll={event => { if (activeRef.current && event.currentTarget.getClientRects().length > 0) directoryScrollTopRef.current = event.currentTarget.scrollTop }}
-      style={{
-        ...styles.list,
-        ...(directory === 'root' ? styles.conversationList : {}),
-        overflowAnchor: 'none',
-        ...(directory === 'send_to_self' ? styles.topicList : {}),
-        ...(directory === 'send_to_self' && cardMode ? styles.topicCardList : {}),
-      }}
-      role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
-      aria-label={directory === 'send_to_self' ? '发给自己分类' : tr("Arkme 会话")}
-    >
-      {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
-      {directory !== 'root' && authenticated && <ArkmeNotificationRowContent
-        selected={ui.mode === 'notifications'} onClick={showNotifications} summary={notificationSummary}
-      />}
-      {directory === 'root' && <>
-        {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
-          selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
-          accountScope={currentAccountKey}
-          hoverEnabled={active && authenticated}
-          onClick={() => {
-            activateNativeEntry()
-            arkmeUi.showHarness()
-            onActivateSurface?.()
-          }}
-        />}
-        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
-        {authenticated && showHarnessEntry && codexEntryVisible && <button type="button" role="treeitem" aria-label="Codex"
-          aria-selected={ui.mode === 'codex'} data-arkme-codex-entry
-          style={{ ...styles.chatRow, ...(ui.mode === 'codex' ? styles.chatRowActive : {}) }}
-          onClick={() => { activateNativeEntry(); arkmeUi.showCodex(null); onActivateSurface?.() }}>
-          <span style={styles.avatar} aria-hidden><span className="arkme-codex-glyph">&gt;_</span></span>
-          <span data-arkme-conversation-content style={styles.chatContent}>
-            <span style={styles.chatTop}><span style={styles.chatName}>Codex</span></span>
-            <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
-          </span>
-        </button>}
-        {authenticated && !teamDirectory.items.some(c => c.side === 'external' && c.channel.jotmoId === 'arkme_cn') && <ArkmeOfficialAuthorRow
-          onClick={() => { void openOfficialAuthor() }}
-        />}
-        {showArkoInSearch && <ArkmeArkoRow
-          selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
-          displayName={arkoPresentationName(arkoProfile)}
-          {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
-          {...(arkoLatestAtMillis === undefined ? {} : { latestAtMillis: arkoLatestAtMillis })}
-          onClick={showArko}
-        />}
-        {showSelfInSearch && (renderSlot ? renderSlot('arkme.send-to-self.entry', { renderEntry: renderSelfEntry, openTopicDirectory: () => { changeDirectory('send_to_self'); onActivateSurface?.() } }) : renderSelfEntry())}
-        {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
-        {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
-        {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
-        {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
-          wide: !!wide,
-          authenticated,
-          ...(activeDirectoryEntryId === undefined ? {} : { activeEntryId: activeDirectoryEntryId }),
-          activateEntry: activateDirectoryEntry,
-          renderRow: renderArkmeDirectoryRow,
-        })}
-        {!hasDirectoryData && (rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
-          <div style={{ ...styles.status, color: '#c2413b' }}>{tr("会话加载失败，请重试")}</div>
-          <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
-        </>}
-        <ArkmeConversationRemovalStyles />
-        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined}>{rootDirectoryRows.map(row => {
+  const renderConversationDirectoryRow = (row: (typeof rootDirectoryRows)[number]) => {
           if (row.kind === 'notifications') return <ArkmeNotificationRowContent key="notifications"
-            selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
+            active={active} selected={activeDirectoryEntryId === undefined && ui.mode === 'notifications'}
             onClick={showNotifications} summary={notificationSummary}
           />
           if (row.kind === 'team-folder') {
             const group = row.group
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.side === 'team' && ui.teamIntent.conversation.channel.jotmoId === group.key
-            return <TeamConversationGroupRow key={`team-folder:${group.key}`} group={group} selected={selected}
+            return <TeamConversationGroupRow key={`team-folder:${group.key}`} accountKey={currentAccountKey ?? ''} group={group} selected={selected}
               onClick={() => { activateNativeEntry(); openTeamMessages({kind:'team',teamRef:group.channel.teamRef,channel:group.channel}); onActivateSurface?.() }} />
           }
           if (row.kind === 'team') {
             const c = row.conversation
             const selected = ui.mode === 'team' && ui.teamIntent?.kind === 'conversation' && ui.teamIntent.conversation.key === c.key && ui.teamIntent.conversation.side === c.side
-            return <TeamConversationRow key={`team:${c.side}:${c.key}`} conversation={c} selected={selected} role="treeitem"
+            return <TeamConversationRow key={`team:${c.side}:${c.key}`} accountKey={currentAccountKey ?? ''} conversation={c} selected={selected} role="treeitem"
               onClick={() => { activateNativeEntry(); openTeamMessages({ kind: 'conversation', conversation: c }); onActivateSurface?.() }} />
           }
 
@@ -2286,7 +2179,151 @@ export function ArkmeNavigation({
             </span>
             <ArkmeConversationRemovalFeedback phase={removalPhase} />
           </div>
-        })}</ArkmeDirectoryWindow>
+
+  }
+  const activeConversationKey = ui.mode === 'notifications' ? 'notifications' : ui.mode === "source" && ui.selectedSource !== undefined ? arkmeSourceIdentityKey(ui.selectedSource) : ui.mode === "bot" && ui.selectedBot !== undefined ? conversationBotVisibilityKey(ui.selectedBot) : undefined
+  const pinnedDirectoryRows = [
+    ...rootDirectoryRows.filter(row => row.pinned).map(row => ({ at: row.activeAtMillis, node: renderConversationDirectoryRow(row) })),
+    ...(['harness', 'arko', 'self'] as const).filter(entry => builtinPins[entry] && (entry !== 'harness' || showHarnessEntry)).map(entry => ({
+      at: builtinPins[entry]!, node: <div key={`builtin:${entry}`} role="none" style={{ display: 'contents' }}>{renderBuiltinEntry(entry)}</div>,
+    })),
+  ].sort((a,b) => b.at - a.at).map(row => row.node)
+
+  if (!wide) {
+    return <div style={styles.rail}><button data-arkme-feedback="neutral"
+      type="button" style={styles.railButton} aria-label={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'}
+      title={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'} onClick={() => { if (!authenticated) showLogin() }}
+    ><ArkmeMark size={20} /></button></div>
+  }
+
+  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <TeamConversationDirectory
+    accountKey={currentAccountKey} folder={ui.teamDirectory}
+    {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
+    onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />
+
+  return <section
+    style={styles.shell}
+    aria-label={tr("Arkme 会话列表")}
+    data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
+    data-arkme-directory-compact={compactDirectory && directory === 'root' ? 'true' : undefined}
+  >
+    {directory === 'send_to_self' && <header data-arkme-window-drag-region="conversation" style={styles.header}>
+      <button data-arkme-feedback="neutral"
+        type="button" style={styles.headerButton} aria-label={tr("返回 Arkme 会话列表")} title={tr("返回")}
+        onClick={() => { changeDirectory('root') }}
+      >‹</button>
+      <h2 style={styles.sendToSelfHeaderTitle}>{tr("发给自己")}</h2>
+      <ArkmeSourceSortControl value={sourceSort} onChange={value => {
+        setSourceSort(value)
+        setHoveredSourceRef(undefined)
+      }} />
+      {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.headerButton} aria-label={tr("关闭 Arkme")} title={tr("关闭 Arkme")} onClick={onClose}>×</button>}
+    </header>}
+    {directory === 'root' && embeddedProductShell && <div className="arkme-directory-search-toolbar" data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
+      <button data-arkme-feedback="neutral" type="button" data-arkme-directory-search style={{ ...directorySearchLayout.field, ...styles.embeddedSearchField }}
+        aria-label={tr("搜索对话或消息")} title={tr("搜索对话或消息")} aria-haspopup="dialog"
+        onClick={() => { if (lockedDirectory) showLogin(); else setGlobalSearchOpen(true) }}
+      >
+        <MagnifyingGlass size={16} style={directorySearchLayout.icon} aria-hidden />
+        <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
+      </button>
+      {active && authenticated && <ArkmeQuickAddButton
+        recordingAccountKey={currentAccountKey}
+        onNewDshSession={showHarnessEntry ? () => startEmbeddedHarnessSession(() => {
+          activateNativeEntry()
+          arkmeUi.showHarness()
+          onActivateSurface?.()
+        }) : undefined}
+        notificationActivationRevision={ui.notificationActivationRevision ?? 0}
+        onBlockingOverlayChange={setQuickAddBlockingOpen}
+        onContactAdd={showContactAdd}
+        onSourceCreated={createdQuickAddSource}
+        onBotCreated={createdQuickAddBot}
+      />}
+      {lockedDirectory && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("添加联系人、群聊或 Bot")} onClick={showLogin}><Plus size={19} /></button>}
+      {onCreateTask !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("新任务")} onClick={onCreateTask}><Plus size={19} /></button>}
+    </div>}
+    {lockedDirectory ? <>
+      <ArkmeOverlayScrollArea style={{ ...styles.list, ...styles.conversationList }} role="tree" aria-label={tr("Arkme 会话")}>
+        {showHarnessEntry && <DeepSeekHarnessRow
+          selected
+          onClick={() => {
+            activateNativeEntry()
+            arkmeUi.showHarness()
+            onActivateSurface?.()
+          }}
+        />}
+        <ArkmeDSHBetaCommunityEntryContent avatarUrls={[]} joining={false} onActivate={showLogin} />
+        <ArkmeOfficialAuthorRow onClick={showLogin} />
+      </ArkmeOverlayScrollArea>
+      <button data-arkme-feedback="neutral" type="button" style={styles.loginButton} onClick={showLogin}>{tr("登录解锁更多功能")}</button>
+    </> : !authenticated && auth !== undefined ? <button data-arkme-feedback="neutral" type="button" style={styles.loginButton} onClick={showLogin}>
+      {bindingRequired ? '完成登录' : '登录 Arkme'}
+    </button> : <>
+    {directory === 'root' && embeddedProductShell && directoryLead}
+    {directory === 'root' && embeddedProductShell && authenticated && <ArkmeMessageSyncBanner />}
+    <ArkmeOverlayScrollArea
+      ref={directoryScrollRef}
+      {...arkmeHomeTourDirectoryAttributes({
+        directory,
+        accountKey: currentAccountKey,
+        accountScopeMatches: directoryAccountKey === currentAccountKey,
+        authenticated,
+        active,
+        embeddedProductShell,
+        baselineReady: chatDirectory.baselineReady,
+      })}
+      data-arkme-home-tour-scroll-container="directory"
+      onScroll={event => { if (activeRef.current && event.currentTarget.getClientRects().length > 0) directoryScrollTopRef.current = event.currentTarget.scrollTop }}
+      style={{
+        ...styles.list,
+        ...(directory === 'root' ? styles.conversationList : {}),
+        overflowAnchor: 'none',
+        ...(directory === 'send_to_self' ? styles.topicList : {}),
+        ...(directory === 'send_to_self' && cardMode ? styles.topicCardList : {}),
+      }}
+      role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
+      aria-label={directory === 'send_to_self' ? '发给自己分类' : tr("Arkme 会话")}
+    >
+      {directory === 'root' && authenticated && <ArkmeNotificationPermissionBanner />}
+      {directory !== 'root' && authenticated && <ArkmeNotificationRowContent
+        active={active} selected={ui.mode === 'notifications'} onClick={showNotifications} summary={notificationSummary}
+      />}
+      {directory === 'root' && <>
+        <ArkmeDirectoryWindow activeKey={activeConversationKey} revealKey={unreadJumpTarget?.key}>{pinnedDirectoryRows}</ArkmeDirectoryWindow>
+        {showHarnessEntry && showHarnessInSearch && !builtinPins.harness && renderBuiltinEntry('harness')}
+        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && showHarnessEntry && codexEntryVisible && <button type="button" role="treeitem" aria-label="Codex"
+          aria-selected={ui.mode === 'codex'} data-arkme-codex-entry
+          style={{ ...styles.chatRow, ...(ui.mode === 'codex' ? styles.chatRowActive : {}) }}
+          onClick={() => { activateNativeEntry(); arkmeUi.showCodex(null); onActivateSurface?.() }}>
+          <span style={styles.avatar} aria-hidden><span className="arkme-codex-glyph">&gt;_</span></span>
+          <span data-arkme-conversation-content style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>Codex</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
+          </span>
+        </button>}
+        {authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow
+          onClick={() => { void openOfficialAuthor() }}
+        />}
+        {showArkoInSearch && !builtinPins.arko && renderBuiltinEntry('arko')}
+        {showSelfInSearch && !builtinPins.self && renderBuiltinEntry('self')}
+        {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
+        {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
+        {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
+        {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
+          wide: !!wide,
+          authenticated,
+          ...(activeDirectoryEntryId === undefined ? {} : { activeEntryId: activeDirectoryEntryId }),
+          activateEntry: activateDirectoryEntry,
+          renderRow: renderArkmeDirectoryRow,
+        })}
+        {!hasDirectoryData && (rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
+          <div style={{ ...styles.status, color: '#c2413b' }}>{tr("会话加载失败，请重试")}</div>
+          <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
+        </>}
+        <ArkmeConversationRemovalStyles />
+        <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={activeConversationKey}>{rootDirectoryRows.filter(row => !row.pinned).map(renderConversationDirectoryRow)}</ArkmeDirectoryWindow>
         {teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
         {privateInteractionDirectory.error && <button type="button" onClick={privateInteractionDirectory.retry}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
@@ -2360,6 +2397,8 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {localPreferenceError && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{localPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) void localDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) }}>{tr('刷新核对')}</button></div>}
+    {builtinActions.overlays}
     {active && chatPreview !== undefined && previewSource !== undefined && <ArkmeChatPreviewDialog
       key={`${chatPreview.accountKey}:${chatPreview.sourceKey}`}
       source={previewSource}

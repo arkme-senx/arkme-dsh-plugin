@@ -7,8 +7,8 @@ function fixture() {
   let userId = 11
   const session = () => ({ userId, refreshToken: 'test' })
   const contacts = { listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 27, label: '我的备注', remark: '我的备注', avatarRef: 'avatar' }]) }
-  const explore = { personEntries: vi.fn(async () => [{ entityId: 'entity-a', linkedUserId: 27, aliases: ['宏顺'], item: { key: 'entity-a-key', ref: 'entity-ref', title: '何宏顺', category: '人物', date: 1, summary: '', status: '' } },
-    { entityId: 'entity-b', linkedUserId: 0, aliases: [], item: { key: 'entity-b-key', ref: 'entity-b-ref', title: '我的备注', category: '人物', date: 0, summary: '', status: '' } }]) }
+  const explore = { personPage: vi.fn(async () => ({ items: [{ entityId: 'entity-a', linkedUserId: 27, aliases: ['宏顺'], item: { key: 'entity-a-key', ref: 'entity-ref', title: '何宏顺', category: '人物', date: 1, summary: '', status: '' } },
+    { entityId: 'entity-b', linkedUserId: 0, aliases: [], item: { key: 'entity-b-key', ref: 'entity-b-ref', title: '我的备注', category: '人物', date: 0, summary: '', status: '' } }] })) }
   const audio = vi.fn(async () => ({ spk_ls: [{ id: 'speaker-a', ref_usr_id: 27, nick_name: '以前的昵称' }, { id: 'speaker-b', ref_usr_id: 0, user_id: 11, nick_name: '我的备注' }] }))
   const runtime = { config: { environment: 'prod' }, stateStore: { uniqueCode: async () => 'test-people-key' }, requireSession: async () => session(), authenticatedAudioPost: audio } as unknown as ServiceRuntime
   const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-ref'), directoryUserSpeakerRef: vi.fn(async () => 'user-ref') }

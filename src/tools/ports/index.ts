@@ -1,3 +1,5 @@
+import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
+import type {ExploreQuery,ExplorePage,ExploreDetail} from '../../explore-contract.js'
 import type {ArkmeTeamProfileToolPort} from '../../team-profile-contract.js'
 import type { ArkmeOfficialNotificationPort } from '../../official-notification-contract.js'
 import type { ArkmeSelfRolePort } from '../../self-role-contract.js'
@@ -25,6 +27,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
   ArkmeOfficialNotificationPort,
   ArkmeSelfRolePort,
@@ -48,7 +51,10 @@ export interface ArkmeCoreToolPorts extends
   ArkmeGroupToolPort,
   ArkmeWechatToolPort,
   ArkmeUserBanToolPort,
-  ArkmeVoiceprintToolPort {}
+  ArkmeVoiceprintToolPort {
+  relationPage(query:Omit<ExploreQuery,'module'>,signal?:AbortSignal):Promise<ExplorePage>
+  relationRecords(query:{ref:string;cursor?:string},signal?:AbortSignal):Promise<ExploreDetail>
+}
 
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
 

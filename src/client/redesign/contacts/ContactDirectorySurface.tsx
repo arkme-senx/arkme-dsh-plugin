@@ -1,4 +1,4 @@
-import { subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { subscribeTeamMessageChanges, invalidateTeamMessages } from '../../team-messaging-events.js'
 import { TeamDirectoryActions } from './TeamDirectoryActions.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react'
@@ -462,7 +462,7 @@ export function ContactDirectorySurface({
       onToggle={handleToggle}
       onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
-      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { load('teams', 'replace', true) }} onSelect={handleSelect} />}
+      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { invalidateTeamMessages(accountKey) }} onSelect={handleSelect} />}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}
       onOpenBot={onOpenBot}

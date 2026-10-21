@@ -1,6 +1,7 @@
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
 import type { TeamChannel, TeamConversation, TeamPage, TeamSide, TeamConversationReadState } from '../team-app-contract.js'
+import { teamDirectoryPreferences, teamEntryHidden, teamEntryPinned, type TeamDirectoryPreferences } from './team-directory-preferences.js'
 
 type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
 const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
@@ -74,6 +75,10 @@ export function startTeamDirectory(key: string): () => void {
     if (controller.signal.aborted || account !== key) return
     const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
     snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
+    if (!readStateOnly) void teamDirectoryPreferences.reconcile(key, items, async c => {
+      const page = await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: c.ref, expectedAccountKey: key, limit: 1 }, controller.signal)
+      return Math.max(0, ...page.messages.map(message => message.createdAt))
+    }, controller.signal).catch(() => { /* Keep hidden entries hidden until new-message evidence can be verified. */ })
     if (again) { const full = fullAgain; again = false; fullAgain = false; await refresh(false, !full) }
   }
   request = refresh
@@ -112,17 +117,17 @@ export function groupTeamConversations(conversations: readonly TeamConversation[
   }).sort((a,b)=>b.latest.updatedAt-a.latest.updatedAt || a.key.localeCompare(b.key))
 }
 
-type TeamDirectoryRow = { kind:'team'; conversation:TeamConversation; activeAtMillis:number; pinned:false }
-  | { kind:'team-folder'; group:TeamConversationGroup; activeAtMillis:number; pinned:false }
+type TeamDirectoryRow = { kind:'team'; conversation:TeamConversation; activeAtMillis:number; pinned:boolean }
+  | { kind:'team-folder'; group:TeamConversationGroup; activeAtMillis:number; pinned:boolean }
 /** Internal visitors share one team entry; external-facing conversations retain their direct entry. */
-export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true): (T | TeamDirectoryRow)[] {
+export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true, preferences: TeamDirectoryPreferences = {}): (T | TeamDirectoryRow)[] {
   const result: (T | TeamDirectoryRow)[] = [...ordinary]
   const teamRows: TeamDirectoryRow[] = [
-    ...groupTeamConversations(teams,complete).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.latest.updatedAt,pinned:false as const})),
-    ...teams.filter(c=>c.side==='external').map(conversation=>({kind:'team' as const,conversation,activeAtMillis:conversation.updatedAt,pinned:false as const})),
+    ...groupTeamConversations(teams,complete).filter(group=>!teamEntryHidden(preferences,{kind:'folder',group})).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.latest.updatedAt,pinned:teamEntryPinned(preferences,{kind:'folder',group})})),
+    ...teams.filter(c=>c.side==='external' && !teamEntryHidden(preferences,{kind:'conversation',conversation:c})).map(conversation=>({kind:'team' as const,conversation,activeAtMillis:conversation.updatedAt,pinned:teamEntryPinned(preferences,{kind:'conversation',conversation})})),
   ]
   for (const row of teamRows.sort((a,b)=>b.activeAtMillis-a.activeAtMillis)) {
-    const index=result.findIndex(item=>!item.pinned && item.activeAtMillis<row.activeAtMillis)
+    const index=result.findIndex(item=>Number(row.pinned)>Number(item.pinned) || row.pinned===item.pinned && item.activeAtMillis<row.activeAtMillis)
     result.splice(index<0?result.length:index,0,row)
   }
   return result

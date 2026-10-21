@@ -21,8 +21,9 @@ function browserStorage(): Storage | undefined {
 /** Optional, bounded read cache. Failed storage must never prevent a live read. */
 export class RelationViewCache {
   private memory = new Map<string, Entry<unknown>>()
-  constructor(private readonly storage = browserStorage, private readonly now = Date.now, private readonly allowed = (_scope: string) => true) {}
-  private key(scope: string, key: string) { return `${PREFIX}${encodeURIComponent(scope)}:${key}` }
+  constructor(private readonly storage = browserStorage, private readonly now = Date.now, private readonly allowed = (_scope: string) => true,
+    private readonly limits = { prefix: PREFIX, maxAge: MAX_AGE, maxEntry: MAX_ENTRY, maxTotal: MAX_TOTAL }) {}
+  private key(scope: string, key: string) { return `${this.limits.prefix}${encodeURIComponent(scope)}:${key}` }
   read<T>(scope: string, key: string, validate: (value: unknown) => value is T): Entry<T> | undefined {
     if (!scope || !this.allowed(scope)) return
     const id = this.key(scope, key)
@@ -30,9 +31,9 @@ export class RelationViewCache {
     try {
       if (!entry) {
         const raw = this.storage()?.getItem(id)
-        if (raw && raw.length <= MAX_ENTRY) entry = JSON.parse(raw) as Entry<unknown>
+        if (raw && raw.length <= this.limits.maxEntry) entry = JSON.parse(raw) as Entry<unknown>
       }
-      if (entry && Number.isFinite(entry.at) && entry.at <= this.now() && this.now() - entry.at < MAX_AGE && validate(entry.value)) {
+      if (entry && Number.isFinite(entry.at) && entry.at <= this.now() && this.now() - entry.at < this.limits.maxAge && validate(entry.value)) {
         this.memory.set(id, entry)
         return entry as Entry<T>
       }
@@ -46,11 +47,11 @@ export class RelationViewCache {
     if (this.memory.size > 24) this.memory.delete(this.memory.keys().next().value!)
     try {
       const target = this.storage(), raw = JSON.stringify(entry)
-      if (!target || raw.length > MAX_ENTRY) { target?.removeItem(id); return }
+      if (!target || raw.length > this.limits.maxEntry) { target?.removeItem(id); return }
       const entries: Array<{ key: string; size: number; at: number }> = []
       for (let i = 0; i < target.length; i++) {
         const k = target.key(i)
-        if (!k?.startsWith(PREFIX) || k === id) continue
+        if (!k?.startsWith(this.limits.prefix) || k === id) continue
         const content = target.getItem(k) ?? ''
         let time = 0
         try { time = Number(JSON.parse(content).at) || 0 } catch { /* Evict malformed entries first. */ }
@@ -58,7 +59,7 @@ export class RelationViewCache {
       }
       let size = raw.length + entries.reduce((sum, e) => sum + e.size, 0), count = entries.length + 1
       for (const e of entries.sort((a, b) => a.at - b.at)) {
-        if (size <= MAX_TOTAL && count <= 20) break
+        if (size <= this.limits.maxTotal && count <= 20) break
         target.removeItem(e.key); size -= e.size; count--
       }
       target.setItem(id, raw)
@@ -73,7 +74,7 @@ export class RelationViewCache {
     try {
       const target = this.storage(); if (!target) return
       for (let i = target.length - 1; i >= 0; i--) {
-        const key = target.key(i); if (key?.startsWith(PREFIX)) target.removeItem(key)
+        const key = target.key(i); if (key?.startsWith(this.limits.prefix)) target.removeItem(key)
       }
     } catch { /* Optional storage. */ }
   }

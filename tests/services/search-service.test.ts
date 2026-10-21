@@ -20,6 +20,28 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it.each([
+    ['send_to_self', { search_scope: 'global', source_kinds: [1, 2] }],
+    ['default_category', { search_scope: 'global', source_kinds: [1] }],
+    ['topic', { search_scope: 'topic', source_kinds: [2], source_uid: 'topic-1' }],
+  ] as const)('searches signed personal %s scope and keeps real result navigation', async (kind, scope) => {
+    const authenticatedPost = vi.fn(async () => ({ items: [{
+      record_uid: 'own-note', source_kind: 2, source_uid: 'topic-1', record_core: { owner_user_id: 42, text_content: '关键词' },
+    }], has_more: true, next_cursor: 'next-page' }))
+    const target = { sourceRef: 'signed-topic', kind: 'topic', displayName: '工作' }
+    const openSourceRef = vi.fn(async () => ({ kind, ownerRef: 'topic-1' }))
+    const searchTargetSource = vi.fn(async () => target)
+    const service = new SearchService({ requireSession: async () => ({ userId: 42 }), authenticatedPost } as never,
+      {} as never, {} as never, { openSourceRef, searchTargetSource } as never,
+      { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '关键词', limit: 50, sourceRef: 'signed-personal', sourceUid: 'wrong-topic', searchScope: 'chat_session' })
+    expect(openSourceRef).toHaveBeenCalledWith('signed-personal', 42)
+    expect(authenticatedPost.mock.calls[0]).toContainEqual({ keyword: '关键词', limit: 50, ...scope })
+    expect(result.items[0]?.targetSource).toEqual(target)
+    expect(result).toMatchObject({ hasMore: true, nextCursor: 'next-page' })
+    await service.searchScene({ scene: 'file', limit: 30, sourceRef: 'signed-personal', cursor: 'next-page' })
+    expect(authenticatedPost.mock.calls[1]).toContainEqual({ scene_kind: 4, limit: 30, cursor: 'next-page', ...scope })
+  })
   it.each([[5, 4], [4, 3], [3, 3], [1, 1]])('distinguishes Record origin %s from effective search source %s in tag results', async (origin, expected) => {
     const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
       items: [{ record_core: { record_uid: 'record', owner_user_id: 42, origin_kind: origin, origin_container_ref: 'container', text_content: '#项目' } }],

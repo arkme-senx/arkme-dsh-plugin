@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useState, useRef, useSyncExternalStore } from 'react'
 import { createArkmeSdk } from '../../sdk/index.js'
-import type { OfflineContextCommand, OfflineContextCommandResult, OfflineContextList, OfflineContextPreview, OfflineContextTranscript, OfflineContextPlayback, OfflineContextCoverage, OfflineContextCapability, OfflineContextRangeOptions } from '../../offline-context-contract.js'
+import type { OfflineContextCommand, OfflineContextCommandResult, OfflineContextList, OfflineContextPreview, OfflineContextTranscript, OfflineContextPlayback, OfflineContextCapability, OfflineContextRangeOptions } from '../../offline-context-contract.js'
 import type { OfflineContextActions, OfflineContextEntry } from '../../offline-context.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../../types.js'
 import { ArkmeConfirmDialog } from '../ArkmeConfirmDialog.js'
 import { arkmeUi } from '../ui-controller.js'
 import { OfflineContextMessagePicker } from './OfflineContextMessagePicker.js'
+import { OfflineContextPending } from './OfflineContextPending.js'
 import { OfflineContextCard } from './OfflineContextCard.js'
 import { tr } from '../locale.js'
 import { arkmeChatTimelineDelta } from '../chat-directory-store.js'
@@ -106,65 +107,61 @@ function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }:
           .then(changed).catch(() => { if (!lifecycle.current?.signal.aborted) setError(tr('重试未能确认结果，请稍后核对状态。')) })
       }}>{tr('重试原操作')}</button>)}
     </p>}
-    {playback && <ArkmeConfirmDialog layout="picker" titleId={id} title={tr('回听所选原文')} busy={false} onClose={() => setPlayback(undefined)}>
+    {playback && <ArkmeConfirmDialog titleId={id} title={tr('回听所选原文')} description={tr('播放本次交流所选的录音片段。')} busy={false} confirmLabel={tr('知道了')} busyLabel="" onConfirm={() => setPlayback(undefined)} onClose={() => setPlayback(undefined)}>
       {playback.clips.map((clip, index) => <audio key={clip.playbackRef} controls aria-label={`${tr('原文音频')} ${index + 1}`} src={sdk.mediaUrl(clip.playbackRef)}
         onLoadedMetadata={event => { event.currentTarget.currentTime = clip.startOffsetMillis / 1000 }}
         onTimeUpdate={event => { const audio = event.currentTarget; if (audio.currentTime >= clip.endOffsetMillis / 1000) audio.pause() }}
         onSeeking={event => { const audio = event.currentTarget; const start = clip.startOffsetMillis / 1000, end = clip.endOffsetMillis / 1000; if (audio.currentTime < start || audio.currentTime > end) audio.currentTime = start }} />)}
     </ArkmeConfirmDialog>}
-    {transcript && <ArkmeConfirmDialog layout="picker" titleId={id} title={tr('转写原文')} busy={false} onClose={() => setTranscript(undefined)}>
+    {transcript && <ArkmeConfirmDialog titleId={id} title={tr('转写原文')} description={tr('高亮部分为本次交流引用的原文。')} busy={false} confirmLabel={tr('知道了')} busyLabel="" onConfirm={() => setTranscript(undefined)} onClose={() => setTranscript(undefined)}>
       <p style={{ whiteSpace: 'pre-wrap' }}>{Array.from(transcript.text).slice(0, transcript.from).join('')}<mark>{Array.from(transcript.text).slice(transcript.from, transcript.to).join('')}</mark>{Array.from(transcript.text).slice(transcript.to).join('')}</p>
     </ArkmeConfirmDialog>}
   </>
 }
 
-export function OfflineContextCandidates({ source, items, onChanged }: { source: ArkmeSourceItem; items: ArkmeTimelineItem[]; onChanged(): void }) {
+export function OfflineContextCandidates(props: { source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; onChanged(): void }) {
+  // The keyed lifetime prevents a late result from crossing conversations.
+  return <CandidateList key={`${props.source.sourceRef}:${props.state ?? 'suggested'}`} {...props} />
+}
+
+function CandidateList({ source, items, state = 'suggested', onChanged }: {
+  source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; onChanged(): void
+}) {
   const [open, setOpen] = useState(false)
-  const [supported, setSupported] = useState(false)
-  const [coverage, setCoverage] = useState<OfflineContextCoverage>()
-  const [state, setState] = useState<'suggested' | 'dismissed'>('suggested')
   const [page, setPage] = useState<OfflineContextList>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [refresh, setRefresh] = useState(0)
-  const id = useId()
   const pageController = useRef<AbortController | undefined>(undefined)
   const invalidation = useSyncExternalStore(arkmeChatTimelineDelta.subscribe, () => arkmeChatTimelineDelta.getSnapshotForSource(source.sourceKey ?? source.sourceRef).invalidationRevision, () => 0)
   useEffect(() => {
-    const controller = new AbortController()
-    void sdk.offlineContext({ operation: 'capability' }, controller.signal).then(value => {
-      if (!controller.signal.aborted) setSupported((value as OfflineContextCapability).supported)
-    }).catch(() => { if (!controller.signal.aborted) setSupported(false) })
-    return () => controller.abort()
-  }, [source.sourceRef])
-  useEffect(() => {
-    if (!open) return
-    const controller = new AbortController(); pageController.current = controller; setBusy(true); setError(''); setPage(undefined); setCoverage(undefined)
-    void Promise.all([sdk.offlineContext({ operation: 'list', sourceRef: source.sourceRef, state }, controller.signal), sdk.offlineContext({ operation: 'coverage', sourceRef: source.sourceRef }, controller.signal)]).then(([value, observation]) => {
-      if (!controller.signal.aborted) { setPage(value as OfflineContextList); setCoverage(observation as OfflineContextCoverage) }
-    }).catch(() => { if (!controller.signal.aborted) setError(tr('暂时无法读取候选')) })
+    const controller = new AbortController(); pageController.current = controller; setBusy(true); setError('')
+    void sdk.offlineContext({ operation: 'capability' }, controller.signal).catch(() => undefined).then(async value => {
+      if (controller.signal.aborted) return
+      if (!(value as OfflineContextCapability | undefined)?.supported) { setPage(undefined); return }
+      const result = await sdk.offlineContext({ operation: 'list', sourceRef: source.sourceRef, state }, controller.signal)
+      if (!controller.signal.aborted) setPage(result as OfflineContextList)
+    }).catch(() => { if (!controller.signal.aborted) setError(tr('暂时无法读取线下交流，请重试。')) })
       .finally(() => { if (!controller.signal.aborted) setBusy(false) })
     return () => controller.abort()
-  }, [open, source.sourceRef, state, refresh, invalidation])
+  }, [source.sourceRef, state, refresh, invalidation])
   const relinkOptions = useMemo(() => offlineRelinkOptions(items), [items])
-  if (!supported) return null
-  const latest = coverage?.observations[0]
-  return <><button type="button" onClick={() => setOpen(true)}>{tr('线下交流')}</button>
-    {open && <ArkmeConfirmDialog layout="picker" titleId={id} title={tr('线下交流关联')} busy={false} onClose={() => setOpen(false)}>
-      {latest && <p role="status">{new Date(latest.startAtMillis).toLocaleString()}–{new Date(latest.endAtMillis).toLocaleString()}：{!latest.complete ? tr('正在核对录音与消息') : latest.issues.length ? tr('部分来源尚未完成核对') : !latest.evidenceSeen ? tr('检查时未发现可用录音') : latest.matches === 0 ? tr('已检查，未找到足够证据的关联') : tr('已完成本次检查')} · {tr('检查时间')} {new Date(latest.observedAtMillis).toLocaleString()}</p>}
-      <label>{tr('查看')}<select value={state} onChange={e => setState(e.target.value as typeof state)}><option value="suggested">{tr('待确认')}</option><option value="dismissed">{tr('已移除')}</option></select></label>
-      {busy && <p role="status">{tr('正在读取…')}</p>}{error && <p role="alert">{error}<button type="button" onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button></p>}
-      {page?.entries.map(entry => <ConnectedCard key={entry.id} entryRef={entry.id} revision={entry.revision} source={source} relinkOptions={relinkOptions} onChanged={() => { setRefresh(v => v + 1); onChanged() }} />)}
-      {page && !page.entries.length && <p>{tr('当前没有待展示的关联；这不代表没有录音或没有线下交流。')}</p>}
-      {page?.nextCursor && <button type="button" disabled={busy} onClick={() => {
-        const signal = pageController.current?.signal
-        if (!signal || signal.aborted) return
-        setBusy(true); setError('')
-        void sdk.offlineContext({ operation: 'list', sourceRef: source.sourceRef, state, cursor: page.nextCursor! }, signal).then(value => {
-          if (signal.aborted) return
-          const next = value as OfflineContextList; setPage({ ...next, entries: [...page.entries, ...next.entries] })
-        }).catch(() => { if (!signal.aborted) setError(tr('读取失败，请重试')) }).finally(() => { if (!signal.aborted) setBusy(false) })
-      }}>{tr('加载更多')}</button>}
-    </ArkmeConfirmDialog>}
+  const failure = error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button></p>
+  if (!page?.entries.length) return failure || null
+  const content = <>
+    {busy && <p role="status">{tr('正在读取…')}</p>}{failure}
+    {page.entries.map(entry => <ConnectedCard key={entry.id} entryRef={entry.id} revision={entry.revision} source={source} relinkOptions={relinkOptions} onChanged={() => { setRefresh(v => v + 1); onChanged() }} />)}
+    {page.nextCursor && <button type="button" disabled={busy} onClick={() => {
+      const signal = pageController.current?.signal
+      if (!signal || signal.aborted) return
+      setBusy(true); setError('')
+      void sdk.offlineContext({ operation: 'list', sourceRef: source.sourceRef, state, cursor: page.nextCursor! }, signal).then(value => {
+        if (signal.aborted) return
+        const next = value as OfflineContextList
+        const entries = new Map([...page.entries, ...next.entries].map(entry => [entry.id, entry]))
+        setPage({ ...next, entries: [...entries.values()] })
+      }).catch(() => { if (!signal.aborted) setError(tr('读取失败，请重试')) }).finally(() => { if (!signal.aborted) setBusy(false) })
+    }}>{tr('加载更多')}</button>}
   </>
+  return state === 'dismissed' ? content : <OfflineContextPending count={page.entries.length} hasMore={!!page.nextCursor} open={open} onToggle={() => setOpen(value => !value)}>{content}</OfflineContextPending>
 }

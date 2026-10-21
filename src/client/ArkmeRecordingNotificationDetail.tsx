@@ -18,7 +18,7 @@ export function recordingNoticePreview(item: RecordingWorkflowNotice) {
 function stateLabel(state: RecordingWorkflowState | 'pending') {
   return state === 'expired' ? tr('自动整理已到期') : state === 'pending' ? tr('等待处理') : state === 'completed' ? tr('已更新') : state === 'partial' ? tr('部分完成') : state === 'skipped' ? tr('无可用内容') : tr('生成失败')
 }
-export function ArkmeRecordingNotificationDetail({ notice, onClose, embedded = false }: { notice: RecordingWorkflowNotice; onClose?(): void; embedded?: boolean }) {
+export function ArkmeRecordingNotificationDetail({ notice, onClose, embedded = false, readOnly = false }: { notice: RecordingWorkflowNotice; onClose?(): void; embedded?: boolean; readOnly?: boolean }) {
   const button = { border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, padding: '6px 10px', background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 12 }
   return <section aria-label={recordingNoticeTitle(notice)} style={embedded ? {} : { padding: 20, overflowY: 'auto' }}>
     {!embedded && <><button type="button" style={button} onClick={onClose}>{tr('返回通知')}</button>
@@ -32,11 +32,11 @@ export function ArkmeRecordingNotificationDetail({ notice, onClose, embedded = f
       return <article key={day.date} style={{ borderTop: `1px solid ${arkmeTheme.border}`, padding: '14px 0' }}>
         <strong>{day.date}</strong>
         {notice.stage === 'analysis' && <p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{tr('总结')} · {stateLabel(day.summary.state)}　{tr('时间轴')} · {stateLabel(day.timeline.state)}</p>}
-        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        {!readOnly && <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
           <button type="button" style={button} onClick={() => arkmeUi.showRecordingTarget(dateStamp, dateStamp, undefined, window)}>{tr('查看录音')}</button>
           {notice.stage === 'analysis' && day.summary.state === 'completed' && <button type="button" style={button} onClick={() => arkmeUi.showRecordingSummaryTarget(dateStamp, day.summary.versionId, window)}>{tr('查看总结')}</button>}
           {notice.stage === 'analysis' && day.timeline.state === 'completed' && <button type="button" style={button} onClick={() => arkmeUi.showRecordingTimelineTarget(dateStamp, day.timeline.versionId, window)}>{tr('查看时间轴')}</button>}
-        </div>
+        </div>}
       </article>
     })}
   </section>

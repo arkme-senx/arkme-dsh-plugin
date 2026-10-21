@@ -64,8 +64,54 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const [confirmRemoval, setConfirmRemoval] = useState<{ userRef: string; name: string }>()
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
+  const avatarRequests = useRef(new Map<string, AbortController>())
+
+  const hydrateAvatars = useCallback(async (appRef: string, pageCursor?: string) => {
+    const key = pageCursor ?? 'first'
+    avatarRequests.current.get(key)?.abort()
+    const controller = new AbortController()
+    avatarRequests.current.set(key, controller)
+    try {
+      // Retry only optional decoration, never reset/reorder the member list.
+      for (const delay of [0, 6_000, 15_000]) {
+        if (delay) await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); controller.signal.removeEventListener('abort', done); resolve() }
+          const timer = setTimeout(done, delay)
+          controller.signal.addEventListener('abort', done, { once: true })
+        })
+        if (controller.signal.aborted) return
+        try {
+          const enriched = await callArkme<TeamMembers>('team.app.members', {
+            teamRef: appRef, limit: 50, avatarMode: 'wait',
+            ...(pageCursor === undefined ? {} : { pageCursor }),
+          }, controller.signal)
+          if (controller.signal.aborted) return
+          const byKey = new Map(enriched.items.map(member => [member.key, member]))
+          setState(current => {
+            if (!current.page) return current
+            return { ...current, page: { ...current.page, items: current.page.items.map(member => {
+              const fresh = byKey.get(member.key)
+              if (!fresh || (enriched.avatarState !== 'ready' && !fresh.avatarRef && !fresh.avatarFallback)) return member
+              const { avatarRef: _oldRef, avatarFallback: _oldFallback, ...rest } = member
+              return { ...rest,
+                ...(fresh.avatarRef === undefined ? {} : { avatarRef: fresh.avatarRef }),
+                ...(fresh.avatarFallback === undefined ? {} : { avatarFallback: fresh.avatarFallback }),
+              }
+            }) } }
+          })
+          if (enriched.avatarState !== 'unavailable') return
+        } catch { if (controller.signal.aborted) return }
+      }
+    } finally {
+      if (avatarRequests.current.get(key) === controller) avatarRequests.current.delete(key)
+    }
+  }, [])
 
   const load = useCallback(async (pageCursor?: string, preserveView = false) => {
+    if (pageCursor === undefined) {
+      for (const request of avatarRequests.current.values()) request.abort()
+      avatarRequests.current.clear()
+    }
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
@@ -83,16 +129,30 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       const page = await callArkme<TeamMembers>('team.app.members', {
         teamRef: appRef,
         limit: 50,
+        avatarMode: 'deferred',
         ...(pageCursor === undefined ? {} : { pageCursor }),
       }, controller.signal)
       if (controller.signal.aborted || generationRef.current !== generation) return
       page.team.teamRef = appRef
       setState(current => {
+        // A refresh with pending decoration must not erase already visible photos.
+        if (page.avatarState === 'pending' || page.avatarState === 'unavailable') {
+          const previous = new Map(current.page?.items.map(member => [member.key, member]))
+          page.items = page.items.map(member => {
+            const known = previous.get(member.key)
+            if (member.avatarRef || member.avatarFallback || !known) return member
+            return { ...member,
+              ...(known.avatarRef === undefined ? {} : { avatarRef: known.avatarRef }),
+              ...(known.avatarFallback === undefined ? {} : { avatarFallback: known.avatarFallback }),
+            }
+          })
+        }
         if (pageCursor === undefined || current.page === undefined) return { status: 'ready', page }
         const members = new Map(current.page.items.map(member => [member.key, member]))
         for (const member of page.items) members.set(member.key, member)
         return { status: 'ready', page: { ...page, items: [...members.values()] } }
       })
+      if (page.avatarState === 'pending' || page.avatarState === 'unavailable') void hydrateAvatars(appRef, pageCursor)
     } catch (error) {
       if (controller.signal.aborted || generationRef.current !== generation) return
       const message = loadErrorMessage(error)
@@ -100,7 +160,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
         ? { status: 'error', message }
         : { ...current, status: 'ready', loadingMore: false, message })
     }
-  }, [accountKey, teamRef])
+  }, [accountKey, teamRef, hydrateAvatars])
 
   useEffect(() => {
     setConfirmRemoval(undefined); setConfirmLeave(false); setRemoving('')
@@ -108,6 +168,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     return () => {
       generationRef.current += 1
       controllerRef.current?.abort()
+      for (const request of avatarRequests.current.values()) request.abort()
+      avatarRequests.current.clear()
     }
   }, [load])
 

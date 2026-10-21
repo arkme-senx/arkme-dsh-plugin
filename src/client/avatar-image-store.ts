@@ -3,6 +3,13 @@ export interface ArkmeAvatarImagePayload {
   dataBase64: string
 }
 
+export interface ArkmeAvatarImageSnapshot {
+  cacheKey: string
+  reference: string
+  value: string
+  expiresAtMillis: number
+}
+
 export type ArkmeAvatarImageListener = (imageDataUrl: string | undefined) => void
 
 export interface ArkmeAvatarImagePort {
@@ -12,6 +19,8 @@ export interface ArkmeAvatarImagePort {
   load(imageRef: string, cacheKey?: string): Promise<string>
   subscribe(imageRef: string, listener: ArkmeAvatarImageListener): () => void
   revalidateActive(imageRefs?: readonly string[]): Promise<void>
+  snapshot?(scopeKey: string, imageRefs: readonly string[]): ArkmeAvatarImageSnapshot[]
+  restore?(scopeKey: string, images: readonly ArkmeAvatarImageSnapshot[]): void
 }
 
 export interface ArkmeAvatarPersistentCache {
@@ -98,6 +107,46 @@ export class InMemoryArkmeAvatarImageStore implements ArkmeAvatarImagePort {
 
   current(imageRef: string): string | undefined {
     return this.entries.get(imageRef)?.value
+  }
+
+  /** Copy already-resolved bytes only. Never turn opening a window into an image download. */
+  snapshot(scopeKey: string, imageRefs: readonly string[]): ArkmeAvatarImageSnapshot[] {
+    if (!scopeKey || scopeKey !== this.scopeKey) return []
+    const refs = new Set(imageRefs.filter(Boolean))
+    const result: ArkmeAvatarImageSnapshot[] = []
+    let bytes = 0
+    for (const [cacheKey, entry] of this.entries) {
+      if (!refs.has(cacheKey) && !refs.has(entry.reference) || !entry.value) continue
+      const image = {cacheKey, reference: entry.reference, value: entry.value, expiresAtMillis: entry.expiresAtMillis}
+      const size = new TextEncoder().encode(JSON.stringify(image)).byteLength
+      if (size > 128 * 1024 || bytes + size > 768 * 1024) continue
+      result.push(image); bytes += size
+      if (result.length >= 64) break
+    }
+    return result
+  }
+
+  restore(scopeKey: string, images: readonly ArkmeAvatarImageSnapshot[]): void {
+    if (!scopeKey || scopeKey !== this.scopeKey || !Array.isArray(images)) return
+    let bytes = 0
+    for (const image of images.slice(0, 64)) {
+      if (!image || typeof image.cacheKey !== 'string' || !image.cacheKey || image.cacheKey.length > 16384
+        || typeof image.reference !== 'string' || !image.reference || image.reference.length > 16384
+        || typeof image.value !== 'string' || image.value.length > 128 * 1024
+        || !/^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/]+={0,2}$/.test(image.value)
+        || !Number.isFinite(image.expiresAtMillis)) continue
+      bytes += new TextEncoder().encode(JSON.stringify(image)).byteLength
+      if (bytes > 768 * 1024) break
+      const existing = this.entries.get(image.cacheKey)
+      if (existing?.value !== undefined) continue
+      const entry: AvatarImageEntry = existing ?? {reference: image.reference, pending: undefined, expiresAtMillis: 0}
+      entry.value = image.value
+      // Preserve freshness; a transferred stale image remains visible while being revalidated.
+      entry.expiresAtMillis = Math.min(image.expiresAtMillis, this.now() + this.ttlMillis)
+      this.entries.set(image.cacheKey, entry)
+      this.notify(image.cacheKey, image.value)
+    }
+    this.pruneCache()
   }
 
   load(imageRef: string, cacheKey = imageRef): Promise<string> {

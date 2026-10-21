@@ -1,3 +1,5 @@
+import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
+import { DeviceLockService } from './services/device-lock-service.js'
 import { PeopleService } from './services/people-service.js'
 import { StatisticsService } from './services/statistics-service.js'
 import { resolveHostPolicy } from './host-policy.js'
@@ -8,7 +10,7 @@ import type { OfflineContextRequest } from './offline-context-contract.js'
 import { ExploreService } from './services/explore-service.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
-import type { RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
+import type { RecordingPersonReferencesQuery, RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
@@ -56,7 +58,8 @@ import { normalizeConversationViewports } from './conversation-viewport-state.js
 import type { ArkmeRecordTopicAssignmentInput, ArkmeRecordTopicAssignmentResult } from './record-topic-assignment-contract.js'
 import { ConversationDirectoryService } from './services/conversation-directory-service.js'
 import { LocalRecordingDirectorySource } from './recording-directory-source.js'
-import { importStagedRecording } from './recording-tool-import.js'
+import { importStagedRecordingBatch, type RecordingFileBatchResult } from './recording-tool-import.js'
+import { recordingToolBatchPlanner } from './services/recording-tool-workflow.js'
 import { prepareRecordingDirectory, importRecordingDirectory, type RecordingDirectoryInput, type PreparedRecordingDirectory, type RecordingDirectoryResult } from './recording-directory-import.js'
 import type { ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeMemberEventQuery } from './types.js'
@@ -387,6 +390,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
   private readonly media: MediaService
@@ -456,7 +460,9 @@ export class ArkmeService {
   async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
   async exploreEnrich(refs: unknown, signal?: AbortSignal) { return this.explore.enrich(refs, signal) }
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
-  async peopleList(source: unknown, signal?: AbortSignal) { return this.people.list(source, signal) }
+  async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
+  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown) { return this.people.list(source, signal, cursor) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
@@ -508,11 +514,16 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
     this.selfRoleAvatars = new SelfRoleAvatarStore(join(config.fileStateDirectory ?? join(homedir(), '.arkme'), 'self-role-avatars'))
-    this.teamApp = new TeamAppService(this.runtime, this.profile)
+    this.teamApp = new TeamAppService(this.runtime, this.profile, {
+      openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
+    }, {
+      privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+    })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
+      identifyReply: (conversation, message, user) => this.teamApp.replyKey(conversation, message, user),
       execute: (op, params, signal) => this.teamApp.execute(op, params, signal),
     })
     this.teamDelivery.start()
@@ -588,7 +599,8 @@ export class ArkmeService {
       this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
-      read: ref => this.filesOwner().readLocal(ref),
+      read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
+withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
       upload: (refs, signal) => this.filesOwner().uploadRefs(refs, signal),
       project: (raw, userId) => this.media.richContentBlocks(raw, userId),
     })
@@ -706,6 +718,7 @@ export class ArkmeService {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
       new BackgroundSoundMembershipService(this.runtime),
@@ -856,6 +869,7 @@ export class ArkmeService {
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
   async dayReviewSource(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.source(input, signal) }
+  async dayReviewModels(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.models(input, signal) }
   async dayReviewPrompts(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.prompts(input, signal) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
@@ -977,8 +991,13 @@ export class ArkmeService {
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async deviceLockStatus() { return await this.deviceLock.refresh() }
+  async lockDevice() { return await this.deviceLock.lock() }
+  async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
+
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     const snapshot = await this.auth.authStatus()
+    void this.deviceLock.refresh().catch(() => undefined)
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
   }
@@ -1053,6 +1072,7 @@ export class ArkmeService {
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         imageRead: true,
@@ -1069,7 +1089,9 @@ export class ArkmeService {
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        relationPages: true,
         recordingEntities: true,
+        recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
         offlineContextV1:true,
@@ -1211,6 +1233,7 @@ export class ArkmeService {
     this.unmarkedSpeaker.dispose()
     this.realtime.dispose()
     this.arko.dispose()
+    this.deviceLock.dispose()
     this.auth.dispose()
     this.bot.dispose()
     this.extensionReview.dispose()
@@ -1317,6 +1340,7 @@ export class ArkmeService {
 
   async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.startRecordingEntities(query, signal) }
   async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntities(query, signal) }
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingPersonReferences(query, signal) }
   async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityOccurrences(query, signal) }
   async recordingEntityFeedback(input: RecordingEntityFeedbackInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.recordingEntityFeedback(input, signal) }
   async undoRecordingEntityFeedback(input: RecordingEntityFeedbackUndoInput, signal?: AbortSignal) { return this.recordingEntitiesOwner.undoRecordingEntityFeedback(input, signal) }
@@ -1338,9 +1362,17 @@ export class ArkmeService {
   /** @internal Built-in loopback UI only. */ async recordingImportReceipt(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null> { return await this.recording.recordingImportReceipt(taskId, expectedUserId) }
   /** @internal Built-in loopback UI only. */ async acceptRecordingImport(sourceHandle: string, metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind?: 0 | 1 | 3 }, expectedUserId: number): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId) }
   async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    const result = await this.importRecordingFiles([input], signal)
+    const item = result.items[0]
+    if (item?.outcome === 'matched_uploaded') throw new ArkmePluginError('recording-import-already-uploaded', '该录音已上传，不重复导入；旧录音不会自动补入新批次', false)
+    if (!item?.job) throw new ArkmePluginError(item?.errorCode ?? 'recording-import-file-failed', '录音导入未完成，请检查原任务后重试', true)
+    return item.job
+  }
+  async importRecordingFiles(inputs: RecordingFileImportInput[], signal?: AbortSignal): Promise<RecordingFileBatchResult> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
-    return await importStagedRecording(this.filesOwner(), this.recording, directory, input, signal)
+    return await importStagedRecordingBatch(this.filesOwner(), this.recording, directory, inputs,
+      recordingToolBatchPlanner(this.runtime, this.recordingWorkflowService), signal)
   }
   async prepareRecordingDirectory(input: RecordingDirectoryInput, signal?: AbortSignal): Promise<PreparedRecordingDirectory> {
     if (!this.runtime.config.recordingImportDirectory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
@@ -1349,7 +1381,8 @@ export class ArkmeService {
   async importRecordingDirectory(input: RecordingDirectoryInput, prepared: PreparedRecordingDirectory, signal?: AbortSignal): Promise<RecordingDirectoryResult> {
     const directory = this.runtime.config.recordingImportDirectory
     if (!directory) throw new ArkmePluginError('recording-import-unavailable', '当前宿主未配置录音导入目录', false, 501)
-    return await importRecordingDirectory(this.recording, new LocalRecordingDirectorySource(directory), input, prepared, signal)
+    return await importRecordingDirectory(this.recording, new LocalRecordingDirectorySource(directory), input, prepared, signal,
+      recordingToolBatchPlanner(this.runtime, this.recordingWorkflowService))
   }
   /** Account-bound status shared by the UI and recording tool. */ async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
   /** @internal Built-in loopback UI only. */ async recordingImportList(signal?: AbortSignal, page?: { toMillis: number; limit: number; offset: number }): Promise<PublicRecordingImportCurrentSnapshot> { return await this.recording.recordingImportList(signal, page) }
@@ -1434,6 +1467,10 @@ export class ArkmeService {
   ): Promise<ArkmeArkoAskResult> {
     return await this.arko.arkoAsk(text, options)
   }
+
+  async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }
+  async arkoPrepareTurn(turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn) { return this.arko.arkoPrepareTurn(turn) }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number) { return this.arko.arkoAcknowledgeTurn(uid,expectedUserId) }
 
   async arkoRunStatus(sessionId: number, runUid: string, signal?: AbortSignal): Promise<ArkmeArkoRunStatus> {
     return await this.arko.arkoRunStatus(sessionId, runUid, signal)
@@ -2264,6 +2301,17 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  async localDirectoryPreferences(accountKey: string, entries?: unknown, migrate = false, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const { userId } = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (accountKey !== `${this.config.environment}:${userId}`) throw new ArkmePluginError('directory-account-changed', '账号已变化，请重新打开对话', false, 409)
+    if (!this.stateStore.localDirectoryPreferences) throw new ArkmePluginError('directory-storage-unavailable', '本机设置保存暂不可用，请重试', true, 503)
+    const normalized = entries === undefined ? undefined : normalizeLocalDirectoryPreferences(entries)
+    if (entries !== undefined && (!normalized || !Object.keys(normalized).length || Object.keys(normalized).length !== Object.keys(entries as object).length)) throw new ArkmePluginError('directory-preference-invalid', '本机设置内容无效', false, 400)
+    return this.stateStore.localDirectoryPreferences(accountKey, normalized, migrate)
+  }
+
   async conversationViewports(accountKey: string, surface: string, entries?: unknown, signal?: AbortSignal): Promise<import('./conversation-viewport-state.js').ConversationViewportEntries> {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()
@@ -2665,7 +2713,11 @@ export class ArkmeService {
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.logoutFeedback.run(async () => {
       this.recordingPresenceWriter.revoke()
-      return await this.auth.logout()
+      const expected = await this.runtime.accountScopedSession()
+      const revoke = await this.deviceLock.beforeLogout(expected)
+      const result = await this.auth.logout(expected)
+      if (revoke) await this.deviceLock.afterLogout()
+      return result
     })
   }
 

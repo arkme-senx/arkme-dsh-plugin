@@ -105,3 +105,31 @@ describe('recording import scheduling and output boundaries', () => {
     expect(result).toContain('"phase": "accepted"')
   })
 })
+
+describe('explicit multi-attachment batches', () => {
+  it('submits every selected attachment in one call rather than individual upload calls', async () => {
+    const batch = vi.fn(async () => ({ supported: true, batchIds: ['batch'], remaining: 0, items: [] }))
+    const single = vi.fn()
+    const tool = createArkmeCoreToolDefinitions({ importRecordingFiles: batch, importRecordingFile: single } as never)
+      .find(t => t.name === 'arkme_recording_import')!
+    const files = [upload, { ...upload, file_ref: 'arkme-file-v1.00000000-0000-4000-8000-000000000002' }]
+      .map(({ file_ref, start_at_millis }) => ({ file_ref, start_at_millis }))
+    const result = String(await tool.execute({ action: 'upload', files }, exec))
+    expect(batch).toHaveBeenCalledOnce()
+    expect(batch.mock.calls[0]![0]).toHaveLength(2)
+    expect(single).not.toHaveBeenCalled()
+    expect(result).toContain('workflow_supported')
+  })
+  it.each([
+    { action: 'upload', files: [] },
+    { ...upload, files: [upload] },
+    { action: 'status', import_ref: 'ref', files: [upload] },
+    { action: 'upload', files: [upload, upload] },
+    { action: 'upload', files: [{ file_ref: upload.file_ref, start_at_millis: -1 }] },
+  ])('rejects ambiguous batch input before I/O: %j', async args => {
+    const batch = vi.fn()
+    const tool = createArkmeCoreToolDefinitions({ importRecordingFiles: batch } as never).find(t => t.name === 'arkme_recording_import')!
+    await expect(tool.execute(args, exec)).rejects.toThrow()
+    expect(batch).not.toHaveBeenCalled()
+  })
+})

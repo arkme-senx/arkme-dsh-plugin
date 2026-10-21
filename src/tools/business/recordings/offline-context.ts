@@ -11,6 +11,7 @@ const query = defineArkmeCoreToolModule({
     parameters: {
       action: { type: 'string', enum: ['capability', 'coverage', 'list', 'read', 'range-options', 'transcript', 'playback', 'preview', 'result', 'pending'], required: true },
       playback_ref: { type: 'string' }, transcript_ref: { type: 'string' }, source_ref: { type: 'string' }, entry_ref: { type: 'string' },
+      message_refs: { type: 'array', items: { type: 'string' }, description: 'Optional opaque message references from this conversation; only return associations linked to these messages (1–100).' },
       state: { type: 'string', enum: ['suggested', 'linked', 'dismissed'] }, cursor: { type: 'string' },
       revision: { type: 'string' }, include_transcript: { type: 'boolean' }, request_id: { type: 'string' },
     },
@@ -23,7 +24,7 @@ const query = defineArkmeCoreToolModule({
         case 'playback': if (!args.playback_ref) throw new Error('playback_ref is required'); input = { operation: 'playback', playbackRef: args.playback_ref }; break
         case 'transcript': if (!args.transcript_ref) throw new Error('transcript_ref is required'); input = { operation: 'transcript', transcriptRef: args.transcript_ref }; break
         case 'pending': input = { operation: 'pending' }; break
-        case 'list': if (!args.source_ref) throw new Error('source_ref is required'); input = { operation: 'list', sourceRef: args.source_ref, ...(args.state ? { state: args.state } : {}), ...(args.cursor ? { cursor: args.cursor } : {}) }; break
+        case 'list': if (!args.source_ref) throw new Error('source_ref is required'); input = { operation: 'list', sourceRef: args.source_ref, ...(args.state ? { state: args.state } : {}), ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.message_refs ? { messageRefs: args.message_refs } : {}) }; break
         case 'range-options': if (!args.entry_ref || !args.revision) throw new Error('entry scope is required'); input = { operation: 'range-options', entryRef: args.entry_ref, revision: args.revision }; break
         case 'read': if (!args.entry_ref) throw new Error('entry_ref is required'); input = { operation: 'read', entryRef: args.entry_ref }; break
         case 'preview': if (!args.entry_ref || !args.revision || args.include_transcript === undefined) throw new Error('preview scope is required'); input = { operation: 'preview', entryRef: args.entry_ref, revision: args.revision, includeTranscript: args.include_transcript }; break
