@@ -37,6 +37,9 @@ describe('call detail drawer', () => {
     expect(rendered).toContain('暂无转写内容')
     expect(rendered).not.toContain('快记详情')
     expect(rendered).not.toContain('延展此快记')
+    const sharing = view!.root.findByProps({ 'aria-label': '分享' })
+    expect(view!.root.findAllByType('header').some(header => header.findAllByProps({ 'aria-label': '分享' }).includes(sharing))).toBe(true)
+    expect(view!.root.findByProps({ 'data-arkme-call-detail-content': 'true' }).findAllByProps({ 'aria-label': '分享' })).toHaveLength(0)
     act(() => { view!.root.findByProps({ 'aria-label': '关闭通话详情' }).props.onClick() })
     expect(onClose).toHaveBeenCalledOnce()
     act(() => { view!.unmount() })
@@ -47,6 +50,7 @@ describe('call detail drawer', () => {
     let view: ReturnType<typeof create>
     await act(async () => { view = create(<ArkmeCallDetailDrawer item={item} onClose={() => {}} />) })
     expect(JSON.stringify(view!.toJSON())).toContain('通话详情加载失败')
+    expect(view!.root.findAllByProps({ 'aria-label': '分享' })).toHaveLength(0)
     expect(JSON.stringify(view!.toJSON())).not.toContain('暂无转写内容')
     await act(async () => { view!.root.findAllByType('button').find(button => button.children.includes('重试'))!.props.onClick() })
     expect(JSON.stringify(view!.toJSON())).toContain('真实转写内容')
