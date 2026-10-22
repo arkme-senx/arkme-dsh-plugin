@@ -131,6 +131,7 @@ export function resolvePersistentSidebarWidth(availableWidth: number, preferredW
 function usePersistentFrameWidth(ref: { current: HTMLElement | null }): number {
   const [width, setWidth] = useState(() => typeof window === 'undefined' ? 1280 : window.innerWidth)
   useLayoutEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return
     const slot = ref.current?.closest('[data-slot="root"]')
     // Slot wrappers use display:contents and have a zero-size bounding box.
     const frame = slot?.querySelector(':scope > div:is([data-rightbar-collapsed], [data-details-collapsed])')
