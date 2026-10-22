@@ -3079,6 +3079,7 @@ export function ArkmeSurface({
     revision: number
     momentId?: string
     contextRef?: string
+    systemRef?: string
     transientHighlight?: boolean
   }>()
   const interwovenRequestRef = useRef<AbortController>()
@@ -4146,7 +4147,7 @@ export function ArkmeSurface({
           body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
             // Virtual context chunks can change height while mounting. Match the
             // around-page path: establish the viewport before releasing its anchor.
-            behavior: calendarLocate || target.contextRef ? 'auto' : 'smooth' })
+            behavior: calendarLocate || target.contextRef || target.systemRef ? 'auto' : 'smooth' })
           conversationTargetLocatedRevisionRef.current = target.revision
           const calendarFinished = finishCalendarNavigation(target.revision)
           highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
@@ -4242,6 +4243,7 @@ export function ArkmeSurface({
           transientHighlight: target.transientHighlight === true,
           ...(target.momentId ? { momentId: target.momentId } : {}),
           ...(target.contextRef ? { contextRef: target.contextRef } : {}),
+          ...(target.systemRef ? { systemRef: target.systemRef } : {}),
         }
         setTimelineView({
           sourceKey: conversationKey,

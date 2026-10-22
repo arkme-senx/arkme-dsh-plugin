@@ -1123,6 +1123,30 @@ describe('conversation send directory projection', () => {
     expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
   })
 
+  it.each(['cached', 'around'] as const)('positions a %s system event before releasing its virtual anchor', async mode => {
+    const page = unifiedFixture(target, [])
+    page.unified.events.push({ kind: 'notice', eventId: 'system-event', source: 'group_metadata',
+      occurredAtMillis: 50, orderTie: 'system', contentStatus: 'available', text: '群聊已创建' })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline'
+      ? Promise.resolve(mode === 'cached' || args[0]?.cursor?.unified?.mode === 'around' ? page : unifiedFixture(target, [])) : baseCall(operation, ...args))
+    const body = { scrollTop: 0, scrollHeight: 5000, clientHeight: 600,
+      scrollTo: vi.fn(({ top, behavior }: { top: number; behavior: string }) => { if (behavior === 'auto') body.scrollTop = top }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
+      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'system-event' },
+        getBoundingClientRect: () => ({ top: 3000 - body.scrollTop, bottom: 3200 - body.scrollTop, height: 200 }) }],
+    }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    body.scrollTop = 0
+    await act(async () => { arkmeUi.showConversationTarget(target, 'system-event', 50, undefined, undefined, false, false, undefined, 'opaque-system') })
+    expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
+    expect(body.scrollTop).toBe(2800)
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
+    if (mode === 'around') expect(mocks.callArkme.mock.calls.some(([op, params]) => op === 'source.timeline' && params.cursor?.unified?.systemRef === 'opaque-system')).toBe(true)
+  })
+
   it('lets a newer locate of an already loaded message supersede a pending return', async () => {
     const body = await mountBottomControl(true)
     const pending = deferred<unknown>()
