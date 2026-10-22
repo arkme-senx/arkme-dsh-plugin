@@ -116,7 +116,7 @@ describe('Arkme redesign dark theme', () => {
 
     expect(darkCss).toContain('background: var(--dsw-alias-bg-base)')
     expect(darkCss).toContain('background: var(--dsw-specific-sidebar-fill)')
-    expect(darkCss).toContain('background: var(--dsw-specific-menu)')
+    expect(darkCss).toContain('background: var(--dsw-alias-bg-layer-3, #ffffff)')
     expect(darkCss).toContain('background: var(--dsw-specific-input-major)')
   })
 
