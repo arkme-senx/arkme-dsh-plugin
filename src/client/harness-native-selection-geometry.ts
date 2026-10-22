@@ -1,11 +1,31 @@
 import { isSelectableNativeNode, type NativeChat } from './harness-native-selection.js'
 
 const ROW = '[data-chat-anchor-key][data-chat-flow-kind]'
+const FLOW = '[data-chat-flow]'
 const HIT = 32
 const GAP = 10
 export interface SelectionPosition { left: number; top: number }
 export interface NativeSelectionSeat extends SelectionPosition { key: string; row: HTMLElement }
 export interface NativeSelectionLayout { seats: readonly NativeSelectionSeat[]; cramped: boolean; viewport: HTMLElement | null; highlight?: { left: number; right: number }; actionDock?: HTMLElement }
+
+/** New Harness versions also use flows inside reasoning/tool groups. Only the
+ * unique outer conversation owns selectable messages and their gutter. */
+function conversationFlow(doc: Document): HTMLElement | undefined {
+  const roots = [...doc.querySelectorAll<HTMLElement>(FLOW)].filter(flow => !flow.parentElement?.closest(FLOW))
+  return roots.length === 1 ? roots[0] : undefined
+}
+
+function messageRowKey(row: HTMLElement, flow: HTMLElement): string | undefined {
+  if (!row.isConnected || row.closest(FLOW) !== flow || row.parentElement?.closest(ROW)
+    || row.closest('[hidden], [aria-hidden="true"], [data-turn-process-hidden="true"]')) return
+  // A single assistant node can have separate reasoning and response seats.
+  // The anchor must identify the response itself, never a process fragment.
+  const part = row.dataset.chatGroupPart
+  const key = row.dataset.chatAnchorKey
+  if (!key || (part !== undefined && part !== 'response')
+    || (row.dataset.chatNodeKey !== undefined && row.dataset.chatNodeKey !== key)) return
+  return key
+}
 
 // The composer stays mounted and keeps its height/draft while selection occupies its space.
 export const nativeSelectionActionOverlayCss = `
@@ -15,9 +35,13 @@ export const nativeSelectionActionOverlayCss = `
 `
 
 export function nativeSelectionHighlightSelector(keys: ReadonlySet<string>): string {
-  return [...keys].map(key => {
+  return [...keys].flatMap(key => {
     const escaped = key.replace(/[^\w-]/gu, character => `\\${character.codePointAt(0)!.toString(16)} `)
-    return `[data-chat-flow] ${ROW}[data-chat-anchor-key="${escaped}"]`
+    const body = `[data-chat-flow] ${ROW}[data-chat-anchor-key="${escaped}"]`
+      + ':not([data-chat-flow] [data-chat-flow] *)'
+      + ':not([hidden]):not([hidden] *):not([aria-hidden="true"]):not([aria-hidden="true"] *)'
+      + ':not([data-turn-process-hidden="true"]):not([data-turn-process-hidden="true"] *)'
+    return [body + ':not([data-chat-group-part])', body + '[data-chat-group-part="response"]']
   }).join(',')
 }
 
@@ -66,9 +90,9 @@ export function watchNativeSelectionGeometry(options: {
 }): { dispose(): void; refresh(): void; valid(seat: NativeSelectionSeat): boolean } {
   const { doc } = options
   const win = doc.defaultView!
-  const flows = doc.querySelectorAll<HTMLElement>('[data-chat-flow]')
-  if (flows.length !== 1) throw new Error('Native chat flow unavailable')
-  const flow = flows[0]!
+  const root = conversationFlow(doc)
+  if (!root) throw new Error('Native chat flow unavailable')
+  const flow: HTMLElement = root
   let parent = flow.parentElement
   while (parent && !['auto', 'scroll'].includes(win.getComputedStyle(parent).overflowY)) parent = parent.parentElement
   if (!parent) throw new Error('Native chat viewport unavailable')
@@ -131,8 +155,8 @@ export function watchNativeSelectionGeometry(options: {
     const seen = new Set<string>()
     let blocked = false
     for (const row of visible) {
-      const key = row.dataset.chatAnchorKey
-      if (!key) continue
+      const key = messageRowKey(row, flow)
+      if (!key) { subscriptions.get(row)?.unsubscribe(); subscriptions.delete(row); continue }
       if (subscriptions.get(row)?.key !== key) {
         subscriptions.get(row)?.unsubscribe()
         subscriptions.set(row, { key, unsubscribe: chat.nodes.source(key).subscribe(schedule) })
@@ -172,7 +196,7 @@ export function watchNativeSelectionGeometry(options: {
   }
   try {
     addTree(flow)
-    mutation.observe(flow, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-chat-anchor-key', 'data-chat-flow-kind', 'hidden', 'class', 'style'] })
+    mutation.observe(flow, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-chat-anchor-key', 'data-chat-node-key', 'data-chat-group-part', 'data-chat-flow-kind', 'data-turn-process-hidden', 'aria-hidden', 'hidden', 'class', 'style'] })
     resize.observe(flow); resize.observe(viewport)
     viewport.addEventListener('scroll', schedule, { passive: true })
     win.addEventListener('resize', schedule)
@@ -187,7 +211,7 @@ export function watchNativeSelectionGeometry(options: {
       if (stopped || frame || !flow.isConnected || !flow.contains(seat.row)) return false
       const node = options.chat().nodes.get(seat.key)
       return isSelectableNativeNode(node) && node.key === seat.key && node.kind === seat.row.dataset.chatFlowKind
-        && seat.row.dataset.chatAnchorKey === seat.key && sameSelectionPosition(seat, measureNativeSelection(viewport, flow, seat.row))
+        && messageRowKey(seat.row, flow) === seat.key && sameSelectionPosition(seat, measureNativeSelection(viewport, flow, seat.row))
     },
   }
 }
@@ -195,13 +219,13 @@ export function watchNativeSelectionGeometry(options: {
 
 /** Header slots do not inherit the native header's private view/store hooks. */
 export function observeNativeChatPresence(doc: Document, publish: (present: boolean) => void): () => void {
-  let flow = doc.querySelector('[data-chat-flow]')
-  publish(flow !== null)
+  let flow = conversationFlow(doc)
+  publish(flow !== undefined)
   const observer = new doc.defaultView!.MutationObserver(records => {
     // Ignore mutations within the current flow and unrelated subtree updates.
     if (flow?.isConnected || !records.some(record => record.addedNodes.length || record.removedNodes.length)) return
-    const next = doc.querySelector('[data-chat-flow]')
-    if (next !== flow) { flow = next; publish(next !== null) }
+    const next = conversationFlow(doc)
+    if (next !== flow) { flow = next; publish(next !== undefined) }
   })
   observer.observe(doc.body, { childList: true, subtree: true })
   return () => observer.disconnect()
@@ -211,10 +235,10 @@ export function observeNativeChatPresence(doc: Document, publish: (present: bool
 export function nativeSelectionMessageRow(doc: Document, target: EventTarget | null, chat: NativeChat): { key: string; row: HTMLElement } | undefined {
   if (!(target instanceof doc.defaultView!.Element) || target.closest('button, a, input, textarea, select, [role="link"], [role="button"], [contenteditable]:not([contenteditable="false"]), [role="menu"], [role="dialog"]')) return
   const row = target.closest<HTMLElement>(ROW)
-  const flows = doc.querySelectorAll('[data-chat-flow]')
-  if (!row?.isConnected || row.hidden || flows.length !== 1 || row.closest('[data-chat-flow]') !== flows[0]) return
-  const key = row.dataset.chatAnchorKey
-  if (!key || [...flows[0]!.querySelectorAll<HTMLElement>(ROW)].filter(candidate => candidate.dataset.chatAnchorKey === key).length !== 1) return
+  const flow = conversationFlow(doc)
+  if (!row || !flow) return
+  const key = messageRowKey(row, flow)
+  if (!key || [...flow.querySelectorAll<HTMLElement>(ROW)].filter(candidate => messageRowKey(candidate, flow) === key).length !== 1) return
   const node = chat.nodes.get(key)
   return isSelectableNativeNode(node) && node.key === key && node.kind === row.dataset.chatFlowKind ? { key, row } : undefined
 }
@@ -225,15 +249,15 @@ export function nativeSelectionPointerRow(doc: Document, event: MouseEvent, chat
   if (direct) return direct
   const target = event.target
   if (!viewport?.isConnected || !(target instanceof doc.defaultView!.Element) || !viewport.contains(target)) return
-  const flow = viewport.querySelector<HTMLElement>('[data-chat-flow]')
-  if (!flow || !(target === viewport || target === flow || target.contains(flow))) return
+  const flow = conversationFlow(doc)
+  if (!flow || !viewport.contains(flow) || !(target === viewport || target === flow || target.contains(flow))) return
   const clip = viewportBounds(viewport)
   if (event.clientX < clip.left + 8 || event.clientX > clip.right - 8 || event.clientY < clip.top || event.clientY > clip.bottom) return
   let nearest: HTMLElement | undefined
   let distance = Infinity
   let ambiguous = false
   for (const row of flow.querySelectorAll<HTMLElement>(ROW)) {
-    if (row.hidden || row.parentElement?.closest(ROW)) continue
+    if (row.closest(FLOW) !== flow || row.closest('[hidden], [aria-hidden="true"], [data-turn-process-hidden="true"]') || row.parentElement?.closest(ROW)) continue
     const box = row.getBoundingClientRect()
     if (box.width <= 0 || box.height <= 0 || event.clientY < box.top - 8 || event.clientY > box.bottom + 8) continue
     const gap = Math.max(box.top - event.clientY, event.clientY - box.bottom, 0)
