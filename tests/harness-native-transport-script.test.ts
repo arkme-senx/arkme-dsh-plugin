@@ -10,6 +10,7 @@ function fixture(search = '?arkme-harness-embed=1') {
   const listeners = new Map<string, () => void>()
   const window = { location: { search, href: 'http://localhost:3000/arkme-self/harness' }, frameElement: { parentElement: {
     getAttribute: (key: string) => attributes.get(key), setAttribute: (key: string, value: string) => attributes.set(key, value),
+    removeAttribute: (key: string) => attributes.delete(key),
   } }, addEventListener: (name: string, fn: () => void) => listeners.set(name, fn) } as any
   const fetch = vi.fn(async (url: string | URL, init: RequestInit) => {
     const body = JSON.parse(String(init.body))
@@ -46,6 +47,73 @@ function fixture(search = '?arkme-harness-embed=1') {
   return { window, attributes, fetch, wire, sockets, listeners, rpc, row, hooks, directory: window.__ARKME_NATIVE_DIRECTORY__ }
 }
 it('leaves non-embedded pages untouched', () => expect(fixture('').hooks).toBeUndefined())
+it('reads reminders and their catalogue from the selected source, keeping prompt text and task ids exact', async () => {
+  const f = fixture()
+  f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
+  f.fetch.mockImplementation(async (_url, init) => {
+    const { params } = JSON.parse(String(init.body))
+    expect(params.runtimeRef).toBe('windows')
+    return Response.json({ ok: true, value: { ok: true, value: params.body.endpoint === 'schedule/catalog'
+      ? [{ sessionId: 'same', id: 'task', prompt: 'same arkme:windows:same', status: 'inactive' }]
+      : [{ id: 'task', title: 'Reminder' }] } })
+  })
+  expect((await f.rpc('schedule/catalog', {})).result.value).toEqual([{ sessionId: 'arkme:windows:same', id: 'task', prompt: 'same arkme:windows:same', status: 'inactive' }])
+  expect((await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })).result.value).toEqual([{ id: 'task', title: 'Reminder' }])
+  expect(JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body)).params.body.payload.args.request.sessionId).toBe('same')
+})
+it('keeps local reminder reads on the native local API', async () => {
+  const f = fixture(); f.directory.select('local')
+  await f.rpc('schedule/catalog', {}); await f.rpc('schedule/list', { request: { sessionId: 'local' } })
+  expect(f.fetch.mock.calls.map(([url]) => String(url))).toEqual(['http://localhost:3000/api/schedule/catalog', 'http://localhost:3000/api/schedule/list'])
+})
+it('routes detail history and updates to their bound source without adding Session fields to native timing snapshots', async () => {
+  const f = fixture(); f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:linux:same')
+  const expected = { id: 'task', kind: 'at', title: 'Reminder', prompt: 'Keep exact', scheduledAt: '2027-01-01T00:00:00Z' }
+  f.fetch.mockImplementation(async (_url, init) => {
+    const { params } = JSON.parse(String(init.body))
+    expect(params.runtimeRef).toBe('windows')
+    const request = params.body.payload.args.request
+    expect(request.sessionId).toBe('same')
+    if (params.body.endpoint === 'schedule/update') expect(request.expected).toEqual(expected)
+    return Response.json({ ok: true, value: { ok: true, value: { id: 'task', updated: true, record: expected } } })
+  })
+  await f.rpc('schedule/history', { request: { sessionId: 'arkme:windows:same', id: 'task', limit: 20 } })
+  const request = { sessionId: 'arkme:windows:same', id: 'task', expected }
+  expect((await f.rpc('schedule/update', { request })).result.value.record).toEqual(expected)
+  expect(f.fetch).toHaveBeenCalledTimes(2)
+})
+it('distinguishes an offline store from a successfully empty list and preserves outer transport error codes', async () => {
+  const f = fixture(); f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: false, error: { code: 'RUNTIME_OFFLINE', message: 'offline' } }, { status: 503 }))
+  expect((await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })).result).toMatchObject({ ok: false, error: { code: 'RUNTIME_OFFLINE' } })
+  expect(f.attributes.get('data-arkme-schedule-error')).toBe('RUNTIME_OFFLINE')
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: [] } }))
+  expect((await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })).result).toEqual({ ok: true, value: [] })
+  expect(f.attributes.has('data-arkme-schedule-error')).toBe(false)
+})
+it('ignores a late failure after selecting another source', async () => {
+  const f = fixture(); f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
+  let finish!: (value: Response) => void
+  f.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const pending = f.rpc('schedule/catalog', {})
+  f.directory.select('arkme:linux:same')
+  finish(Response.json({ ok: true, value: { ok: false, error: { code: 'RUNTIME_OFFLINE' } } }))
+  await pending
+  expect(f.attributes.has('data-arkme-schedule-error')).toBe(false)
+})
+it('invalidates native reminder caches when the selected source or source availability changes', async () => {
+  const f = fixture(), controller = new AbortController()
+  const stream = f.hooks.openStream('$events', { args: {} }, controller.signal)[Symbol.asyncIterator]()
+  await stream.next()
+  f.directory.select('arkme:windows:same')
+  expect((await stream.next()).value).toEqual({ type: 'emit', event: 'schedule/changed', args: [] })
+  f.directory.publish([f.row()])
+  expect((await stream.next()).value.event).toBe('api-session/added')
+  expect((await stream.next()).value.event).toBe('schedule/changed')
+  f.directory.publish([f.row('windows', { presence: 'offline' })])
+  expect((await stream.next()).value.event).toBe('schedule/changed')
+  await stream.return()
+})
 it('accepts the 0.2 relative unary RPC route and the legacy URL carrier', async () => {
   const f = fixture()
   await f.rpc('session/create', { request: { workspaceId: 'work' } })

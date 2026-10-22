@@ -27,6 +27,11 @@ function installNativeTransport(route: string): void {
     return { runtime, id: value }
   }
   const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected) || writable.get(split(selected)!.runtime) === true))
+  const scheduleFailure = (id: string | undefined, code?: string) => {
+    if (id !== selected) return
+    if (code) surface.setAttribute('data-arkme-schedule-error', code)
+    else surface.removeAttribute?.('data-arkme-schedule-error')
+  }
   type Json = Record<string, any>
   const rows = new Map<string, DshAccountSession>()
   const summary = (row: DshAccountSession) => ({ sessionId: identity(row.runtimeRef, row.sessionRef), updatedAt: row.updatedAt,
@@ -56,7 +61,9 @@ function installNativeTransport(route: string): void {
   const aliasCandidates = new Map<string, DshAccountSession[]>()
   let localRuntimeRef: string | undefined
   const redirect = (canonical: DshAccountSession) => {
+    const previous = selected
     selected = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
+    if (selected !== previous) { scheduleFailure(selected); emit({ type: 'emit', event: 'schedule/changed', args: [] }) }
     const doc = surface.ownerDocument
     doc.dispatchEvent(new doc.defaultView!.CustomEvent('arkme:native-session-open', { detail: {
       runtimeRef: canonical.local ? '' : canonical.runtimeRef, sessionRef: canonical.sessionRef,
@@ -102,6 +109,7 @@ function installNativeTransport(route: string): void {
     reconcileLocal(local.sessionId)
   }
   const localFrame = (frame: Json): boolean => {
+    if (frame.type === 'emit' && frame.event === 'schedule/changed' && split(selected)) return false
     if (frame.type === 'emit' && String(frame.event).startsWith('api-session/')) {
       const id = frame.event === 'api-session/added' ? frame.args[0]?.sessionId : frame.args[0]
       if (frame.event === 'api-session/added') remember(frame.args[0])
@@ -123,6 +131,8 @@ function installNativeTransport(route: string): void {
   }
   Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: {
     publish(incoming: readonly DshAccountSession[], runtimeRef?: string) {
+      const activeSource = split(selected)?.runtime
+      const wasWritable = activeSource ? writable.get(activeSource) === true : true
       localRuntimeRef = runtimeRef
       const next = new Map(incoming.filter(row => !row.local && !row.archived && row.origin !== 'subagent').map(row => [identity(row.runtimeRef, row.sessionRef), row]))
       for (const id of rows.keys()) if (!next.has(id)) emit({ type: 'emit', event: 'api-session/removed', args: [id] })
@@ -149,11 +159,22 @@ function installNativeTransport(route: string): void {
       }
       for (const id of localRows.keys()) reconcileLocal(id)
       availability()
+      if (activeSource && wasWritable !== (writable.get(activeSource) === true)) {
+        scheduleFailure(selected)
+        emit({ type: 'emit', event: 'schedule/changed', args: [] })
+      }
     },
     canonicalLocal(id: string) { const row = folded.get(id); return row && row.coveredLocalHistory?.source !== 'local' ? preferred(row) : undefined },
     preferredSession(id: string) { const row = folded.get(id); return row ? preferred(row) : hiddenRemote.get(id) },
     writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
-    select(id: string | undefined) { selected = id; if (id && folded.has(id) && preferred(folded.get(id)!) !== id) redirect(folded.get(id)!); else if (id && hiddenRemote.has(id)) redirect({ ...rows.get(id)!, local: true }); availability() },
+    select(id: string | undefined) {
+      const changed = selected !== id
+      selected = id
+      if (id && folded.has(id) && preferred(folded.get(id)!) !== id) redirect(folded.get(id)!)
+      else if (id && hiddenRemote.has(id)) redirect({ ...rows.get(id)!, local: true })
+      availability()
+      if (changed) { scheduleFailure(selected); emit({ type: 'emit', event: 'schedule/changed', args: [] }) }
+    },
   } satisfies HarnessNativeDirectory })
   let socket: WebSocket | undefined
   const pending = new Map<string, { frame: string; resolve(value: unknown): void; reject(error: Error): void; stop(): void }>()
@@ -194,7 +215,7 @@ function installNativeTransport(route: string): void {
   const request = async (runtimeRef: string, body: object, signal?: AbortSignal) => {
     const scoped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
     const params = { runtimeRef, body, requestRef: crypto.randomUUID() }
-    let result: { ok: boolean; value: unknown; error?: { message?: string } }
+    let result: { ok: boolean; value: unknown; error?: { code?: string; message?: string } }
     if (['pull', 'close'].includes(String((body as { mode?: string }).mode))) {
       result = await streamRequest(params, scoped) as typeof result
     } else {
@@ -203,9 +224,9 @@ function installNativeTransport(route: string): void {
         body: JSON.stringify({ operation: 'remote.session.native', params }), signal: scoped,
       })
       result = await response.json() as typeof result
-      if (!response.ok) throw new Error(result.error?.message ?? '原生远程连接已断开')
+      if (!response.ok) throw Object.assign(new Error(result.error?.message ?? '原生远程连接已断开'), { code: result.error?.code })
     }
-    if (!result.ok) throw new Error(result.error?.message ?? '原生远程连接已断开')
+    if (!result.ok) throw Object.assign(new Error(result.error?.message ?? '原生远程连接已断开'), { code: result.error?.code })
     const value = result.value as { sourceWritable?: boolean }
     if (value.sourceWritable !== undefined) { writable.set(runtimeRef, value.sourceWritable); availability() }
     return result.value
@@ -299,6 +320,10 @@ function installNativeTransport(route: string): void {
             if (endpoint === '$events') {
               if (frame.type === 'ready') { (state as { clientId?: string }).clientId = frame.clientId; continue }
               if (frame.type === 'emit') {
+                if (frame.event === 'schedule/changed') {
+                  if (split(selected)?.runtime === runtime) emit({ type: 'emit', event: 'schedule/changed', args: [] })
+                  continue
+                }
                 // Deployment-wide events must not invalidate another source's caches.
                 if (!String(frame.event).startsWith('api-session/')) continue
                 const args = [...frame.args]
@@ -344,6 +369,11 @@ function installNativeTransport(route: string): void {
       const message = JSON.parse(String(init.body)) as Json
       if (url.pathname !== `/api/${message.method}`) throw new Error('原生传输入口不一致')
       const target = addressed(message.payload)
+      const schedule = /^schedule\/(catalog|list|history|update|delete)$/.test(message.method)
+      const selectionAtRequest = selected
+      // Native task details read a Host catalogue rather than a Session list.
+      // Follow the selected source Host, never the preview computer's task store.
+      if (message.method === 'schedule/catalog') target.runtime = split(selected)?.runtime
       const event = message.method === '$events/result' ? split(message.payload.args.eventId) : undefined
       if (event) {
         target.runtime = event.runtime; target.payload.args.eventId = event.id
@@ -364,10 +394,25 @@ function installNativeTransport(route: string): void {
       }
       const endpoint = message.method
       // Phase one: only actions with complete per-session routing are admitted.
-      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result']
-      let result: unknown
+      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result', 'schedule/catalog', 'schedule/list', 'schedule/history', 'schedule/update', 'schedule/delete']
+      let result: any
       if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
-      else result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined)
+      else {
+        try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined) }
+        catch (error) {
+          if (!schedule || init.signal?.aborted) throw error
+          result = { ok: false, error: { code: (error as { code?: string }).code ?? 'REMOTE_TRANSPORT_FAILED', message: '提醒暂时无法读取，请重试', details: {} } }
+        }
+      }
+      if (schedule) {
+        if (['schedule/list', 'schedule/catalog', 'schedule/history'].includes(endpoint)) {
+          const owner = endpoint === 'schedule/catalog' ? selectionAtRequest : message.payload.args.request.sessionId
+          scheduleFailure(owner, result.ok ? undefined : result.error?.code ?? 'REMOTE_TRANSPORT_FAILED')
+        }
+        // Only routing fields are qualified. Prompts and saved history stay exact.
+        const qualify = (record: Json) => ({ ...record, sessionId: identity(target.runtime!, record.sessionId) })
+        if (result.ok && endpoint === 'schedule/catalog') result = { ...result, value: result.value.map(qualify) }
+      }
       return Response.json({ type: 'server-response', rpcId: message.rpcId, result })
     },
     async *openStream(endpoint: string, payload: unknown, signal: AbortSignal) {

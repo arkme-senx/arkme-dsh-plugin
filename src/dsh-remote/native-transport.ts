@@ -51,6 +51,22 @@ export class DshNativeTransport {
     const args = nativeRecord(nativeRecord(payload).args)
     if (stream && ['$events', 'session/control', 'workspace/follow'].includes(endpoint)) return
     if (!stream && ['session/create', 'session/list', 'session/modelCatalog', 'session/canOpenWorkspacePath', 'settings/describe', 'agentPresets/list'].includes(endpoint)) return
+    // The native catalogue is Host-wide. Its response is account-filtered below;
+    // mutations and delivery history additionally require an owned Session.
+    if (!stream && endpoint === 'schedule/catalog') return
+    if (!stream && /^schedule\/(list|history|update|delete)$/.test(endpoint)) {
+      const request = nativeRecord(args.request)
+      await this.requireOwned(scope, request.sessionId)
+      if (endpoint === 'schedule/update') {
+        const expected = nativeRecord(request.expected)
+        // The native timing snapshot has no Session field; the request binding
+        // above and the schedule service itself enforce Session ownership.
+        if (expected.id !== request.id) {
+          throw new DshRemoteError('REMOTE_REQUEST_INVALID', '提醒快照与任务不一致')
+        }
+      }
+      return
+    }
     if (endpoint === '$events/result' && !stream) {
       const lease = [...this.streams.values()].find(item => item.accountId === scope.accountId && item.clientId === args.clientId && item.events.has(String(args.eventId)))
       if (!lease) throw new DshRemoteError('REMOTE_NOT_FOUND', '交互已经结束')
@@ -80,6 +96,11 @@ export class DshNativeTransport {
   }
 
   private async filter(endpoint: string, value: unknown, scope: Scope, lease?: Lease): Promise<unknown | undefined> {
+    if (endpoint === 'schedule/catalog') {
+      const records = list(value)
+      const owned = await scope.owned(records.map(item => nativeRecord(item).sessionId).filter((id): id is string => typeof id === 'string'))
+      return records.filter(item => owned.has(String(nativeRecord(item).sessionId)))
+    }
     const frame = nativeRecord(value)
     const ids = async (values: unknown[]) => await scope.owned(values.filter((v): v is string => typeof v === 'string'))
     if (endpoint === 'session/list') {
@@ -116,6 +137,8 @@ export class DshNativeTransport {
       }
       if (frame.type === 'emit' && typeof frame.event === 'string') {
         if (frame.event === 'llm/adapters-updated') return frame
+        // This is a payload-free invalidation, never another account's task data.
+        if (frame.event === 'schedule/changed') return { type: 'emit', event: 'schedule/changed', args: [] }
         if (frame.event.startsWith('api-session/')) {
           const first = list(frame.args)[0], id = frame.event === 'api-session/added' ? nativeRecord(first).sessionId : first
           return (await ids([id])).has(String(id)) ? frame : undefined
@@ -168,7 +191,7 @@ export class DshNativeTransport {
       }
       const result = nativeRecord(await this.call(endpoint, body.payload, scope.signal))
       if (result.ok === true && endpoint === 'settings/describe') result.value = { ...nativeRecord(result.value), writable: false, hasDocument: false }
-      if (result.ok === true && ['session/list', 'workspace/archiveSession'].includes(endpoint)) result.value = await this.filter(endpoint, result.value, scope)
+      if (result.ok === true && ['session/list', 'workspace/archiveSession', 'schedule/catalog'].includes(endpoint)) result.value = await this.filter(endpoint, result.value, scope)
       scope.signal.throwIfAborted()
       return result
     }

@@ -152,6 +152,11 @@ export class DshCloudNativeTransport {
     }
     const args = object(object(body.payload).args)
     const ok = (value: unknown) => ({ ok: true, value })
+    // Journals do not contain the Host's durable task store. An offline read
+    // must not manufacture an authoritative empty catalogue or delivery history.
+    if (mode === 'call' && String(endpoint).startsWith('schedule/')) {
+      return { ok: false, error: { code: 'RUNTIME_OFFLINE', message: '源电脑未连接，暂无法读取或修改提醒', details: {} } }
+    }
     if (mode === 'call' && endpoint === 'session/list') {
       const rows = await this.sessions(runtime, signal)
       return ok({ items: rows.map(row => ({ sessionId: row.session_ref, updatedAt: row.source_updated_at, running: false, blank: row.blank === true,

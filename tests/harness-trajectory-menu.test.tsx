@@ -220,6 +220,9 @@ describe.each(['legacy', 'resident'] as const)('%s native Harness trajectory nav
     expect(effect).not.toHaveBeenCalled()
     window.history.replaceState(null, '', '/arkme-self/harness-frame?arkme-harness-embed=1')
     apply({ effect } as unknown as ClientContext)
-    expect(effect).toHaveBeenCalledOnce()
+    expect(effect.mock.calls.map(call => call[1])).toEqual([
+      'arkme: native Harness trajectory navigation',
+      'arkme: native Harness reminder feedback',
+    ])
   })
 })
