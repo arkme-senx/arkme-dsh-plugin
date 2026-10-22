@@ -1,3 +1,5 @@
+import { HarnessTextSelection } from './HarnessTextSelection.js'
+import type { NativeTextInputActions } from './harness-text-selection.js'
 import { NativeCopyLinkAction } from './NativeCopyLinkAction.js'
 import { NativeForwardAction } from './NativeForwardAction.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -18,6 +20,7 @@ const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], cramped: false, viewpor
 type HeaderProps = {
   sessionId: string
   useChat?: SnapshotSelectorHook<unknown>
+  inputActions?: NativeTextInputActions | undefined
 }
 
 class SelectionBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -27,16 +30,16 @@ class SelectionBoundary extends Component<{ children: ReactNode }, { failed: boo
   render() { return this.state.failed ? <span role="status">{tr("多选暂不可用")}</span> : this.props.children }
 }
 
-export function NativeSelectionHeader({ sessionId, useChat, doc = document }: HeaderProps & { doc?: Document }) {
+export function NativeSelectionHeader({ sessionId, useChat, inputActions, doc = document }: HeaderProps & { doc?: Document }) {
   if (typeof useChat !== 'function') return null
-  return <SelectionBoundary key={sessionId}><NativeSelectionView sessionId={sessionId} useChat={useChat} doc={doc} /></SelectionBoundary>
+  return <SelectionBoundary key={sessionId}><NativeSelectionView sessionId={sessionId} useChat={useChat} inputActions={inputActions} doc={doc} /></SelectionBoundary>
 }
 
-function NativeSelectionView({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionView({ sessionId, useChat, inputActions, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; inputActions?: NativeTextInputActions | undefined; doc: Document }) {
   useArkmeLocale()
   const [present, setPresent] = useState(false)
   useLayoutEffect(() => observeNativeChatPresence(doc, setPresent), [doc])
-  return present ? <NativeSelectionSession sessionId={sessionId} useChat={useChat} doc={doc} /> : null
+  return present ? <NativeSelectionSession sessionId={sessionId} useChat={useChat} inputActions={inputActions} doc={doc} /> : null
 }
 
 function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; selectedKey: string | undefined; doc: Document }) {
@@ -77,7 +80,7 @@ function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; se
   </>
 }
 
-function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; inputActions?: NativeTextInputActions | undefined; doc: Document }) {
   useArkmeLocale()
   const snapshot = useChat(value => value)
   const chat = readNativeChat(snapshot)
@@ -194,6 +197,7 @@ function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string
   const fallbackBounds = !layout.actionDock ? layout.viewport?.getBoundingClientRect() : undefined
   const actionTarget = layout.actionDock ?? (fallbackBounds ? doc.body : undefined)
   return <>
+    {!state.active && <HarnessTextSelection sessionId={sessionId} chat={chat} doc={doc} inputActions={inputActions} />}
     {state.active && <style data-arkme-native-selection="highlight">{state.keys.size > 0
       ? `${highlightSelector} { position: relative; isolation: isolate; }
         ${highlightSelector.split(',').map(selector => `${selector}::before`).join(',')} {

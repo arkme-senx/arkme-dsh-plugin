@@ -1,4 +1,4 @@
-import { arkmeEmojiById } from './arkme-emoji.js'
+import { arkmeEmojiUnicode } from '../arkme-emoji-text.js'
 
 const blockTags = new Set(['P', 'DIV', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR', 'TABLE'])
 
@@ -34,14 +34,14 @@ export function captureMessageTextSelection(bubble: HTMLElement | undefined): st
     || !bubble.contains(selection.anchorNode) || !bubble.contains(selection.focusNode)) return undefined
   const fragment = selection.getRangeAt(0).cloneContents()
   let converted = false
-  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read],style,script')) {
+  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read],style,script,button,input,textarea,select,[aria-hidden="true"]')) {
     indicator.remove()
     converted = true
   }
   for (const image of fragment.querySelectorAll('img[data-arkme-rich-emoji]')) {
-    const emoji = arkmeEmojiById[image.getAttribute('data-arkme-rich-emoji') ?? '']
-    if (emoji !== undefined) {
-      image.replaceWith(emoji.unicode)
+    const emoji = arkmeEmojiUnicode(image.getAttribute('data-arkme-rich-emoji') ?? '')
+    if (emoji !== '') {
+      image.replaceWith(emoji)
       converted = true
     }
   }
