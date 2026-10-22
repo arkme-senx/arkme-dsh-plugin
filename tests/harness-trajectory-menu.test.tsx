@@ -11,14 +11,15 @@ const nativeSelection = vi.fn()
 const nativeDownload = vi.fn()
 const cleanups: Array<() => void> = []
 const roots: Root[] = []
+type HeaderLayout = 'legacy' | 'resident'
+let layout: HeaderLayout
 
-function HeaderFixture({ extraView = false, more = true, english = false, initial = 'chat' }: {
-  extraView?: boolean; more?: boolean; english?: boolean; initial?: string
+function HeaderFixture({ extraView = false, more = true, english = false, initial = 'chat', session = true }: {
+  extraView?: boolean; more?: boolean; english?: boolean; initial?: string; session?: boolean
 }) {
   const [view, setView] = useState(initial)
   const [open, setOpen] = useState(false)
-  return <>
-    <div data-slot="conversation.session.header"><header>
+  const content = <>
       <div><span data-native-title>Conversation title</span><span>标准模式</span>
         <div data-slot="conversation.session.header.utilities">
           {more && <Menu open={open} align="end" dense onClose={() => { setOpen(false) }}
@@ -29,13 +30,20 @@ function HeaderFixture({ extraView = false, more = true, english = false, initia
           />}
         </div>
       </div>
-      <div role="tablist">
+      <div role="tablist" {...(layout === 'resident' ? { 'data-conversation-tabs': '' } : {})}>
         {[['chat', english ? 'Chat' : '对话'], ['trajectory', english ? 'Trajectory' : '轨迹'],
           ...(extraView ? [['new-official-view', 'New official view']] : [])].map(([id, title]) =>
           <button key={id} type="button" role="tab" aria-selected={view === id}
             onClick={() => { nativeSelection(id); setView(id!) }}>{title}</button>)}
       </div>
-    </header></div>
+  </>
+  return <>
+    {layout === 'resident'
+      ? <div data-slot="conversation.header"><header data-window-drag="true">
+        <div data-conversation-header-leading="" />
+        {session && <div data-slot="conversation.session.header" style={{ display: 'contents' }}>{content}</div>}
+      </header></div>
+      : session && <div data-slot="conversation.session.header"><header>{content}</header></div>}
     <div data-native-view={view}>Official view: {view}</div>
     <textarea aria-label="draft" defaultValue="unsent draft" />
   </>
@@ -70,7 +78,8 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-describe('native Harness trajectory navigation', () => {
+describe.each(['legacy', 'resident'] as const)('%s native Harness trajectory navigation', headerLayout => {
+  beforeEach(() => { layout = headerLayout })
   it('adds to the native menu, runs native view actions, returns focus, and leaves the draft and other actions intact', async () => {
     await mount()
     const title = document.querySelector('[data-native-title]')
@@ -80,6 +89,7 @@ describe('native Harness trajectory navigation', () => {
     draft.value = 'edited unsent draft'
     await install()
     expect(getComputedStyle(nativeTabs).display).toBe('none')
+    expect(document.querySelector('header')?.hasAttribute('data-arkme-harness-compact-header')).toBe(true)
     expect(back().hidden).toBe(true)
     await click(more())
     expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(2)
@@ -167,6 +177,19 @@ describe('native Harness trajectory navigation', () => {
     expect(viewItem()).toBeNull()
     await click(more()); await click(viewItem())
     expect(nativeSelection).toHaveBeenLastCalledWith('trajectory')
+  })
+
+  it('cleans up when the session leaves the resident header and reattaches when it returns', async () => {
+    const { root } = await mount({ initial: 'trajectory' }); await install()
+    expect(back().hidden).toBe(false)
+    await act(async () => { root.render(<HeaderFixture session={false} />) })
+    expect(back()).toBeNull()
+    expect(document.querySelector('[data-arkme-harness-compact-header]')).toBeNull()
+    await act(async () => { root.render(<HeaderFixture />) })
+    expect(getComputedStyle(tabs()).display).toBe('none')
+    expect(document.querySelectorAll('[data-arkme-harness-return]')).toHaveLength(1)
+    await click(more())
+    expect(document.querySelectorAll('[data-arkme-harness-trajectory-item]')).toHaveLength(1)
   })
 
   it('removes only Arkme additions on unload and preserves the original native styles', async () => {
