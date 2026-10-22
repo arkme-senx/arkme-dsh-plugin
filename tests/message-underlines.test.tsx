@@ -222,7 +222,7 @@ it('retains one queued invalidation while an older snapshot is still reading', a
  expect(callArkme).toHaveBeenCalledTimes(2);expect(session.snapshots.get(underlineTargetKey(target))?.revision).toBe(2)
  session.dispose()
 })
-it('switches between shared and existing local marks without uploading or changing either store', async () => {
+it.each([{ audience: 'self' as const, label: '在我的设备间同步', button: '标记' }, { audience: 'conversation' as const, label: '会话成员可见', button: '共享标记' }])('keeps $audience marking simple and switches existing stores without writing', async ({ audience, label, button }) => {
   const { act, useState } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const { webcrypto } = await import('node:crypto')
@@ -250,7 +250,7 @@ it('switches between shared and existing local marks without uploading or changi
     const [storage, setStorage] = useState<'local' | 'cloud'>('cloud')
     const marks = useMessageUnderlines('scope', 'self', 42, undefined, storage)
     return <><ArkmeMessageContent item={target.item} sourceRef="self" />{marks.layer}
-      <ArkmeMessageTextSelectionToolbar replySourceRef="self" markStorage={storage} onMarkStorageChange={setStorage}
+      <ArkmeMessageTextSelectionToolbar replySourceRef="self" markStorage={storage} onMarkStorageChange={setStorage} markAudience={audience}
         onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} /></>
   }
   const dom = document.createElement('div'); document.body.append(dom)
@@ -265,14 +265,43 @@ it('switches between shared and existing local marks without uploading or changi
     const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 2)
     document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
     await act(async () => text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
-    const localButton = document.querySelector<HTMLButtonElement>('[aria-label="查看仅本机标记"]')!
-    expect(localButton).not.toBeNull()
-    await act(async () => localButton.click())
-    await settle(() => expect(document.querySelector('[role="toolbar"]')?.textContent).toContain('取消标记'))
-    const sharedButton = document.querySelector<HTMLButtonElement>('[aria-label="切换到跨设备同步标记，不上传本机标记"]')!
-    expect(sharedButton).not.toBeNull()
-    await act(async () => sharedButton.click())
-    await settle(() => expect(document.querySelector('[role="toolbar"]')?.textContent).not.toContain('取消标记'))
+    const toolbar = () => document.querySelector('[role="toolbar"]')!
+    expect(toolbar().textContent).not.toMatch(/查看仅本机|跨设备同步|会话共享/)
+    expect([...toolbar().querySelectorAll('button')].some(b => b.textContent === button)).toBe(true)
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    const openScope = async () => {
+      await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="标记范围"]')!.click())
+      await settle(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
+    }
+    const choose = async (text: string) => {
+      const option = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === text)!
+      expect(option).toBeDefined()
+      // Native mouse events on the portaled list must not dismiss the selection toolbar.
+      await act(async () => {
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        option.click()
+      })
+    }
+    await openScope()
+    expect([...document.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual([label, '仅此电脑可见'])
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(toolbar()).not.toBeNull()
+    expect(document.getSelection()?.toString()).toBe('重点')
+    await openScope()
+    await choose('仅此电脑可见')
+    await settle(() => expect(toolbar().textContent).toContain('取消标记（仅此电脑）'))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.getSelection()?.toString()).toBe('重点')
+    await openScope()
+    await choose(label)
+    await settle(() => expect(toolbar().textContent).not.toContain('取消标记'))
+    expect(toolbar().textContent).not.toContain('仅此电脑')
+    await openScope()
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="toolbar"]')).toBeNull()
     expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation.startsWith('source.local-') && operation.endsWith('.list'))).toBe(true)
     expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation === 'source.message-underline.list')).toBe(true)
     expect(vi.mocked(callArkme).mock.calls.every(([operation]) => operation.endsWith('.list') || operation.endsWith('.capabilities'))).toBe(true)

@@ -8543,7 +8543,7 @@ export function ArkmeSurface({
       replyLabel={sourceIsChat ? '回复' : '延展'}
       markStorage={messageMarkStorage}
       onMarkStorageChange={setMessageMarkStorage}
-      cloudMarkLabel={sourceIsChat ? '会话共享' : '跨设备同步'}
+      markAudience={sourceIsChat ? 'conversation' : 'self'}
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}

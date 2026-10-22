@@ -29,7 +29,7 @@ function Fixture(){
  <section><small>宏顺 · 消息正文</small><article><ArkmeMessageContent item={item} sourceRef={target.sourceRef}/></article></section>
  <p className="hint">点击黄色文字：复制、全选、取消自己的标记、回复。拖选其他文字也可标记。</p>
  <output>{reply ? `回复引用：${reply}` : `当前标记：${session.snapshots.get(underlineTargetKey(target))!.items.map(m=>`${m.mine?'你':m.actorName}「${m.anchor.text}」`).join(' · ')}`}</output>
- <UnderlineLayer session={session} revision={revision}/><ArkmeMessageTextSelectionToolbar markStorage={storage} onMarkStorageChange={setStorage} cloudMarkLabel="会话共享" replySourceRef={target.sourceRef} onReply={(_,quote)=>setReply(quote.text)}
+ <UnderlineLayer session={session} revision={revision}/><ArkmeMessageTextSelectionToolbar markStorage={storage} onMarkStorageChange={setStorage} markAudience="conversation" replySourceRef={target.sourceRef} onReply={(_,quote)=>setReply(quote.text)}
  onUnderline={async(t,anchor)=>{await session.change(t,{kind:'add',anchor,operationId:crypto.randomUUID()});return undefined}}
  getMarks={t=>session.snapshots.get(underlineTargetKey(t))?.items??[]}
  onRemoveMark={async(t,mark)=>{if(!mark.mine)return '只能取消自己的标记';await session.change(t,{kind:'remove',annotationId:mark.id,operationId:crypto.randomUUID()});return undefined}}/>
