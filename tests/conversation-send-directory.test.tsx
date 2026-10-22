@@ -1,3 +1,4 @@
+import { followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
 import { mentionBotCache } from '../src/client/mention-bot-cache.js'
 vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
@@ -1131,6 +1132,9 @@ describe('conversation send directory projection', () => {
     mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline'
       ? Promise.resolve(mode === 'cached' || args[0]?.cursor?.unified?.mode === 'around' ? page : unifiedFixture(target, [])) : baseCall(operation, ...args))
     const body = { scrollTop: 0, scrollHeight: 5000, clientHeight: 600,
+      ownerDocument: { defaultView: { requestAnimationFrame: () => 1, cancelAnimationFrame: () => {}, performance: { now: () => 0 } } },
+      style: { getPropertyValue: () => '', getPropertyPriority: () => '', setProperty: () => {}, removeProperty: () => {} },
+      addEventListener: () => {}, removeEventListener: () => {},
       scrollTo: vi.fn(({ top, behavior }: { top: number; behavior: string }) => { if (behavior === 'auto') body.scrollTop = top }),
       getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
       querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'system-event' },
@@ -1140,9 +1144,12 @@ describe('conversation send directory projection', () => {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
     body.scrollTop = 0
+    followConversationBottom(body as unknown as HTMLElement)
+    expect(isConversationFollowing(body as unknown as HTMLElement)).toBe(true)
     await act(async () => { arkmeUi.showConversationTarget(target, 'system-event', 50, undefined, undefined, false, false, undefined, 'opaque-system') })
     expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
     expect(body.scrollTop).toBe(2800)
+    expect(isConversationFollowing(body as unknown as HTMLElement)).toBe(false)
     expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
     if (mode === 'around') expect(mocks.callArkme.mock.calls.some(([op, params]) => op === 'source.timeline' && params.cursor?.unified?.systemRef === 'opaque-system')).toBe(true)
   })
