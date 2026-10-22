@@ -14,6 +14,15 @@ function fixture(wait?: (milliseconds: number, signal: AbortSignal) => Promise<v
   return { cloud, call, post }
 }
 afterEach(() => vi.useRealTimers())
+it('reports an unavailable reminder store instead of manufacturing empty tasks or history from cloud journals', async () => {
+  const f = fixture()
+  for (const endpoint of ['schedule/list', 'schedule/catalog', 'schedule/history', 'schedule/update', 'schedule/delete']) {
+    expect(await f.call({ mode: 'call', endpoint, payload: { args: { request: { sessionId: 'empty' } } } } as never))
+      .toMatchObject({ ok: false, error: { code: 'RUNTIME_OFFLINE' } })
+  }
+  expect(f.post).not.toHaveBeenCalled()
+  f.cloud.close()
+})
 it('opens a verified empty cloud session in the native renderer without contacting the source', async () => {
   const f = fixture()
   expect(await f.call()).toMatchObject({ items: [{ type: 'snapshot', cursor: -1, records: [], hasMore: false, assistantStream: { revision: 0 }, projections: { values: { title: '空会话' } } }] })

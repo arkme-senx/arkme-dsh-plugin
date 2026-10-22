@@ -1,3 +1,5 @@
+import { HarnessTextSelection } from './HarnessTextSelection.js'
+import type { NativeTextInputActions } from './harness-text-selection.js'
 import { NativeCopyLinkAction } from './NativeCopyLinkAction.js'
 import { NativeForwardAction } from './NativeForwardAction.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -14,11 +16,11 @@ import { watchNativeSelectionGeometry, nativeSelectionActionOverlayCss, observeN
 import type {} from './harness-slots-contract.js'
 
 const SLOT = 'conversation.session.header.actions'
-const buttonStyle = { display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, borderRadius: 6, padding: '5px 8px', background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit' } as const
 const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], cramped: false, viewport: null }
 type HeaderProps = {
   sessionId: string
   useChat?: SnapshotSelectorHook<unknown>
+  inputActions?: NativeTextInputActions | undefined
 }
 
 class SelectionBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -28,16 +30,16 @@ class SelectionBoundary extends Component<{ children: ReactNode }, { failed: boo
   render() { return this.state.failed ? <span role="status">{tr("多选暂不可用")}</span> : this.props.children }
 }
 
-export function NativeSelectionHeader({ sessionId, useChat, doc = document }: HeaderProps & { doc?: Document }) {
+export function NativeSelectionHeader({ sessionId, useChat, inputActions, doc = document }: HeaderProps & { doc?: Document }) {
   if (typeof useChat !== 'function') return null
-  return <SelectionBoundary key={sessionId}><NativeSelectionView sessionId={sessionId} useChat={useChat} doc={doc} /></SelectionBoundary>
+  return <SelectionBoundary key={sessionId}><NativeSelectionView sessionId={sessionId} useChat={useChat} inputActions={inputActions} doc={doc} /></SelectionBoundary>
 }
 
-function NativeSelectionView({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionView({ sessionId, useChat, inputActions, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; inputActions?: NativeTextInputActions | undefined; doc: Document }) {
   useArkmeLocale()
   const [present, setPresent] = useState(false)
   useLayoutEffect(() => observeNativeChatPresence(doc, setPresent), [doc])
-  return present ? <NativeSelectionSession sessionId={sessionId} useChat={useChat} doc={doc} /> : null
+  return present ? <NativeSelectionSession sessionId={sessionId} useChat={useChat} inputActions={inputActions} doc={doc} /> : null
 }
 
 function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; selectedKey: string | undefined; doc: Document }) {
@@ -78,7 +80,7 @@ function NativeCopyTextAction({ chat, selectedKey, doc }: { chat: NativeChat; se
   </>
 }
 
-function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; doc: Document }) {
+function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { sessionId: string; useChat: SnapshotSelectorHook<unknown>; inputActions?: NativeTextInputActions | undefined; doc: Document }) {
   useArkmeLocale()
   const snapshot = useChat(value => value)
   const chat = readNativeChat(snapshot)
@@ -190,7 +192,12 @@ function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string
     event.stopPropagation(); exit()
   }
   const highlightSelector = nativeSelectionHighlightSelector(state.keys)
+  // Keep every selection action at the bottom, including when an older/newer
+  // Harness composer cannot be recognized. Never take over an unknown editor.
+  const fallbackBounds = !layout.actionDock ? layout.viewport?.getBoundingClientRect() : undefined
+  const actionTarget = layout.actionDock ?? (fallbackBounds ? doc.body : undefined)
   return <>
+    {!state.active && <HarnessTextSelection sessionId={sessionId} chat={chat} doc={doc} inputActions={inputActions} />}
     {state.active && <style data-arkme-native-selection="highlight">{state.keys.size > 0
       ? `${highlightSelector} { position: relative; isolation: isolate; }
         ${highlightSelector.split(',').map(selector => `${selector}::before`).join(',')} {
@@ -199,11 +206,6 @@ function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string
           border-radius: 6px; background: ${messageSelectionStyles.rowSelectedForAction.background};
         }`
       : ''}</style>}
-    {state.active && <div data-arkme-native-selection="header" onKeyDown={escape} style={{ display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.text, fontSize: 12 }}>
-        <span role="status" aria-live="polite">{tr("已选")} {state.keys.size} {tr("条")}</span>
-        {layout.cramped && <span role="status" style={{ color: arkmeTheme.secondary }}>{tr("请扩大窗口以勾选消息")}</span>}
-        <button data-arkme-feedback="neutral" type="button" style={buttonStyle} onClick={exit}><ArkmeSelectActionIcon kind="close" size={16} />{tr("退出")}</button>
-    </div>}
     {menu && createPortal(<ArkmeActionMenu label={tr("消息操作")} point={{ x: menu.x, y: menu.y }} pointDocument={doc}
       autoFocus={menu.autoFocus} onClose={() => setMenu(null)} actions={[
         { id: 'select', label: '多选', icon: <ArkmeSelectActionIcon kind="select" size={16} />, onSelect: () => {
@@ -214,9 +216,18 @@ function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string
           } catch { fail() }
         } },
       ]} />, doc.body)}
-    {state.active && <NativeForwardAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} onComplete={exit}>{forwardButton => layout.actionDock && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label={tr("多选操作")} onKeyDown={escape}
-      style={{ ...messageSelectionStyles.selectBar, height: '100%', borderTop: 0 }}>
+    {state.active && <NativeForwardAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} onComplete={exit}>{forwardButton => actionTarget && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label={tr("多选操作")} onKeyDown={escape}
+      style={{ ...messageSelectionStyles.selectBar, flexWrap: 'wrap', alignContent: 'center', rowGap: 8,
+        ...(fallbackBounds ? { position: 'fixed', left: fallbackBounds.left, width: fallbackBounds.width,
+          bottom: Math.max(0, doc.defaultView!.innerHeight - fallbackBounds.bottom), zIndex: 40 }
+          : { height: '100%', borderTop: 0 }),
+      }}>
       <style>{nativeSelectionActionOverlayCss}</style>
+      <div data-arkme-native-selection="summary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, maxWidth: '100%', color: arkmeTheme.text, fontSize: 12 }}>
+        <span role="status" aria-live="polite" style={{ whiteSpace: 'nowrap' }}>{tr("已选")} {state.keys.size} {tr("条")}</span>
+        {layout.cramped && <span role="status" style={{ color: arkmeTheme.secondary }}>{tr("请扩大窗口以勾选消息")}</span>}
+      </div>
+      <div data-arkme-native-selection="action-buttons" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '100%', gap: messageSelectionStyles.selectBar.gap }}>
       <NativeCopyTextAction key={state.keys.size === 1 ? [...state.keys][0] : 'no-single-selection'} chat={chat} selectedKey={state.keys.size === 1 ? [...state.keys][0] : undefined} doc={doc} />
       <NativeCopyLinkAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} />
       {forwardButton}
@@ -224,7 +235,8 @@ function NativeSelectionSession({ sessionId, useChat, doc }: { sessionId: string
         <span style={messageSelectionStyles.selectBarIconTile}><ArkmeSelectActionIcon kind="close" size={18} /></span>
         <span style={messageSelectionStyles.selectBarLabel}>{tr("退出多选")}</span>
       </button>
-    </div>, layout.actionDock)}</NativeForwardAction>}
+      </div>
+    </div>, actionTarget)}</NativeForwardAction>}
     {state.active && layout.viewport && createPortal(<div ref={layer} data-arkme-native-selection="controls" onKeyDown={escape}
       style={{ position: 'relative', width: 0, height: 0, overflowAnchor: 'none', pointerEvents: 'none', zIndex: 20 }}>
       <style>{'[data-arkme-native-selection] button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }'}</style>

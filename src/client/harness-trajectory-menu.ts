@@ -24,9 +24,24 @@ interface Mount extends Navigation {
   focusBack: boolean
 }
 
+function nativeHeaders(doc: Document): HTMLElement[] {
+  return [...doc.querySelectorAll<HTMLElement>(HEADER_SLOT)].flatMap(slot => {
+    const parent = slot.parentElement
+    const header = parent?.tagName === 'HEADER' && parent.querySelector(':scope > [data-conversation-header-leading]')
+      ? parent
+      : slot.querySelector<HTMLElement>(':scope > header')
+    return header === null ? [] : [header]
+  })
+}
+
 /** Only recognize the native two-view header; new upstream views keep their own navigation. */
 function navigation(header: HTMLElement): Navigation | undefined {
-  const tablists = header.querySelectorAll<HTMLElement>(':scope > [role="tablist"]')
+  // 0.1.x puts the header inside the session slot. 0.2.x keeps the header
+  // resident and renders the session title/tabs inside a display:contents slot.
+  const session = header.querySelector<HTMLElement>(`:scope > ${HEADER_SLOT}`)
+  const tablists = session === null
+    ? header.querySelectorAll<HTMLElement>(':scope > [role="tablist"]')
+    : session.querySelectorAll<HTMLElement>(':scope > [role="tablist"][data-conversation-tabs]')
   if (tablists.length !== 1) return
   const tabs = tablists[0]!
   const buttons = [...tabs.querySelectorAll<HTMLButtonElement>(':scope > button[role="tab"]')]
@@ -56,8 +71,8 @@ function removeMount(mount: Mount): void {
 }
 
 /**
- * A reversible presentation adapter for DSH's native header. DSH 0.1.5-rc.2
- * has no tab-strip or export-menu-item slot. Keep its components, handlers,
+ * A reversible presentation adapter for DSH's native 0.1.x/0.2.x headers,
+ * which have no tab-strip or export-menu-item slot. Keep components, handlers,
  * session state and other menu entries intact; never copy/replace the header.
  */
 export function installHarnessTrajectoryMenu(doc: Document): () => void {
@@ -70,13 +85,14 @@ export function installHarnessTrajectoryMenu(doc: Document): () => void {
   style.dataset.arkmeHarnessTrajectory = 'true'
   style.textContent = `
     [${TABS_MARKER}] { display: none !important; }
-    ${HEADER_SLOT} > header[${HEADER_MARKER}] {
+    header[${HEADER_MARKER}] {
       min-height: 0; padding-bottom: 10px;
     }
     [data-arkme-harness-return] {
       background: transparent; border: 0; padding: 4px 0; margin-top: 8px;
       color: var(--dsw-alias-label-secondary, inherit); font: inherit;
       font-size: 13px; cursor: pointer;
+      grid-column: 1 / -1; justify-self: start; -webkit-app-region: no-drag;
     }
     [data-arkme-harness-return]:hover { color: var(--dsw-alias-label-primary, inherit); }
     [data-arkme-harness-return][hidden] { display: none; }
@@ -174,10 +190,11 @@ export function installHarnessTrajectoryMenu(doc: Document): () => void {
 
   function sync(): void {
     if (disposed) return
+    const headers = nativeHeaders(doc)
     for (const [header, mount] of mounts) {
-      if (!header.isConnected) { removeMount(mount); mounts.delete(header) }
+      if (!header.isConnected || !headers.includes(header)) { removeMount(mount); mounts.delete(header) }
     }
-    for (const header of doc.querySelectorAll<HTMLElement>(`${HEADER_SLOT} > header`)) {
+    for (const header of headers) {
       const value = unsupported.has(header) ? undefined : navigation(header)
       let mount = mounts.get(header)
       if (mount !== undefined && (value === undefined || mount.tabs !== value.tabs

@@ -14,7 +14,7 @@ import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './Ark
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
   /** Owner-local authority is never passed to ordinary Chat actions. */
-  selectionDomain?: 'transcript'
+  selectionDomain?: 'transcript' | 'native'
   localMarkRef?: string
   cloudMarkRef?:string
 }
@@ -23,6 +23,17 @@ export function messageSelectionReference(target: MessageSelectionTarget, storag
   return target.localMarkRef ?? target.item.messageActionRef
 }
 const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
+/** Additive registration for native Harness bodies; never replace their renderer. */
+export function registerMessageTextSelectionTarget(element: HTMLElement, text: string, target: MessageSelectionTarget) {
+  const entry = { copyText: text, reply: target }
+  targets.set(element, entry)
+  element.setAttribute('data-arkme-text-selection', '')
+  return () => {
+    if (targets.get(element) !== entry) return
+    targets.delete(element)
+    element.removeAttribute('data-arkme-text-selection')
+  }
+}
 export function registeredMessageTargets(sourceRef: string) {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-arkme-text-selection]')).flatMap(element => {
     const target = targets.get(element)?.reply
@@ -103,6 +114,14 @@ function stillValid(snapshot: Snapshot) {
 
 /** Keep selection within this message's prose, excluding trailing attachment controls. */
 function wholeMessageRange(element: HTMLElement): Range | undefined {
+  const prose = targets.get(element)?.reply?.selectionDomain === 'native'
+    ? Array.from(element.querySelectorAll<HTMLElement>('[data-arkme-quote-prose]')).flatMap(body => wholeMessageRange(body) ?? []) : []
+  if (prose.length) {
+    const range = element.ownerDocument.createRange()
+    range.setStart(prose[0]!.startContainer, prose[0]!.startOffset)
+    range.setEnd(prose[prose.length - 1]!.endContainer, prose[prose.length - 1]!.endOffset)
+    return range
+  }
   const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (node instanceof Element) {
@@ -123,8 +142,10 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, canReplace, prepareReplace, selectionDomain }: {
-  selectionDomain?: 'transcript' | undefined
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, canReplace, prepareReplace, selectionDomain, getViewport }: {
+  /** Embedded native chat may occupy only part of a full-window clipped iframe. */
+  getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
+  selectionDomain?: 'transcript' | 'native' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
   markScopeControl?: ReactNode
@@ -149,7 +170,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     let dragging = false
     const insideToolbar = (target: EventTarget | null) => target instanceof Node && toolbar.current?.contains(target)
     const dismiss = () => { setSnapshot(undefined) }
-    const capture = () => { const next = captureSelection(document); return next && next.startEntry?.reply?.selectionDomain === selectionDomain && (selectionDomain !== 'transcript' || next.startEntry?.reply?.sourceRef === replySourceRef) ? next : undefined }
+    const capture = () => { const next = captureSelection(document); return next && next.startEntry?.reply?.selectionDomain === selectionDomain && (selectionDomain === undefined || next.startEntry?.reply?.sourceRef === replySourceRef) ? next : undefined }
     const show = () => { setNotice(''); setSnapshot(capture()) }
     const down = (event: MouseEvent) => {
       if (insideToolbar(event.target)) return
@@ -253,11 +274,13 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   }, [snapshot])
   useLayoutEffect(() => {
     if (!snapshot || !toolbar.current) return
+    const viewport = getViewport?.() ?? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight }
+    toolbar.current.style.maxWidth = `${Math.max(80, viewport.right - viewport.left - 16)}px`
     const box = toolbar.current.getBoundingClientRect(), rect = snapshot.rect
-    const left = Math.max(8, Math.min(window.innerWidth - box.width - 8, rect.right - box.width))
-    const top = rect.top - box.height - 8 >= 8 ? rect.top - box.height - 8 : rect.bottom + 8
-    setPosition({ left, top: Math.max(8, Math.min(window.innerHeight - box.height - 8, top)) })
-  }, [snapshot, notice, verified])
+    const left = Math.max(viewport.left + 8, Math.min(viewport.right - box.width - 8, rect.right - box.width))
+    const top = rect.top - box.height - 8 >= viewport.top + 8 ? rect.top - box.height - 8 : rect.bottom + 8
+    setPosition({ left, top: Math.max(viewport.top + 8, Math.min(viewport.bottom - box.height - 8, top)) })
+  }, [snapshot, notice, verified, getViewport])
   if (typeof document === 'undefined') return null
   if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
     {...replacing} prepare={prepareReplace} onClose={() => setReplacing(undefined)} />
@@ -279,7 +302,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     } catch (error) { if (current.current === snapshot) setNotice(error instanceof Error ? error.message : '取消标记失败，请重试') }
   }
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
-    && replyTarget.item.status === 1 && !!replyTarget.item.messageActionRef
+    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || (selectionDomain === 'native' && !!replyTarget.localMarkRef))
   const find = () => {
     if (!stillValid(snapshot) || !replySourceRef) return
     if (!findSelectedMessageText(replySourceRef, snapshot.text)) { setNotice('当前对话暂不支持查找'); return }

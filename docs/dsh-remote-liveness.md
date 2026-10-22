@@ -47,6 +47,8 @@ Host 的单一消费者在上批完成后，从当前缓冲取下一批。空闲
 
 ## DSH Gateway 兼容
 
+DSH 0.2.1 的进程内调用必须显式携带 Peer。插件通过公共 Connection 创建一个独立的 owner Peer，由注入作用域持有，卸载时取消 API lifetime 并销毁 Peer；Gateway 请求、原生流和交互应答共用该身份。它只承载既有受信 Host 适配，远端不能设置 principal，Arkme 的账号/会话归属、租约与交互校验仍先执行。只读和现有下行流传入立即结束的 uplink，不新增上行队列。适配器直接引用官方导出类型，避免手写旧签名继续通过类型检查。
+
 旧版通过 `apiProxy` 创建远控 Host；新版通过 `typertGateway`、`sessionController`、`workspaceController` 和 `connection` 创建同一个 Host。两者仍由账号作用域持有，不改变 Realtime 协议、租约、心跳和重连策略。功能关闭或依赖缺失时，Host API 返回具体原因；普通业务请求不执行远控诊断探测。
 
 新版在 `gateway-api.ts` 适配公共接口：
@@ -66,3 +68,11 @@ Host 的单一消费者在上批完成后，从当前缓冲取下一批。空闲
 2026-09-16 在独立数据目录、独立凭据前缀、空闲端口的未修改 DSH `0.1.5-rc.2` 中安装本地 `.tgz`：Host 成功创建，未登录时返回登录提示；真实 Gateway 验证了工作区、创建/列举 Session、历史首屏和分页、发送参数进入业务校验，以及问题回答和审批拒绝的往返。审批探针走公共 scoped waterfall，不执行工具。该 CLI 探针没有使用生产账号发送提示词，未验证真实模型响应、生产 Realtime 注册/心跳、移动端消费或 Windows/Linux。
 
 随后使用客户端官方 master 基线 `f5e0c00` 启动独立 App Data 的 macOS 开发实例，加载本次插件与 DSH `0.1.5-rc.2`。实例通过正常登录态读取完成生产 Realtime 注册，`remote.getStatus` 返回 `available/enabled/connected=true`。该证据证明连接和注册，实际远程操作由用户在此常驻实例回归；开发路径运行不等同于正式 Release Set 发布。
+
+### 原生控制流与嵌套工具事件
+
+`session/control` 使用官方 `SessionControlFrame`：基线只包含 `projections`，后续帧替换单个投影。跨实例桥保留带水位的基线和最新增量，重连后替换该源实例的缓存；释放或移除会话时，以已知水位的空投影块清除旧能力，不提高水位或覆盖其他实例。源实例最多 8 个，每源控制缓存仍受 32768 帧、64 MiB 限制，最后一个观察者释放时取消订阅并清理缓存。
+
+历史投影识别当前 `tool/ptc-dispatch-start` / `tool/ptc-dispatch`，并保留历史 `tool/code-dispatch*` 回放。子调用开始和结束归入原根工具节点，携带原事件顺序、结果及来源序号，父工具结算后继续保留子调用。手机端原始事件回放需采用同一事件词汇。
+
+回归辅助器通过已发布 DSH 的公共 `SessionController.control()` 取得控制基线，通过公共 Tools 的 `run_code` 管线执行无副作用的 echo 子调用并取得真实日志；仅将时钟和结果消息的不透明标识固定为确定值。插件逐次对照该生产者校验 `published-0.2.1-rc.2-ptc.json`，手机端消费相同夹具，覆盖完整回放、增量开始/结束、父工具结算、重复与补页及旧名称兼容。
