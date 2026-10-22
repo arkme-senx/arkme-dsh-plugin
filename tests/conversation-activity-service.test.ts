@@ -6,7 +6,7 @@ import { query as q, envelope as env, wireResult as result, wireState as state, 
 function fixture(kind = 'private_chat') {
   let userId = 7, change = () => {}
   const post = vi.fn(async (path: string, _body: unknown, _session: unknown, _signal: unknown, _options: unknown): Promise<unknown> => path.endsWith('/capabilities') ? capability : state)
-  const runtime = { config: { environment: 'prod' }, requireSession: async () => ({ userId }), authenticatedChatPost: post, subscribeAccountScope: (fn: () => void) => { change = fn; return () => {} } } as unknown as ServiceRuntime
+  const runtime = { stateStore: { uniqueCode: async () => 'system-key' }, config: { environment: 'prod' }, requireSession: async () => ({ userId }), authenticatedChatPost: post, subscribeAccountScope: (fn: () => void) => { change = fn; return () => {} } } as unknown as ServiceRuntime
   const sources = { openSourceRef: vi.fn(async () => ({ kind, ownerRef: 'chat1' })) }
   return { service: new ConversationActivityService(runtime, sources as never), post, sources, change: () => { userId = 8; change() } }
 }
@@ -87,3 +87,22 @@ describe('activity owner adapter', () => {
     }
   })
 })
+
+ it('seals system identities without inventing a record owner and binds around reads to the same scope', async () => {
+  const { systemTimelineAnchorCodec } = await import('../src/services/system-timeline-anchor.js')
+  const { chatTimelineEventId } = await import('../src/services/timeline-event-id.js')
+  const f = fixture('group_chat'), input = { ...q, resultId: 'a1', messageSourceRef: 'opaque', hour: 9, weekday: 2 }
+  const id = 'member_join:chat1:join:00000000000000000010:00000000000000000007'
+  const raw = { ...env, result_id: 'a1', source_ref: 'opaque', hour: 9, weekday: 2, available: true,
+    message_uid: id, timeline_anchor_source: 'group_metadata', timeline_anchor_id: id, send_at: result.fromAt }
+  f.post.mockResolvedValue(raw)
+  const target = await f.service.source(input)
+  expect(target).toEqual({ messageUid: chatTimelineEventId('system-key', 7, 'prod', 'chat1', id),
+    sendAtMillis: result.fromAt, systemRef: expect.stringMatching(/^atw1\./) })
+  expect(JSON.stringify(target)).not.toContain('member_join:')
+  expect(systemTimelineAnchorCodec('system-key', 'prod', 7, 'chat1').open(target.systemRef!))
+    .toEqual({ anchor_source: 'group_metadata', anchor_id: id })
+  for (const patch of [{ record_owner_user_id: 7 }, { message_uid: 'another' }, { timeline_anchor_source: 'world_public' }, { timeline_anchor_id: '' }]) {
+    f.post.mockResolvedValueOnce({ ...raw, ...patch }); await expect(f.service.source(input)).rejects.toThrow()
+  }
+ })

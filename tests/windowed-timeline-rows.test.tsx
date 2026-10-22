@@ -158,3 +158,13 @@ it('mounts an offscreen context target in a long conversation before DOM locatin
     expect(arkmeConversationTargetAnchor(rows, { itemUid: 'missing', contextRef: 'missing' })).toBeUndefined()
   } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() }
 })
+
+it('locates a system event by its signed row identity, never by an unrelated record at the same time', () => {
+ const rows = [{ id: 'chat-event:signed-system', kind: 'notice' }, { id: 'message:other', kind: 'message', item: { itemUid: 'chat-event:signed-system' } }]
+ const target = { itemUid: 'chat-event:signed-system', systemRef: 'opaque-anchor' }
+ expect(arkmeConversationTargetAnchor(rows, target)).toBe('chat-event:signed-system')
+ const host = document.createElement('div')
+ host.innerHTML = '<li data-arkme-message-item-uid="chat-event:signed-system"></li><li data-arkme-conversation-row="chat-event:signed-system"></li>'
+ expect(arkmeConversationTargetRow(host, target)).toBe(host.children[1])
+ expect(arkmeConversationTargetRow(host, { ...target, itemUid: 'missing' })).toBeUndefined()
+})

@@ -1,3 +1,5 @@
+import { systemTimelineAnchorCodec, validateSystemTimelineAnchor } from './system-timeline-anchor.js'
+import { chatTimelineEventId } from './timeline-event-id.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { conversationWordsEnvelope, parseConversationWordsQuery, parseConversationWordParticipants, wordObject, wordText } from '../conversation-word-frequency.js'
 import { activityMessageMatches, assertActivityEnvelope, parseActivityMessages, parseActivitySelection, parseConversationActivity, unavailableConversationActivity } from '../conversation-activity.js'
@@ -60,9 +62,18 @@ export class ConversationActivityService {
     const raw = wordObject(await this.request('source', { ...c.body, result_id: resultId, source_ref: sourceRef, ...selection }, c.session, signal)); await c.guard()
     assertActivityEnvelope(raw, c.q, c.source.ownerRef)
     const owner = recordOwnerId(raw.record_owner_user_id)
-    if (owner === 0 || raw.available !== true || raw.result_id !== resultId || raw.source_ref !== sourceRef || raw.hour !== selection.hour || raw.weekday !== selection.weekday
+    if (raw.available !== true || raw.result_id !== resultId || raw.source_ref !== sourceRef || raw.hour !== selection.hour || raw.weekday !== selection.weekday
       || typeof raw.send_at !== 'number' || !activityMessageMatches(raw.send_at, c.q, selection))
       throw new ArkmePluginError('chat-activity-source-unavailable', '原消息已变化或不可查看，请刷新统计后重试', false, 409)
+    if (raw.timeline_anchor_source !== undefined || raw.timeline_anchor_id !== undefined) {
+      const anchor = validateSystemTimelineAnchor(raw.timeline_anchor_source, raw.timeline_anchor_id)
+      if (raw.message_uid !== anchor.anchor_id || owner !== 0)
+        throw new ArkmePluginError('chat-activity-source-unavailable', '系统通知定位数据不匹配', false, 409)
+      const key = await this.runtime.stateStore.uniqueCode(); await c.guard()
+      return { messageUid: chatTimelineEventId(key, c.session.userId, this.runtime.config.environment, c.source.ownerRef, anchor.anchor_id), sendAtMillis: raw.send_at,
+        systemRef: systemTimelineAnchorCodec(key, this.runtime.config.environment, c.session.userId, c.source.ownerRef).seal(anchor.anchor_source, anchor.anchor_id) }
+    }
+    if (owner === 0) throw new ArkmePluginError('chat-activity-source-unavailable', '原消息定位数据不完整', false, 409)
     return { messageUid: wordText(raw.message_uid), sendAtMillis: raw.send_at, recordOwnerUserId: owner }
   }
 }

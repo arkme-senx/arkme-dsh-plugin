@@ -4108,8 +4108,9 @@ export function ArkmeSurface({
       arkmeUi.consumeConversationTarget(target.revision)
       return
     }
-    if (target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
-      || !target.contextRef && items.some(item => item.itemUid === target.itemUid)
+    if (target.systemRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.eventId === target.itemUid)
+      || target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
+      || !target.systemRef && !target.contextRef && items.some(item => item.itemUid === target.itemUid)
       || target.momentId && recordOwnerId(target.recordOwnerUserId) === 0) {
       if (pendingConversationTargetLocateRef.current?.revision === target.revision) return
       let animationFrame = 0
@@ -4165,7 +4166,7 @@ export function ArkmeSurface({
       return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
-      && (target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
+      && (target.systemRef || target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
       && !conversationTargetPagingRef.current.aroundRequested) {
       conversationTargetPagingRef.current.aroundRequested = true
       const generation = timelineGenerationRef.current
@@ -4179,10 +4180,10 @@ export function ArkmeSurface({
       let readStartDeltas = new Map<string, ArkmeTimelineItem>()
       void withArkmeReadDeadline(signal => retryArkmeRead(() => {
         readStartDeltas = new Map(arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).items.map(item => [item.itemUid, item]))
-        if (target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
-          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', contextRef: target.contextRef, limit: 40 } },
+        if (target.systemRef || target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
+          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', ...(target.systemRef ? { systemRef: target.systemRef } : { contextRef: target.contextRef }), limit: 40 } },
         }, signal).then(page => {
-          if (!page.unified) throw new Error('线下交流定位暂不可用')
+          if (!page.unified) throw new Error(target.systemRef ? '系统通知定位暂不可用' : '线下交流定位暂不可用')
           return { ...page, anchorItemUid: target.itemUid, anchorIndex: -1, anchorSequence: 0,
             olderHasMore: page.unified.olderHasMore, newerHasMore: page.unified.newerHasMore,
             ...(page.unified.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: page.unified.olderCursor } } } : {}),
@@ -4205,7 +4206,7 @@ export function ArkmeSurface({
         const delta = sourceIsChat ? arkmeChatTimelineDelta.getSnapshotForSource(conversationKey) : undefined
         const items = page.unified ? page.items : reconcileTimelinePage(cached?.items ?? [],
           delta, page.items, readStartDeltas)
-        if (target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
+        if (target.systemRef ? !page.unified?.events.some(event => event.eventId === target.itemUid) : target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.systemRef ? '该系统通知已不可用，请刷新后重试' : target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
         timelineRequestsRef.current.get('initial')?.controller.abort()
         timelineRequestsRef.current.delete('initial')
         timelineWindowRevisionRef.current += 1

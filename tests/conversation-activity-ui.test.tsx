@@ -121,3 +121,10 @@ it('shows an explicit zero result without inventing a busiest hour', async () =>
   expect(host.textContent).toContain('此范围暂无消息活动')
   expect(host.textContent).not.toContain('最活跃时段')
 })
+
+it('uses the existing system notification source action with no invented record owner', async () => {
+  mocks.call.mockImplementation(async op => op === 'chat.activity.read' ? state : op === 'chat.activity.messages' ? { items: [{ key: 'system', sourceRef: 'opaque', senderName: '系统通知', preview: '群聊已创建', sentAt: result.fromAt, kind: 'system' }], total: 1, nextCursor: null } : op === 'chat.activity.source' ? { messageUid: 'chat-event:signed-system', sendAtMillis: result.fromAt, systemRef: 'opaque-system-anchor' } : wordsMissing)
+  await open(); await act(async () => { host.querySelector<HTMLButtonElement>('.ca-bar:not(:disabled)')!.click(); await tick() })
+  await click('定位消息')
+  expect(mocks.locate).toHaveBeenCalledWith(source, 'chat-event:signed-system', result.fromAt, undefined, undefined, false, false, undefined, 'opaque-system-anchor')
+})
