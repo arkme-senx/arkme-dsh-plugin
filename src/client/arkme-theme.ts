@@ -10,7 +10,9 @@ export const arkmeTheme = {
   layer3: 'var(--dsw-alias-bg-layer-3, #ffffff)',
   sidebar: 'var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-layer-1, #f8f9fa))',
   input: 'var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))',
-  menu: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))',
+  // DSH's menu token is translucent glass. Arkme popovers need an opaque
+  // surface so text underneath cannot bleed through, including in portals.
+  menu: 'var(--dsw-alias-bg-layer-3, #ffffff)',
   messageOwn: 'var(--arkme-chat-self-bubble, var(--dsw-alias-state-business-tertiary, #eef1f8))',
   messageOther: 'var(--arkme-chat-other-bubble, var(--dsw-specific-bubble, var(--dsw-alias-bg-layer-2, #f3f4f6)))',
   memberRecordOther: 'var(--arkme-member-record-other-bubble, var(--dsw-specific-bubble-highlight, var(--dsw-alias-bg-layer-3, #e1e5ee)))',

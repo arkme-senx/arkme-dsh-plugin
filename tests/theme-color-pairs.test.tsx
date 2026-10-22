@@ -61,6 +61,13 @@ function contrast(foreground: string, background: string, dark: boolean) {
 }
 
 describe.each([false, true])('rendered theme color pairs (dark=%s)', dark => {
+  it('keeps popup surfaces opaque over both light and dark message content', () => {
+    expect(color(arkmeTheme.menu, dark, [0, 0, 0]))
+      .toEqual(color(arkmeTheme.menu, dark, [255, 255, 255]))
+    expect(contrast(arkmeTheme.text, arkmeTheme.menu, dark)).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(arkmeTheme.secondary, arkmeTheme.menu, dark)).toBeGreaterThanOrEqual(4.5)
+  })
+
   it('keeps add-member panel and search readable; QR fallback stays dark on white', () => {
     const props = { source: { sourceRef: 'group', kind: 'group_chat' as const, displayName: '群聊', activeAtMillis: 1, unreadCount: 0 }, open: true, onClose() {}, onAdded() {}, onError() {}, onAddMembers() {} }
     const dom = new JSDOM(renderToStaticMarkup(<><AddMembersDrawer {...props}/><InviteCollaboratorsDialog {...props}/></>))
