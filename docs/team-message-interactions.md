@@ -24,3 +24,19 @@ PC 标记范围仅在既有选区工具条出现，默认“仅本机”；切�
 - 上述 E2E 的业务上游是隔离合成 HTTP fixture；真实 Team/Record/Chat 域与 Mongo 测试在各后端仓独立执行。不能把这份报告称为线上多服务或 Windows/Linux 实机验收。
 
 完整基线、制品摘要、截图、门禁结果与边界位于同任务 meta 的 `openspec/changes/c20261019-team-message-interactions/verification/20261021/`。没有提交、发布或操作用户常驻 DSH。
+
+## 正式宿主 CLI 端到端验收
+
+`tests/e2e/team-message-official-cli-acceptance.mjs` 不依赖 DSH 源码 scaffold。提供发布版 DSH CLI、不可变插件 tgz 和 Playwright 安装的 package.json 锚点，脚本自行创建临时 Profile、loopback TLS 与合成登录，经官方 CLI 安装，再验证独立 SDK consumer、正式会话 Tool 和原生附件草稿。
+
+```sh
+ARKME_OFFICIAL_DSH_CLI=<published-dsh/lib/bin.js> \
+ARKME_PACKED_ARTIFACT=<plugin.tgz> \
+PLAYWRIGHT_MODULE_ANCHOR=<playwright-install/package.json> \
+ARKME_E2E_CAPTURE_DIR=<isolated-capture-directory> \
+node tests/e2e/team-message-official-cli-acceptance.mjs
+```
+
+默认合成 HTTP 模式检查精确版本读取失败发生在 native 草稿创建之前，以及重试成功。配齐 `TEAM_INTERACTION_STACK_TEAM/RECORD/CHAT` 三个显式 `http://127.0.0.1:<port>` 地址后，业务读写转给仓内 opt-in 真实服务 fixture，逐项操作引用发送、共享标记、表态、转发、举报与问 DSH，并回查 owner 接受事实。目录组合元数据和账号是隔离夹具，不连接真实用户。先运行常规三服务 driver，再运行本脚本；最后才运行 driver 的撤权模式，避免并行改变同一组夹具的权限和消息。
+
+新宿主 `sessions.create` 只登记会话。附件桥必须通过 `controllerOperation` retain 并等待 ready，再访问 scoped conversation；成功或失败都释放临时引用。原生主视图接管后仍只提供草稿，不代用户发送。iframe Error 的消息采用结构检查，避免跨 JavaScript realm 的 `instanceof Error` 丢失具体失败原因。
