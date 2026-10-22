@@ -55,6 +55,8 @@ const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read
    else if(path.endsWith('/get-user-info'))data={user_id:actor,nick_name:'团队交互验收',phone:'13800000000',phone_binding_policy:{mode:'none'}}
    else if(path.endsWith('/conversations/list'))data={items:body.side==='team'?[conversation('source'),conversation('target')]:[],has_more:false}
    else if(path.endsWith('/conversations/timeline/page'))data={conversation:conversation(body.conversation_uid),messages:body.conversation_uid==='source'?[message]:[],has_more:false}
+   else if(path.endsWith('/conversations/read-state/query-list'))data={items:body.conversation_uids.map(conversation_uid=>({conversation_uid,accessible:true,last_seq:1,my_read_seq:1,unread:0}))}
+   else if(path.endsWith('/conversations/read-receipts/summary-list'))data={last_seq:1,my_read_seq:1,unread:0,items:body.message_uids.map(message_uid=>({message_uid,team_read:true,summary:{recipient_count:2,read_count:1,unread_count:1},visitor_read:false}))}
    else if(path.endsWith('/conversations/messages/batch-get')){if(stale){code=400;data={reason:'record_version_conflict'}}else data={messages:[message]}}
    else if(path.endsWith('/conversations/messages/forward'))data={message_uid:'accepted-forward',state:'published',side:body.side,seq:9}
    else if(path.endsWith('/conversations/messages/reports/create'))data={report_uid:'frozen-evidence'}
