@@ -713,3 +713,23 @@ it('team folder navigation preserves the right pane and restores a separate visi
   controller.showTeamConversation({kind:'team',teamRef:'a',channel})
   expect(controller.getSnapshot().teamIntent?.kind).toBe('team')
 })
+
+
+it('compact directory navigation keeps the current conversation and ignores background refreshes', () => {
+  const controller = new ArkmeUiController()
+  controller.showArko()
+  controller.showConversationDirectory()
+  expect(controller.getViewSnapshot().conversationDirectoryOpen).toBe(true)
+  expect(controller.getSnapshot().mode).toBe('arko')
+  controller.recordChanged()
+  expect(controller.getViewSnapshot().conversationDirectoryOpen).toBe(true)
+  // Selecting even the same conversation opens its content again.
+  controller.showArko()
+  expect(controller.getViewSnapshot().conversationDirectoryOpen).toBeUndefined()
+  for (const activate of [() => controller.showHarness(), () => controller.focusSendToSelf(),
+    () => controller.showNotifications(), () => controller.showCodex()]) {
+    controller.showConversationDirectory()
+    activate()
+    expect(controller.getViewSnapshot().conversationDirectoryOpen).toBeUndefined()
+  }
+})

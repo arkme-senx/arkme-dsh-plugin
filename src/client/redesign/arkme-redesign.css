@@ -341,9 +341,8 @@ span.arkme-forward-search {
   border-right: 0 !important;
 }
 
-/* Keep both Arkme navigation columns visible at every viewport width. DSH may
-   report its sidebar as collapsed at 1024px; the plugin still owns its navigation rail
-   and at least a 120px directory with search/add controls (plus the 4px divider budget). */
+/* Arkme owns the directory width independently of the host's 1024px collapse.
+   Two panes keep a readable directory; truly narrow containers show one pane. */
 /* The shell itself is not a scrollport. Hidden Harness rightbar content can
    overflow its zero-width track; focus/reveal must not pan both Arkme columns. */
 [data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) { overflow: clip; }
@@ -367,7 +366,27 @@ span.arkme-forward-search {
   min-width: var(--arkme-navigation-width) !important;
   flex: 0 0 var(--arkme-navigation-width) !important;
 }
-[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }
+[data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 240px !important; }
+/* Keep both panes mounted so returning preserves drafts, selection and scroll. */
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"][data-arkme-conversation-mobile-view="directory"]) {
+  grid-template-columns: minmax(0, 1fr) 0px 0px !important;
+}
+[data-slot="root"] > div:is([data-details-collapsed="true"], [data-rightbar-collapsed="true"]):has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"][data-arkme-conversation-mobile-view="content"]) {
+  grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0px !important;
+}
+[data-arkme-conversation-mobile-view="content"] > [data-arkme-directory-mode],
+[data-arkme-conversation-mobile-view] > [data-arkme-owned="persistent-sidebar-resize-handle"],
+:root:has([data-arkme-conversation-mobile-view="directory"]) [data-arkme-owned="persistent-workspace"] { display: none !important; }
+.arkme-conversation-mobile-back { display: none; }
+:root:has([data-arkme-conversation-mobile-view="content"]) [data-arkme-owned="persistent-workspace"] { display: flex; flex-direction: column; }
+:root:has([data-arkme-conversation-mobile-view="content"]) .arkme-conversation-mobile-back {
+  display: flex; flex: none; min-height: 36px; align-items: center; gap: 5px; padding: 0 14px;
+  border: 0; border-bottom: 1px solid var(--dsw-alias-border-l3, #e6e6e6);
+  background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-secondary, #68707c); cursor: pointer;
+}
+.arkme-conversation-mobile-back::before { content: "‹"; font-size: 18px; line-height: 1; }
+.arkme-conversation-mobile-back:hover { color: var(--dsw-alias-label-primary, #202124); }
+
 /* Only the search label condenses. Conversation rows retain their left anchor
    and continuously truncate text instead of switching to an avatar-only layout. */
 [data-arkme-directory-compact="true"] [data-arkme-directory-search] { flex: none !important; width: 40px; padding: 0 !important; justify-content: center; }
