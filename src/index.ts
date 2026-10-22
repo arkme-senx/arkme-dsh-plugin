@@ -89,7 +89,7 @@ import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
-import { createDshGatewayApi, type DshGatewayLike } from './dsh-remote/gateway-api.js'
+import { createDshGatewayApi, type DshGatewayLike, type DshConnectionLike } from './dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api-proxy-adapter.js'
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
@@ -732,18 +732,13 @@ export function apply(ctx: Context, config: Config): void {
   ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'connection'], apiCtx => {
     if (apiCtx.get('apiProxy') !== undefined) return
     const lifetime = new AbortController()
-    const connection = apiCtx.connection
-    // This trusted in-process bridge retains Arkme's account/session guards;
-    // the caller cannot supply or change its DSH principal over the wire.
-    const peer = connection.createPeer({ principal: { kind: 'owner' } })
-    apiCtx.effect(() => async () => { lifetime.abort(); await peer.dispose() }, 'arkme: DSH Gateway API lifetime')
+    apiCtx.effect(() => () => { lifetime.abort() }, 'arkme: DSH Gateway API lifetime')
     attachRemoteApi(apiCtx, createDshGatewayApi(
       apiCtx,
       apiCtx.get('typertGateway') as DshGatewayLike,
-      connection,
+      apiCtx.get('connection') as DshConnectionLike,
       lifetime.signal,
-      peer,
-    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, connection, peer))
+    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, apiCtx.get('connection') as DshConnectionLike))
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: webPort,

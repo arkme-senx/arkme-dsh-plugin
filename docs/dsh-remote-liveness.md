@@ -47,8 +47,6 @@ Host 的单一消费者在上批完成后，从当前缓冲取下一批。空闲
 
 ## DSH Gateway 兼容
 
-DSH 0.2.1 的进程内调用必须显式携带 Peer。插件通过公共 Connection 创建一个独立的 owner Peer，由注入作用域持有，卸载时取消 API lifetime 并销毁 Peer；Gateway 请求、原生流和交互应答共用该身份。它只承载既有受信 Host 适配，远端不能设置 principal，Arkme 的账号/会话归属、租约与交互校验仍先执行。只读和现有下行流传入立即结束的 uplink，不新增上行队列。适配器直接引用官方导出类型，避免手写旧签名继续通过类型检查。
-
 旧版通过 `apiProxy` 创建远控 Host；新版通过 `typertGateway`、`sessionController`、`workspaceController` 和 `connection` 创建同一个 Host。两者仍由账号作用域持有，不改变 Realtime 协议、租约、心跳和重连策略。功能关闭或依赖缺失时，Host API 返回具体原因；普通业务请求不执行远控诊断探测。
 
 新版在 `gateway-api.ts` 适配公共接口：

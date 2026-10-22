@@ -49,8 +49,7 @@ export function lockDisconnectedComposer(sessions: ISessions, connection: {
 export function apply(ctx: ClientContext): void {
   if ((window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__) {
     ctx.inject(['connection'], scope => {
-      // Browser and Host Connection services share declarations, but run in separate contexts.
-      const connection = scope.get('connection') as unknown as { state: Parameters<typeof lockDisconnectedComposer>[1] }
+      const connection = scope.get('connection') as { state: Parameters<typeof lockDisconnectedComposer>[1] }
       const sessions = harnessSessions(scope)
       scope.effect(() => {
         const surface = window.frameElement?.parentElement
