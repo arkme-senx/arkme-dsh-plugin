@@ -1723,9 +1723,12 @@ export class SourceService {
         ? 'group_chat'
         : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
       if (uid === '' || kind === undefined) continue
+      const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
       const displayName = (kind === 'private_chat'
-        ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
+        ? stringValue(supplement.remark).trim() || privateNickname
+          || (sessionKind === 3 ? stringValue(supplement.pending_name).trim() : '')
+          || cached?.displayName || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
       const preview = activity.latestPreview ?? arkmeChatConversationPreview(latestRecord, session.userId)
@@ -1743,7 +1746,6 @@ export class SourceService {
             ? undefined
             : backendMentionState === true || latestPreviewMentionsViewer
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
-      const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
       const item = retainNewerArkmeChatActivity(cached, retainNewerArkmeChatPolicy(cached, {
         sourceRef: await this.sealSourceRef(
@@ -1981,8 +1983,7 @@ export class SourceService {
     for (const [index, targetUserId] of privateUserIdByIndex) {
       const item = items[index]
       if (item === undefined) continue
-      const nickname = profiles.get(targetUserId)?.nickname?.trim()
-      if (nickname) item.privateNickname = nickname
+      // Avatar profile caches must not overwrite Chat's current-name projection.
       if (profiles.get(targetUserId)?.avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
@@ -2204,7 +2205,9 @@ export class SourceService {
     if (uid === '' || kind === undefined) throw new Error('invalid chat display snapshot')
     const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
     const displayName = (kind === 'private_chat'
-      ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
+      ? stringValue(supplement.remark).trim() || privateNickname
+        || (sessionKind === 3 ? stringValue(supplement.pending_name).trim() : '')
+        || cached?.displayName || stringValue(counterpart.visible_phone).trim()
       : stringValue(chatSession.title)).trim() || cached?.displayName || '未命名会话'
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
     // Lifecycle changes keep last_seq stable. Only a full detail snapshot may
