@@ -40,6 +40,8 @@ const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read
  if(live){
   sourceUID=(await ownerPost('team','/api/v1/team/conversations/open',{public_ref:'a'.repeat(32)},2)).conversation.conversation_uid;
   targetUID=(await ownerPost('team','/api/v1/team/conversations/open',{public_ref:'b'.repeat(32)},2)).conversation.conversation_uid;
+  // Empty unopened receptions are intentionally absent from the target directory.
+  await ownerPost('team','/api/v1/team/conversations/messages/send',{conversation_uid:targetUID,side:'external',client_message_uid:randomUUID(),expected_reply_seq:0,content:{text_content:'已有接待消息',template_kind:1}},2);
   sourceMessageUID=(await ownerPost('team','/api/v1/team/conversations/messages/send',{conversation_uid:sourceUID,side:'external',client_message_uid:randomUUID(),expected_reply_seq:0,content:{text_content:text,template_kind:1}},2)).message_uid;
  }
  const server=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:await readFile(process.env.NODE_EXTRA_CA_CERTS)},async(req,res)=>{
