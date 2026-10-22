@@ -87,7 +87,7 @@ describe('published package contents', () => {
       visit(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS))
       expect(localModules, file).toEqual([])
     }
-  }, 30_000)
+  }, packageTestTimeout)
 
   it('loads cloud history validators from the consuming Harness instead of bundling the development DSH', () => {
     runPnpm(['run', 'bundle'])
