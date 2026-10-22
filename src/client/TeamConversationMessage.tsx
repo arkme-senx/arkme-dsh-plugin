@@ -4,9 +4,9 @@ import { conversationMessageMenu } from './conversation-message-actions.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
 import { teamMessageSelectable } from './use-team-message-selection.js'
 import { TeamReceiptBadge } from './TeamReadReceipts.js'
-import type { TeamReceiptStore } from './team-read-receipts.js'
+import { emptyTeamReceipt, type TeamReceiptStore } from './team-read-receipts.js'
 import { ArkmeReadReceiptControl, readReceiptLineStyle } from './ArkmeReadReceiptControl.js'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import type { TeamMessage } from '../team-app-contract.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
@@ -31,6 +31,15 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   const bubble = useRef<HTMLDivElement>(null)
   const receiptButton = useRef<HTMLButtonElement>(null)
   const select = (action: () => void) => { setMenu(undefined); action() }
+  const receipt = useSyncExternalStore(receiptStore.subscribe, () => receiptStore.get(message.key), () => emptyTeamReceipt)
+  const recipientRead = !showReceipts ? receipt.value?.teamRead ?? message.recipientRead : message.recipientRead
+  useEffect(() => {
+    if (showReceipts || !message.own || message.state !== 'published' || !receiptButton.current) return
+    let stop: (() => void) | undefined
+    const observer = new IntersectionObserver(entries => { if (entries.some(e=>e.isIntersecting)) stop ??= receiptStore.watch(message); else {stop?.();stop=undefined} })
+    observer.observe(receiptButton.current)
+    return () => {observer.disconnect();stop?.()}
+  },[showReceipts,message.key,message.ref,message.own,message.state,recipientRead,receiptStore])
   const published = message.state === 'published', available = (published || message.state === 'sending') && message.contentStatus === 'available'
   useEffect(() => { setMenu(undefined) }, [message.key, message.version, message.state, message.contentStatus, selecting])
   const copy = (text: string) => select(() => { void copyText(text).catch(() => onError(tr('复制失败，请重试'))) })
@@ -48,9 +57,9 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
         {message.replyToKey && onLocateReply && <TeamMessageReply parent={replyParent} busy={locatingReply} onLocate={onLocateReply} />}
         <div style={{ ...readReceiptLineStyle, justifyContent: message.own ? 'flex-end' : 'flex-start' }}>
         {showReceipts && message.own && published && available && <TeamReceiptBadge message={message} store={receiptStore} onClick={onReceipts} />}
-        {!showReceipts && message.own && published && message.recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
-          state={message.recipientRead === undefined ? 'error' : 'unread'}
-          label={tr(message.recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
+        {!showReceipts && message.own && published && recipientRead !== true && <ArkmeReadReceiptControl buttonRef={receiptButton}
+          state={recipientRead === undefined ? 'error' : 'unread'}
+          label={tr(recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
           {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
         <div ref={bubble} className="arkme-timed-bubble" data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
           aria-label={tr('消息操作')}

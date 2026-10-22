@@ -1,17 +1,26 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { DshNativeTransport } from '../src/dsh-remote/native-transport.js'
 import { parseDshRemoteRequest } from '../src/dsh-remote/protocol-v1.js'
+import { Context } from '@deepseek-ai/cordis'
+import { Peer, type PeerScope } from '@deepseek-ai/dsh-client-connection'
 
-const cleanups: Array<() => void> = []
-afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.useRealTimers() })
+const cleanups: Array<() => void | Promise<void>> = []
+afterEach(async () => { await Promise.all(cleanups.splice(0).map(fn => fn())); vi.useRealTimers() })
 function fixture(frames: unknown[] = [], result: unknown = { ok: true, value: { accepted: true } }) {
+  const peer = new Peer(new Context(), { principal: { kind: 'owner' } })
   const controller = new AbortController()
   const owned = vi.fn(async (ids: string[]) => new Set(ids.filter(id => id === 'mine')))
-  const close = vi.fn(), fetch = vi.fn(async () => Response.json({ result }))
-  const open = vi.fn(async (_endpoint, _payload, signal: AbortSignal) => ({ async *[Symbol.asyncIterator]() { try { yield* frames; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) }) } finally { close() } } }))
-  const relay = new DshNativeTransport({ invoke: vi.fn(), stream: vi.fn(), wireStream: { open } }, { createSharedFetchHandler: () => ({ fetch }) })
-  cleanups.push(() => relay.close())
-  return { relay, scope: { accountId: '3016', createSessionId: 'new-session', claim: vi.fn(async () => {}), signal: controller.signal, owned }, controller, fetch, open, close }
+  const close = vi.fn(), fetch = vi.fn(async (_request: Request, caller: PeerScope) => {
+    expect(caller).toBe(peer); caller.signal.throwIfAborted(); return Response.json({ result })
+  })
+  const open = vi.fn(async (_endpoint, _payload, uplink: AsyncIterable<unknown>, caller: PeerScope, signal: AbortSignal) => {
+    expect(caller).toBe(peer); caller.signal.throwIfAborted()
+    expect(await uplink[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined })
+    return { async *[Symbol.asyncIterator]() { try { yield* frames; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) }) } finally { close() } } }
+  })
+  const relay = new DshNativeTransport({ invoke: vi.fn(), stream: vi.fn(), wireStream: { open } }, { createSharedFetchHandler: () => ({ fetch }) }, peer)
+  cleanups.push(async () => { relay.close(); await peer.dispose() })
+  return { relay, peer, scope: { accountId: '3016', createSessionId: 'new-session', claim: vi.fn(async () => {}), signal: controller.signal, owned }, controller, fetch, open, close }
 }
 it('filters the reminder catalogue by account ownership, including inactive records', async () => {
   const mine = { sessionId: 'mine', id: 'reminder', status: 'inactive', prompt: 'keep exact' }
