@@ -81,6 +81,39 @@ it.each(['arkme-code-2001', 'arkme-network-error'])('cloud cancellation clears u
   expect(session.snapshots.get(underlineTargetKey(target))?.items.map(item=>item.id)).toEqual(['other'])
   session.dispose()
 })
+it.each(['add', 'remove'] as const)('settles a lost %s response when a fresh owner snapshot already confirms the requested state', async kind => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target), kind === 'remove' ? initial : {...initial,items:[initial.items[1]!]})
+  const change = kind === 'remove'
+    ? {kind,annotationId:'mine',operationId:'lost'} as const
+    : {kind,anchor,operationId:'lost'} as const
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('response lost'))
+  await session.change(target,change)
+  const confirmed = {...initial,revision:2,items:kind === 'remove' ? [initial.items[1]!] : initial.items.map(item => ({...item,anchor:{...item.anchor,recordVersion:1}}))}
+  vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:confirmed}])
+  await session.retry?.()
+  expect(session.snapshots.get(underlineTargetKey(target))).toEqual(confirmed)
+  expect(session.notice).toBe('')
+  expect(session.retry).toBeUndefined()
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  session.dispose()
+})
+it.each(['denied', 'failed'] as const)('does not interpret a %s access read as successful cancellation', async state => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target),initial)
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('response lost'))
+  await session.change(target,{kind:'remove',annotationId:'mine',operationId:'lost'})
+  if (state === 'denied') vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:{revision:0,accessible:false,items:[]}}])
+  else vi.mocked(callArkme).mockRejectedValueOnce(new Error('access lookup failed'))
+  await session.retry?.()
+  expect(session.notice).not.toBe('')
+  expect(session.retry).toBeDefined()
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  expect(session.snapshots.get(underlineTargetKey(target))?.items ?? []).toEqual([])
+  session.dispose()
+})
 it.each([false,true])('paints background (native=%s) and opens the shared toolbar with exact own cancellation', async (native) => {
   const {act}=await import('react'),{createRoot}=await import('react-dom/client'),{webcrypto}=await import('node:crypto')
   const {UnderlineLayer}=await import('../src/client/ArkmeMessageUnderlines.js')
