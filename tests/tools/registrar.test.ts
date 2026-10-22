@@ -226,6 +226,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_rename',
       'arkme_arko_models','arkme_arko_pending',
       'arkme_arko_profile',
+      'arkme_arko_history',
       'arkme_arko_session',
       'arkme_arko_ask',
       'arkme_arko_run_status',

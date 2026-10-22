@@ -1,3 +1,4 @@
+import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
@@ -152,6 +153,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS local_transcript_edits (
+        account_key TEXT NOT NULL, scope TEXT NOT NULL, item_id TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, scope, item_id)
       );
       CREATE TABLE IF NOT EXISTS local_directory_preferences (
         account_key TEXT NOT NULL, entry_key TEXT NOT NULL, payload TEXT NOT NULL,
@@ -1179,6 +1184,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async recentEmojiIds(accountKey: string): Promise<string[]> {
     return this.readRecentEmojiIds(accountKey)
+  }
+
+  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: LocalTranscriptChange): Promise<Record<string, LocalTranscriptEntry>> {
+    const read = (id: string): LocalTranscriptEntry | undefined => {
+      const row = this.database.prepare('SELECT payload FROM local_transcript_edits WHERE account_key=? AND scope=? AND item_id=?').get(account, scope, id) as { payload: string } | undefined
+      return row ? JSON.parse(row.payload) as LocalTranscriptEntry : undefined
+    }
+    if (change) this.transaction(() => {
+      const entry = changeLocalTranscript(read(change.id), change, Number(account.split(':').at(-1)))
+      this.database.prepare('INSERT OR REPLACE INTO local_transcript_edits(account_key,scope,item_id,payload) VALUES (?,?,?,?)').run(account, scope, change.id, JSON.stringify(entry))
+    })
+    const result: Record<string, LocalTranscriptEntry> = Object.create(null)
+    for (const id of ids) { const entry = read(id); if (entry) result[id] = entry }
+    return result
   }
 
   async localDirectoryPreferences(accountKey: string, entries?: LocalDirectoryPreferences, migrate = false): Promise<LocalDirectoryPreferences> {

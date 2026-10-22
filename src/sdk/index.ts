@@ -12,6 +12,8 @@ export type { DayReviewModels } from '../calendar-day-review.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress } from '../arko-history-contract.js'
+export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
 import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
@@ -522,6 +524,67 @@ export class ArkmeSdk {
     }
   }
 
+  private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
+  }
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.messages', { ...query }, signal)
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.search', { ...query }, signal)
+  }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.context', { ...query }, signal)
+  }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
+    await this.requireArkoHistory(signal)
+    if (!onProgress) return this.call('arko.export', {}, signal)
+    const response = await this.fetchImpl(this.route, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation: 'arko.export', params: {} }), ...(signal ? { signal } : {}) })
+    const invalid = () => new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应不完整，请重试', retryable: true })
+    if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+      let failure: ArkmePluginResponse<unknown>
+      try { failure = await response.json() as ArkmePluginResponse<unknown> } catch { throw invalid() }
+      if (!failure.ok) throw new ArkmeClientError(failure.error)
+      throw invalid()
+    }
+    if (!response.body) throw invalid()
+    const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true })
+    let pending = '', wireBytes = 0, count = 0, result: ArkmeArkoExport | undefined
+    try {
+      while (true) {
+        signal?.throwIfAborted()
+        const part = await reader.read()
+        signal?.throwIfAborted()
+        if (part.done) break
+        wireBytes += part.value.byteLength
+        if (wireBytes > 2 * 1024 * 1024) throw invalid()
+        pending += decoder.decode(part.value, { stream: true })
+        let newline: number
+        while ((newline = pending.indexOf('\n')) >= 0) {
+          if (newline > 16 * 1024 || result) throw invalid()
+          const line = pending.slice(0, newline); pending = pending.slice(newline + 1)
+          const frame = JSON.parse(line) as { kind?: string; count?: number; value?: ArkmeArkoExport; error?: ArkmePluginErrorBody }
+          if (frame.kind === 'error' && frame.error) throw new ArkmeClientError(frame.error)
+          if (frame.kind === 'progress' && Number.isSafeInteger(frame.count) && frame.count! >= count) {
+            count = frame.count!
+            try { onProgress({ count }) } catch { /* A view observer cannot disrupt the owner. */ }
+          } else if (frame.kind === 'result' && frame.value && Number.isSafeInteger(frame.value.count) && frame.value.count >= count
+            && typeof frame.value.fileRef === 'string' && typeof frame.value.fileName === 'string') result = frame.value
+          else throw invalid()
+        }
+        if (pending.length > 16 * 1024) throw invalid()
+      }
+      if (decoder.decode() !== '' || pending !== '' || !result) throw invalid()
+      return result
+    } catch (error) {
+      if (error instanceof ArkmeClientError || signal?.aborted) throw error
+      throw invalid()
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+  }
   async relationPage(query: Omit<ExploreQuery,'module'> = {}, signal?: AbortSignal): Promise<ExplorePage> {
     if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
     return this.call('relations.list',{...query},signal)
@@ -2446,7 +2509,7 @@ export class ArkmeSdk {
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
   localFileUrl(fileRef: string, download = false): string {
-    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-generated-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 

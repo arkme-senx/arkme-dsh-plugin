@@ -2,6 +2,8 @@ import {TeamMessageForwardService} from './services/team-message-forward-service
 import type {TeamMessageReadOptions} from './team-message-contract.js'
 import type {TeamConversation,TeamPage,TeamSide,TeamTimeline} from './team-app-contract.js'
 import type {TeamSendTask} from './team-send-contract.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
+import { GENERATED_ARTIFACT_PREFIX } from './generated-artifacts.js'
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
 import { DeviceLockService } from './services/device-lock-service.js'
 import { PeopleService } from './services/people-service.js'
@@ -632,6 +634,7 @@ export class ArkmeService {
       ),
       this.bot,
       new LocalMessageActionCapabilityCodec(async () => await this.runtime.stateStore.uniqueCode()),
+      { read: (anchors, userId, signal) => this.arko.actionMessages(anchors, userId, signal) },
     )
     this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
     this.world = new WorldService(
@@ -801,7 +804,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
   async fileStage(path: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>, expectedUserId?: number, retention?: 'references') { return await this.filesOwner().stage(path, metadata, expectedUserId, retention) }
   async fileList() { return await this.filesOwner().files() }
-  async fileReadLocal(ref: string) { return await this.filesOwner().readLocal(ref) }
+  async fileReadLocal(ref: string) { return ref.startsWith(`${GENERATED_ARTIFACT_PREFIX}.`) ? await this.arko.readGeneratedFile(ref) : await this.filesOwner().readLocal(ref) }
   attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
   async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
   async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
@@ -1125,6 +1128,7 @@ arkoImagesV1:true,
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
@@ -1370,6 +1374,7 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
+  async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) { return await this.recording.copyRecordingLink(itemRefs, signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
@@ -1481,6 +1486,20 @@ arkoImagesV1:true,
   async arkoActivateModel(routeKey: string, signal?: AbortSignal): Promise<ArkmeArkoModelCatalog> {
     return await this.arko.arkoActivateModel(routeKey, signal)
   }
+
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
+    const { userId } = await this.runtime.requireSession()
+    const page = await this.arko.arkoMessages(query, signal)
+    if (!query.cursor && !query.role && query.startAtMillis === undefined && query.endAtMillis === undefined && query.direction !== 'asc') {
+      if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，请重新读取', false, 409)
+      const latest = page.items.find(item => item.text.trim() !== '' || item.contentBlocks?.length)
+      if (latest) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text.trim() || '[图片]', createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
+    }
+    return page
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal) { return this.arko.arkoSearch(query, signal) }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal) { return this.arko.arkoContext(query, signal) }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: import('./arko-history-contract.js').ArkmeArkoExportProgress) => void) { return this.arko.arkoExport(signal, onProgress) }
 
   async arkoHistoryPage(
     limit = 50,
@@ -2346,6 +2365,17 @@ arkoImagesV1:true,
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
+  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: import('./local-transcript-state.js').LocalTranscriptChange, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    if (account !== `${this.config.environment}:${session.userId}`) throw new ArkmePluginError('transcript-account-changed', '账号已变化，请重新打开转写', false, 409)
+    if (!/^(recording|call):.{1,2048}$/u.test(scope) || !Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string' || !id || id.length > 2048)
+      || change && (!ids.includes(change.id) || ids.length !== 1)) throw new ArkmePluginError('transcript-local-invalid', '转写参数无效', false, 400)
+    if (!this.stateStore.localTranscriptEntries) throw new ArkmePluginError('transcript-local-unavailable', '本机转写存储暂不可用', true, 503)
+    return this.stateStore.localTranscriptEntries(account, scope, ids, change)
+  }
+
   async localDirectoryPreferences(accountKey: string, entries?: unknown, migrate = false, signal?: AbortSignal) {
     signal?.throwIfAborted()
     const { userId } = await this.runtime.requireSession()

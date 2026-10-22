@@ -31,6 +31,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
 arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
 arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
 prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>
@@ -1346,6 +1347,86 @@ export class ServiceRuntime {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
+  }
+
+  /** Keep the body inside coordinator admission until consumption ends. No stream
+   * recovery: a retry after a delivered item would splice two snapshots. */
+  async intelligentExportStream<T>(
+    initialSession: ArkmeSessionCredentials,
+    consume: (body: ReadableStream<Uint8Array>, signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const scope = this.requestScope(initialSession.userId)
+    return this.requestCoordinator.run({
+      scope, service: 'intelligent', lane: 'background-read', ...(signal ? { signal } : {}),
+      operation: async coordinatedSignal => {
+        const controller = new AbortController()
+        const abort = () => controller.abort(coordinatedSignal.reason)
+        if (coordinatedSignal.aborted) abort()
+        else coordinatedSignal.addEventListener('abort', abort, { once: true })
+        let initialScopeNotification = true
+        const unsubscribeScope = this.subscribeAccountScope(() => {
+          if (initialScopeNotification) { initialScopeNotification = false; return }
+          controller.abort(new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409))
+        })
+        const total = setTimeout(() => controller.abort(new Error('导出超过时间限制')), 5 * 60_000)
+        let idle: ReturnType<typeof setTimeout> | undefined
+        const resetIdle = () => { clearTimeout(idle); idle = setTimeout(() => controller.abort(new Error('导出读取超时')), 20_000) }
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+        try {
+          let session = initialSession
+          if ((await this.requireSession()).userId !== session.userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409)
+          let response: Response | undefined
+          for (let attempt = 0; attempt < 2; attempt++) {
+            resetIdle()
+            response = await this.fetchImpl(joinUrl(this.config.intelligentBaseUrl, '/api/v1/arko/messages/export'), {
+              method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN', Usersource: '3', Authorization: `Bearer ${session.accessToken}` },
+              body: '{}', signal: controller.signal,
+            })
+            if ((response.status === 401 || response.status === 403) && attempt === 0) {
+              await response.body?.cancel()
+              session = await this.refreshAccessToken(session, controller.signal)
+              continue
+            }
+            break
+          }
+          if (!response?.ok || !response.body) throw new ArkmePluginError('arko-export-unavailable', '导出服务暂不可用', true, 502)
+          if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+            // Failed JSON envelopes are small in this protocol. Do not call text()
+            // on an unbounded or incorrectly typed upstream body.
+            await response.body.cancel()
+            throw new ArkmePluginError('arko-export-rejected', '导出未能取得完整快照，请重试', true, 502)
+          }
+          reader = response.body.getReader()
+          controller.signal.addEventListener('abort', () => { void reader?.cancel(controller.signal.reason).catch(() => undefined) }, { once: true })
+          const input = reader
+          const bounded = new ReadableStream<Uint8Array>({
+            pull: async stream => {
+              try {
+                controller.signal.throwIfAborted()
+                resetIdle()
+                const part = await input.read()
+                clearTimeout(idle)
+                if (part.done) stream.close(); else stream.enqueue(part.value)
+              } catch (error) { stream.error(error) }
+            },
+            cancel: async reason => { controller.abort(reason); await input.cancel(reason) },
+          }, { highWaterMark: 0 })
+          const result = await consume(bounded, controller.signal)
+          controller.signal.throwIfAborted()
+          if (this.requestScope(initialSession.userId) !== scope || (await this.requireSession()).userId !== initialSession.userId) {
+            throw new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409)
+          }
+          return result
+        } finally {
+          unsubscribeScope(); clearTimeout(total); clearTimeout(idle)
+          controller.abort()
+          await reader?.cancel().catch(() => undefined)
+          reader?.releaseLock()
+          coordinatedSignal.removeEventListener('abort', abort)
+        }
+      },
+    })
   }
 
   async authenticatedIntelligentPost<T>(

@@ -1490,6 +1490,7 @@ arkoImagesV1?:true
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
@@ -2590,6 +2591,8 @@ export interface ArkmeMessageCopyLinkMediaItem {
 export interface ArkmeMessageCopyLinkStructuredContent {
   structuredKind: number
   durationMillis: number
+  /** Only the server-authorized selection snapshot; never the full source session. */
+  longRecordingSegments?: ArkmeForwardTranscriptSegment[]
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {
@@ -3814,6 +3817,10 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  messageRef?: string
+  orderAtMillis?: number
+  sourceType?: number
+  messageType?: number
   /** Account-bound authority for private, persisted marks on completed text. */
   localMarkRef?: string
   messageId: number
@@ -4148,6 +4155,8 @@ export type ArkmePluginOperation =
   | 'topic.dissolve'
   | 'provider.capabilities'
   | 'source.message-extension.capabilities'
+  | 'transcript.local.read'
+  | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
@@ -4510,6 +4519,11 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'arko.messages'
+  | 'arko.search'
+  | 'arko.context'
+  | 'arko.export'
+
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'emoji.recent.list'
   | 'conversation.viewport.read'
@@ -4552,6 +4566,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.compare'
   | 'recordings.compare.start'
   | 'recordings.forward.capabilities'
+  | 'recordings.copy-link'
   | 'recordings.forward'
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'

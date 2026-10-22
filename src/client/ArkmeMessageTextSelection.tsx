@@ -14,6 +14,7 @@ import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './Ark
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
   /** Owner-local authority is never passed to ordinary Chat actions. */
+  selectionDomain?: 'transcript'
   localMarkRef?: string
   cloudMarkRef?:string
 }
@@ -25,7 +26,10 @@ const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSele
 export function registeredMessageTargets(sourceRef: string) {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-arkme-text-selection]')).flatMap(element => {
     const target = targets.get(element)?.reply
-    return target?.sourceRef === sourceRef && target.item.status === 1 ? [{ element, target }] : []
+    if (target?.sourceRef !== sourceRef || target.item.status !== 1) return []
+    // Measuring skipped transcript descendants would defeat content-visibility on long days.
+    if (target.selectionDomain === 'transcript' && element.checkVisibility && !element.checkVisibility({ contentVisibilityAuto: true })) return []
+    return [{ element, target }]
   })
 }
 const targetSelector = '[data-arkme-text-selection]'
@@ -119,7 +123,8 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, canReplace, prepareReplace }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, canReplace, prepareReplace, selectionDomain }: {
+  selectionDomain?: 'transcript' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
   markScopeControl?: ReactNode
@@ -144,7 +149,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     let dragging = false
     const insideToolbar = (target: EventTarget | null) => target instanceof Node && toolbar.current?.contains(target)
     const dismiss = () => { setSnapshot(undefined) }
-    const show = () => { setNotice(''); setSnapshot(captureSelection(document)) }
+    const capture = () => { const next = captureSelection(document); return next && next.startEntry?.reply?.selectionDomain === selectionDomain && (selectionDomain !== 'transcript' || next.startEntry?.reply?.sourceRef === replySourceRef) ? next : undefined }
+    const show = () => { setNotice(''); setSnapshot(capture()) }
     const down = (event: MouseEvent) => {
       if (insideToolbar(event.target)) return
       dragging = event.button === 0
@@ -158,7 +164,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     const context = (event: MouseEvent) => {
       const clicked = targetFor(event.target as Node)
       if (!clicked) return
-      const next = captureSelection(document)
+      const next = capture()
       if (!next || !next.range.intersectsNode(clicked)) return
       event.preventDefault()
       event.stopPropagation()
@@ -203,7 +209,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       window.removeEventListener('blur', dismiss)
       window.removeEventListener('resize', dismiss)
     }
-  }, [])
+  }, [selectionDomain, replySourceRef])
   useEffect(() => {
     const open = (event: Event) => {
       const { element, range, quote, entry } = (event as CustomEvent<{ element: HTMLElement; range: Range; quote: ArkmeMessageQuote; entry: ReturnType<typeof targets.get> }>).detail

@@ -1,4 +1,4 @@
-import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
+import { useTranscriptInteractions, type TranscriptInteractionRow } from './TranscriptInteractions.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -98,6 +98,12 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
     setVideoPlaying(false)
     for (const video of videoRefs.current.values()) video.pause()
     standaloneVideo.current?.pause()
+  })
+  const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl }))
+  const transcriptInteraction = useTranscriptInteractions({ scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
+    enabled: active && !selectedIsSample && !!detail?.stableId,
+    playing: !!transcriptPlayback.state && transcriptPlayback.state.status !== 'failed', onStop: transcriptPlayback.stop,
+    onPlay: ids => transcriptPlayback.playItems((detail?.transcriptSegments ?? []).filter(segment => ids.includes(segment.segmentId)).sort((a,b) => a.startMillis - b.startMillis)),
   })
   const stopTranscript = transcriptPlayback.stop
   useEffect(() => {
@@ -340,6 +346,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
   }
 
   return <div data-arkme-call-detail-content="true" style={{ ...styles.detailBody, ...(compact ? { padding: '8px 16px 24px' } : {}) }}>
+    {transcriptInteraction.host}
           <section style={styles.card} data-arkme-call-tour-target={tourSample ? 'summary' : undefined}>
             <h3 style={styles.cardTitle}>{tr("AI 摘要")}</h3>
             <p style={styles.cardText}>
@@ -353,9 +360,8 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
               <span style={styles.transcriptCount}>{detail.transcriptSegments.length} {tr("段对话")}</span>
-              {!selectedIsSample && detailState === 'ready' && <div style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex' }}><ArkmeCallShareControls callRef={detail.callRef} /></div>}
             </header>
-            {detail.transcriptSegments.map(segment => {
+            {detail.transcriptSegments.map((segment, index) => {
               const mine = segment.speakerUserId !== undefined && detail.participants.some(participant => participant.isCurrentUser && participant.userId === segment.speakerUserId)
               const speaker = detail.participants.find(participant => segment.speakerUserId !== undefined && participant.userId === segment.speakerUserId)
                 ?? detail.participants.find(participant => participant.displayName.trim() === segment.speakerDisplayName.trim())
@@ -368,11 +374,12 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
               // the timestamp without adding a separate metadata row.
               const timeSpace = segmentTime !== '' ? <span aria-hidden="true" style={styles.segmentTimeSpace} /> : null
               const content = <span style={styles.segmentContent} data-arkme-call-utterance-content="true">
-                <span style={{ ...styles.segmentText, display: 'block' }}>{segment.text}{!playback && timeSpace}</span>
+                <span style={{ ...styles.segmentText, display: 'block' }}>{transcriptInteraction.renderText(interactionRows[index]!)}{!playback && timeSpace}</span>
                 {playback && <span role="status" style={{ display: 'block', marginTop: 4, fontSize: 11, color: playback === 'failed' ? arkmeTheme.danger : arkmeTheme.secondary }}>{playback === 'loading' ? '正在加载… 点击停止' : playback === 'playing' ? '■ 正在播放' : '播放失败，点击重试'}{timeSpace}</span>}
                 {segmentTime !== '' && <time style={styles.segmentTime} data-arkme-call-utterance-time="true">{segmentTime}</time>}
               </span>
-              return <article key={segment.segmentId} data-arkme-call-utterance={segment.segmentId} style={{ ...styles.segment, ...(mine ? styles.segmentMine : {}) }}>
+              return <article key={segment.segmentId} data-arkme-call-utterance={segment.segmentId} onContextMenu={event => transcriptInteraction.contextMenu(interactionRows[index]!, event)} onClick={() => { if (transcriptInteraction.selected && !document.getSelection()?.toString()) transcriptInteraction.toggle(segment.segmentId) }} style={{ ...styles.segment, ...(mine ? styles.segmentMine : {}) }}>
+                {transcriptInteraction.checkbox(interactionRows[index]!)}
                 {!mine && <CallAvatar
                   name={segment.speakerDisplayName}
                   avatarRef={selectedIsSample ? undefined : speakerAvatarRef}
@@ -380,17 +387,14 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
                   size={30}
                 />}
                 <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
-                  {segment.audioUrl ? <button type="button"
+                  <span aria-pressed={segment.audioUrl ? highlighted : undefined} aria-busy={segment.audioUrl ? playback === 'loading' : undefined} role={segment.audioUrl ? 'button' : undefined} tabIndex={segment.audioUrl ? 0 : undefined}
+                    aria-label={segment.audioUrl ? `${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr('播放')}${segment.speakerDisplayName}的录音片段：${segment.text}` : undefined}
+                    onClick={() => { if (segment.audioUrl && !transcriptInteraction.selected && (typeof document === 'undefined' || !document.getSelection()?.toString())) transcriptPlayback.toggle(segment) }}
+                    onKeyDown={event => { if (event.target === event.currentTarget && segment.audioUrl && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); if (!transcriptInteraction.selected) transcriptPlayback.toggle(segment) } }}
                     data-arkme-call-tour-target={tourSample && segment.segmentId === 'sample-video-1' ? 'utterance' : undefined}
-                    aria-label={`${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr("播放")}${segment.speakerDisplayName}的录音片段：${segment.text}`}
-                    aria-pressed={highlighted}
-                    aria-busy={playback === 'loading'}
-                    onClick={() => { transcriptPlayback.toggle(segment) }}
-                    style={{ ...bubbleStyle, border: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer', ...(highlighted ? { boxShadow: `inset 0 0 0 1px ${arkmeTheme.accent}`, background: arkmeTheme.accentSoft } : {}) }}>
+                    style={{ ...bubbleStyle, cursor: 'text', ...(highlighted ? { boxShadow: `inset 0 0 0 1px ${arkmeTheme.accent}`, background: arkmeTheme.accentSoft } : {}) }}>
                     {content}
-                  </button> : <span style={bubbleStyle}>
-                    {content}
-                  </span>}
+                  </span>
                 </span>
                 {mine && <CallAvatar
                   name={segment.speakerDisplayName}
@@ -400,6 +404,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
                 />}
               </article>
             })}
+            {transcriptInteraction.controls}
             <div style={styles.endEvent}>
               <i style={styles.endLine} />
               <span>{detail.hangupParticipant ? tr("{v0}已挂断通话", { v0: detail.hangupParticipant.displayName }) : '通话已结束'}</span>
@@ -410,7 +415,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
               <span style={styles.transcriptCount}>{tr("0 段对话")}</span>
-              {!selectedIsSample && detailState === 'ready' && <div style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex' }}><ArkmeCallShareControls callRef={detail.callRef} /></div>}
             </header>
             <p role="status" style={styles.transcriptEmpty}>{detail.transcriptFailed ? tr("转写失败") : detail.transcriptPending ? '转写处理中' : tr("暂无转写内容")}</p>
           </section>}

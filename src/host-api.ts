@@ -1,4 +1,5 @@
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
+import type { ArkmeArkoHistoryQuery } from './arko-history-contract.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { OfflineContextRequest } from './offline-context-contract.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
@@ -972,7 +973,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
       if (request.operation === 'offline-context' && origin === undefined) throw new ArkmePluginError('origin-required','上下文操作需要受信任来源',false,403)
-      if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -981,6 +982,25 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
+      }
+      // Content negotiation adds request-scoped progress to the same export
+      // owner. No task/status registry, polling, replay or background job exists.
+      if (request.operation === 'arko.export' && req.headers.accept === 'application/x-ndjson') {
+        const send = (frame: unknown) => {
+          if (controller.signal.aborted || res.destroyed) return
+          if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
+          if (!res.write(JSON.stringify(frame) + '\n') && res.writableLength > 16 * 1024) {
+            controller.abort(); res.destroy()
+          }
+        }
+        try {
+          const value = await service.arkoExport(controller.signal, progress => send({ kind: 'progress', ...progress }))
+          send({ kind: 'result', value })
+        } catch (error) {
+          const known = error instanceof ArkmePluginError ? error : undefined
+          send({ kind: 'error', error: { code: known?.code ?? 'arko-export-unavailable', message: known?.message ?? '导出失败，请重试', retryable: known?.retryable ?? true } })
+        } finally { if (!res.destroyed) res.end() }
+        return
       }
       if (request.operation === 'remote.session.observe') {
         const directory = options.accountSessions?.()
@@ -1550,6 +1570,11 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.forward.capabilities': return await service.recordingForwardCapabilities(requestSignal)
+    case 'recordings.copy-link': {
+      const refs = params.itemRefs
+      if (!Array.isArray(refs) || !refs.every((ref): ref is string => typeof ref === 'string')) throw new ArkmePluginError('recording-share-selection-invalid', '录音片段选择无效', false, 400)
+      return await service.copyRecordingLink(refs, requestSignal)
+    }
     case 'recordings.forward': {
       const itemRefs = params.itemRefs
       if (!Array.isArray(itemRefs) || !itemRefs.every((item): item is string => typeof item === 'string')) {
@@ -1815,9 +1840,15 @@ export async function dispatchArkmeHostOperation(
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()
     case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
+    case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
+    case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),
+      before: numberParam(params, 'before', 20), after: numberParam(params, 'after', 20) }, requestSignal)
+    case 'arko.export': return await service.arkoExport(requestSignal)
     case 'arko.history': return await service.arkoHistoryPage(
       numberParam(params, 'limit', 50),
       numberParam(params, 'offset', 0),
+      requestSignal,
     )
     case 'arko.ask': {
       if (params.imageFileRefs !== undefined && (!Array.isArray(params.imageFileRefs)
@@ -2655,6 +2686,8 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
+    case 'transcript.local.read': return await service.localTranscriptEntries(stringParam(params, 'accountKey'), stringParam(params, 'scope'), stringListParam(params, 'ids'), undefined, requestSignal)
+    case 'transcript.local.change': return await service.localTranscriptEntries(stringParam(params, 'accountKey'), stringParam(params, 'scope'), [stringParam(params, 'id')], params.change as import('./local-transcript-state.js').LocalTranscriptChange, requestSignal)
     case 'directory.preferences.read': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), undefined, false, requestSignal)
     case 'directory.preferences.set': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, false, requestSignal)
     case 'directory.preferences.migrate': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, true, requestSignal)
@@ -3120,4 +3153,21 @@ function longArticleImagesParam(params: Record<string, unknown>): import('./type
     if (typeof image.fileRef !== 'string' && typeof image.fileAssetUid !== 'string') throw new TypeError('Image reference is required')
     return { ...(typeof image.fileRef === 'string' ? {fileRef:image.fileRef} : {}), ...(typeof image.fileAssetUid === 'string' ? {fileAssetUid:image.fileAssetUid} : {}) }
   })
+}
+
+function arkoHistoryQueryParams(params: Record<string, unknown> | undefined): ArkmeArkoHistoryQuery {
+  const result: ArkmeArkoHistoryQuery = {}
+  for (const key of ['cursor', 'direction', 'role'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'string') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    Object.assign(result, { [key]: value })
+  }
+  for (const key of ['limit', 'startAtMillis', 'endAtMillis'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'number') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    result[key] = value
+  }
+  return result
 }

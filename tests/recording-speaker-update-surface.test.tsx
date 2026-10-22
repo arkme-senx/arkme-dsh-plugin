@@ -37,6 +37,7 @@ describe('speaker update in a long recording transcript', { timeout: 15_000 }, (
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     initial = day(true); updated = day(false); reads = 0
     mocks.call.mockReset().mockImplementation(async (op, params) => {
+      if (op === 'transcript.local.read') return {}
       if (op === 'recordings.totals.index') return { items: [], nextOffset: null }
       if (op === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (op === 'recordings.summary-model-config') return { options: [] }
