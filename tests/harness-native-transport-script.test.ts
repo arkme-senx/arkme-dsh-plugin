@@ -1,9 +1,14 @@
 import { runInNewContext } from 'node:vm'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { harnessNativeTransportScript } from '../src/harness-native-transport-script.js'
 
+import { publishedControlBaseline } from './helpers/published-dsh-protocol.js'
+
+let currentBaseline: Awaited<ReturnType<typeof publishedControlBaseline>>
+beforeAll(async () => { currentBaseline = await publishedControlBaseline({}) })
+
 const disposers: Array<() => void> = []
-afterEach(() => disposers.splice(0).forEach(fn => fn()))
+afterEach(() => { disposers.splice(0).forEach(fn => fn()); vi.useRealTimers() })
 
 function fixture(search = '?arkme-harness-embed=1') {
   const attributes = new Map<string, string>([['data-arkme-account-id', '3016']])
@@ -19,7 +24,7 @@ function fixture(search = '?arkme-harness-embed=1') {
   })
   const wire = vi.fn(async (params: any) => ({ ok: true, value: params.body.mode === 'close' ? { done: true } : {
     items: params.body.endpoint === '$events' ? [{ type: 'ready', clientId: 'remote-client', host: { home: 'C:/' } }]
-      : params.body.endpoint === 'session/control' ? [{ type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }]
+      : params.body.endpoint === 'session/control' ? [currentBaseline]
         : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] : [], done: true,
   } }))
   const sockets: Socket[] = []
@@ -33,7 +38,7 @@ function fixture(search = '?arkme-harness-embed=1') {
       const frame = JSON.parse(text); this.frames.push(frame)
       if (frame.params) void wire(frame.params).then(result => this.receive({ id: frame.id, ...result }))
       else if (frame.type === 'open') this.receive({ type: 'item', streamId: frame.streamId, value: frame.endpoint === '$events'
-        ? { type: 'ready', clientId: 'local-client', host: { home: '/local' } } : { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } } })
+        ? { type: 'ready', clientId: 'local-client', host: { home: '/local' } } : currentBaseline })
     }
     receive(value: unknown) { this.onmessage?.({ data: JSON.stringify(value) }) }
     close() { this.readyState = 3; this.onclose?.() }
@@ -215,23 +220,23 @@ it('keeps offline state scoped to the selected source and releases blocked strea
   await expect(result).rejects.toMatchObject({ name: 'AbortError' })
   expect(f.sockets.every(socket => socket.readyState === 3)).toBe(true)
 })
-it('replays source control values after local baselines without replacing another source state', async () => {
+it('replays current source baselines after local reconnects and clears only the released source', async () => {
   const f = fixture(), abort = new AbortController()
-  f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === 'session/control' ? [{
-    type: 'baseline', value: { queues: { same: [{ id: 'queued' }] }, jobs: {}, projections: { same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'source-model' } } } } } },
-  }] : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, records: [] }] : [], done: true } }) as any)
+  const baseline = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'source-model' } } } } })
+  f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === 'session/control' ? [baseline]
+    : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, records: [] }] : [], done: true } }) as any)
   const history = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
   await history.next()
   const openControl = () => f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
   let control = openControl()
-  expect((await control.next()).value.type).toBe('baseline')
-  expect((await control.next()).value).toMatchObject({ type: 'queue', sessionId: 'arkme:windows:same', items: [{ id: 'queued' }] })
-  expect((await control.next()).value).toMatchObject({ type: 'projection', sessionId: 'arkme:windows:same', key: 'modelSelection', seq: 7 })
+  expect((await control.next()).value).toEqual(currentBaseline)
+  const forwarded = (await control.next()).value
+  expect(forwarded).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': baseline.value.projections.same } } })
   await control.return(); control = openControl()
-  expect((await control.next()).value.type).toBe('baseline')
-  expect((await control.next()).value.items[0].id).toBe('queued')
-  await control.next(); await history.return()
-  expect((await control.next()).value).toMatchObject({ type: 'queue', items: [] })
+  expect((await control.next()).value).toEqual(currentBaseline)
+  expect((await control.next()).value).toEqual(forwarded)
+  await history.return()
+  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 7, values: {} } } } })
   await control.return()
 })
 it('returns interactive responses to the source event generation instead of the local client', async () => {
@@ -389,4 +394,52 @@ it('returns a cold-start cloud selection to its native owner when registration i
   expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ init: { detail: { runtimeRef: '', sessionRef: 'same', accountId: '3016', accountScope: '' } } }))
   f.directory.publish([f.row('cloud', { canonicalIdentity: true, local: true })], 'cloud')
   expect(dispatchEvent).toHaveBeenCalledOnce()
+})
+
+it('keeps a remote source writable with the published DSH control baseline', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  const history = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  await history.next()
+  expect(currentBaseline.value).toEqual({ projections: {} })
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  abort.abort(); await history.return()
+})
+
+it('replaces a reconnected source baseline, replays newer deltas and keeps another source isolated', async () => {
+  const first = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'old' } } } }, retired: { asOfSeq: 5, values: { title: 'retired' } } })
+  const second = await publishedControlBaseline({ same: { asOfSeq: 9, values: { title: 'new' } } })
+  const other = await publishedControlBaseline({ same: { asOfSeq: 20, values: { title: 'other source' } } })
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController(), counts = new Map<string, number>()
+  const original = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async (params: any) => {
+    if (params.body.endpoint !== 'session/control') return original(params)
+    const count = (counts.get(params.runtimeRef) ?? 0) + 1; counts.set(params.runtimeRef, count)
+    const frames = params.runtimeRef === 'linux' ? [other] : count === 1
+      ? [first, { type: 'projection', sessionId: 'same', key: 'goal', value: { status: 'running' }, seq: 8 }] : [second]
+    return { ok: true, value: { items: frames, done: true } }
+  })
+  const control = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  await control.next()
+  const history = (runtime: string) => f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: `arkme:${runtime}:same` } } } }, abort.signal)[Symbol.asyncIterator]()
+  const windows = history('windows'); await windows.next()
+  expect((await control.next()).value.value.projections['arkme:windows:same']).toEqual(first.value.projections.same)
+  expect((await control.next()).value).toMatchObject({ type: 'projection', sessionId: 'arkme:windows:same', key: 'goal', seq: 8 })
+  const linux = history('linux'); await linux.next()
+  expect((await control.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
+  const warm = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  await warm.next()
+  expect((await warm.next()).value.value.projections['arkme:windows:same']).toEqual(first.value.projections.same)
+  expect((await warm.next()).value).toMatchObject({ type: 'projection', key: 'goal', seq: 8 })
+  expect((await warm.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
+  await warm.return()
+  await vi.advanceTimersByTimeAsync(1000)
+  const reconnected = (await control.next()).value
+  expect(reconnected).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': second.value.projections.same, 'arkme:windows:retired': { asOfSeq: 5, values: {} } } } })
+  expect((await control.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
+  expect(counts).toEqual(new Map([['windows', 2], ['linux', 2]]))
+  await windows.return()
+  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 9, values: {} }, 'arkme:windows:retired': { asOfSeq: 5, values: {} } } } })
+  abort.abort(); await linux.return(); await control.return()
 })

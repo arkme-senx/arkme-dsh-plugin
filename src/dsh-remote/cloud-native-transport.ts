@@ -166,7 +166,7 @@ export class DshCloudNativeTransport {
     let frame: unknown
     let watch: Lease['watch']
     if (mode === 'pull' && endpoint === '$events') frame = { type: 'ready', clientId: randomUUID(), host: { home: '' } }
-    else if (mode === 'pull' && endpoint === 'session/control') frame = { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }
+    else if (mode === 'pull' && endpoint === 'session/control') frame = { type: 'baseline', value: { projections: {} } }
     else if (mode === 'pull' && endpoint === 'workspace/follow') frame = { type: 'baseline', value: { items: [], archivedSessionIds: (await this.sessions(runtime, signal)).filter(row => row.archived === true).map(row => row.session_ref) } }
     else if ((mode === 'pull' && endpoint === 'session/follow') || (mode === 'call' && endpoint === 'session/page')) {
       const request = object(args.request), address = object(request.address)
