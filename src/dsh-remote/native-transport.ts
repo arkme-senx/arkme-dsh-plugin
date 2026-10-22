@@ -1,6 +1,7 @@
 import { readFiveTurns, type NativeHistoryPage } from './native-history.js'
 import { randomUUID } from 'node:crypto'
-import type { DshConnectionLike, DshGatewayLike } from './gateway-api.js'
+import { EMPTY_DSH_UPLINK, type DshConnectionLike, type DshGatewayLike } from './gateway-api.js'
+import type { PeerScope } from '@deepseek-ai/dsh-client-connection'
 import { DshRemoteError } from './errors.js'
 
 type RecordValue = Record<string, unknown>
@@ -31,7 +32,7 @@ type Lease = {
 export class DshNativeTransport {
   private readonly streams = new Map<string, Lease>()
   private readonly opening = new Set<string>()
-  constructor(private readonly gateway: DshGatewayLike, private readonly connection: DshConnectionLike) {}
+  constructor(private readonly gateway: DshGatewayLike, private readonly connection: DshConnectionLike, private readonly peer: PeerScope) {}
 
   close(): void { for (const id of this.streams.keys()) this.release(id) }
 
@@ -131,7 +132,7 @@ export class DshNativeTransport {
     const response = await this.connection.createSharedFetchHandler('/api').fetch(new Request(`http://localhost/api/${endpoint}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: endpoint, payload }),
-    }))
+    }), this.peer)
     const envelope = nativeRecord(await response.json())
     return envelope.result
   }
@@ -184,7 +185,7 @@ export class DshNativeTransport {
       const controller = new AbortController(), signal = AbortSignal.any([controller.signal, scope.signal])
       const historyRequest = endpoint === 'session/follow' ? nativeRecord(nativeRecord(body.payload).args).request as RecordValue : undefined
       const payload = historyRequest ? { args: { request: { ...historyRequest, maxMessages: 10 } } } : body.payload
-      const stream = await this.gateway.wireStream.open(endpoint, payload, signal)
+      const stream = await this.gateway.wireStream.open(endpoint, payload, EMPTY_DSH_UPLINK, this.peer, signal)
       lease = { accountId: scope.accountId, endpoint, controller, iterator: stream[Symbol.asyncIterator](), busy: false, events: new Set(), ...(historyRequest ? { historyRequest, afterSeq: body.afterSeq as number | undefined } : {}), timer: setTimeout(() => this.release(id), 45_000) }
       lease.timer.unref(); this.streams.set(id, lease)
       signal.addEventListener('abort', () => this.release(id), { once: true })
