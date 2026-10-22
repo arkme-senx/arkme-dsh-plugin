@@ -1,4 +1,5 @@
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
+import type { ArkmeArkoHistoryQuery } from './arko-history-contract.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
 import type { OfflineContextRequest } from './offline-context-contract.js'
 import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
@@ -982,6 +983,25 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['calendar.day-recap', 'calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile', 'recordings.speech-statistics.create', 'chat.word-frequency.create'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'AI 小结必须从当前 DSH 页面确认后发起', false, 403)
       }
+      // Content negotiation adds request-scoped progress to the same export
+      // owner. No task/status registry, polling, replay or background job exists.
+      if (request.operation === 'arko.export' && req.headers.accept === 'application/x-ndjson') {
+        const send = (frame: unknown) => {
+          if (controller.signal.aborted || res.destroyed) return
+          if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
+          if (!res.write(JSON.stringify(frame) + '\n') && res.writableLength > 16 * 1024) {
+            controller.abort(); res.destroy()
+          }
+        }
+        try {
+          const value = await service.arkoExport(controller.signal, progress => send({ kind: 'progress', ...progress }))
+          send({ kind: 'result', value })
+        } catch (error) {
+          const known = error instanceof ArkmePluginError ? error : undefined
+          send({ kind: 'error', error: { code: known?.code ?? 'arko-export-unavailable', message: known?.message ?? '导出失败，请重试', retryable: known?.retryable ?? true } })
+        } finally { if (!res.destroyed) res.end() }
+        return
+      }
       if (request.operation === 'remote.session.observe') {
         const directory = options.accountSessions?.()
         if (!directory) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)
@@ -1809,9 +1829,15 @@ export async function dispatchArkmeHostOperation(
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()
     case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
+    case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
+    case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),
+      before: numberParam(params, 'before', 20), after: numberParam(params, 'after', 20) }, requestSignal)
+    case 'arko.export': return await service.arkoExport(requestSignal)
     case 'arko.history': return await service.arkoHistoryPage(
       numberParam(params, 'limit', 50),
       numberParam(params, 'offset', 0),
+      requestSignal,
     )
     case 'arko.ask': {
       if (params.imageFileRefs !== undefined && (!Array.isArray(params.imageFileRefs)
@@ -3116,4 +3142,21 @@ function longArticleImagesParam(params: Record<string, unknown>): import('./type
     if (typeof image.fileRef !== 'string' && typeof image.fileAssetUid !== 'string') throw new TypeError('Image reference is required')
     return { ...(typeof image.fileRef === 'string' ? {fileRef:image.fileRef} : {}), ...(typeof image.fileAssetUid === 'string' ? {fileAssetUid:image.fileAssetUid} : {}) }
   })
+}
+
+function arkoHistoryQueryParams(params: Record<string, unknown> | undefined): ArkmeArkoHistoryQuery {
+  const result: ArkmeArkoHistoryQuery = {}
+  for (const key of ['cursor', 'direction', 'role'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'string') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    Object.assign(result, { [key]: value })
+  }
+  for (const key of ['limit', 'startAtMillis', 'endAtMillis'] as const) {
+    const value = params?.[key]
+    if (value === undefined) continue
+    if (typeof value !== 'number') throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    result[key] = value
+  }
+  return result
 }

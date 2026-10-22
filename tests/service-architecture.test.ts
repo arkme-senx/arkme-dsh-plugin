@@ -66,7 +66,7 @@ const expectedPublicMethods = [
   'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
   'importRecordingFiles', 'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
-  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
+  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',
   'arkoPendingTurns', 'arkoPrepareTurn', 'arkoAcknowledgeTurn',
   'arkoLocalMarkCapabilities', 'arkoLocalMarks', 'changeArkoLocalMark',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',

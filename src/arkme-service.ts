@@ -1,3 +1,5 @@
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
+import { GENERATED_ARTIFACT_PREFIX } from './generated-artifacts.js'
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
 import { DeviceLockService } from './services/device-lock-service.js'
 import { PeopleService } from './services/people-service.js'
@@ -589,6 +591,7 @@ export class ArkmeService {
       ),
       this.bot,
       new LocalMessageActionCapabilityCodec(async () => await this.runtime.stateStore.uniqueCode()),
+      { read: (anchors, userId, signal) => this.arko.actionMessages(anchors, userId, signal) },
     )
     this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
     this.world = new WorldService(
@@ -757,7 +760,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
   async fileStage(path: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>, expectedUserId?: number, retention?: 'references') { return await this.filesOwner().stage(path, metadata, expectedUserId, retention) }
   async fileList() { return await this.filesOwner().files() }
-  async fileReadLocal(ref: string) { return await this.filesOwner().readLocal(ref) }
+  async fileReadLocal(ref: string) { return ref.startsWith(`${GENERATED_ARTIFACT_PREFIX}.`) ? await this.arko.readGeneratedFile(ref) : await this.filesOwner().readLocal(ref) }
   attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
   async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
   async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
@@ -1081,6 +1084,7 @@ arkoImagesV1:true,
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
@@ -1437,6 +1441,20 @@ arkoImagesV1:true,
   async arkoActivateModel(routeKey: string, signal?: AbortSignal): Promise<ArkmeArkoModelCatalog> {
     return await this.arko.arkoActivateModel(routeKey, signal)
   }
+
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
+    const { userId } = await this.runtime.requireSession()
+    const page = await this.arko.arkoMessages(query, signal)
+    if (!query.cursor && !query.role && query.startAtMillis === undefined && query.endAtMillis === undefined && query.direction !== 'asc') {
+      if ((await this.runtime.requireSession()).userId !== userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，请重新读取', false, 409)
+      const latest = page.items.find(item => item.text.trim() !== '' || item.contentBlocks?.length)
+      if (latest) void this.directory.rememberSpecial({ arkoPreview: { text: latest.text.trim() || '[图片]', createdAtMillis: latest.createdAtMillis } }, userId).catch(() => undefined)
+    }
+    return page
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal) { return this.arko.arkoSearch(query, signal) }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal) { return this.arko.arkoContext(query, signal) }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: import('./arko-history-contract.js').ArkmeArkoExportProgress) => void) { return this.arko.arkoExport(signal, onProgress) }
 
   async arkoHistoryPage(
     limit = 50,

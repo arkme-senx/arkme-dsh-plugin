@@ -1490,6 +1490,7 @@ arkoImagesV1?:true
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
@@ -3815,6 +3816,10 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  messageRef?: string
+  orderAtMillis?: number
+  sourceType?: number
+  messageType?: number
   /** Account-bound authority for private, persisted marks on completed text. */
   localMarkRef?: string
   messageId: number
@@ -4509,6 +4514,11 @@ export type ArkmePluginOperation =
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
+
+  | 'arko.messages'
+  | 'arko.search'
+  | 'arko.context'
+  | 'arko.export'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'emoji.recent.list'
