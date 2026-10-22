@@ -127,6 +127,33 @@ it('persists private Team marks across refreshed references without cloud writes
 })
 
 describe('Team App owner adapter', () => {
+  it('projects a complete summary batch using stable opaque identities and the Team owner only', async()=>{
+    const f=fixture((path,body)=>path.endsWith('/summary-list')
+      ? {items:(body.message_uids as string[]).map(message_uid=>({message_uid,team_read:true,visitor_read:false,summary:{recipient_count:1000,read_count:200,unread_count:800}})),last_seq:2,my_read_seq:2,unread:0}
+      : {channel,conversation:{...conversation,side:'team'},messages:[message,{...message,message_uid:'second-message',seq:1}]})
+    const opened=await open(f), timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:timeline.messages.map(m=>m.ref)}) as {items:Array<{key:string;summary:unknown}>}
+    expect(result.items.map(m=>m.key)).toEqual(timeline.messages.map(m=>m.key))
+    expect(result.items[0]!.summary).toEqual({total:1000,read:200,unread:800})
+    expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'team',message_uids:['message-private','second-message']})
+    expect(f.requests.every(r=>!r.path.includes('chat')&&!r.path.includes('record')&&!r.path.includes('read-receipts/query'))).toBe(true)
+    expect(JSON.stringify(result)).not.toMatch(/message-private|second-message|user_id|conversation_uid/)
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref,timeline.messages[0]!.ref]})).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
+  it('does not disclose counts or identities in an external summary even if the server supplies them',async()=>{
+    const own={...message,side:'external',actor_user_id:90}
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items:[{message_uid:own.message_uid,team_read:true,visitor_read:true,summary:{recipient_count:1,read_count:1,unread_count:0},members:[{user_id:11}]}],last_seq:2,my_read_seq:2,unread:0} : {channel,conversation,messages:[own]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})
+    expect(result).toEqual({items:[{key:timeline.messages[0]!.key,teamRead:true}],lastSeq:2,myReadSeq:2,unread:0})
+  })
+  it.each([[],[{message_uid:message.message_uid,team_read:true,summary:{recipient_count:10,read_count:9,unread_count:0}}]])('rejects incomplete summary truth %s instead of manufacturing unread',async items=>{
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items,last_seq:2,my_read_seq:2,unread:0} : {channel,conversation:{...conversation,side:'team'},messages:[message]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
   it('resolves official membership by provider identity, including users with no team conversations', async () => {
     let teams: unknown = [{ ...channel, team_id: '9223372036854775801', name: channel.name }]
     const f = fixture(path => path.endsWith('official-feedback-target') ? channel : { teams })
@@ -155,6 +182,7 @@ describe('Team App owner adapter', () => {
     expect(first.members).toHaveLength(messageSide==='team'?3:4)
     expect(first.members.map(m=>m.key)).toEqual(second.members.map(m=>m.key))
     expect(first.members.find(m=>m.isMe)).toMatchObject({nickname:'重名',read:true})
+    expect(first.members.find(m=>m.isMe)?.readAt).toBe(123)
     expect(first.members.at(-1)?.read).toBeUndefined()
     expect(JSON.stringify(first)).not.toMatch(/user_id|actor_user_id|sender_user_id/)
     expect(Object.keys(f.requests.at(-1)!.body).sort()).toEqual(['conversation_uid','cursor','limit','message_uid','side'])
@@ -503,7 +531,7 @@ describe('Team App owner adapter', () => {
   })
   it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
     const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
-    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100 })
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: event.kind==='team.receipt.changed' })
     expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()
@@ -619,6 +647,23 @@ it('binds a frozen Team card to owner-blind target media and removes source acto
  expect(card.forwardRecords?.items[0]).toMatchObject({senderName:'原作者',textContent:'冻结正文',contentBlocks:[{mediaRef:card.media[0]?.ref}]})
  expect(card.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
  expect(JSON.stringify(card.forwardRecords)).not.toContain('private-signed')
+})
+
+it('projects scoped conversation cursor metadata without fetching bodies and rejects incomplete batches', async () => {
+  let broken = false
+  const f=fixture((path,body)=>path.endsWith('/read-state/query-list')
+    ? {items:broken?[]:(body.conversation_uids as string[]).map(conversation_uid=>({conversation_uid,accessible:true,last_seq:2,my_read_seq:2,unread:0}))}
+    : {channel,conversation})
+  const opened=await open(f), ref=opened.conversation!.ref
+  const data=await f.service.execute('team.app.read-states',{conversationRefs:[ref]})
+  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0}])
+  expect(f.requests.at(-1)!.body).toEqual({side:'external',conversation_uids:[conversation.conversation_uid]})
+  expect(JSON.stringify(data)).not.toContain(conversation.conversation_uid)
+  broken=true
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref,ref]})).rejects.toThrow()
+  f.changeAccount()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
 })
 
 describe('Team visitor private chat authority', () => {

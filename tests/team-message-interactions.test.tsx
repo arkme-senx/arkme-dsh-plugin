@@ -6,7 +6,7 @@ import { TeamConversationMessage } from '../src/client/TeamConversationMessage.j
 import { ArkmeMessageTextSelectionToolbar } from '../src/client/ArkmeMessageTextSelection.js'
 import { copyText } from '../src/client/clipboard-text.js'
 import type { TeamMessage } from '../src/team-app-contract.js'
-import type { TeamReceiptStore } from '../src/client/team-read-receipts.js'
+import { emptyTeamReceipt, type TeamReceiptStore } from '../src/client/team-read-receipts.js'
 vi.mock('../src/client/clipboard-text.js', () => ({ copyText: vi.fn(async () => {}) }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn(async () => ({})) }))
 vi.mock('../src/client/TeamReadReceipts.js', () => ({ TeamReceiptBadge: () => null }))
@@ -21,7 +21,7 @@ const labels = (node: Element | null) => [...node?.querySelectorAll('button') ??
 function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -180,7 +180,7 @@ it('routes own right-click details to the snapshot while body click stays in rea
 it('enables actual extension and DSH callbacks, closes the menu and keeps backend gaps disabled', async () => {
   const extend = vi.fn(), ask = vi.fn()
   await act(async () => root.render(<TeamConversationMessage message={message} avatar={null} writable showReceipts={false}
-    receiptStore={{} as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error}
+    receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error}
     onReply={extend} onAsk={ask} />))
   for (const label of ['延展', '问 DSH']) {
     await mouse(host.querySelector('p')!, 'contextmenu', 2)

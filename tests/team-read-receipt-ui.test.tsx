@@ -11,7 +11,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 const message: TeamMessage = { ref: 'ref', key: 'message', seq: 1, revision: 1, side: 'external', sender: { nickname: '外部联系人' }, own: false,
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   content: { text_content: '消息正文', template_kind: 1 } }
-const receipts = (read: number, total = 3): TeamReceipts => ({ hasMore: false, senderExcluded: true,
+const receipts = (read: number, total = 3): TeamReceipts => ({ summary:{read,unread:total-read,total},hasMore: false, senderExcluded: true,
   members: Array.from({ length: total }, (_, i) => ({ key: String(i), nickname: `成员${i}`, read: i < read })) })
 let root: Root, host: HTMLDivElement, state: TeamReceiptState, observer: IntersectionObserverCallback
 const listeners = new Set<() => void>(), onReceipts = vi.fn(), onDetail = vi.fn(), unwatch = vi.fn(), watch = vi.fn(() => unwatch)
@@ -61,9 +61,8 @@ it('preserves the same bubble and accessory as visible receipts load and refresh
 })
 
 it.each([
-  { ...receipts(3), hasMore: true },
-  { ...receipts(3), senderExcluded: false },
-  { ...receipts(3), members: [{ key: '1' }] },
+  { ...receipts(3), summary: undefined },
+  { ...receipts(3), summary: {read:3,unread:0,total:2} },
   receipts(0, 0),
 ])('does not show an all-read tick for incomplete or empty recipient data', async value => {
   state = { value, loading: false, at: 1 }; await render()
@@ -124,8 +123,8 @@ it('retains a numeric ring for zero and all team readers, independent of visitor
 
 it.each([
   receipts(3),
-  { ...receipts(3), visitorRead: true, hasMore: true },
-  { ...receipts(3), visitorRead: true, senderExcluded: false },
+  { ...receipts(3), visitorRead: true, summary: undefined },
+  { ...receipts(3), visitorRead: true, summary: {read:3,unread:0,total:2} },
 ])('keeps unknown visitor or team count as a placeholder, not an unread circle', async value => {
   state = { value, loading: false, at: 1 }
   await render({ side: 'team', own: true })
@@ -160,4 +159,13 @@ it('orders readers by their latest time, dims unread members with a dot, and kee
   expect(dots).toHaveLength(2)
   for (const dot of dots) expect((dot.previousElementSibling as HTMLElement).style.opacity).toBe('0.5')
   expect(host.querySelectorAll('.team-receipt-heading')).toHaveLength(2)
+})
+
+// Aggregate truth is independent of which member pages are currently loaded.
+it.each([true, false])('uses authoritative totals for outgoing circles while detail paging is incomplete, senderExcluded=%s', async senderExcluded => {
+  state = {value:{...receipts(2),visitorRead:false,hasMore:true,senderExcluded},loading:false,at:1}
+  await render({side:'team',own:true})
+  expect(indicator()?.getAttribute('data-arkme-read-receipt-indicator')).toBe('count')
+  expect(indicator()?.textContent).toBe('2')
+  expect(host.querySelector('[aria-label="查看阅读状态：对方未读 · 团队已读 2/3"]')).not.toBeNull()
 })

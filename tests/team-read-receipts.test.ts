@@ -4,12 +4,46 @@ const { call } = vi.hoisted(() => ({call:vi.fn()}))
 vi.mock('../src/client/api.js', () => ({callArkme:call}))
 import { TeamReceiptStore, teamReceiptCounts, mergeTeamReceiptMembers } from '../src/client/team-read-receipts.js'
 const message = (key='m') => ({key, ref:key}) as TeamMessage
-const page = (overrides:Partial<TeamReceipts>={}):TeamReceipts => ({hasMore:false,senderExcluded:true,members:[{key:'a',nickname:'同名',read:true},{key:'b',nickname:'同名',read:false}],...overrides})
+const page = (overrides:Partial<TeamReceipts>={}):TeamReceipts => ({summary:{read:1,unread:1,total:2},hasMore:false,senderExcluded:true,members:[{key:'a',nickname:'同名',read:true},{key:'b',nickname:'同名',read:false}],...overrides})
 afterEach(()=>{call.mockReset(); vi.useRealTimers()})
 describe('team read receipts',()=>{
-  it('counts recipients only with a complete identified snapshot, preserving unknown statuses',()=>{
+  it('batches 120 visible summaries in bounded pages without loading any member identities',async()=>{
+    vi.useFakeTimers()
+    call.mockImplementation(async(op,p)=>({items:p.messageRefs.map((key:string)=>({key,summary:{read:1,unread:999,total:1000}})),myReadSeq:8,unread:0}))
+    const store=new TeamReceiptStore('prod:11'), read=vi.fn(), stop=store.subscribeReadState(read)
+    for(let i=0;i<120;i++)store.watch(message(String(i)))
+    await vi.runAllTimersAsync()
+    expect(call.mock.calls.map(args=>args[1].messageRefs.length)).toEqual([50,50,20])
+    expect(call.mock.calls.every(args=>args[0]==='team.app.receipt-summaries'&&args[1].expectedAccountKey==='prod:11')).toBe(true)
+    expect(store.get('0').value?.members).toEqual([])
+    expect(teamReceiptCounts(store.get('0').value)).toEqual({read:1,unread:999,total:1000})
+    expect(read).toHaveBeenCalledWith(expect.objectContaining({myReadSeq:8,unread:0}))
+    stop();store.dispose()
+  })
+  it('re-reads active summaries when a receipt invalidation arrives during the request',async()=>{
+    vi.useFakeTimers()
+    let resolve!:(value:unknown)=>void
+    const result=(read:number)=>({items:[{key:'m',summary:{read,unread:2-read,total:2}}],myReadSeq:read,unread:0})
+    call.mockImplementationOnce(()=>new Promise(r=>resolve=r)).mockResolvedValue(result(2))
+    const store=new TeamReceiptStore('prod:11');store.watch(message());await vi.advanceTimersByTimeAsync(0)
+    store.refreshVisible(true);resolve(result(1));await vi.runAllTimersAsync()
+    expect(call).toHaveBeenCalledTimes(2)
+    expect(teamReceiptCounts(store.get('m').value)?.read).toBe(2)
+    store.dispose()
+  })
+  it('coalesces a detail invalidation burst into one follow-up request',async()=>{
+    let resolve!:(value:TeamReceipts)=>void
+    call.mockImplementationOnce(()=>new Promise(r=>resolve=r)).mockResolvedValue(page())
+    const store=new TeamReceiptStore('prod:11'), first=store.load(message())
+    const requests=Array.from({length:1000},()=>store.load(message(),false,true))
+    resolve(page());await Promise.all([first,...requests])
+    expect(call).toHaveBeenCalledTimes(2)
+    store.dispose()
+  })
+  it('uses authoritative totals independently of loaded roster pages and identities',()=>{
     expect(teamReceiptCounts(page())).toEqual({read:1,unread:1,total:2})
-    for(const override of [{hasMore:true},{senderExcluded:false},{members:[{nickname:'未知',read:false}]},{members:[{key:'a',nickname:'甲'}]}]) expect(teamReceiptCounts(page(override))).toBeUndefined()
+    for(const override of [{hasMore:true},{senderExcluded:false},{members:[{nickname:'未知',read:false}]},{members:[]}]) expect(teamReceiptCounts(page(override))).toEqual({read:1,unread:1,total:2})
+    for(const summary of [undefined,{read:1,unread:1,total:1},{read:-1,unread:2,total:1}]) expect(teamReceiptCounts(page({summary}))).toBeUndefined()
     expect(mergeTeamReceiptMembers(page().members,[{key:'a',nickname:'新名',read:false}])).toEqual([{key:'a',nickname:'新名',read:false},{key:'b',nickname:'同名',read:false}])
   })
   it('bounds visible-row concurrency, coalesces requests and scopes them to the account',async()=>{
@@ -26,8 +60,8 @@ describe('team read receipts',()=>{
     store.dispose()
   })
   it('refreshes only watched rows and preserves already loaded pages without double-counting',async()=>{
-    call.mockImplementation(async(_op,p)=>p.cursor ? page({members:[{key:'b',nickname:'同名',read:false},{key:'c',nickname:'丙',read:true}]}) : page({hasMore:true,nextCursor:'next'}))
-    const store=new TeamReceiptStore('prod:11'),stop=store.watch(message())
+    call.mockImplementation(async(_op,p)=>p.cursor ? page({summary:{read:2,unread:1,total:3},members:[{key:'b',nickname:'同名',read:false},{key:'c',nickname:'丙',read:true}]}) : page({summary:{read:2,unread:1,total:3},hasMore:true,nextCursor:'next'}))
+    const store=new TeamReceiptStore('prod:11'),stop=store.watchDetail(message())
     await store.load(message());await store.load(message(),true)
     expect(store.get('m').value?.members).toHaveLength(3)
     store.refreshVisible(true);await store.load(message())

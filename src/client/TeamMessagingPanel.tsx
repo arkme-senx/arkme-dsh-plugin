@@ -220,6 +220,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   if (selected) return <div className="team-message-panel">
     <TeamConversationPane key={`${accountKey}:${selected.side}:${selected.key}`} accountKey={accountKey} conversation={selected}
       onChanged={() => { void refreshTeamDirectory(accountKey) }}
+      onReadChanged={() => { void refreshTeamDirectory(accountKey, false, true) }}
       onAccessLost={() => { discardTeamDirectory(accountKey, selected); arkmeUi.forgetTeamConversation(selected.channel) }} />
   </div>
   if (intent.kind === 'team' || intent.kind === 'inbox' && intent.side === 'team') return <section className="team-message-panel" aria-label={tr('团队对话')}>
@@ -251,7 +252,7 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets'>): TeamCon
     ...(draft.assets.length ? { content_payload: { payload_kind: 2, schema_version: 1, text_state: draft.text.trim() ? 1 : 3,
       media_refs: draft.assets.map((f, index) => ({ file_asset_uid: f.fileAssetUid, render_role: 1, sort_order: index, file_name: f.fileName })) } } : {}) }
 }
-export function TeamConversationPane({ conversation, accountKey, onChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onAccessLost?(): void }) {
+export function TeamConversationPane({ conversation, accountKey, onChanged, onReadChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onReadChanged?(): void; onAccessLost?(): void }) {
   useArkmeLocale()
   const [markScope,setMarkScope]=useState<'local'|'team'|'conversation'>('local')
   const markTransport=useMemo(()=>markScope==='local'?teamMessageMarkTransport:teamSharedMarkTransport(markScope),[markScope])
@@ -300,7 +301,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const [receiptMessage, setReceiptMessage] = useState<TeamMessage>()
   const receiptState = useSyncExternalStore(receiptStore.subscribe, () => receiptMessage ? receiptStore.get(receiptMessage.key) : emptyTeamReceipt, () => emptyTeamReceipt)
   useEffect(() => receiptStore.retain(), [receiptStore])
-  useEffect(() => receiptMessage ? receiptStore.watch(receiptMessage) : undefined, [receiptStore, receiptMessage])
+  useEffect(() => receiptMessage ? receiptStore.watchDetail(receiptMessage) : undefined, [receiptStore, receiptMessage])
   useEffect(() => {
     const update = () => { if (document.visibilityState === 'visible' && document.hasFocus()) receiptStore.refreshVisible() }
     const timer = window.setInterval(update, 15_000)
@@ -338,6 +339,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort() }, [])
+  useEffect(() => receiptStore.subscribeAccessLost(() => {
+    accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined);
+    latest.current = undefined; setTimeline(undefined); receiptRef.current = undefined;
+    setReceiptMessage(undefined); setEditing(undefined);
+  }), [receiptStore])
+  useEffect(() => receiptStore.subscribeReadState(state => {
+    const old = latest.current
+    // A receipt read started before a new message cannot clear its unread count.
+    if (!old || state.lastSeq < old.conversation.lastSeq || state.myReadSeq < Math.max(read.current,old.conversation.myReadSeq)) return
+    read.current = state.myReadSeq
+    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread}}
+    latest.current=next;setTimeline(next)
+  }),[receiptStore])
   const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
   const receiptAnchor = useRef<HTMLElement | null>(null)
   const readReceipts = useCallback((message: TeamMessage, more = false) => {
@@ -391,7 +405,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges(account => { if (account === accountKey) { void recover() } }) }, [recover, accountKey])
+  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else void recover() } }) }, [recover, accountKey, receiptStore])
   useEffect(() => {
     const recoverOnline = () => { void recover() }
     window.addEventListener('focus', recoverOnline)
@@ -448,8 +462,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onAc
     const sequence = Math.max(0, ...current.messages.map(m => m.seq))
     if (!sequence || sequence <= read.current) return
     const previous = read.current; read.current = sequence
-    void callArkme('team.app.read', { conversationRef: conversation.ref, readSeq: sequence }, ctrl.current.signal).then(onChanged).catch(() => { read.current = previous })
-  }, [conversation.ref, onChanged])
+    void callArkme('team.app.read', { conversationRef: conversation.ref, readSeq: sequence }, ctrl.current.signal).then(() => onReadChanged?.()).catch(() => { read.current = previous })
+  }, [conversation.ref, onReadChanged])
   useEffect(() => {
     const observer = new IntersectionObserver(entries => { visible.current = entries.some(v => v.isIntersecting); advance() }, { root: scroller.current, threshold: 1 })
     if (bottom.current) observer.observe(bottom.current)
@@ -942,7 +956,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
       if (!ctrl.current.signal.aborted && token===generation.current) setError('')
     } catch (e) { if (!ctrl.current.signal.aborted && token===generation.current) {setError(errorText(e)); if(inaccessible(e)){setChannel(undefined);setApplications(undefined)}} }
   }
-  useEffect(() => { void refresh(); return subscribeTeamMessageChanges(account => { if (account === accountKey) void refresh() }) }, [teamRef, accountKey])
+  useEffect(() => { void refresh(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey && !receiptOnly) void refresh() }) }, [teamRef, accountKey])
   const mutate = async (run: () => Promise<unknown>) => { setBusy(true); try { await run(); if (ctrl.current.signal.aborted) return; setConfirm(undefined); await refresh(); onChanged() } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) } finally { if (!ctrl.current.signal.aborted) setBusy(false) } }
   const configure = (enabled: boolean, rotate = false) => callArkme('team.app.channel.configure', { teamRef, revision: channel?.revision ?? 0, enabled, rotate }, ctrl.current.signal)
   const copyLink = async () => {

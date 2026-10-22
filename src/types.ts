@@ -3996,6 +3996,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'team-invalidated'
   revision: number
+  receiptOnly?: boolean
 } | {
   type: 'directory-update'
   revision: number
