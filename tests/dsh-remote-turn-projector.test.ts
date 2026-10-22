@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { publishedPtcHistory } from './helpers/published-dsh-protocol.js'
 import { describe, expect, it } from 'vitest'
 import type { DshRemoteHistoryEntry } from '../src/dsh-remote/dsh-event-contract.js'
-import { extractCompletedTurnWindows, projectCompletedTurns } from '../src/dsh-remote/turn-projector.js'
+import { extractCompletedTurnWindows, projectCompletedTurns, projectDshHistoryNodes } from '../src/dsh-remote/turn-projector.js'
 
 function entry(
   type: string,
@@ -198,4 +200,16 @@ describe('DSH completed Turn projector', () => {
     expect(second.completed[0]!.map(value => value.event.seq)).toEqual([0, 1, 2, 3, 4, 5])
     expect(second.pending).toEqual([])
   })
+})
+
+it('retains nested dispatches emitted by the published DSH Tools pipeline', async () => {
+  const entries = await publishedPtcHistory()
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/dsh-remote/published-0.2.1-rc.2-ptc.json', import.meta.url), 'utf8'))
+  expect(entries).toEqual(fixture.entries)
+  expect(entries.map(entry => entry.event.type)).toEqual(['tool/call', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch', 'tool/result'])
+  const nodes = projectDshHistoryNodes(entries)
+  expect(nodes[0]?.data.dispatches).toEqual(entries.slice(1, 3).map(entry => entry.event.data))
+  expect(nodes[0]?.source_seq_end).toBe(3)
+  const legacy = entries.map(entry => ({ event: { ...entry.event, type: entry.event.type.replace('ptc-dispatch', 'code-dispatch') } }))
+  expect(projectDshHistoryNodes(legacy)).toEqual(nodes)
 })

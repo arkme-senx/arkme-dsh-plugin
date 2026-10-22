@@ -1303,3 +1303,39 @@ it('coalesces lifecycle preview reads, clears deleted content, and keeps the exi
     expect(options).toEqual(Array.from({ length: 10 }, () => expect.objectContaining({ traffic: 'message-sync', bypassCache: true })))
   } finally { service.dispose() }
 })
+
+it('projects current counterpart names through realtime display refresh without rewriting historical senders', async () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = new ServiceRuntime(config, { read: async () => session, write: async () => {}, delete: async () => {} }, { uniqueCode: async () => 'current-name-fixture' } as unknown as StateStore)
+  const source = new SourceService(runtime, new ProfileService(runtime), {
+    async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+  })
+  const bundle = { session: { chat_session_uid: 'chat', session_kind: 1 },
+    private_counterpart: { user_id: 17, display_name_snapshot: '当前昵称' },
+    private_supplement: { remark: '', counterpart_name_snapshot: '当前昵称' },
+    unread_snapshot: { session_last_seq: 7, unread_count: 0 } }
+  const post = vi.spyOn(runtime, 'authenticatedChatPost').mockImplementation(async path => {
+    if (path.endsWith('display-snapshots')) return { items: [bundle] }
+    throw new Error('name refresh must not fetch historical bodies')
+  })
+  const reader = { chatTimelineItems: vi.fn(async () => []) }
+  const service = new ChatRealtimeService(runtime, source, reader)
+  vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
+  const updates: Array<{ displayName: string; privateNickname?: string }> = []
+  const stop = service.subscribeChatRealtime(event => {
+    if (event.type === 'sessions-delta') updates.push(...event.updates.map(update => update.source))
+  })
+  try {
+    for (const nickname of ['当前昵称', '改名后的昵称']) {
+      bundle.private_counterpart.display_name_snapshot = nickname
+      bundle.private_supplement.counterpart_name_snapshot = nickname
+      expect(await service.refreshChatSessionProjectionBatch([['chat', { latestSequence: 7, notificationHints: [], refreshTimeline: false }]])).toEqual([])
+      expect(updates.at(-1)).toMatchObject({ displayName: nickname, privateNickname: nickname })
+    }
+    bundle.private_supplement.remark = '我的备注'
+    await service.refreshChatSessionProjectionBatch([['chat', { latestSequence: 7, notificationHints: [], refreshTimeline: false }]])
+    expect(updates.at(-1)).toMatchObject({ displayName: '我的备注', privateNickname: '改名后的昵称' })
+    expect(post).toHaveBeenCalledTimes(3)
+    expect(reader.chatTimelineItems).not.toHaveBeenCalled()
+  } finally { stop(); service.dispose(); runtime.dispose() }
+})
