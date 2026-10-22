@@ -1,3 +1,4 @@
+import type { SessionControlFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { DshAccountSession } from './dsh-remote/account-session-types.js'
 
 export interface HarnessNativeDirectory {
@@ -296,17 +297,27 @@ function installNativeTransport(route: string): void {
     return { ...frame, ...(frame.header ? { header: { ...frame.header, id: identity(runtime, frame.header.id) } } : {}),
       ...(frame.sessionId ? { sessionId: identity(runtime, frame.sessionId) } : {}) }
   }
-  const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: Map<string, { value: Json; bytes: number }>; bytes: number }>()
+  type ControlFrames = Map<string, { value: SessionControlFrame; bytes: number }>
+  const controlCuts = (frames: ControlFrames) => {
+    const cuts = new Map<string, number>()
+    for (const { value: frame } of frames.values()) {
+      if (frame.type === 'baseline') for (const [id, block] of Object.entries(frame.value.projections)) cuts.set(id, Math.max(cuts.get(id) ?? -1, block.asOfSeq))
+      else cuts.set(frame.sessionId, Math.max(cuts.get(frame.sessionId) ?? -1, frame.seq))
+    }
+    return cuts
+  }
+  const clearControl = (frames: ControlFrames) => control({ type: 'baseline', value: { projections: Object.fromEntries([...controlCuts(frames)].map(([id, asOfSeq]) => [id, { asOfSeq, values: {} }])) } })
+  const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: ControlFrames; bytes: number }>()
   function retainSource(runtime: string, signal: AbortSignal): () => void {
     let source = sources.get(runtime)
     if (!source) {
       if (sources.size >= 8) throw new Error('打开的远程实例过多')
-      const state = source = { users: 0, abort: new AbortController(), frames: new Map<string, { value: Json; bytes: number }>(), bytes: 0 }; sources.set(runtime, state)
+      const state = source = { users: 0, abort: new AbortController(), frames: new Map<string, { value: SessionControlFrame; bytes: number }>(), bytes: 0 }; sources.set(runtime, state)
       const scoped = AbortSignal.any([state.abort.signal, lifetime.signal])
       // Keep only the latest control value per field, to replay after a local
       // reconnect baseline. Journals/history remain in the native session store.
-      const publish = (frame: Json) => {
-        const key = JSON.stringify([frame.sessionId, frame.type, frame.key])
+      const publish = (frame: SessionControlFrame) => {
+        const key = frame.type === 'baseline' ? 'baseline' : JSON.stringify([frame.sessionId, frame.key])
         if (!state.frames.has(key) && state.frames.size >= 32768) throw new Error('远端控制状态数量超限')
         const bytes = JSON.stringify(frame).length * 2
         const total = state.bytes - (state.frames.get(key)?.bytes ?? 0) + bytes
@@ -332,16 +343,17 @@ function installNativeTransport(route: string): void {
                 if (hiddenRemote.has(id)) continue
                 emit({ ...frame, args })
               } else emit({ ...frame, eventId: identity(runtime, frame.eventId), ...(frame.agentId ? { agentId: identity(runtime, frame.agentId) } : {}) })
-            } else if (frame.type === 'baseline') {
-              for (const { value: previous } of state.frames.values()) {
-                if (previous.type === 'queue') control({ ...previous, items: [] })
-                else if (previous.type === 'jobs') control({ ...previous, jobs: [] })
-              }
-              state.frames.clear(); state.bytes = 0
-              for (const [id, items] of Object.entries(frame.value.queues)) publish({ type: 'queue', sessionId: identity(runtime, id), items })
-              for (const [id, jobs] of Object.entries(frame.value.jobs)) publish({ type: 'jobs', sessionId: identity(runtime, id), jobs })
-              for (const [id, block] of Object.entries(frame.value.projections) as Array<[string, Json]>) for (const [key, value] of Object.entries(block.values)) publish({ type: 'projection', sessionId: identity(runtime, id), key, value, seq: block.asOfSeq })
-            } else publish(nativeFrame(runtime, frame))
+            } else {
+              const current = frame as SessionControlFrame
+              if (current.type === 'baseline') {
+                const projections = Object.fromEntries(Object.entries(current.value.projections).map(([id, block]) => [identity(runtime, id), block]))
+                // A source baseline only replaces its own named Sessions. Empty
+                // blocks clear removed projections without inventing newer cuts.
+                for (const [id, asOfSeq] of controlCuts(state.frames)) if (!(id in projections)) projections[id] = { asOfSeq, values: {} }
+                state.frames.clear(); state.bytes = 0
+                publish({ type: 'baseline', value: { projections } })
+              } else publish(nativeFrame(runtime, current) as SessionControlFrame)
+            }
           }
         } catch { if (!scoped.aborted) { writable.set(runtime, false); availability() } }
         if (!scoped.aborted) await new Promise<void>(resolve => {
@@ -355,7 +367,7 @@ function installNativeTransport(route: string): void {
     source.users++
     let released = false
     const owned = source
-    const release = () => { if (released) return; released = true; signal.removeEventListener('abort', release); if (--owned.users === 0) { owned.abort.abort(); sources.delete(runtime); for (const { value: frame } of owned.frames.values()) { if (frame.type === 'queue') control({ ...frame, items: [] }); else if (frame.type === 'jobs') control({ ...frame, jobs: [] }) }; owned.frames.clear() } }
+    const release = () => { if (released) return; released = true; signal.removeEventListener('abort', release); if (--owned.users === 0) { owned.abort.abort(); sources.delete(runtime); clearControl(owned.frames); owned.frames.clear() } }
     signal.addEventListener('abort', release, { once: true }); return release
   }
   const failure = (message: string) => ({ ok: false, error: { code: 'CAPABILITY_UNSUPPORTED', message, details: {} } })
