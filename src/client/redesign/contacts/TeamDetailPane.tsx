@@ -173,7 +173,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     }
   }, [load])
 
-  useEffect(()=>subscribeTeamMessageChanges(account=>{if(account===accountKey)void load(undefined,true)}),[accountKey,load])
+  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly)=>{if(account===accountKey&&!receiptOnly)void load(undefined,true)}),[accountKey,load])
   const openProfile=async()=>{
     if(profileBusy||!state.page?.team.canEditProfile)return
     const controller=new AbortController();navigationRef.current?.abort();navigationRef.current=controller;setProfileBusy(true)

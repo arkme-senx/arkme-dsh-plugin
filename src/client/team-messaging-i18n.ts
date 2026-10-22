@@ -13,6 +13,7 @@ const english: Record<string,string> = {
   '已读 {v0}/{v1}': 'Read {v0}/{v1}',
   '已加载 {v0} 人': '{v0} members loaded',
   '更新失败，点击重试': 'Update failed. Retry',
+  '已加载成员中暂无符合条件的成员': 'No matching members in loaded pages',
   '暂无未读成员': 'No unread members shown',
   '暂无已读成员': 'No read members shown',
   '暂无其他成员': 'No other members',

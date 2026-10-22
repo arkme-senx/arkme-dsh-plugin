@@ -40,7 +40,7 @@ export function startOfficialTeamMembership(key: string): () => void {
     }
   }
   refreshCurrent = refresh
-  const stop = subscribeTeamMessageChanges(changed => { if (changed === key) void refresh() })
+  const stop = subscribeTeamMessageChanges((changed, receiptOnly) => { if (changed === key && !receiptOnly) void refresh() })
   const resume = () => { void refresh() }
   const browserWindow = typeof window === 'undefined' ? undefined : window
   const browserDocument = typeof document === 'undefined' ? undefined : document

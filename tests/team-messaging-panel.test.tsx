@@ -539,7 +539,7 @@ describe('Team send UI recovery', () => {
     const msg:TeamMessage={key:'m',ref:'m',seq:1,revision:1,side,sender:{nickname:'发信人'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
     mocks.call.mockImplementation(async(op:string)=>op==='team.app.timeline'
       ? {conversation:{...conversation,side:'team',visitor:{nickname:'外部甲'}},messages:[msg],hasMore:false,beforeSeq:0}
-      : {visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
+      : {summary:{read:2,unread:0,total:2},visitorRead:true,teamRead:true,senderExcluded:true,hasMore:false,members:[{key:'a',nickname:'内部甲',read:true},{key:'b',nickname:'内部乙',read:true}]})
     await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })
     const receiptButton = () => renderer!.root.findAllByType('button').find(button => button.props['aria-label']?.startsWith('查看阅读状态：'))!
     await act(async()=>{receiptButton().props.onClick({currentTarget:null});await tick()})
@@ -800,7 +800,7 @@ describe('Team send UI recovery', () => {
       if(op==='team.app.timeline') return {conversation:{...conversation,side:'team'},messages:[message],hasMore:false,beforeSeq:0}
       if(op==='team.app.receipts') {
         if(hold) return new Promise(resolve=>{deferred=resolve})
-        return {teamRead:read,visitorRead:read,senderExcluded:true,members:[{key:p.cursor?'two':'one',nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
+        return {summary:{read:read?2:0,unread:read?0:2,total:2},teamRead:read,visitorRead:read,senderExcluded:true,members:[{key:p.cursor?'two':'one',nickname:p.cursor?'two':'one',read}],hasMore:!p.cursor,nextCursor:p.cursor?'':'next'}
       }
       return {}
     })

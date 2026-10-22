@@ -109,7 +109,7 @@ function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: 
   useEffect(() => {
     const request = new AbortController()
     controller.current = request
-    const stop = subscribeTeamMessageChanges(account => { if (account === accountKey && mode === 'join') void check() })
+    const stop = subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey && mode === 'join' && !receiptOnly) void check() })
     // Match the existing Team readers: events, returning to the page and a
     // visible-page fallback all perform scoped reads, never another join.
     const resume = () => { void check() }

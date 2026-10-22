@@ -235,7 +235,7 @@ export function useArkmeRealtimeClientEvents(
           }
           return
         }
-        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope)
+        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
           void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
