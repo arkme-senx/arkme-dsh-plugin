@@ -17,6 +17,7 @@ interface MessageActionReferenceBase {
 
 export interface AgentMessageActionReference extends MessageActionReferenceBase {
   ownerKind: 'agent'
+  shareableAgentReply?: boolean
   agentSessionId: number
   agentMessageId: number
   entryRecordUid?: string
@@ -78,6 +79,7 @@ export interface MessageActionBotRegistryPort {
 }
 
 export interface MessageActionCapabilityCodec {
+  fingerprint(payload: unknown): string
   seal(prefix: string, payload: unknown): Promise<string>
   open(prefix: string, value: string): Promise<Record<string, unknown>>
 }
@@ -122,7 +124,12 @@ export interface MessageActionGateway {
 }
 
 export function messageActionCanCopyLink(reference: MessageActionReference): boolean {
-  if (reference.ownerKind === 'agent') return reference.role === 'assistant' || reference.entryRecordUid !== undefined
+  if (reference.ownerKind === 'agent') return (reference.role === 'assistant' && reference.shareableAgentReply !== false) || reference.entryRecordUid !== undefined
   if (reference.ownerKind === 'bot_chat') return true
   return reference.role === 'user'
+}
+
+/** The history owner revalidates a bounded selection in one consistent read. */
+export interface ArkoMessageActionReader {
+  read(anchors: readonly { sessionId: number; messageId: number }[], userId: number, signal?: AbortSignal): Promise<import('./types.js').ArkmeArkoHistoryItem[]>
 }

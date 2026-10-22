@@ -5,7 +5,7 @@ import { isHarnessWindowDragPoint, watchHarnessWindowDrag } from '../src/client/
 const bounds = (top = 0, height = 80) => ({ x: 0, y: top, top, left: 0, right: 900, bottom: top + height, width: 900, height, toJSON() {} })
 let dispose: (() => void) | undefined
 afterEach(() => { dispose?.(); dispose = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
-function fixture() {
+function fixture(resident = true) {
   const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'
   const frame = document.createElement('iframe'); surface.append(frame); document.body.append(surface)
   const doc = frame.contentDocument!
@@ -13,13 +13,21 @@ function fixture() {
     <div data-phase="hero" id="hero"><div data-composer-seat id="composer"><div id="welcome"></div><textarea></textarea></div></div>
     <section data-sidebar-right-panel="push" data-sidebar-right-open><div data-dockkit-strip="main" role="tablist" id="strip"><div data-dockkit-tab="file" role="tab" id="tab"></div><button id="close"></button></div>
     <div data-files-root="/workspace"><div id="pathbar"><span data-files-path="true">/workspace</span><button data-files-reload></button></div><ul><li id="file">file</li></ul></div></section><div id="body"></div>`
+  if (resident) {
+    const header = doc.getElementById('header')!
+    const slot = header.parentElement!
+    slot.replaceWith(header)
+    header.setAttribute('data-window-drag', 'true')
+    const leading = doc.createElement('div'); leading.dataset.conversationHeaderLeading = ''
+    header.prepend(leading); header.append(slot)
+  }
   for (const el of doc.querySelectorAll('*')) vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(bounds())
   vi.spyOn(doc.getElementById('hero')!, 'getBoundingClientRect').mockReturnValue(bounds(0, 700))
   vi.spyOn(doc.getElementById('composer')!, 'getBoundingClientRect').mockReturnValue(bounds(300, 200))
   return { surface, frame, doc, el: (id: string) => doc.getElementById(id)! }
 }
-it('recognizes only header whitespace, empty hero space above composer, and open right-panel chrome', () => {
-  const { doc, el } = fixture()
+it.each([false, true])('recognizes only header whitespace, empty hero space and open right-panel chrome (resident: %s)', resident => {
+  const { doc, el } = fixture(resident)
   for (const id of ['blank', 'strip', 'pathbar']) expect(isHarnessWindowDragPoint(doc, el(id), 200, 30)).toBe(true)
   expect(isHarnessWindowDragPoint(doc, el('hero'), 200, 200)).toBe(true)
   expect(isHarnessWindowDragPoint(doc, el('hero'), 200, 320)).toBe(false)

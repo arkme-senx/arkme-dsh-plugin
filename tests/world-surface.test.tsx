@@ -299,7 +299,7 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('aria-label="关闭发布窗口"')
     expect(markup).not.toContain('选择文件')
     expect(styleForDataAttribute(markup, 'data-world-publish-dialog', 'spacious'))
-      .toContain('background:var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))')
+      .toContain('background:var(--dsw-alias-bg-layer-3, #ffffff)')
     expect(styleForDataAttribute(markup, 'data-world-publish-editor', 'true'))
       .toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
     expect(markup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')

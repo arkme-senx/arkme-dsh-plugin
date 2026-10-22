@@ -728,9 +728,9 @@ describe('Arkme marketplace UI', () => {
       kind="disable" restarting={false} onLater={() => {}} onRestart={() => {}}
     />)
 
-    expect(ARKME_EXTENSION_RESTART_SURFACE).toContain('--dsw-specific-menu')
+    expect(ARKME_EXTENSION_RESTART_SURFACE).toContain('--dsw-alias-bg-layer-3')
     expect(ready).toContain('role="alertdialog"')
-    expect(ready).toContain('--dsw-specific-menu')
+    expect(ready).toContain('--dsw-alias-bg-layer-3')
     expect(ready).toContain('--dsw-alias-label-primary')
     expect(ready).toContain('--dsw-alias-label-secondary')
     expect(ready).toContain('--dsw-alias-button-primary-fill')

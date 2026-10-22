@@ -20,6 +20,7 @@ function numberValue(value: unknown): number {
 }
 
 export class LocalMessageActionCapabilityCodec extends EncryptedReferenceCodec implements MessageActionCapabilityCodec {
+  fingerprint(payload: unknown): string { return createHash('sha256').update(JSON.stringify(payload)).digest('hex') }
   constructor(uniqueCode: () => Promise<string>) {
     super(uniqueCode, cause => new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause }))
   }

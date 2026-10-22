@@ -2,7 +2,7 @@ export type HarnessDragMessage = { kind: 'begin' | 'move'; id: string; x: number
   | { kind: 'end'; id: string }
 export interface HarnessDragBridge { send(message: HarnessDragMessage): void }
 
-const SESSION_HEADER = '[data-slot="conversation.session.header"] > header'
+const SESSION_HEADER = '[data-slot="conversation.session.header"] > header, header[data-window-drag="true"]:has([data-conversation-header-leading]):has([data-slot="conversation.session.header"])'
 const OPEN_PANEL = '[data-sidebar-right-panel][data-sidebar-right-open]'
 const INTERACTIVE = 'button,a,input,textarea,select,label,summary,[tabindex],[aria-haspopup],'
   + '[contenteditable]:not([contenteditable="false"]),[draggable="true"],'

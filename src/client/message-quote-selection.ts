@@ -1,5 +1,5 @@
 import type { ArkmeTimelineItem } from '../types.js'
-import { arkmeEmojiById } from './arkme-emoji.js'
+import { arkmeEmojiUnicode } from '../arkme-emoji-text.js'
 import { MESSAGE_QUOTE_LIMIT, normalizeQuoteText, quoteCanonicalText, quoteSourceContent, quoteMatchesCanonical, type ArkmeMessageQuote } from '../message-quote.js'
 
 const excluded = 'button,input,textarea,select,style,script,[data-arkme-mention-read],[aria-hidden="true"],img:not([data-arkme-rich-emoji])'
@@ -21,7 +21,7 @@ export function quoteDomProjection(root: Node) {
     const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node as ChildNode) : 0
     const before = { node: parent, offset: index }, after = { node: parent, offset: index + 1 }
     if (el?.matches('img[data-arkme-rich-emoji]')) {
-      add(arkmeEmojiById[el.getAttribute('data-arkme-rich-emoji') ?? '']?.unicode ?? '', before, after); return
+      add(arkmeEmojiUnicode(el.getAttribute('data-arkme-rich-emoji') ?? ''), before, after); return
     }
     if (el?.tagName === 'BR') { add(' ', before, after); return }
     const block = !!el && blocks.has(el.tagName)

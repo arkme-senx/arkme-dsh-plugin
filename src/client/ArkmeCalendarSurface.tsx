@@ -283,7 +283,26 @@ interface ScopedResource<T> {
   value?: T
 }
 
-type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+type CalendarMonthReader = (query: { startDate: string; endDate: string; timezone: string }, signal: AbortSignal) => Promise<{ days: ArkmeCalendarBucketDay[] }>
+type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { loadMonth?: CalendarMonthReader; value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+
+/** A source adapter owns month reads; custom calendars never invoke record APIs. */
+function useIndexedMonth(load: CalendarMonthReader | undefined, startDate: string, endDate: string, timezone: string, enabled: boolean, account?: string) {
+  const [attempt, setAttempt] = useState(0)
+  const [resource, setResource] = useState<{ value?: { days: ArkmeCalendarBucketDay[] }; loading: boolean; error: string }>({ loading: false, error: '' })
+  useEffect(() => {
+    if (!load) return
+    setResource({ loading: false, error: '' })
+    if (!enabled) return
+    const controller = new AbortController()
+    setResource({ loading: true, error: '' })
+    void load({ startDate, endDate, timezone }, controller.signal).then(value => {
+      if (!controller.signal.aborted) setResource({ value, loading: false, error: '' })
+    }).catch(error => { if (!controller.signal.aborted) setResource({ loading: false, error: errorMessage(error) }) })
+    return () => controller.abort()
+  }, [load, startDate, endDate, timezone, enabled, account, attempt])
+  return { ...resource, retry: () => setAttempt(value => value + 1) }
+}
 
 /** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
 function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
@@ -298,7 +317,7 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
   const [visible, setVisible] = useState(initial)
   useEffect(() => { if (initial) setVisible(true) }, [initial])
   useEffect(() => {
-    if (index || visible || !element.current || typeof IntersectionObserver === 'undefined') return
+    if ((index && !index.loadMonth) || visible || !element.current || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect() }
     }, { root: scrollRoot.current, rootMargin: '60px' })
@@ -307,7 +326,8 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
   }, [index, visible, scrollRoot])
   const loaded = useCalendarMonth({ scopeKey: scopeKey ?? sourceRef ?? 'global', ...(sourceRef ? { sourceRef } : {}),
     startDate: dateKey(monthStart(month)), endDate: dateKey(monthEnd(month)), timezone }, !index && visible, accountScope)
-  const resource = index ?? loaded
+  const indexed = useIndexedMonth(index?.loadMonth, dateKey(monthStart(month)), dateKey(monthEnd(month)), timezone, visible, accountScope)
+  const resource = index?.loadMonth ? indexed : index ?? loaded
   const byDay = new Map(resource.value?.days.map(day => [day.bucketDate, day]))
   const known = resource.value !== undefined
   return <section ref={element} aria-label={monthLabel(month)} data-calendar-month={dateKey(month).slice(0, 7)} style={{ paddingBottom: 12 }}>
@@ -335,7 +355,7 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
         today={sameDay(date, today)} showCountLabel unknown={!known} incomplete={index?.incomplete}
         onClick={() => onSelect(date, day)} />
     })}</div>
-    {!index && (resource.loading || resource.error) && <div style={styles.status} role={resource.error ? 'alert' : 'status'}>
+    {(!index || index.loadMonth) && (resource.loading || resource.error) && <div style={styles.status} role={resource.error ? 'alert' : 'status'}>
       {resource.error || (known ? tr("正在更新…") : tr("正在加载…"))}
       {resource.error && <button type="button" style={styles.retryButton} data-arkme-feedback="neutral" onClick={resource.retry}>{tr("重试")}</button>}
     </div>}

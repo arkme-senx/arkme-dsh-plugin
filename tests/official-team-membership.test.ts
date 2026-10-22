@@ -90,3 +90,15 @@ it('rechecks visible pages periodically without needing a conversation or user c
   expect(readOfficialTeamMembership('a').value?.isMember).toBe(false)
   expect(call).toHaveBeenCalledTimes(2)
 })
+
+it('receipt-only changes do not reload official membership or disturb its confirmed shortcut', async () => {
+  call.mockResolvedValue(value(true));stops.push(startOfficialTeamMembership('a'))
+  await vi.waitFor(()=>expect(readOfficialTeamMembership('a').state).toBe('ready'))
+  const known=readOfficialTeamMembership('a');call.mockClear()
+  invalidateTeamMessages('a',true)
+  await Promise.resolve()
+  expect(call).not.toHaveBeenCalled()
+  expect(readOfficialTeamMembership('a')).toBe(known)
+  invalidateTeamMessages('a')
+  await vi.waitFor(()=>expect(call).toHaveBeenCalledOnce())
+})

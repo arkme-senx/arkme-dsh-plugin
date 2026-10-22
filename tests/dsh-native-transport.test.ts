@@ -1,18 +1,55 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { DshNativeTransport } from '../src/dsh-remote/native-transport.js'
 import { parseDshRemoteRequest } from '../src/dsh-remote/protocol-v1.js'
+import { Context } from '@deepseek-ai/cordis'
+import { Peer, type PeerScope } from '@deepseek-ai/dsh-client-connection'
 
-const cleanups: Array<() => void> = []
-afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.useRealTimers() })
+const cleanups: Array<() => void | Promise<void>> = []
+afterEach(async () => { await Promise.all(cleanups.splice(0).map(fn => fn())); vi.useRealTimers() })
 function fixture(frames: unknown[] = [], result: unknown = { ok: true, value: { accepted: true } }) {
+  const peer = new Peer(new Context(), { principal: { kind: 'owner' } })
   const controller = new AbortController()
   const owned = vi.fn(async (ids: string[]) => new Set(ids.filter(id => id === 'mine')))
-  const close = vi.fn(), fetch = vi.fn(async () => Response.json({ result }))
-  const open = vi.fn(async (_endpoint, _payload, signal: AbortSignal) => ({ async *[Symbol.asyncIterator]() { try { yield* frames; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) }) } finally { close() } } }))
-  const relay = new DshNativeTransport({ invoke: vi.fn(), stream: vi.fn(), wireStream: { open } }, { createSharedFetchHandler: () => ({ fetch }) })
-  cleanups.push(() => relay.close())
-  return { relay, scope: { accountId: '3016', createSessionId: 'new-session', claim: vi.fn(async () => {}), signal: controller.signal, owned }, controller, fetch, open, close }
+  const close = vi.fn(), fetch = vi.fn(async (_request: Request, caller: PeerScope) => {
+    expect(caller).toBe(peer); caller.signal.throwIfAborted(); return Response.json({ result })
+  })
+  const open = vi.fn(async (_endpoint, _payload, uplink: AsyncIterable<unknown>, caller: PeerScope, signal: AbortSignal) => {
+    expect(caller).toBe(peer); caller.signal.throwIfAborted()
+    expect(await uplink[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined })
+    return { async *[Symbol.asyncIterator]() { try { yield* frames; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) }) } finally { close() } } }
+  })
+  const relay = new DshNativeTransport({ invoke: vi.fn(), stream: vi.fn(), wireStream: { open } }, { createSharedFetchHandler: () => ({ fetch }) }, peer)
+  cleanups.push(async () => { relay.close(); await peer.dispose() })
+  return { relay, peer, scope: { accountId: '3016', createSessionId: 'new-session', claim: vi.fn(async () => {}), signal: controller.signal, owned }, controller, fetch, open, close }
 }
+it('filters the reminder catalogue by account ownership, including inactive records', async () => {
+  const mine = { sessionId: 'mine', id: 'reminder', status: 'inactive', prompt: 'keep exact' }
+  const f = fixture([], { ok: true, value: [mine, { sessionId: 'foreign', id: 'private' }, { id: 'unbound' }] })
+  expect(await f.relay.request({ mode: 'call', endpoint: 'schedule/catalog', payload: { args: {} } }, f.scope))
+    .toEqual({ ok: true, value: [mine] })
+})
+it('allows reminder operations only on an owned session with a matching update snapshot', async () => {
+  const f = fixture()
+  for (const endpoint of ['schedule/list', 'schedule/history', 'schedule/delete', 'schedule/update']) {
+    await expect(f.relay.request({ mode: 'call', endpoint, payload: { args: { request: { sessionId: 'foreign', id: 'task' } } } }, f.scope))
+      .rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
+    const request = { sessionId: 'mine', id: 'task', expected: { id: 'task', kind: 'at', title: 'Reminder', prompt: 'Keep exact', scheduledAt: '2027-01-01T00:00:00Z' } }
+    await expect(f.relay.request({ mode: 'call', endpoint, payload: { args: { request } } }, f.scope)).resolves.toMatchObject({ ok: true })
+  }
+  expect(f.fetch).toHaveBeenCalledTimes(4)
+  for (const expected of [{ id: 'other' }, {}]) {
+    await expect(f.relay.request({ mode: 'call', endpoint: 'schedule/update', payload: { args: { request: { sessionId: 'mine', id: 'task', expected } } } }, f.scope))
+      .rejects.toMatchObject({ code: 'REMOTE_REQUEST_INVALID' })
+  }
+  await expect(f.relay.request({ mode: 'call', endpoint: 'schedule/create', payload: { args: { request: { sessionId: 'mine' } } } }, f.scope))
+    .rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED' })
+  expect(f.fetch).toHaveBeenCalledTimes(4)
+})
+it('passes only a payload-free reminder invalidation through the native event stream', async () => {
+  const f = fixture([{ type: 'emit', event: 'schedule/changed', args: ['private payload'] }, { type: 'emit', event: 'private/event', args: ['private'] }])
+  expect(await f.relay.request({ mode: 'pull', streamRef: 'reminder-events', endpoint: '$events', payload: { args: {} } }, f.scope))
+    .toEqual({ items: [{ type: 'emit', event: 'schedule/changed', args: [] }] })
+})
 it('forwards native journal snapshots unchanged and cancels the actual source iterator', async () => {
   const snapshot = { type: 'snapshot', cursor: 5, header: { id: 'mine' }, records: [{ event: { type: 'assistant/message', seq: 5, surfaceOp: 'append', data: { content: [{ type: 'text', text: '原生正文' }] } } }], projections: { asOfSeq: 5, values: { unknownFutureProjection: true } } }
   const f = fixture([snapshot])

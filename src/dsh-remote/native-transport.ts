@@ -1,6 +1,7 @@
 import { readFiveTurns, type NativeHistoryPage } from './native-history.js'
 import { randomUUID } from 'node:crypto'
-import type { DshConnectionLike, DshGatewayLike } from './gateway-api.js'
+import { EMPTY_DSH_UPLINK, type DshConnectionLike, type DshGatewayLike } from './gateway-api.js'
+import type { PeerScope } from '@deepseek-ai/dsh-client-connection'
 import { DshRemoteError } from './errors.js'
 
 type RecordValue = Record<string, unknown>
@@ -31,7 +32,7 @@ type Lease = {
 export class DshNativeTransport {
   private readonly streams = new Map<string, Lease>()
   private readonly opening = new Set<string>()
-  constructor(private readonly gateway: DshGatewayLike, private readonly connection: DshConnectionLike) {}
+  constructor(private readonly gateway: DshGatewayLike, private readonly connection: DshConnectionLike, private readonly peer: PeerScope) {}
 
   close(): void { for (const id of this.streams.keys()) this.release(id) }
 
@@ -51,6 +52,22 @@ export class DshNativeTransport {
     const args = nativeRecord(nativeRecord(payload).args)
     if (stream && ['$events', 'session/control', 'workspace/follow'].includes(endpoint)) return
     if (!stream && ['session/create', 'session/list', 'session/modelCatalog', 'session/canOpenWorkspacePath', 'settings/describe', 'agentPresets/list'].includes(endpoint)) return
+    // The native catalogue is Host-wide. Its response is account-filtered below;
+    // mutations and delivery history additionally require an owned Session.
+    if (!stream && endpoint === 'schedule/catalog') return
+    if (!stream && /^schedule\/(list|history|update|delete)$/.test(endpoint)) {
+      const request = nativeRecord(args.request)
+      await this.requireOwned(scope, request.sessionId)
+      if (endpoint === 'schedule/update') {
+        const expected = nativeRecord(request.expected)
+        // The native timing snapshot has no Session field; the request binding
+        // above and the schedule service itself enforce Session ownership.
+        if (expected.id !== request.id) {
+          throw new DshRemoteError('REMOTE_REQUEST_INVALID', '提醒快照与任务不一致')
+        }
+      }
+      return
+    }
     if (endpoint === '$events/result' && !stream) {
       const lease = [...this.streams.values()].find(item => item.accountId === scope.accountId && item.clientId === args.clientId && item.events.has(String(args.eventId)))
       if (!lease) throw new DshRemoteError('REMOTE_NOT_FOUND', '交互已经结束')
@@ -80,6 +97,11 @@ export class DshNativeTransport {
   }
 
   private async filter(endpoint: string, value: unknown, scope: Scope, lease?: Lease): Promise<unknown | undefined> {
+    if (endpoint === 'schedule/catalog') {
+      const records = list(value)
+      const owned = await scope.owned(records.map(item => nativeRecord(item).sessionId).filter((id): id is string => typeof id === 'string'))
+      return records.filter(item => owned.has(String(nativeRecord(item).sessionId)))
+    }
     const frame = nativeRecord(value)
     const ids = async (values: unknown[]) => await scope.owned(values.filter((v): v is string => typeof v === 'string'))
     if (endpoint === 'session/list') {
@@ -116,6 +138,8 @@ export class DshNativeTransport {
       }
       if (frame.type === 'emit' && typeof frame.event === 'string') {
         if (frame.event === 'llm/adapters-updated') return frame
+        // This is a payload-free invalidation, never another account's task data.
+        if (frame.event === 'schedule/changed') return { type: 'emit', event: 'schedule/changed', args: [] }
         if (frame.event.startsWith('api-session/')) {
           const first = list(frame.args)[0], id = frame.event === 'api-session/added' ? nativeRecord(first).sessionId : first
           return (await ids([id])).has(String(id)) ? frame : undefined
@@ -131,7 +155,7 @@ export class DshNativeTransport {
     const response = await this.connection.createSharedFetchHandler('/api').fetch(new Request(`http://localhost/api/${endpoint}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: endpoint, payload }),
-    }))
+    }), this.peer)
     const envelope = nativeRecord(await response.json())
     return envelope.result
   }
@@ -168,7 +192,7 @@ export class DshNativeTransport {
       }
       const result = nativeRecord(await this.call(endpoint, body.payload, scope.signal))
       if (result.ok === true && endpoint === 'settings/describe') result.value = { ...nativeRecord(result.value), writable: false, hasDocument: false }
-      if (result.ok === true && ['session/list', 'workspace/archiveSession'].includes(endpoint)) result.value = await this.filter(endpoint, result.value, scope)
+      if (result.ok === true && ['session/list', 'workspace/archiveSession', 'schedule/catalog'].includes(endpoint)) result.value = await this.filter(endpoint, result.value, scope)
       scope.signal.throwIfAborted()
       return result
     }
@@ -184,7 +208,7 @@ export class DshNativeTransport {
       const controller = new AbortController(), signal = AbortSignal.any([controller.signal, scope.signal])
       const historyRequest = endpoint === 'session/follow' ? nativeRecord(nativeRecord(body.payload).args).request as RecordValue : undefined
       const payload = historyRequest ? { args: { request: { ...historyRequest, maxMessages: 10 } } } : body.payload
-      const stream = await this.gateway.wireStream.open(endpoint, payload, signal)
+      const stream = await this.gateway.wireStream.open(endpoint, payload, EMPTY_DSH_UPLINK, this.peer, signal)
       lease = { accountId: scope.accountId, endpoint, controller, iterator: stream[Symbol.asyncIterator](), busy: false, events: new Set(), ...(historyRequest ? { historyRequest, afterSeq: body.afterSeq as number | undefined } : {}), timer: setTimeout(() => this.release(id), 45_000) }
       lease.timer.unref(); this.streams.set(id, lease)
       signal.addEventListener('abort', () => this.release(id), { once: true })

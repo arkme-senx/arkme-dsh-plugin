@@ -67,7 +67,7 @@ beforeEach(async () => {
   history = [item(1, 'user', '我的问题需要保留'), item(2, 'assistant', '这是 **重点结论**，以及[链接](https://example.com)。')]
   vi.mocked(callArkme).mockImplementation(async (method, params) => {
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [] } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 2 } as never
     if (method === 'user.profile') return { profile: {} } as never

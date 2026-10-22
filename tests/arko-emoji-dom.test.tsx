@@ -78,7 +78,7 @@ beforeEach(() => {
 
     if (method === 'arko.ask') { const result=await ask(input);pending.delete(String(input?.clientTurnUid));return result }
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [{ routeKey: 'model-a', displayName: 'Model A', selected: true }, { routeKey: 'model-b', displayName: 'Model B', selected: false }], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never
@@ -901,4 +901,24 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).toHaveBeenCalledTimes(2)
     expect(ask).toHaveBeenLastCalledWith(expect.objectContaining({ text: emoji.token }))
   })
+})
+
+it('keeps emoji insertion selection when native focus restores an older caret', async () => {
+  await mount()
+  const view = documentEditor().view
+  const focus = view.dom.focus.bind(view.dom)
+  // Native focus can restore the pre-picker DOM caret. The editor's document
+  // selection must remain authoritative after the insertion transaction.
+  vi.spyOn(view.dom, 'focus').mockImplementation(options => {
+    focus(options)
+    const range = document.createRange()
+    range.setStart(view.dom.firstChild!, 0); range.collapse(true)
+    const selection = document.getSelection()!
+    selection.removeAllRanges(); selection.addRange(range)
+  })
+  await chooseEmoji()
+  const native = document.getSelection()!
+  expect({ model: view.state.selection.head, native: view.posAtDOM(native.anchorNode!, native.anchorOffset) }).toEqual({ model: 2, native: 2 })
+  await act(async () => { editor().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true })) })
+  expect(serialized()).toBe(`${emoji.token}\n`)
 })
