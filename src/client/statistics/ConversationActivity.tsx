@@ -94,8 +94,8 @@ function ActivityMessages({ query, resultId, selection, source, onBack, onClose 
     if (!message.sourceRef) return
     sourceController.current?.abort(); const c = new AbortController(); sourceController.current = c; setOpening(message.key); setSourceError('')
     try {
-      const target = await withArkmeReadDeadline(signal => callArkme<{ messageUid: string; sendAtMillis: number }>('chat.activity.source', { ...query, resultId, ...selection, messageSourceRef: message.sourceRef }, signal), c.signal)
-      if (!c.signal.aborted) { onClose(); arkmeUi.showConversationTarget(source, target.messageUid, target.sendAtMillis) }
+      const target = await withArkmeReadDeadline(signal => callArkme<{ messageUid: string; sendAtMillis: number; recordOwnerUserId: import('../../record-owner-id.js').RecordOwnerId }>('chat.activity.source', { ...query, resultId, ...selection, messageSourceRef: message.sourceRef }, signal), c.signal)
+      if (!c.signal.aborted) { onClose(); arkmeUi.showConversationTarget(source, target.messageUid, target.sendAtMillis, target.recordOwnerUserId) }
     } catch (e) { if (!c.signal.aborted) setSourceError(e instanceof Error ? e.message : tr('原消息不可查看')) }
     finally { if (!c.signal.aborted) setOpening('') }
   }

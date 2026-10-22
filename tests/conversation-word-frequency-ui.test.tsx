@@ -75,14 +75,14 @@ it('selects departed historical group senders and can return to all or self', as
 })
 it('opens exact word messages and navigates with a freshly authorized source', async () => {
   const close = vi.fn()
-  mocks.call.mockImplementation(async op => op.endsWith('.state') ? state : op.endsWith('.source') ? { messageUid: 'm1', sendAtMillis: 100 } : { items: [{ key: 'm1', senderName: '周鹏', text: '工作工作', count: 2, sentAt: 100, basis: 'text', sourceRef: 'opaque' }], total: 1, nextCursor: null })
+  mocks.call.mockImplementation(async op => op.endsWith('.state') ? state : op.endsWith('.source') ? { messageUid: 'm1', sendAtMillis: 100, recordOwnerUserId: 1001 } : { items: [{ key: 'm1', senderName: '周鹏', text: '工作工作', count: 2, sentAt: 100, basis: 'text', sourceRef: 'opaque' }], total: 1, nextCursor: null })
   await render({ onClose: close }); await click('工作，6 次')
   expect(mocks.call).toHaveBeenCalledWith('chat.word-frequency.messages', expect.objectContaining({ resultId: 'r1', wordKey: 'w1', sender: 'all' }), expect.any(AbortSignal))
   expect(host.textContent).toContain('工作工作')
   await click('定位消息')
   expect(mocks.call).toHaveBeenLastCalledWith('chat.word-frequency.source', expect.objectContaining({ messageSourceRef: 'opaque', resultId: 'r1', sourceRef: 'signed' }), expect.any(AbortSignal))
   expect(close).toHaveBeenCalledOnce()
-  expect(mocks.locate).toHaveBeenCalledWith(source, 'm1', 100)
+  expect(mocks.locate).toHaveBeenCalledWith(source, 'm1', 100, 1001)
 })
 it('preserves source errors without erroneously retrying message pagination', async () => {
   mocks.call.mockImplementation(async op => { if (op.endsWith('.source')) throw new Error('原消息不可查看'); return op.endsWith('.state') ? state : { items: [{ key: 'm', senderName: '我', text: '工作', count: 1, sentAt: 100, basis: 'text', sourceRef: 'x' }], total: 1, nextCursor: null } })

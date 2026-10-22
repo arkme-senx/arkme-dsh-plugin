@@ -1,3 +1,4 @@
+import { recordOwnerId } from '../record-owner-id.js'
 import { conversationWordsEnvelope, parseConversationWordsQuery, parseConversationWordParticipants, wordObject, wordText } from '../conversation-word-frequency.js'
 import { activityMessageMatches, assertActivityEnvelope, parseActivityMessages, parseActivitySelection, parseConversationActivity, unavailableConversationActivity } from '../conversation-activity.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -58,9 +59,10 @@ export class ConversationActivityService {
     const c = await this.context(input, signal), v = wordObject(input), selection = parseActivitySelection(v), resultId = wordText(v.resultId), sourceRef = wordText(v.messageSourceRef, 4096)
     const raw = wordObject(await this.request('source', { ...c.body, result_id: resultId, source_ref: sourceRef, ...selection }, c.session, signal)); await c.guard()
     assertActivityEnvelope(raw, c.q, c.source.ownerRef)
-    if (raw.available !== true || raw.result_id !== resultId || raw.source_ref !== sourceRef || raw.hour !== selection.hour || raw.weekday !== selection.weekday
+    const owner = recordOwnerId(raw.record_owner_user_id)
+    if (owner === 0 || raw.available !== true || raw.result_id !== resultId || raw.source_ref !== sourceRef || raw.hour !== selection.hour || raw.weekday !== selection.weekday
       || typeof raw.send_at !== 'number' || !activityMessageMatches(raw.send_at, c.q, selection))
       throw new ArkmePluginError('chat-activity-source-unavailable', '原消息已变化或不可查看，请刷新统计后重试', false, 409)
-    return { messageUid: wordText(raw.message_uid), sendAtMillis: raw.send_at }
+    return { messageUid: wordText(raw.message_uid), sendAtMillis: raw.send_at, recordOwnerUserId: owner }
   }
 }

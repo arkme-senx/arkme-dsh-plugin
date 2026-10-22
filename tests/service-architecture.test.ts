@@ -13,7 +13,7 @@ const expectedPublicMethods = [
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
   'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
-  'statisticsRead',
+  'statisticsRead', 'personalKeywordsRead', 'personalKeywordRecords', 'analyticsRead',
   'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
   'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
   'automaticCapabilities', 'updateAutomaticCapability',
@@ -119,6 +119,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
   'conversation-activity-service.ts',
   'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',

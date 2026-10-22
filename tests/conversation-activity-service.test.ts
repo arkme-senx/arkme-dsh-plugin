@@ -79,9 +79,9 @@ describe('activity owner adapter', () => {
   })
   it('revalidates sources against the correct bucket and current visibility', async () => {
     const f = fixture(), input = { ...q, resultId: 'a1', messageSourceRef: 'opaque', hour: 9, weekday: 2 }
-    const source = { ...env, result_id: 'a1', source_ref: 'opaque', hour: 9, weekday: 2, available: true, message_uid: 'm', send_at: result.fromAt }
+    const source = { ...env, result_id: 'a1', source_ref: 'opaque', hour: 9, weekday: 2, available: true, record_owner_user_id: '1001', message_uid: 'm', send_at: result.fromAt }
     f.post.mockResolvedValue(source)
-    expect(await f.service.source(input)).toEqual({ messageUid: 'm', sendAtMillis: result.fromAt })
+    expect(await f.service.source(input)).toEqual({ messageUid: 'm', sendAtMillis: result.fromAt, recordOwnerUserId: 1001 })
     for (const patch of [{ available: false }, { source_ref: 'other' }, { send_at: result.toAt }, { hour: 20 }]) {
       f.post.mockResolvedValueOnce({ ...source, ...patch }); await expect(f.service.source(input)).rejects.toThrow('已变化')
     }

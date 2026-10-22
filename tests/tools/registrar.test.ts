@@ -295,6 +295,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_self_nickname_set',
       'arkme_common_groups',
       'arkme_source_read',
+      'arkme_analytics_read', 'arkme_conversation_words_generate',
       'arkme_copy_link_extend',
       'arkme_source_members',
       'arkme_source_members_page',

@@ -45,14 +45,14 @@ it('shows hourly counts/percentages on hover and a full 7x24 weekly heatmap', as
 })
 it('retains textless media in bucket details and navigates to the original message', async () => {
   const close = vi.fn()
-  mocks.call.mockImplementation(async op => op === 'chat.activity.read' ? state : op === 'chat.activity.messages' ? { items: [{ key: 'm1', sourceRef: 'opaque', senderName: '周鹏', preview: '', sentAt: result.fromAt, kind: 'image' }], total: 1, nextCursor: null } : op === 'chat.activity.source' ? { messageUid: 'm1', sendAtMillis: result.fromAt } : wordsMissing)
+  mocks.call.mockImplementation(async op => op === 'chat.activity.read' ? state : op === 'chat.activity.messages' ? { items: [{ key: 'm1', sourceRef: 'opaque', senderName: '周鹏', preview: '', sentAt: result.fromAt, kind: 'image' }], total: 1, nextCursor: null } : op === 'chat.activity.source' ? { messageUid: 'm1', sendAtMillis: result.fromAt, recordOwnerUserId: 1001 } : wordsMissing)
   await open({ onClose: close }); await click('一周内')
   await act(async () => { host.querySelector<HTMLButtonElement>('.ca-cell:not(:disabled)')!.click(); await tick() })
   expect(mocks.call).toHaveBeenLastCalledWith('chat.activity.messages', expect.objectContaining({ resultId: 'a1', hour: 9, weekday: 2 }), expect.any(AbortSignal))
   expect(host.textContent).toContain('[图片]')
   await click('定位消息')
   expect(mocks.call).toHaveBeenLastCalledWith('chat.activity.source', expect.objectContaining({ resultId: 'a1', hour: 9, weekday: 2, messageSourceRef: 'opaque' }), expect.any(AbortSignal))
-  expect(mocks.locate).toHaveBeenCalledWith(source, 'm1', result.fromAt)
+  expect(mocks.locate).toHaveBeenCalledWith(source, 'm1', result.fromAt, 1001)
   expect(close).toHaveBeenCalledOnce()
 })
 it('supports historical group senders through the activity owner and retains enabled picker on same-tab click', async () => {

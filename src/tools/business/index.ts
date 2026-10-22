@@ -1,3 +1,4 @@
+import { analyticsToolModules } from './conversation/analytics.js'
 import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
 import { messageSyncToolModules } from './conversation/message-sync.js'
@@ -99,6 +100,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
+  ...analyticsToolModules,
   copyLinkExtendToolModule,
   sourceMembersToolModule,
   ...memberPageToolModules,
