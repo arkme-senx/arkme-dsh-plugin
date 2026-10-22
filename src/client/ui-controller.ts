@@ -56,8 +56,6 @@ export interface ArkmeUiState {
   exploreModule?: ExploreModule
   codexTarget?: CodexConversationTarget
   productMode?: 'conversations' | 'contacts'
-  /** Compact navigation only; returning to the directory never clears the active conversation. */
-  conversationDirectoryOpen?: boolean
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
   teamIntent?: TeamMessageIntent
@@ -166,7 +164,7 @@ export class ArkmeUiController {
     this.lastConversationDestination = { kind: 'send_to_self' }
     const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget,
       calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'source' })
+    this.publish({ ...rest, mode: 'source' })
   }
 
   resumeSendToSelf(): void {
@@ -424,7 +422,6 @@ export class ArkmeUiController {
   }
 
   showTeamConversation(intent: TeamMessageIntent): void {
-    const showDirectory = intent.kind === 'team' || (intent.kind === 'inbox' && intent.side === 'team')
     this.leaveContacts()
     let folder: ArkmeUiState['teamDirectory']
     if (intent.kind === 'team') {
@@ -439,7 +436,7 @@ export class ArkmeUiController {
     } else if (intent.kind === 'inbox' && intent.side === 'team') folder = {}
     this.lastConversationDestination = { kind: 'team', intent }
     const { selectedSource: _source, selectedBot: _bot, calendarOpen: _calendar, productMode: _productMode, teamDirectory: _folder, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: showDirectory, mode: 'team', teamIntent: intent, ...(folder ? {teamDirectory:folder} : {}) })
+    this.publish({ ...rest, mode: 'team', teamIntent: intent, ...(folder ? {teamDirectory:folder} : {}) })
   }
 
   resolveTeamDirectory(teamRef: string, channel: TeamChannel): void {
@@ -447,8 +444,7 @@ export class ArkmeUiController {
     const remembered = this.lastTeamConversations.get(channel.jotmoId)
     const intent = this.state.teamIntent
     if (remembered && intent?.kind === 'team' && intent.teamRef === teamRef) {
-      this.publish({...this.state, teamIntent:{kind:'conversation',conversation:{...remembered,channel}},
-        teamDirectory:{teamRef:channel.teamRef,channel}})
+      this.showTeamConversation({kind:'conversation',conversation:{...remembered,channel}})
     } else this.publish({...this.state,teamDirectory:{teamRef:channel.teamRef,channel}})
   }
 
@@ -461,10 +457,6 @@ export class ArkmeUiController {
   }
   readTeamDirectoryScroll(key: string): number { return this.teamDirectoryScroll.get(key) ?? 0 }
   rememberTeamDirectoryScroll(key: string, top: number): void { this.teamDirectoryScroll.set(key, top) }
-
-  showConversationDirectory(): void {
-    this.publish({ ...this.state, conversationDirectoryOpen: true })
-  }
 
   showConversations(): void {
     this.leaveContacts()
@@ -487,7 +479,7 @@ export class ArkmeUiController {
       extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction,
       extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter,
       webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'notifications' })
+    this.publish({ ...rest, mode: 'notifications' })
   }
 
   locateNextUnreadConversation(): void {
@@ -510,14 +502,14 @@ export class ArkmeUiController {
     this.leaveContacts()
     this.lastConversationDestination = { kind: 'arko' }
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'arko' })
+    this.publish({ ...rest, mode: 'arko' })
   }
 
   showHarness(): void {
     this.leaveContacts()
     this.lastConversationDestination = { kind: 'harness' }
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, webLoginDialogOpen: _webLoginDialogOpen, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'harness' })
+    this.publish({ ...rest, mode: 'harness' })
   }
 
   showCodex(target?: CodexConversationTarget | null): void {
@@ -526,7 +518,7 @@ export class ArkmeUiController {
     const { selectedSource: _source, calendarOpen: _calendar, productMode: _product, ...rest } = this.state
     const { codexTarget: previousTarget, ...withoutTarget } = rest
     const nextTarget = target === undefined ? previousTarget : target
-    this.publish({ ...withoutTarget, conversationDirectoryOpen: false, mode: 'codex', ...(nextTarget ? { codexTarget: nextTarget } : {}) })
+    this.publish({ ...withoutTarget, mode: 'codex', ...(nextTarget ? { codexTarget: nextTarget } : {}) })
   }
 
   openExtensionShare(shareRef: string, action?: ArkmeExtensionShareAction): void {
@@ -551,7 +543,7 @@ export class ArkmeUiController {
     this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'source', selectedSource: source })
+    this.publish({ ...rest, mode: 'source', selectedSource: source })
   }
 
   updateSelectedSourceProjection(source: ArkmeSourceItem): boolean {
@@ -583,7 +575,7 @@ export class ArkmeUiController {
       ...rest
     } = this.state
     this.publish({
-      ...rest, conversationDirectoryOpen: false,
+      ...rest,
       mode: 'source',
       selectedSource: source,
       notificationActivationRevision: ++this.notificationActivationRevision,
@@ -594,7 +586,7 @@ export class ArkmeUiController {
     this.leaveContacts()
     this.lastConversationDestination = { kind: 'bot', bot }
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, conversationDirectoryOpen: false, mode: 'bot', selectedBot: bot })
+    this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
   showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false, contextRef?: string): void {
@@ -605,7 +597,7 @@ export class ArkmeUiController {
     this.lastConversationDestination = { kind: 'source', source }
     const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({
-      ...rest, conversationDirectoryOpen: false,
+      ...rest,
       mode: 'source',
       selectedSource: source,
       conversationTarget: {
@@ -630,10 +622,6 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
-    if (next.conversationDirectoryOpen !== true) {
-      const { conversationDirectoryOpen: _directoryOpen, ...rest } = next
-      next = rest
-    }
     if (next.mode !== 'team') { const { teamIntent: _intent, teamDirectory: _directory, ...rest } = next; next = rest }
     if (next.mode !== 'world') {
       const { worldInitialScope: _scope, worldNavigationRevision: _revision, ...rest } = next
@@ -648,7 +636,6 @@ export class ArkmeUiController {
       && next.teamIntent === this.state.teamIntent
       && next.teamDirectory === this.state.teamDirectory
       && next.productMode === this.state.productMode
-      && next.conversationDirectoryOpen === this.state.conversationDirectoryOpen
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
       && next.conversationUnreadJumpRevision === this.state.conversationUnreadJumpRevision

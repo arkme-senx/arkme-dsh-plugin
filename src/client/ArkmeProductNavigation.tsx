@@ -256,7 +256,7 @@ export function ArkmeProductNavigation({
     else if (id === 'explore') arkmeUi.showExplore('profile')
     else if (id === 'calendar') arkmeUi.showCalendar()
     else if (id === 'arrangements') arkmeUi.showArrangements()
-    else { arkmeUi.showConversations(); arkmeUi.showConversationDirectory() }
+    else arkmeUi.showConversations()
   }
 
   return <nav

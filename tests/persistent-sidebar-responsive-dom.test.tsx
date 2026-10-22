@@ -7,7 +7,10 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
 vi.mock('../src/client/ArkmeProductNavigation.js', () => ({ ArkmeProductNavigation: () => <nav /> }))
-vi.mock('../src/client/ArkmeVirtualWorkspace.js', () => ({ ArkmeNavigation: () => <div>Conversation directory</div> }))
+vi.mock('../src/client/ArkmeVirtualWorkspace.js', () => ({
+  ArkmeNavigation: ({ compactDirectory }: { compactDirectory: boolean }) =>
+    <div data-arkme-directory-compact={String(compactDirectory)}>Conversation directory</div>,
+}))
 vi.mock('../src/client/redesign/contacts/ContactDirectorySurface.js', () => ({ ContactDirectorySurface: () => null }))
 vi.mock('../src/client/api.js', () => ({ callArkme: async () => ({ items: [] }) }))
 let host: HTMLDivElement, root: Root, width: number
@@ -48,17 +51,19 @@ it('uses the real container width and restores the saved width without persistin
   await resize(1023)
   expect(sidebar().dataset.arkmeDirectoryWidth).toBe('364')
   await resize(800)
-  expect(sidebar().dataset.arkmeDirectoryWidth).toBe('256')
+  expect(sidebar().dataset.arkmeDirectoryWidth).toBe('294')
   expect(window.localStorage.getItem(key)).toBe('364')
-  await resize(700)
-  expect(sidebar().dataset.arkmeConversationMobileView).toBe('content')
-  expect(host.querySelector('[role="separator"]')).toBeNull()
-  await act(async () => arkmeUi.showConversationDirectory())
-  expect(sidebar().dataset.arkmeConversationMobileView).toBe('directory')
-  await act(async () => arkmeUi.recordChanged())
-  expect(sidebar().dataset.arkmeConversationMobileView).toBe('directory')
-  await act(async () => arkmeUi.showArko())
-  expect(sidebar().dataset.arkmeConversationMobileView).toBe('content')
+  for (const [frameWidth, directoryWidth] of [[700, 254], [500, 174], [350, 120]]) {
+    await resize(frameWidth)
+    expect(sidebar().dataset.arkmeDirectoryWidth).toBe(String(directoryWidth))
+    expect(sidebar().dataset.arkmeDirectoryVisible).toBe('true')
+    expect(sidebar().dataset.arkmeConversationMobileView).toBeUndefined()
+    expect(host.querySelector('[role="separator"]')).not.toBeNull()
+    expect(window.localStorage.getItem(key)).toBe('364')
+    await act(async () => arkmeUi.recordChanged())
+    expect(sidebar().dataset.arkmeDirectoryWidth).toBe(String(directoryWidth))
+  }
+  expect(host.querySelector('[data-arkme-directory-compact="true"]')).not.toBeNull()
   await resize(1200)
   expect(sidebar().dataset.arkmeConversationMobileView).toBeUndefined()
   expect(sidebar().dataset.arkmeDirectoryWidth).toBe('364')
@@ -69,7 +74,7 @@ it('persists deliberate keyboard resizing even below the host collapse breakpoin
   await act(async () => separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
   expect(window.localStorage.getItem(key)).toBe('348')
   await resize(800)
-  expect(sidebar().dataset.arkmeDirectoryWidth).toBe('256')
+  expect(sidebar().dataset.arkmeDirectoryWidth).toBe('294')
   await resize(1100)
   expect(sidebar().dataset.arkmeDirectoryWidth).toBe('348')
 })

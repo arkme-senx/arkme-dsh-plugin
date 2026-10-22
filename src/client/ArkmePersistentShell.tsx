@@ -76,11 +76,9 @@ const styles: Record<string, CSSProperties> = {
 // Keep directory width independent of the navigation rail and its 4px divider budget.
 const ARKME_PERSISTENT_DIVIDER_BUDGET = 4
 const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = ARKME_NAVIGATION_WIDTH + ARKME_PERSISTENT_DIVIDER_BUDGET
-const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 240
+const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 120
 const ARKME_PERSISTENT_DIRECTORY_DEFAULT_WIDTH = 300
-const ARKME_PERSISTENT_CHAT_MIN_WIDTH = 480
-export const ARKME_CONVERSATION_SINGLE_PANE_WIDTH = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
-  + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH + ARKME_PERSISTENT_CHAT_MIN_WIDTH
+const ARKME_PERSISTENT_DIRECTORY_MAX_SHARE = 0.4
 const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
 const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
@@ -119,12 +117,14 @@ export function writePersistentSidebarWidth(width: number, storage: PersistentSi
   catch { /* Browser privacy settings may make localStorage unavailable. */ }
 }
 
-/** Fit the preferred directory without letting the host's 1024px collapse discard it. */
+/** Share shrinking space with the chat, retaining the existing 120px compact directory. */
 export function resolvePersistentSidebarWidth(availableWidth: number, preferredWidth?: number): number {
   const preferred = clampPersistentSidebarWidth(preferredWidth
     ?? ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH + ARKME_PERSISTENT_DIRECTORY_DEFAULT_WIDTH)
-  return Math.min(preferred, Math.max(ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH,
-    Math.floor(availableWidth) - ARKME_PERSISTENT_CHAT_MIN_WIDTH))
+  const directoryBudget = Math.floor((availableWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH)
+    * ARKME_PERSISTENT_DIRECTORY_MAX_SHARE)
+  return Math.min(preferred, ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+    + Math.max(ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH, directoryBudget))
 }
 
 /** Observe the actual app container, including embedded panes and desktop resizing. */
@@ -265,10 +265,6 @@ export function ArkmePersistentSidebar({
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
   const sidebarRef = useRef<HTMLElement>(null)
   const frameWidth = usePersistentFrameWidth(sidebarRef)
-  const singlePane = frameWidth < ARKME_CONVERSATION_SINGLE_PANE_WIDTH
-  const conversationMobileView = !contactsMode && singlePane && (directoryVisible || webLockedMode)
-    ? ui.conversationDirectoryOpen ? 'directory' : 'content'
-    : undefined
   const sidebarResizeRef = useRef<{
     pointerId: number
     startX: number
@@ -411,7 +407,6 @@ export function ArkmePersistentSidebar({
   if (loginMode) return webLockedMode ? <aside
     ref={sidebarRef}
     data-arkme-owned="persistent-sidebar"
-    data-arkme-conversation-mobile-view={conversationMobileView}
     data-arkme-workspace
     data-arkme-login-mode="true"
     data-arkme-web-locked
@@ -440,7 +435,6 @@ export function ArkmePersistentSidebar({
   return <aside
     ref={sidebarRef}
     data-arkme-owned="persistent-sidebar"
-    data-arkme-conversation-mobile-view={conversationMobileView}
     data-arkme-workspace
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
     data-arkme-harness-mode={harnessMode ? 'true' : 'false'}
@@ -526,7 +520,7 @@ export function ArkmePersistentSidebar({
         setContactAddSession(current => current === contactAddSession ? undefined : current)
       }}
     />}
-    {directoryVisible && !conversationMobileView && (contactsMode
+    {directoryVisible && (contactsMode
       ? <div data-arkme-owned="persistent-sidebar-divider" aria-hidden style={styles.sidebarDivider} />
       : sidebarResizeHandle)}
   </aside>
@@ -570,9 +564,6 @@ export function ArkmePersistentWorkspace({
     aria-label={tr("Arkme 主界面")}
   >
     <ArkmePersistentClientRuntime />
-    <button type="button" className="arkme-conversation-mobile-back"
-      onClick={() => { arkmeUi.showConversationDirectory() }}>{tr("返回对话列表")}</button>
-    <div data-arkme-owned="persistent-workspace-content" style={{ ...styles.workspace, flex: 1 }}>
     <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface
       key={contactsAccountKey ?? 'guest'}
@@ -638,7 +629,6 @@ export function ArkmePersistentWorkspace({
         />}
       />
     </div>}
-    </div>
   </main>
 }
 
