@@ -15,7 +15,7 @@ it('keeps unread discovery in the persistent shell and contains Team failures', 
  mocks.call.mockResolvedValue({ external: true, team: false })
  invalidateTeamMessages('a')
  await vi.waitFor(() => expect(readTeamAttention('a').external).toBe(true))
- expect(notify).toHaveBeenCalledTimes(1)
+ expect(notify).not.toHaveBeenCalled()
  mocks.call.mockRejectedValue(new Error('Team offline'))
  invalidateTeamMessages('a')
  await vi.waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(3))
@@ -44,4 +44,11 @@ it('uses a business-neutral browser notification and cancels old activations', (
  close?.();expect(notices[0]!.onclick).toBeNull()
  Notice.permission='denied';expect(showBrowserNotification('Team','Unread','team-a',activate)).toBeUndefined()
  expect(notices).toHaveLength(1)
+})
+
+it('only a new application attention transition emits the old aggregate notice',async()=>{
+ const notify=vi.fn();mocks.call.mockResolvedValue({external:true,team:true,applications:false});stops.push(startTeamAttention('a',notify))
+ await vi.waitFor(()=>expect(readTeamAttention('a').team).toBe(true));expect(notify).not.toHaveBeenCalled()
+ mocks.call.mockResolvedValue({external:true,team:true,applications:true});invalidateTeamMessages('a')
+ await vi.waitFor(()=>expect(notify).toHaveBeenCalledOnce())
 })

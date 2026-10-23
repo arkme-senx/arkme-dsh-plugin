@@ -3,19 +3,19 @@ import type { ArkmeChatClientEvent } from '../types.js'
 
 export type ArkmeDesktopNotificationRequest = Extract<
   ArkmeChatClientEvent,
-  { type: 'message-notification' }
+  { type: 'message-notification' | 'team-message-notification' }
 >['notification']
 
 export interface ArkmeDesktopNotificationActivation {
   activationId?: string
-  kind?: 'chat-source'
+  kind?: 'chat-source' | 'team-conversation'
   sourceRef: string
   sourceKey?: string
 }
 
 export interface ArkmeDesktopNotificationActivationV2 {
   activationId: string
-  kind: 'chat-source'
+  kind: 'chat-source' | 'team-conversation'
   sourceRef: string
   sourceKey?: string
 }
@@ -78,9 +78,11 @@ export class ArkmeDesktopNotificationRuntime {
 
   async show(request: ArkmeDesktopNotificationRequest): Promise<boolean> {
     const bridge = this.getBridge()
-    if (bridge === undefined || this.rememberedEventUids.has(request.eventUid)) return false
+    if (bridge === undefined || this.rememberedEventUids.has(request.eventUid) ||
+        (request.sourceKind === 'team_conversation' && request.expiresAtMillis <= Date.now())) return false
     this.rememberedEventUids.add(request.eventUid)
     this.rememberedActivations.set(request.sourceRef, {
+      ...(request.sourceKind === 'team_conversation' ? {kind:'team-conversation' as const} : {}),
       sourceRef: request.sourceRef,
       sourceKey: request.sourceKey,
     })
@@ -178,6 +180,7 @@ export class ArkmeDesktopNotificationRuntime {
       const remembered = this.rememberedActivations.get(activation.sourceRef)
       const sourceKey = activation.sourceKey ?? remembered?.sourceKey
       listener({
+        ...(activation.kind === 'team-conversation' || remembered?.kind === 'team-conversation' ? {kind:'team-conversation' as const} : {}),
         sourceRef: activation.sourceRef,
         ...(sourceKey === undefined ? {} : { sourceKey }),
       })

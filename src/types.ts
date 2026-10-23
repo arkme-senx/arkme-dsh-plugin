@@ -1495,6 +1495,7 @@ arkoImagesV1?:true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    teamNotificationPoliciesV1?: true
     teamProfiles?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -4065,6 +4066,10 @@ export type ArkmeChatClientEvent = {
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
+  type: 'team-message-notification'
+  revision: number
+  notification: {eventUid:string;sourceRef:string;sourceKey:string;sourceKind:'team_conversation';title:string;body:string;eventAtMillis:number;expiresAtMillis:number}
+} | {
   type: 'message-notification'
   revision: number
   notification: {
@@ -4198,6 +4203,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

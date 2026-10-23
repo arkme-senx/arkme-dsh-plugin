@@ -1,3 +1,5 @@
+import { TeamMessageNotificationService } from './services/team-message-notification-service.js'
+import type { TeamNotificationPage, TeamNotificationPolicy } from './team-notification-contract.js'
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
@@ -424,8 +426,23 @@ export class ArkmeService {
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
+  private readonly teamNotifications: TeamMessageNotificationService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  async listTeamNotificationConversations(side:'team'|'external', cursor?:string, signal?:AbortSignal):Promise<TeamNotificationPage> {
+    if (side!=='team' && side!=='external') throw new TypeError('Choose team or external')
+    const page = await this.teamApp.execute('team.app.conversations',{side,...(cursor?{cursor}:{})},signal) as import('./team-app-contract.js').TeamPage<import('./team-app-contract.js').TeamConversation>
+    return {items:page.items.map(c=>({conversationRef:c.ref,displayName:c.side==='team'?`${c.visitor?.nickname??'用户'} · ${c.channel.name}`:c.channel.name,
+      side:c.side,policy:c.notificationPolicy!})),hasMore:page.hasMore,...(page.nextCursor?{nextCursor:page.nextCursor}:{})}
+  }
+  async getTeamNotificationPolicy(conversationRef:string, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    return await this.teamApp.execute('team.app.notification-policy.get',{conversationRef},signal) as TeamNotificationPolicy
+  }
+  async setTeamNotificationPolicy(conversationRef:string, muted:boolean, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    const value=await this.teamApp.execute('team.app.notification-policy.set',{conversationRef,muted},signal) as TeamNotificationPolicy
+    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision()})
+    return value
+  }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
     const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
     const team=teams.find(t=>t.jotmoId===jotmoId.trim());if(!team)throw new ArkmePluginError('team-not_accessible','团队不存在或无法访问',false,403)
@@ -631,6 +648,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
       chatTimelineItems: async (...args) => await this.chat.chatTimelineItems(...args),
     })
+    this.teamNotifications = new TeamMessageNotificationService({
+      session:()=>this.runtime.accountScopedSession(),
+      resolve:(hint,session,signal)=>this.teamApp.resolveMessageNotification(hint,session,signal),
+      fallback:notification=>this.realtime.emitChatClientEvent({type:'team-message-notification',revision:this.realtime.nextChatClientRevision(),notification}),
+    })
+    this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
@@ -1097,6 +1120,7 @@ arkoImagesV1:true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
+        teamNotificationPoliciesV1: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
@@ -1232,6 +1256,7 @@ arkoImagesV1:true,
   dispose(): void {
     this.messageSync.dispose()
     this.unifiedTimeline.dispose()
+    this.teamNotifications.dispose()
     this.teamDelivery.dispose()
     this.selfRoles.dispose()
     this.recordingPresenceWriter.revoke()

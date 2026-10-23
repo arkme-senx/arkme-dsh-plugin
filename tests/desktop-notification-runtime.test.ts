@@ -306,3 +306,15 @@ describe('notification activation store', () => {
     expect(store.getSnapshot()).toMatchObject({ activationId: 'activation-2', source: second })
   })
 })
+
+it('preserves Team activation identity in Browser fallback and refuses expired requests',async()=>{
+ const bridge:ArkmeDesktopNotificationBridge={show:vi.fn(async()=>({shown:true})),onActivated:vi.fn(()=>()=>{})}
+ const runtime=new ArkmeDesktopNotificationRuntime(()=>bridge), listener=vi.fn()
+ runtime.onActivated(listener)
+ const request={eventUid:'team',sourceRef:'sealed-team',sourceKey:'team-key',sourceKind:'team_conversation' as const,title:'团队',body:'消息',eventAtMillis:Date.now(),expiresAtMillis:Date.now()+300000}
+ expect(await runtime.show(request)).toBe(true)
+ vi.mocked(bridge.onActivated).mock.calls[0]![0]('sealed-team')
+ expect(listener).toHaveBeenCalledWith({kind:'team-conversation',sourceRef:'sealed-team',sourceKey:'team-key'})
+ expect(await runtime.show({...request,eventUid:'old',expiresAtMillis:1})).toBe(false)
+ expect(bridge.show).toHaveBeenCalledOnce()
+})

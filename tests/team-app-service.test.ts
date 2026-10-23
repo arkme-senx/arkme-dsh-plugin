@@ -574,7 +574,7 @@ it('projects scoped conversation cursor metadata without fetching bodies and rej
     : {channel,conversation})
   const opened=await open(f), ref=opened.conversation!.ref
   const data=await f.service.execute('team.app.read-states',{conversationRefs:[ref]})
-  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0}])
+  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0,notificationPolicy:{muted:false,policyVersion:0,notifyAfterSeq:0}}])
   expect(f.requests.at(-1)!.body).toEqual({side:'external',conversation_uids:[conversation.conversation_uid]})
   expect(JSON.stringify(data)).not.toContain(conversation.conversation_uid)
   broken=true
@@ -707,3 +707,22 @@ it('projects server reply keys and rejects cross-conversation or cross-account r
   f.changeAccount()
   await expect(f.service.replyKey(conversationRef,parent.ref,91)).rejects.toThrow()
 })
+
+it('policy is explicit, shared across both views, monotonic, and never clears unread',async()=>{
+ let policy={muted:true,policy_version:4,notify_after_seq:10}
+ const f=fixture((path,body)=>path.endsWith('/notification-policy/get')||path.endsWith('/notification-policy/set')?policy:{channel,conversation:{...conversation,notification_policy:policy}})
+ const c=(await open(f)).conversation!
+ expect(c.unread).toBe(1);expect(c.attentionUnread).toBe(0)
+ const result=await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})
+ expect(result).toMatchObject({muted:true,policyVersion:4});expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',muted:true})
+ policy={muted:false,policy_version:3,notify_after_seq:0}
+ expect(await f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).toMatchObject({muted:true,policyVersion:4})
+ await expect(f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:'false'})).rejects.toThrow()
+ f.changeAccount();await expect(f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).rejects.toThrow()
+})
+it('lost policy response is resolved by owner read and is never replayed as a toggle',async()=>{
+ const f=fixture(path=>path.endsWith('/notification-policy/set')?new Response('{}',{status:503}):path.endsWith('/notification-policy/get')?{muted:true,policy_version:1,notify_after_seq:3}:{channel,conversation})
+ const c=(await open(f)).conversation!
+ expect(await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})).toEqual({muted:true,policyVersion:1,notifyAfterSeq:3})
+ expect(f.requests.filter(r=>r.path.endsWith('/notification-policy/set'))).toHaveLength(1)
+},15000)
