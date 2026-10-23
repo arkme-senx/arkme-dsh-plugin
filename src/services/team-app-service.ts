@@ -26,6 +26,8 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
+  invalid_external_chat: '对外私聊请求无效，请重新打开',
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
@@ -58,7 +60,7 @@ export class TeamAppService {
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
-    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'>) {
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds' | 'openSourceRef'>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -105,7 +107,7 @@ export class TeamAppService {
   private async team(raw: unknown, actor: number): Promise<ArkmeTeam> {
     const v = obj(raw)
     if (!recordOwnerId(v.team_id)) throw invalid()
-    return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+    return { key: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
       profileRevision:num(v.profile_revision),canEditProfile:v.can_edit_profile===true,avatar:await this.avatar(v,actor),
       currentUserRole: role(v.role), createdAtMillis: num(v.ca), updatedAtMillis: num(v.ua) }
   }
@@ -170,6 +172,12 @@ export class TeamAppService {
         }
       })),
     }
+  }
+
+  private async externalShare(v: Record<string,unknown>, actor: number): Promise<import('../team-external-chat-contract.js').ExternalChatShare> {
+    return { ref: await this.ref('external-share', { share_uid: str(v.share_uid) }, actor), key: await this.key(`external:${str(v.share_uid)}`, actor),
+      teamKey: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: v.team_id }, actor), sharerKey: await this.key(`person:${String(v.sharer_user_id)}`, actor),
+      sharerName: str(v.sharer_name) || '团队成员', peerName: str(v.peer_name) || '外部联系人', own: recordOwnerId(v.sharer_user_id) === actor }
   }
 
   async assertViewer(expectedAccountKey: unknown): Promise<ArkmeSessionCredentials> {
@@ -272,6 +280,46 @@ export class TeamAppService {
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
     }
     switch (operation) {
+      case 'team.app.external.mine': case 'team.app.external.share': {
+        const source = await this.contacts?.openSourceRef(str(p.sourceRef), actor)
+        if (!source || source.kind !== 'private_chat') throw invalid()
+        const data = operation === 'team.app.external.share'
+          ? await post('external-chats/share', { team_id: await teamID(), chat_session_uid: source.ownerRef })
+          : await post('external-chats/mine', { chat_session_uid: source.ownerRef }, true)
+        const rows = operation === 'team.app.external.share' ? [data] : list(data.items)
+        return { items: await Promise.all(rows.map(v => this.externalShare(v, actor))), hasMore: false }
+      }
+      case 'team.app.external.unshare': {
+        const v = await this.open('external-share', p.shareRef, actor)
+        return await post('external-chats/unshare', { share_uid: v.share_uid })
+      }
+      case 'team.app.external.list': {
+        const data = await post('external-chats/list', { team_id: await teamID(), limit: 50,
+          ...(p.cursor ? { page_cursor: (await this.open('external-cursor', p.cursor, actor)).cursor } : {}) }, true)
+        return { items: await Promise.all(list(data.items).map(v => this.externalShare(v, actor))), hasMore: data.has_more === true,
+          ...(data.next_page_cursor ? { nextCursor: await this.ref('external-cursor', { cursor: data.next_page_cursor }, actor) } : {}) }
+      }
+      case 'team.app.external.page': {
+        const grant = await this.open('external-share', p.shareRef, actor)
+        const data = await post('external-chats/page', { share_uid: grant.share_uid, before_seq: num(p.beforeSeq), limit: 50 }, true)
+        const mediaUrls: Record<string,string> = {}
+        const items = await Promise.all(list(data.items).map(async v => {
+          const rel = obj(v.relation), record = obj(v.record), body = num(record.status) === 1 ? obj(record.payload) : {}
+          const contentBlocks = await Promise.all(list(body.media_display_items).map(async (f, sortOrder) => {
+            const ref = await this.ref('media', { share_uid: grant.share_uid, seq: num(rel.seq), media_index: sortOrder, file_asset_uid: str(f.file_asset_uid), file_uid: str(f.file_uid), file_name: str(f.file_name), mime_type: str(f.mime_type) }, actor)
+            mediaUrls[ref] = `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`
+            const mime = str(f.mime_type)
+            return { mediaRef: ref, kind: mime.startsWith('image/') ? 'image' as const : mime.startsWith('audio/') ? 'audio' as const : mime.startsWith('video/') ? 'video' as const : 'file' as const,
+              fileName: str(f.file_name), mimeType: mime, size: num(f.size), sortOrder }
+          }))
+          return { itemUid: await this.key(`external:${String(grant.share_uid)}:${str(rel.rel_uid)}`, actor),
+            senderName: str(rel.display_name_snapshot) || str(obj(body.sender_snapshot).display_name) || '用户', isMe: false,
+            sendAtMillis: num(rel.attach_at), title: str(body.title), textContent: num(record.status) === 1 ? str(body.text_content) : '内容当前不可用',
+            textFormat: obj(body.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const,
+            status: 1, version: num(body.version), templateKind: num(body.template_kind), contentBlocks }
+        }))
+        return { items, hasMore: data.has_more === true, beforeSeq: num(data.next_before_seq), mediaUrls }
+      }
       case 'team.app.profile.get':return await this.profile((await post('profile/get',{team_id:await teamID()},true)).team,actor)
       case 'team.app.profile.status':return await this.profileResult(await post('profile/update/status',{team_id:await teamID(),request_uid:str(p.requestUid)},true),actor)
       case 'team.app.profile.update': {
@@ -629,6 +677,19 @@ export class TeamAppService {
   async fetchMedia(mediaRef: string, range: string | undefined, signal: AbortSignal): Promise<{ response: Response; fileName: string; mimeType: string }> {
     const initial = await this.runtime.requireSession()
     const ref = await this.open('media', mediaRef, initial.userId)
+    if (ref.share_uid) {
+      const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/external-chats/page', { share_uid: ref.share_uid, before_seq: num(ref.seq) + 1, limit: 1 }, initial, signal, true))
+      const item = list(data.items).find(v => num(obj(v.relation).seq) === num(ref.seq))
+      const record = obj(obj(item).record)
+      const asset = num(record.status) === 1 ? list(obj(record.payload).media_display_items)[num(ref.media_index)] : undefined
+      if (!asset || str(asset.file_asset_uid) !== str(ref.file_asset_uid) || str(asset.file_uid) !== str(ref.file_uid)) throw invalid()
+      const url = str(asset?.download_url) || str(asset?.preview_url)
+      if (!url) throw invalid()
+      const response = await this.runtime.fetchImpl(authorizedStorageURL(url), { signal, redirect: 'error', ...(range ? { headers: { Range: range } } : {}) })
+      const current = await this.runtime.accountScopedSession()
+      if (!response.ok || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
+      return { response, fileName: str(ref.file_name) || '附件', mimeType: str(ref.mime_type) || 'application/octet-stream' }
+    }
     const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false }
     if (!this.runtime.config.teamBaseUrl) throw invalid()
     let session = initial

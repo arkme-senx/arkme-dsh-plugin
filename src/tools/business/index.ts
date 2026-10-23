@@ -1,3 +1,4 @@
+import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { nativeAnnotationTools } from './conversation/native-annotations.js'
 import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
@@ -68,6 +69,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...officialNotificationToolModules,
   directoryReadToolModule,
   ...teamProfileTools,
+  ...teamExternalChatTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

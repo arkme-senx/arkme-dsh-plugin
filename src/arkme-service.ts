@@ -426,6 +426,10 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  async externalChats(operation: import('./team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (!['list','mine','share','unshare','page'].includes(operation)) throw new Error('Unsupported external chat operation')
+    return await this.teamApp.execute(`team.app.external.${operation}`, params, signal)
+  }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
     const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
     const team=teams.find(t=>t.jotmoId===jotmoId.trim());if(!team)throw new ArkmePluginError('team-not_accessible','团队不存在或无法访问',false,403)
@@ -526,6 +530,7 @@ export class ArkmeService {
       openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
     }, {
       privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+      openSourceRef: (ref, actor) => this.source.openSourceRef(ref, actor),
     })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
@@ -1097,6 +1102,7 @@ arkoImagesV1:true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
+        teamExternalChats: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
