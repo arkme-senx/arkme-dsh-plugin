@@ -363,6 +363,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   let accountSessions: DshAccountSessions | undefined
   let remoteHost: DshRemoteHostFacade | undefined
+  service.setNativeAnnotationSource(async (target, signal) => {
+    if (!remoteHost?.annotationSource) throw new ArkmePluginError('native-annotation-source-not-ready', '来源电脑尚未准备好标记同步', true, 503)
+    return await remoteHost.annotationSource(target.sessionRef, target.eventSeq, signal)
+  }, () => remoteHost?.getStatus().runtimeRef)
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({
     profile: config.openclawProfile,

@@ -44,3 +44,23 @@ export async function patchChatPolicy(
   }
   return updated
 }
+
+/** Read the authenticated user's policy, never infer an off state from missing fields. */
+export async function readChatPolicy(
+  runtime: ServiceRuntime, session: ArkmeSessionCredentials, chatSessionUid: string, signal?: AbortSignal,
+): Promise<ChatPolicySnapshot> {
+  const policy = await runtime.authenticatedChatPost<ChatPolicySnapshot>(
+    '/api/v1/chats/policy/get', { chat_session_uid: chatSessionUid }, session, signal,
+  )
+  signal?.throwIfAborted()
+  if ((await runtime.requireSession()).userId !== session.userId) {
+    throw new ArkmePluginError('login-context-changed', '登录账号已切换，请重试当前操作', false, 409)
+  }
+  if (!policy || policy.chat_session_uid !== chatSessionUid || policy.user_id !== session.userId
+    || !Number.isSafeInteger(policy.update_at) || policy.update_at <= 0
+    || ![policy.show_in_home_state, policy.privacy_state, policy.mute_state, policy.pin_state, policy.notify_state].every(value => value === 1 || value === 2)
+    || ![1, 2, 3].includes(policy.status)) {
+    throw new ArkmePluginError('chat-policy-result-invalid', '会话通知设置读取不完整，请重试', true, 502)
+  }
+  return policy
+}

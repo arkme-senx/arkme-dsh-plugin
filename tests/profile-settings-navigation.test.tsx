@@ -79,6 +79,16 @@ describe('profile/settings navigation', () => {
     expect(host.textContent).toContain('已恢复')
     expect(host.querySelectorAll('li')).toHaveLength(0)
   })
+  it('explains Arko backend availability without mixing Arko messages into the Record recovery flow', async () => {
+    await act(async () => root.render(<ArkmeDataManagementSettings />))
+    await act(async () => button('最近删除').click())
+    const section = host.querySelector('[aria-label="Arko 对话消息"]')!
+    expect(section.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
+    expect(section.textContent).toContain('30 天内可恢复')
+    expect(section.querySelector('button')).toBeNull()
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['data.deleted'])
+    expect(button('恢复')).toBeDefined()
+  })
   it('makes export limitations explicit without creating an export session', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('导出数据').click())

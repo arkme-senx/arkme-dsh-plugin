@@ -909,7 +909,7 @@ export function InviteCollaboratorsDialog(props: {
   </div>
 }
 
-function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
+export function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
   return <span
     role="switch"
     aria-label={tr("消息免打扰")}

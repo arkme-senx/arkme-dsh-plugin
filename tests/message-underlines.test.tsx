@@ -197,3 +197,13 @@ it('local save failure rolls back and retries the same operation', async () => {
   vi.mocked(callArkme).mockResolvedValueOnce({...initial,items:[mark]});await session.retry?.()
   expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toMatchObject({change:{operationId:'local-fail'}})
 })
+it('retains one queued invalidation while an older snapshot is still reading', async () => {
+ const session=new MessageUnderlineSession('self',42,vi.fn());session.capability={supported:true,maxLength:2000}
+ const stale=deferred<unknown>()
+ vi.mocked(callArkme).mockReturnValueOnce(stale.promise).mockResolvedValueOnce([{actionRef:'ref',snapshot:{...initial,revision:2}}])
+ const read=session.read([target]);for(let i=0;i<100;i++)void session.read([target])
+ expect(callArkme).toHaveBeenCalledOnce()
+ stale.resolve([{actionRef:'ref',snapshot:{revision:1,accessible:true,items:[]}}]);await read
+ expect(callArkme).toHaveBeenCalledTimes(2);expect(session.snapshots.get(underlineTargetKey(target))?.revision).toBe(2)
+ session.dispose()
+})

@@ -119,6 +119,7 @@ function installDirectoryApi(openGroup: ReturnType<typeof deferred<ArkmeSourceIt
   const signals: Partial<Record<'group' | 'bot', AbortSignal>> = {}
   testState.callArkme.mockImplementation(async (operation: string, params?: { section?: string; countOnly?: boolean }, signal?: AbortSignal) => {
     if (operation === 'auth.status') return { status: 'authenticated', environment: 'test', userId: 101 }
+    if (operation === 'people.list') return { source: 'speakers', items: [] }
     if (operation === 'auth.config') return { environment: 'test' }
     if (operation === 'sources.list') return { items: [], hasMore: false }
     if (operation === 'directory.list') {

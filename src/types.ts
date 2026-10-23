@@ -170,13 +170,14 @@ export interface ArkmeContactAddResult {
 }
 
 export type ArkmeDirectorySectionKind =
-  | 'groups' | 'bots' | 'unmarked-speakers' | 'teams' | 'contacts'
+  | 'groups' | 'bots' | 'unmarked-speakers' | 'manual-speakers' | 'teams' | 'contacts'
 
 /** Browser-safe directory row. Provider-private identifiers never cross this boundary. */
 export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
+  | { kind: 'manual-speaker'; speakerKey: string; speakerRef: string; displayName: string }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
@@ -3148,10 +3149,13 @@ export interface ArkmeGroupSettingsSnapshot {
   chatNotificationPolicyUpdatedAtMillis: number
 }
 
-export interface ArkmeGroupNotificationResult {
+export interface ArkmeChatNotificationResult {
   messageDnd: boolean
   chatNotificationPolicyUpdatedAtMillis: number
 }
+
+/** Group menus keep the same shared conversation-policy contract. */
+export type ArkmeGroupNotificationResult = ArkmeChatNotificationResult
 
 export interface ArkmeGroupProjectionResult {
   source: ArkmeSourceItem
@@ -4058,7 +4062,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4114,6 +4118,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'native-chat.annotations'
   | 'arko.models'
   | 'arko.ask'
   | 'arko.history'
@@ -4421,6 +4426,8 @@ export type ArkmePluginOperation =
   | 'group.bot.add'
   | 'group.bot.remove'
   | 'group.settings'
+  | 'chat.notification.get'
+  | 'chat.notification.set'
   | 'group.notification.set'
   | 'group.rename'
   | 'group.leave'
@@ -4633,6 +4640,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.dismiss'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
+  | 'native-chat.annotations'
   | 'native-chat.local-mark.capabilities'
   | 'native-chat.local-mark.list'
   | 'native-chat.local-mark.change'

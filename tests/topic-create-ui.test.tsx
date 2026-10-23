@@ -159,7 +159,7 @@ describe('topic create UI', () => {
     expect(`${child}${root}`).toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
     expect(`${child}${root}`).toContain('background:var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))')
     expect(`${child}${root}`).toContain('box-shadow:var(--dsw-shadow-lv3')
-    expect(`${child}${root}`).toContain('--dsw-specific-menu')
+    expect(`${child}${root}`).toContain('--dsw-alias-bg-layer-3')
     expect(`${child}${root}`).toContain('--dsw-alias-state-business-tertiary')
     expect(`${child}${root}`).not.toContain('--dsw-specific-dialog-fill')
     expect(`${child}${root}`).not.toContain('--dsw-alias-brand-disabled')

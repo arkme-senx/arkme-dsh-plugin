@@ -1,4 +1,5 @@
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
+import { ArkoDeletedMessagesNotice } from './ArkoMessageDeletion.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -116,6 +117,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <button type="button" className="arkme-settings-link" disabled={loading || recovering} onClick={() => setRevision(value => value + 1)}>{loading ? tr("读取中…") : tr("刷新")}</button>
       {error && <p role="alert" className="arkme-data-error">{tr(error)}</p>}
       {notice && <p role="status">{notice}</p>}
+      {page === 'deleted' && <ArkoDeletedMessagesNotice />}
       {page === 'deleted' && deleted && <>
         <p className="arkme-data-hint">{deleted.items.length ? `本次显示 ${deleted.items.length} 条${deleted.mayHaveMore ? '，更多记录请在手机端查看' : ''}。` : deleted.unverifiedCount ? tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。') : deleted.mayHaveMore ? tr('本次读取范围内暂无可恢复记录，更多记录请在手机端查看。') : tr('暂无最近删除的记录。')}{deleted.items.length > 0 && !!deleted.unverifiedCount && tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。')}{tr('浏览不会自动清除数据。')}</p>
         <ul className="arkme-data-deleted-list">{deleted.items.map(item => <li key={item.recordUid}>

@@ -264,6 +264,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'message-actions.forward'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
+  | 'native-chat.annotations'
   | 'native-chat.local-mark.capabilities'
   | 'native-chat.local-mark.list'
   | 'native-chat.local-mark.change'

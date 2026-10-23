@@ -1,4 +1,5 @@
 import { analyticsToolModules } from './conversation/analytics.js'
+import { nativeAnnotationTools } from './conversation/native-annotations.js'
 import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
 import { messageSyncToolModules } from './conversation/message-sync.js'
@@ -62,6 +63,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  ...nativeAnnotationTools,
   ...messageSyncToolModules,
   ...selfRoleToolModules,
   ...officialNotificationToolModules,

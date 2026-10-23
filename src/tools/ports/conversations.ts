@@ -13,6 +13,7 @@ import type {
 export interface ArkmeConversationToolPort {
   analyticsRead(input: import('../../analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown>
   conversationWordsCreate(input: import('../../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../../conversation-word-frequency.js').ConversationWordsState>
+  nativeAnnotations(request: import('../../native-annotations.js').NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown>
   messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   sharedRecordingDetail(detailRef: string, options?: { signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSharedRecordingPreview>

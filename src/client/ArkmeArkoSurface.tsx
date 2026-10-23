@@ -19,6 +19,7 @@ import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { ArkmeComposerSendButton, arkmeComposerSendButtonStyle } from './ArkmeComposerSendButton.js'
 import { arkmeConversationMessageLayout, dayKey } from './conversation-message-presentation.js'
 import { ArkmeArkoHistoryTools } from './ArkmeArkoHistoryTools.js'
+import { ArkoMessageDeletionDialog } from './ArkoMessageDeletion.js'
 import { arkoHistoryDate, readLatestArkoMessages } from './arko-history-browser.js'
 import type {
   ArkmeArkoAskResult,
@@ -562,13 +563,33 @@ export function ArkmeArkoSurface() {
   )), [visibleMessages])
   const messageSelectionItems = useMemo(() => visibleMessages.filter(message => message.role !== 'divider').map(message => ({ id: message.id, copyText: arkmeEmojiPlainText(message.text) })), [visibleMessages])
   const messageSelectionScope = profileUserId === undefined ? 'anonymous' : `user:${String(profileUserId)}:session:${String(session?.sessionId ?? 0)}`
+  const deletionScope = `${accountKey}:${messageSelectionScope}`
+  const [deletionRequest, setDeletionRequest] = useState<{ scope: string; ids: readonly string[] }>()
+  const deletionCandidates = useMemo(() => new Set(visibleMessages.filter(message => message.role !== 'divider'
+    // User history can retain its initial queued status after the assistant completes.
+    && message.status !== 'sending' && (message.role !== 'assistant' || !isActiveRunStatus(message.runStatus))
+    && !(activeRun && message.sessionId === activeRun.sessionId && message.runUid === activeRun.runUid)
+    && message.id !== pendingTurn?.localUserMessageId && message.id !== pendingTurn?.localAssistantMessageId
+    && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0).map(message => message.id)), [visibleMessages, pendingTurn, activeRun])
+  useEffect(() => { setDeletionRequest(undefined) }, [deletionScope])
   const markSourceRef = accountKey === undefined ? undefined : `arko:${accountKey}`
   const messageMarks = useMessageUnderlines(`${accountKey}:arko`, markSourceRef, profileUserId, arkoMessageMarkTransport)
   const messageActions = useArkmeMessageActions({
     scopeKey: messageSelectionScope,
     selectionItems: messageSelectionItems,
     items: messageActionItems,
+    deleteSelection: {
+      disabledReason: items => items.length > 100 ? tr('每次最多删除 100 条消息')
+        : items.some(item => !deletionCandidates.has(item.id)) ? tr('所选消息仍在生成或发送结果待确认，请完成后再删除') : undefined,
+      onRequest: items => setDeletionRequest({ scope: deletionScope, ids: items.map(item => item.id) }),
+    },
   })
+
+  useEffect(() => {
+    if (deletionRequest && (!messageActions.selecting || deletionRequest.ids.some(id => !messageActions.selectedIds.has(id) || !deletionCandidates.has(id)))) {
+      setDeletionRequest(undefined)
+    }
+  }, [deletionRequest, messageActions.selecting, messageActions.selectedIds, deletionCandidates])
 
   useEffect(() => {
     if (messageActions.selecting) setDetailSelection(undefined)
@@ -1335,6 +1356,7 @@ export function ArkmeArkoSurface() {
       onSelect={selectModel} onClose={closeModelMenu}
     />}
 
+    {deletionRequest?.scope === deletionScope && <ArkoMessageDeletionDialog count={deletionRequest.ids.length} onClose={() => setDeletionRequest(undefined)} />}
     {clearConfirmOpen && <div style={styles.backdrop} onMouseDown={event => {
       if (event.target === event.currentTarget) setClearConfirmOpen(false)
     }}>

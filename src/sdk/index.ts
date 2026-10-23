@@ -1,6 +1,8 @@
 export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
 export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
 export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
+import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
+export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 export type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
 import type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
@@ -502,6 +504,25 @@ function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
 }
 
 export class ArkmeSdk {
+  async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }
+  async nativeAnnotationContexts(targets: NativeAnnotationTarget[], signal?: AbortSignal): Promise<NativeAnnotationContext[]> { return await this.call('native-chat.annotations', { request: { action: 'contexts', targets } }, signal) }
+  async listNativeAnnotations(messageRefs: string[], signal?: AbortSignal): Promise<NativeAnnotationSnapshot[]> { return await this.call('native-chat.annotations', { request: { action: 'list', messageRefs } }, signal) }
+  async changeNativeAnnotation(request: Extract<NativeAnnotationRequest, { action: 'add' | 'remove' }>, signal?: AbortSignal): Promise<NativeAnnotationSnapshot> { return await this.call('native-chat.annotations', { request }, signal) }
+  observeNativeAnnotations(messageRefs: string[], onChange: (rows: NativeAnnotationSnapshot[]) => void, onError: (error: unknown) => void, signal?: AbortSignal): () => void {
+    const controller = new AbortController()
+    const scoped = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const read = async () => {
+      try { const rows = await this.listNativeAnnotations(messageRefs, scoped); if (!scoped.aborted) onChange(rows) }
+      catch (error) { if (!scoped.aborted) onError(error) }
+      finally { if (!scoped.aborted) timer = setTimeout(() => { void read() }, 15000) }
+    }
+    const dispose = () => { if (timer) clearTimeout(timer); controller.abort() }
+    scoped.addEventListener('abort', () => { if (timer) clearTimeout(timer) }, { once: true })
+    if (!scoped.aborted) void read()
+    return dispose
+  }
+
   private readonly route: string
   private readonly fetchImpl: typeof fetch
 

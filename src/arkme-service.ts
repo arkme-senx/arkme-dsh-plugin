@@ -1,3 +1,5 @@
+import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
+import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
 import { PersonalKeywordService } from './services/personal-keyword-service.js'
 import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
@@ -266,6 +268,7 @@ import type {
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
+  ArkmeChatNotificationResult,
   ArkmeGroupNotificationResult,
   ArkmeGroupProjectionResult,
   ArkmeGroupSettingsSnapshot,
@@ -507,6 +510,7 @@ export class ArkmeService {
   private readonly desktopScreenshot: ArkmeDesktopScreenshot
   private readonly recordingPresenceWriter: RecordingPresenceWriter
   private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
+  private readonly nativeAnnotationService: NativeAnnotationsService
   private worldVoiceprintInviteVariantIndex = 0
   private dayRecapService?: DayRecapService
   private readonly conversationActivity: ConversationActivityService
@@ -526,6 +530,7 @@ export class ArkmeService {
   ) {
     this.accountScope = createArkmeAccountSessionOwner(sessionStore, fetchImpl)
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore, this.accountScope)
+    this.nativeAnnotationService = new NativeAnnotationsService(this.runtime)
     this.recordingPresenceWriter = new RecordingPresenceWriter(this.runtime, config.fileStateDirectory ?? join(homedir(), '.arkme', 'recording-presence'))
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
     this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
@@ -1024,6 +1029,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
   }
+
+  setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
+  nativeAnnotations(request: NativeAnnotationRequest, signal?: AbortSignal) { return this.nativeAnnotationService.execute(request, signal) }
 
   async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }
   async dshRemotePost<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemotePost<T>(path, body, undefined, signal) }
@@ -1907,6 +1915,10 @@ arkoImagesV1:true,
         } catch { /* The normal authoritative member read remains available. */ }
       }
     }
+  }
+
+  async conversationNotification(sourceRef: string, enabled?: boolean, signal?: AbortSignal): Promise<ArkmeChatNotificationResult> {
+    return await this.chat.conversationNotification(sourceRef, enabled, signal)
   }
 
   async setGroupMessageDnd(
