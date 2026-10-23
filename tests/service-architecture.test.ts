@@ -81,7 +81,7 @@ const expectedPublicMethods = [
   'prepareEnableGroupAiPolish', 'prepareEnableGroupAiPolishRuleForSource', 'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'groupSelfNickname', 'setGroupSelfNickname', 'removeGroupMember', 'listGroupJoinRestrictions', 'setGroupJoinRestriction',
-  'createGroup', 'groupSettings', 'setGroupMessageDnd',
+  'createGroup', 'groupSettings', 'setGroupMessageDnd', 'conversationNotification',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
   'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'memberEvents', 'memberEventProfile', 'memberEventPrivateChat',

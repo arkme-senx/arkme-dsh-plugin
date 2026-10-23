@@ -1,5 +1,8 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '免打扰状态暂未更新，请重新打开菜单重试': 'Mute status could not be updated. Reopen this menu to retry.',
+  '免打扰状态读取失败，点击重试': 'Could not load mute status. Click to retry.',
+  '免打扰未确认保存，请重试': 'Mute setting could not be confirmed. Please retry.',
   '有更新版本': 'Newer version available',
   '更新暂未完成，当前内容已保留': 'Update incomplete; current content retained',
   '正在查找录音日期…': 'Finding recording dates…',

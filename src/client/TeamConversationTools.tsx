@@ -3,8 +3,6 @@ import { createPortal } from 'react-dom'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
-import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
-import { PushPin } from '@phosphor-icons/react/dist/icons/PushPin'
 import type { TeamConversation, TeamIdentity, TeamMessage, TeamTimeline } from '../team-app-contract.js'
 import type { ArkmeOpenPrivateChatResult } from '../types.js'
 import type { ConversationActivitySelection } from '../conversation-activity.js'
@@ -20,7 +18,6 @@ import { ActivityChart, conversationActivityStyles } from './statistics/Conversa
 import { conversationAnalysisStyles } from './statistics/ConversationAnalysis.js'
 import { downloadArkmeConversationMarkdown } from './conversation-export.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
-import { teamDirectoryPreferences, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
 import { availableTeamMessage, exportTeamHistory, readTeamHistory, teamHistoryActivity, teamHistoryDate, teamHistoryDays, teamHistoryPerson, teamHistoryText } from './team-history-browser.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeUi } from './ui-controller.js'
@@ -46,8 +43,6 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   const [query, setQuery] = useState(''), [limit, setLimit] = useState(50), [notice, setNotice] = useState(''), [opening, setOpening] = useState('')
   const [exporting, setExporting] = useState(false), [privateBusy, setPrivateBusy] = useState(false)
   const privateLock = useRef(false), locateLock = useRef(false), exportLock = useRef(false)
-  const prefs = useTeamDirectoryPreferences(accountKey), target = { kind: 'conversation' as const, conversation }
-  const pinned = teamEntryPinned(prefs, target)
   useEffect(() => () => { lifetime.current.abort(); reader.current?.abort() }, [])
   useEffect(() => { if (overlayOpen) setOpen(undefined) }, [overlayOpen])
   useEffect(() => {
@@ -151,8 +146,6 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     <ArkmePrivateCallMenu displayName={title} personalIdentity busy={privateBusy} onStart={mediaType => void openPrivate(mediaType)}/>
     <ConversationActionsMenu anchor={menu} label={tr('更多团队对话操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
       conversationExportActionItem({ busy: exporting, processed: archive.messages.length, invoke: () => void exportHistory() }),
-      ...(conversation.side === 'team' ? [{ id: 'private', label: tr('发起私聊'), icon: <ChatCircle size={20}/>, busy: privateBusy, invoke: () => void openPrivate() }] : []),
-      { id: 'pin', label: tr(pinned ? '取消置顶' : '置顶'), icon: <PushPin size={20}/>, invoke: async () => { try { await teamDirectoryPreferences.pin(accountKey, target, !pinned) } catch (e) { setNotice(errorText(e)) } } },
     ]}/>
     <ArkmeSelfCalendarPopover open={open === 'calendar'} anchor={calendar} accountScope={accountKey} scopeKey={`team:${conversation.key}`} getReadingDate={getReadingDate}
       onClose={() => setOpen(undefined)} onSelectRecord={() => {}}

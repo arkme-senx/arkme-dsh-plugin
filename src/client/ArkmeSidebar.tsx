@@ -1,3 +1,4 @@
+import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
@@ -5923,6 +5924,7 @@ export function ArkmeSurface({
     updateSourceProjection(projected)
     return projected.isMuted === true
   }, [updateSourceProjection])
+  const privateMessageDnd = usePrivateMessageDnd(authenticatedAccountKey, activeConversation ? source : undefined, relatedMenuOpen, updateSourceMessageDndProjection)
   const conversationMemberByRef = useMemo(
     () => new Map(conversationMembers.map(member => [member.memberRef, member])),
     [conversationMembers],
@@ -8767,12 +8769,12 @@ export function ArkmeSurface({
             ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
             visibility: relatedPanelOpen ? 'hidden' : 'visible',
           }}>
-            <ConversationActionsMenu items={privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            <ConversationActionsMenu items={[...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
             }, source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0
-              ? () => activateContextPanel('common-groups') : undefined)}
+              ? () => activateContextPanel('common-groups') : undefined)]}
               anchor={relatedMenuButtonRef}
               onClose={() => { setRelatedMenuOpen(false) }}
               trigger={{

@@ -66,3 +66,9 @@ it('shows real local activity and an honest unsupported word-frequency state',as
   await act(async()=>byText('词频分析').click());expect(host.textContent).toContain('团队词频分析尚未接通')
   expect(call.mock.calls.every(([op])=>op==='team.app.timeline')).toBe(true)
 })
+it('keeps export in the header menu without duplicating avatar private chat or directory pin actions',async()=>{
+  await act(async()=>mount());await act(async()=>byLabel('更多团队对话操作').click())
+  expect(byText('导出')).toBeDefined()
+  expect(byText('发起私聊')).toBeUndefined();expect(byText('置顶')).toBeUndefined();expect(byText('取消置顶')).toBeUndefined()
+  expect(call).not.toHaveBeenCalled()
+})
