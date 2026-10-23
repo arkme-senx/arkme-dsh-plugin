@@ -15,7 +15,7 @@ function fixture(kind='group_chat') {
 it.each(['group_chat','private_chat','send_to_self','default_category','topic'])('routes signed %s underline writes and verifies receipt',async(kind)=>{
   const {service,post}=fixture(kind)
   await expect(service.changeSourceUnderline('src','signed',{kind:'add',operationId:'op',anchor})).resolves.toMatchObject({items:[{mine:true}]})
-  expect(post).toHaveBeenLastCalledWith('/api/v1/records/annotations/create',expect.objectContaining({record_uid:'record',record_owner_user_id:7,operation_uid:'op',anchor}),{userId:42},undefined)
+  expect(post).toHaveBeenLastCalledWith('/api/v1/records/annotations/create',expect.objectContaining({record_uid:'record',record_owner_user_id:7,operation_uid:'op',anchor}),{userId:42},undefined,{trackWriteOutcome:true})
   if(kind.includes('chat'))expect(post.mock.calls.at(-1)?.[1]).toMatchObject({chat_session_uid:'chat',relation_uid:'relation',sequence:8})
 })
 it('does not claim success for a missing or changed receipt',async()=>{

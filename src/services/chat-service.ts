@@ -3518,7 +3518,8 @@ export class ChatService {
     const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
     if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('underline-source-invalid', '当前来源不支持标记', false, 403)
     const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) =>
-      this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal)
+      this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal,
+        ...(action === 'create' || action === 'remove' ? [{ trackWriteOutcome: true }] : []))
     return { session, source, chat, post }
   }
 
@@ -3820,6 +3821,7 @@ export class ChatService {
         },
         session,
         options.signal,
+        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
@@ -3896,6 +3898,7 @@ export class ChatService {
         },
         session,
         options.signal,
+        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
       if (options.quote !== undefined && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })

@@ -69,7 +69,7 @@ describe('quote reply owner contract', () => {
     expect(post).toHaveBeenCalledWith('/api/v1/chats/extensions/children/create', expect.objectContaining({
       child_record_uid: recordUid, child_rel_uid: relationUid, quote_reply: quote,
       quote_reply_source: { relation_uid: 'original-relation', sequence: 7 },
-    }), { userId: 42 }, undefined)
+    }), { userId: 42 }, undefined, { trackWriteOutcome: true })
   })
 })
 it.each(['send_to_self','default_category','topic'])('checks personal capabilities for %s rather than chat capabilities', async kind => {
@@ -94,7 +94,7 @@ it.each([true,false])('requires a personal record create quote receipt (echo=%s)
   const writing=service.createExtensionForConversation('parent',recordUid,'正文',[],undefined,quote)
   if(echo)await expect(writing).resolves.toMatchObject({recordUid,localState:'synced'})
   else await expect(writing).rejects.toMatchObject({code:'message-quote-receipt-missing'})
-  expect(create).toHaveBeenCalledWith('/api/v1/records/extensions/create',expect.objectContaining({quote_reply:quote,parent_record_uid:'parent'}),{userId:42})
+  expect(create).toHaveBeenCalledWith('/api/v1/records/extensions/create',expect.objectContaining({quote_reply:quote,parent_record_uid:'parent'}),{userId:42},undefined,{trackWriteOutcome:true})
 })
 it('hides inaccessible personal quote snapshots even when an old parent preview is present',async()=>{
   const {RecordService}=await import('../../src/services/record-service.js')
