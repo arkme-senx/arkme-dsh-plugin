@@ -27,11 +27,13 @@ export async function readPersonalCodexState(
   const tasks: CodexViewTask[] = []
   let self: TeamCodexState['self'] = null
   let hasMore = false
+  let reviewingTasks = 0
   for (const team of teams) {
     const result = results.get(team.teamRef)
     if (!result) continue
     self ??= result.self
     hasMore ||= result.cloud?.hasMore === true
+    reviewingTasks += result.cloud?.reviewingTasks ?? 0
     if (result.cloud?.status === 'offline' || result.cloud?.status === 'blocked') unavailable.push(team.name)
     for (const task of result.tasks) {
       // Cloud rows use canonical owner ids; local rows are account-bound by the host.
@@ -43,7 +45,7 @@ export async function readPersonalCodexState(
   }
   return {
     // Read-only aggregate for the conversation picker, never used as upload status.
-    state: {localOnly:false,self,installations:[],tasks,cloud:{status:'ready',pending:0,blocked:0,page,hasMore}},
+    state: {localOnly:false,self,installations:[],tasks,cloud:{status:'ready',pending:0,blocked:0,page,hasMore,reviewingTasks}},
     unavailable:[...new Set(unavailable)],
   }
 }

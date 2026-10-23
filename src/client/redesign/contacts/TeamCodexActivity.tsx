@@ -243,7 +243,8 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       {!state.localOnly && <small>{tr('搜索仅筛选当前页已加载的任务')}</small>}
     </div>}
     {!!state?.tasks.length && visibleGroups.length===0 && <p>{tr('没有匹配的任务')}</p>}
-    {state?.tasks.length===0 && <p>{tr('没有匹配的任务')}</p>}
+    {state?.tasks.length===0 && !state.cloud?.reviewingTasks && <p>{tr('没有匹配的任务')}</p>}
+    {!!state?.cloud?.reviewingTasks && <p role="status">{tr('正在核对任务来源…')}</p>}
     {!state && <p role="status">{tr('正在加载工作动态…')}</p>}
     {visibleGroups.map(group=><section className="arkme-team-codex-project" key={group.key} aria-label={group.name}>
       <header className="arkme-team-codex-project-header">
@@ -257,7 +258,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
           if (onOpenTask) onOpenTask(task,{page,member,project})
           else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
         }}>
-          <span className="arkme-codex-state-dot" data-working={liveTask(task)&&task.state==='working'} aria-hidden="true"/><span className="arkme-team-codex-task-title"><strong>{task.title}</strong><small>{status(task)}{liveTask(task) && !!task.queue?.items.length && ` · ${queueLabel(task)}`}</small></span><time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>
+          <span className="arkme-codex-state-dot" data-working={liveTask(task)&&task.state==='working'} aria-hidden="true"/><span className="arkme-team-codex-task-title"><strong>{task.title}</strong>{liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span><time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>
         </button>
         {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
           onClick={()=>{setExpanded(task.id);setTaskMenu(expanded===task.id ? !taskMenu : true)}}>⋯</button>}
@@ -366,7 +367,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
           mode={(selected.cloud ? !!selfMember && selected.cloud.ownerRef === selfMember
             : !!state?.self && selected.member.userRef === state.self.userRef)
             ? selected.cloud?.remote ? 'remote' : 'local' : 'readonly'}/>}
-      </> : <div className="arkme-codex-reader-empty"><strong>Codex</strong><p>{tr(isPersonal && state?.tasks.length===0 ? '暂无自己的同步任务' : '选择一项任务，继续阅读对话')}</p><small>{tr(isPersonal ? '这里展示自己已同步的任务。接入与同事任务请前往团队工作台。' : '按成员和项目查看已同步的输入与回答')}</small>{conversation && <p>{(!isPersonal || !!state?.tasks.length) && <button type="button" onClick={() => setPickerOpen(true)}>{tr('选择任务')}</button>}<button type="button" onClick={onManage}>{tr(isPersonal ? '团队工作台' : target?.fromTeam ? '返回团队' : '团队与同步管理')}</button></p>}</div>}
+      </> : <div className="arkme-codex-reader-empty"><strong>Codex</strong><p>{tr(state?.cloud?.reviewingTasks ? '正在核对任务来源…' : isPersonal && state?.tasks.length===0 ? '暂无自己的同步任务' : '选择一项任务，继续阅读对话')}</p><small>{tr(isPersonal ? '这里展示自己已同步的任务。接入与同事任务请前往团队工作台。' : '按成员和项目查看已同步的输入与回答')}</small>{conversation && <p>{(!isPersonal || !!state?.tasks.length) && <button type="button" onClick={() => setPickerOpen(true)}>{tr('选择任务')}</button>}<button type="button" onClick={onManage}>{tr(isPersonal ? '团队工作台' : target?.fromTeam ? '返回团队' : '团队与同步管理')}</button></p>}</div>}
     </section>}
     </div>}
   </section>

@@ -64,7 +64,7 @@ export interface TeamCodexInstallation {
 }
 export interface TeamCodexState {
   localOnly: boolean
-  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string }
+  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string; reviewingTasks?: number }
   self: ArkmeTeamMember | null
   tasks: TeamCodexTask[]
   installations: TeamCodexInstallation[]

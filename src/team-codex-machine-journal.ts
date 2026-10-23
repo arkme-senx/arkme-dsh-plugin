@@ -6,7 +6,8 @@ import { ArkmePluginError } from './services/service.js'
 import type { ArkmeTeamMember } from './types.js'
 import type { TeamCodexConnectionStatus, TeamCodexEventPage, TeamCodexInstallation, TeamCodexQueueSnapshot, TeamCodexTask } from './team-codex-contract.js'
 import { TeamCodexDesktopQueueReader, type QueueObservation } from './team-codex-desktop-queue.js'
-import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
+import { TeamCodexDesktopTitleReader, type CodexThreadVisibility } from './team-codex-desktop-titles.js'
+import { codexInternalRequest } from './team-codex-task-visibility.js'
 import { codexPromptText } from './team-codex-prompt-text.js'
 
 interface Installation {
@@ -52,7 +53,9 @@ export class TeamCodexMachineJournal {
       PRIMARY KEY(installation_id,project_key));
       CREATE TABLE IF NOT EXISTS codex_legacy_migrations (connection_id TEXT PRIMARY KEY,task_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS codex_queue_snapshots (task_id TEXT PRIMARY KEY REFERENCES codex_tasks(id),
-        version INTEGER NOT NULL,payload TEXT NOT NULL,checked_at INTEGER NOT NULL,changed_at INTEGER NOT NULL);`)
+        version INTEGER NOT NULL,payload TEXT NOT NULL,checked_at INTEGER NOT NULL,changed_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS codex_session_visibility (installation_id TEXT NOT NULL,session_id TEXT NOT NULL,
+        visibility TEXT NOT NULL,PRIMARY KEY(installation_id,session_id));`)
   }
 
   migratedIds():Set<string> {
@@ -83,7 +86,8 @@ export class TeamCodexMachineJournal {
   }
 
   private control(row:Installation):void {
-    const excluded=this.db.prepare('SELECT session_id FROM codex_tasks WHERE installation_id=? AND (excluded=1 OR deleted=1)').all(row.id) as {session_id:string}[]
+    const excluded=this.db.prepare(`SELECT session_id FROM codex_tasks WHERE installation_id=? AND (excluded=1 OR deleted=1)
+      UNION SELECT session_id FROM codex_session_visibility WHERE installation_id=? AND visibility='internal'`).all(row.id,row.id) as {session_id:string}[]
     this.write(join(this.directory,row.id,'control.json'),{version:2,userId:row.user_id,status:row.status,
       generation:row.generation,expiresAt:row.expires_at,excludedSessions:excluded.map(t=>t.session_id),
       excludedProjects:this.exclusions(row.id).map(p=>p.project_key)})
@@ -100,6 +104,7 @@ export class TeamCodexMachineJournal {
         FROM codex_tasks t LEFT JOIN codex_events e ON e.task_id=t.id
         WHERE t.installation_id=? AND t.deleted=0 GROUP BY t.id ORDER BY t.updated_at DESC,t.id`).all(installation.id) as unknown as (Task&{event_count:number;latest_kind:string|null})[]
       for(const row of rows) {
+        if(this.visibility(row.installation_id,row.session_id)!=='user') continue
         const queue = this.queueSnapshot(row.id)
         const input = row.latest_kind === 'UserPromptSubmit' ? this.db.prepare("SELECT turn_id,text,at FROM codex_events WHERE task_id=? AND kind='UserPromptSubmit' ORDER BY at DESC,sequence DESC LIMIT 1").get(row.id) as {turn_id:string;text:string;at:number}|undefined : undefined
         tasks.push({id:row.id,installationId:row.installation_id,title:row.title,
@@ -180,6 +185,7 @@ export class TeamCodexMachineJournal {
     const task=this.ownedTask(user,team,id)
     if(!task) return undefined
     if(task.deleted) fail('本地记录已删除',404)
+    if(this.visibility(task.installation_id,task.session_id)!=='user') fail('此记录尚未确认为用户任务',409)
     const rows=this.db.prepare('SELECT * FROM codex_events WHERE task_id=? AND sequence<? ORDER BY sequence DESC LIMIT 51').all(id,before??Number.MAX_SAFE_INTEGER) as unknown as EventRow[]
     const visible=rows.slice(0,50).reverse()
     return {items:visible.map(row=>({sequence:row.sequence,turnId:row.turn_id,kind:row.kind,text:row.text,at:row.at,truncated:row.truncated===1})),
@@ -196,9 +202,45 @@ export class TeamCodexMachineJournal {
         const path=join(folder,file)
         try{return [{path,event:this.read(path)}]}catch{rmSync(path,{force:true});return []}
       }).sort((a,b)=>Number(a.event.at)-Number(b.event.at)||Number(a.event.kind!=='UserPromptSubmit')-Number(b.event.kind!=='UserPromptSubmit')).slice(0,100)
+      const existing=this.db.prepare(`SELECT t.id,t.session_id FROM codex_tasks t WHERE t.installation_id=? AND t.excluded=0 AND t.deleted=0
+        AND NOT EXISTS(SELECT 1 FROM codex_project_exclusions p WHERE p.installation_id=t.installation_id AND p.project_key=t.project_key)
+        AND NOT EXISTS(SELECT 1 FROM codex_tasks other JOIN codex_installations i ON i.id=other.installation_id WHERE other.session_id=t.session_id AND i.user_id<>?)
+        AND NOT EXISTS(SELECT 1 FROM connections c WHERE c.session_id=t.session_id AND c.user_id<>?)`).all(row.id,user,user) as {id:string;session_id:string}[]
+      const incoming=entries.filter(({event})=>this.valid(row,claim,event) &&
+        !this.db.prepare(`SELECT 1 FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
+          WHERE t.session_id=? AND (i.user_id<>? OR t.excluded=1 OR t.deleted=1)
+          UNION SELECT 1 FROM connections WHERE session_id=? AND user_id<>?`).get(String(event.sessionId),user,String(event.sessionId),user)
+        && !this.exclusions(row.id).some(p=>p.project_key===(event.project as Json).key))
+      const metadata=this.titles.inspect(String(claim.homeKey),[...existing.map(t=>t.session_id),...incoming.map(e=>String(e.event.sessionId))])
+      let visibilityChanged=false
+      const classify=(session:string,internal=false):CodexThreadVisibility=>{
+        const previous=this.visibility(row.id,session),native=metadata?.visibility.get(session)
+        // Reusing a native session after switching accounts may retain its user-thread kind,
+        // but never imports the other account's title, queue or events (those remain fenced).
+        const knownUser=this.db.prepare(`SELECT 1 FROM codex_session_visibility v JOIN codex_installations i ON i.id=v.installation_id
+          WHERE i.home_key=? AND v.session_id=? AND v.visibility='user' LIMIT 1`).get(String(claim.homeKey),session)
+        // A temporarily missing/corrupt desktop index cannot revoke an established user task.
+        const next=native==='user' || previous==='user' || knownUser ? 'user'
+          : native==='internal' || previous==='internal' || internal ? 'internal' : 'pending'
+        if(next!==previous) {
+          this.db.prepare('INSERT INTO codex_session_visibility VALUES(?,?,?) ON CONFLICT(installation_id,session_id) DO UPDATE SET visibility=excluded.visibility').run(row.id,session,next)
+          visibilityChanged=true
+        }
+        return next
+      }
+      for(const task of existing) {
+        if(metadata?.visibility.get(task.session_id)==='user' || ['user','internal'].includes(this.visibility(row.id,task.session_id)??'')) {
+          classify(task.session_id)
+          continue
+        }
+        const prompts=this.db.prepare("SELECT substr(text,1,4096) text FROM codex_events WHERE task_id=? AND kind='UserPromptSubmit'").all(task.id) as {text:string}[]
+        classify(task.session_id,prompts.length>0 && prompts.every(e=>codexInternalRequest(e.text)))
+      }
       let changed=false
       for(const {path,event} of entries) {
         if(this.valid(row,claim,event)) {
+          const visibility=classify(String(event.sessionId),event.kind==='UserPromptSubmit' && codexInternalRequest(String(event.text)))
+          if(visibility==='internal') {rmSync(path,{force:true});continue}
           // Once the explicitly authorized global connection actually works, retire ALL legacy
           // collectors for this member/team. Otherwise an old collector could bypass global pause.
           this.adoptLegacy(row)
@@ -231,9 +273,14 @@ export class TeamCodexMachineJournal {
         this.db.prepare("UPDATE codex_installations SET status='active',home_key=?,name=?,updated_at=? WHERE id=?").run(row.home_key,row.name,row.updated_at,row.id)
         this.control(row)
       }
+      else if(visibilityChanged) this.control(row)
       this.captureTitles(row)
       this.captureQueues(row)
     }
+  }
+
+  private visibility(installation:string,session:string):CodexThreadVisibility|undefined {
+    return (this.db.prepare('SELECT visibility FROM codex_session_visibility WHERE installation_id=? AND session_id=?').get(installation,session) as {visibility:CodexThreadVisibility}|undefined)?.visibility
   }
 
   private queueSnapshot(taskId:string):TeamCodexQueueSnapshot|undefined {
@@ -262,7 +309,7 @@ export class TeamCodexMachineJournal {
     const tasks=this.db.prepare('SELECT * FROM codex_tasks WHERE installation_id=? AND deleted=0').all(installation.id) as unknown as Task[]
     const excluded=new Set(this.exclusions(installation.id).map(p=>p.project_key))
     // Read only sessions already bound through the trusted Hook. Never claim unrelated queues.
-    const eligible=tasks.filter(task=>!task.excluded&&!excluded.has(task.project_key)&&installation.status==='active')
+    const eligible=tasks.filter(task=>!task.excluded&&!excluded.has(task.project_key)&&installation.status==='active'&&this.visibility(task.installation_id,task.session_id)==='user')
     const snapshots=this.queues.read(installation.home_key??'',eligible.map(t=>t.session_id),this.now())
     for(const task of tasks) {
       const previous=this.queueSnapshot(task.id)
@@ -298,6 +345,8 @@ export class TeamCodexMachineJournal {
         this.db.prepare('INSERT INTO codex_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(task.id,installation.id,task.session_id,task.title,'unknown','','','','',0,0,task.updated_at)
       }
       this.migrateLegacy(installation,task)
+      // Legacy enrollment explicitly bound this exact session; retain that evidence.
+      this.db.prepare("INSERT OR IGNORE INTO codex_session_visibility VALUES(?,?,'user')").run(installation.id,task.session_id)
     }
     if(legacy.length) this.control(installation)
   }

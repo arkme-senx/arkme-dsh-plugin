@@ -28,15 +28,58 @@ function fixture(cloud?:TeamCodexCloudPort){
     env:{...process.env,CODEX_HOME:codex,CODEX_THREAD_ID:'',...env},...(input?{input:JSON.stringify(input)}:{}),encoding:'utf8',timeout:5000})
   const enroll=async()=>{const invite=await service.invite(teamRef);installation=invite.id;const result=run(['enroll',installation]);expect(result.status,result.stderr).toBe(0);return invite}
   const claim=()=>JSON.parse(readFileSync(join(directory,installation,'claim.json'),'utf8'))
-  const record=(kind='UserPromptSubmit',override:Record<string,unknown>={})=>run(['capture',installation,'--home-key',claim().homeKey],{
-    hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
+  const registered=new Map<string,string>()
+  const register=(id='task_current_123',name='Codex')=>{
+    registered.set(id,name)
+    writeFileSync(join(codex,'session_index.jsonl'),[...registered].map(([id,thread_name])=>JSON.stringify({id,thread_name,updated_at:'2026-10-23T00:00:00Z'})).join('\n')+'\n')
+  }
+  const record=(kind='UserPromptSubmit',override:Record<string,unknown>={},persistent=true)=>{
+    if(persistent) {
+      const id=String(override.session_id??'task_current_123')
+      register(id,registered.get(id)??'Codex')
+    }
+    return run(['capture',installation,'--home-key',claim().homeKey],{
+      hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
+  }
   const tasks=async()=>(await service.state(teamRef)).tasks
   const task=async()=>(await tasks())[0]!
-  return {service,options,root,directory,codex,project,run,enroll,record,claim,tasks,task,
+  return {service,options,root,directory,codex,project,run,enroll,record,register,claim,tasks,task,
     setUser:(value:number|undefined)=>{user=value;service.fence()},advance:(value:number)=>{offset+=value}}
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('does not ingest internal suggestion requests or their later Interrupt, but accepts a persistent user quoting that envelope',async()=>{
+    const f=fixture();await f.enroll()
+    const prompt='This is an app-generated request for a suggested next user message. The user did not write this message.\n\n{"suggestion":null}'
+    f.record('UserPromptSubmit',{session_id:'background_123',prompt},false)
+    expect(await f.tasks()).toEqual([])
+    f.record('Interrupt',{session_id:'background_123'},false)
+    expect(await f.tasks()).toEqual([])
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'),{readOnly:true})
+    expect(journal.prepare('SELECT count(*) n FROM codex_events').get()).toEqual({n:0});journal.close()
+    f.record('UserPromptSubmit',{prompt})
+    expect((await f.tasks()).map(t=>t.title)).toEqual(['Codex'])
+  })
+  it('holds unregistered sessions until native metadata arrives, retains the same event, and survives a temporary metadata failure',async()=>{
+    const f=fixture();await f.enroll();f.record('UserPromptSubmit',{},false)
+    expect(await f.tasks()).toEqual([])
+    writeFileSync(join(f.codex,'session_index.jsonl'),JSON.stringify({id:'task_current_123',thread_name:'真实用户任务',updated_at:'2026-10-23T00:00:00Z'})+'\n')
+    const task=await f.task();expect(task).toMatchObject({title:'真实用户任务',eventCount:1})
+    writeFileSync(join(f.codex,'state_5.sqlite'),'corrupt')
+    expect(await f.task()).toMatchObject({id:task.id,title:task.title,eventCount:1})
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe('请修复页面')
+  })
+  it('quarantines pre-upgrade background rows without deleting their raw events',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    journal.prepare('DELETE FROM codex_session_visibility').run()
+    journal.prepare('UPDATE codex_events SET text=?').run('## Memory Writing Agent: Phase 2 (Consolidation)\n\nYou are a Memory Writing Agent.\n\nwork')
+    rmSync(join(f.codex,'session_index.jsonl'))
+    expect(await f.tasks()).toEqual([])
+    expect(journal.prepare('SELECT count(*) n FROM codex_events').get()).toEqual({n:1})
+    await expect(f.service.events(teamRef,task.id)).rejects.toThrow('尚未确认为用户任务')
+    journal.close()
+  })
   it('extracts the current question before truncating its preview and keeps original events intact',async()=>{
     const f=fixture();await f.enroll()
     const body='实际问题：'+ '请核对录音器尺寸。'.repeat(40),prompt=wrappedCodexPrompt(body)
@@ -341,6 +384,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
   })
   it('orders batches, pages without overlap and discards malformed/wrong-generation/wrong-home records',async()=>{
     const f=fixture(),invite=await f.enroll(),folder=join(f.directory,invite.id)
+    f.register()
     const control=JSON.parse(readFileSync(join(folder,'control.json'),'utf8')),at=Date.now()
     const sample={version:2,homeKey:f.claim().homeKey,sessionId:'task_current_123',generation:control.generation,
       turnId:'turn_invalid',kind:'UserPromptSubmit',text:'bad',at,project:{key:'unknown',name:'',cwd:'',branch:'',worktree:''}}
@@ -365,6 +409,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     writeFileSync(join(f.directory,legacy,'claim.json'),JSON.stringify({sessionId:'task_current_123',title:'原任务',at:now}))
     await f.service.tick();f.run(['record'],{session_id:'different_task_123',turn_id:'other',hook_event_name:'UserPromptSubmit',prompt:'ignore'})
     expect((await f.task()).eventCount).toBe(1)
+    f.register('task_current_123','原任务')
     await f.enroll();f.record();const task=await f.task();expect(await f.tasks()).toHaveLength(1)
     expect(task).toMatchObject({title:'原任务',eventCount:2})
     expect((await f.service.events(teamRef,task.id)).items.map(e=>e.text)).toEqual(['旧记录','请修复页面'])

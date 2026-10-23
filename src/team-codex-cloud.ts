@@ -3,6 +3,7 @@ import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexInvitation, TeamCodexState, TeamCodexTask } from './team-codex-contract.js'
 import { ArkmePluginError } from './services/service.js'
 import { DEFAULT_CODEX_SOURCE_NAME, TeamCodexCloudJournal, validCodexSourceName } from './team-codex-cloud-journal.js'
+import { TeamCodexRemoteTaskReview } from './team-codex-remote-task-review.js'
 
 export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
@@ -22,6 +23,7 @@ const eligible = (tasks: readonly TeamCodexTask[]) => tasks.filter(t => t.status
 
 export class TeamCodexCloud {
   readonly journal: TeamCodexCloudJournal
+  private readonly taskReview: TeamCodexRemoteTaskReview
   private controller = new AbortController()
   private readonly destinations = new Map<string, { id: string | null; until: number }>()
   private readonly failures = new Map<string, { state: CloudState; retryAt: number; attempts: number }>()
@@ -30,6 +32,7 @@ export class TeamCodexCloud {
   constructor(private readonly db: DatabaseSync, private readonly port: TeamCodexCloudPort, private readonly currentUser: () => Promise<number | undefined>, private readonly now = Date.now,
     private readonly onConnectionEvidence: (owner:number) => void = () => undefined) {
     this.journal = new TeamCodexCloudJournal(db)
+    this.taskReview = new TeamCodexRemoteTaskReview(db,now)
     db.exec(`CREATE TABLE IF NOT EXISTS codex_cloud_consent (owner INTEGER NOT NULL, local_team TEXT NOT NULL,
       team TEXT NOT NULL, enabled INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(owner,local_team))`)
     if (!(db.prepare('PRAGMA table_info(codex_cloud_consent)').all() as {name:string}[]).some(column => column.name === 'source_name')) {
@@ -68,6 +71,7 @@ export class TeamCodexCloud {
     }
   }
   fence(): void {
+    this.taskReview.fence()
     this.controller.abort()
     this.controller = new AbortController()
     this.destinations.clear()
@@ -199,9 +203,17 @@ export class TeamCodexCloud {
         if (mapping) own.set(mapping.taskId, { ...task, cloud: { ...mapping, ownerRef: String(owner), remote: false } })
       }
       const remote = new Map<string, TeamCodexTask>()
+      // Preserve a known source-side decision even when that row is no longer in local.tasks.
+      const hasVisibility=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_session_visibility'").get()
+      const hidden=new Set(hasVisibility ? (this.db.prepare(`SELECT c.id,s.id source FROM codex_cloud_tasks c
+        JOIN codex_cloud_sources s ON s.id=c.source JOIN codex_tasks t ON t.id=c.local_id
+        JOIN codex_session_visibility v ON v.installation_id=t.installation_id AND v.session_id=t.session_id
+        WHERE s.owner=? AND s.local_team=? AND v.visibility<>'user'`).all(owner,localTeam) as {id:string;source:string}[])
+        .map(row=>JSON.stringify([row.source,row.id])) : [])
       for (const value of data.items) {
         const row = obj(value), id = validId(row.task_id), sourceId = validId(row.source_id), user = decimal(row.owner_ref)
         if (!id || !sourceId || !user || row.team_ref !== team || (memberRef && user !== memberRef) || !Number.isSafeInteger(row.latest_at) || Number(row.latest_at) < 1 || !Number.isSafeInteger(row.event_count) || Number(row.event_count) < 0) return invalid()
+        if(user===String(owner)&&hidden.has(JSON.stringify([sourceId,id]))) continue
         const matched = own.get(id)
         if (matched && matched.cloud?.sourceId === sourceId && user === String(owner)) { remote.set(id, matched); continue }
         const member: ArkmeTeamMember = user === String(owner) && local.self ? local.self : {
@@ -221,8 +233,15 @@ export class TeamCodexCloud {
         remote.set(mapping?.taskId ?? task.id, mapping ? own.get(mapping.taskId)! : task)
       }
       const failure = this.failures.get(`${owner}:${localTeam}`)
-      return { ...local, localOnly: false, tasks: [...remote.values()].sort((a, b) => b.updatedAt - a.updatedAt),
-        cloud: { ...(failure?.state ?? { status: 'ready' }), ...counts, page, hasMore: data.has_more,
+      let reviewingTasks=0
+      const visible=[...remote.values()].filter(task=>{
+        const result=this.taskReview.visible(owner,localTeam,task,()=>this.events(owner,localTeam,task.cloud!.taskId,task.cloud!.sourceId))
+        if(result==='checking') reviewingTasks++
+        return result==='visible'
+      })
+      return { ...local, localOnly: false, tasks: visible.sort((a, b) => b.updatedAt - a.updatedAt),
+        // Successful list reads must not be discarded because an earlier upload failed.
+        cloud: { status:'ready', ...(failure ? {message:failure.state.message} : {}), ...counts, page, hasMore: data.has_more, reviewingTasks,
           uploadEnabled: this.consent(owner,localTeam)?.enabled === 1,
           sourceName: this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME,
           ...(counts.blocked ? { message: ambiguous ? '部分任务存在跨账号归属冲突，仅保留在本机，未继续上传。' : '部分记录存在版本冲突或被拒绝，已保留本地内容，未覆盖云端。' } : {}) } }
