@@ -52,6 +52,15 @@ describe('Codex conversation reader', () => {
     expect(host.querySelectorAll('.arkme-team-codex-text')).toHaveLength(0)
     await click('复制回答');expect(mocks.writeText).toHaveBeenCalledWith('回答')
   })
+  it('places duration above its own answer without putting timing into copied message text',async()=>{
+    const start=Date.now()-150000
+    mocks.callArkme.mockResolvedValue({items:[event(1,'提问','UserPromptSubmit'),{...event(2,'真实回答'),timing:{state:'finished',startedAt:start,completedAt:start+128000,durationMs:128012,observedAt:start+128000}}]})
+    await render()
+    const label=host.querySelector('.arkme-codex-turn-duration')!
+    expect(label.textContent).toContain('用时 2分钟 8秒')
+    expect(label.nextElementSibling?.classList.contains('is-assistant')).toBe(true)
+    await click('复制回答');expect(mocks.writeText).toHaveBeenLastCalledWith('真实回答')
+  })
   it('cleans cached and refreshed questions for both display and copy without rewriting history',async()=>{
     const raw=wrappedCodexPrompt('24mm 和 26mm，统一起来对比。')
     const reading={...newCodexReadingState(),loaded:true,items:[event(1,raw,'UserPromptSubmit')]}

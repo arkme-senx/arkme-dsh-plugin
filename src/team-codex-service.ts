@@ -11,6 +11,7 @@ import { TeamCodexMachineJournal } from './team-codex-machine-journal.js'
 import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
 import { TeamCodexCloud, type TeamCodexCloudPort } from './team-codex-cloud.js'
 import { TeamCodexCaptureHealthReader } from './team-codex-capture-health.js'
+import { TeamCodexTurnTimingStore, type CodexTimingSource } from './team-codex-turn-timing.js'
 
 interface Binding {
   id: string; user_id: number; team_ref: string; member_json: string; title: string
@@ -53,6 +54,7 @@ export class TeamCodexService {
   private readonly machine: TeamCodexMachineJournal
   private readonly titles: TeamCodexDesktopTitleReader
   private readonly captureHealth: TeamCodexCaptureHealthReader
+  private readonly timings: TeamCodexTurnTimingStore
   private readonly cloud: TeamCodexCloud | undefined
   private cloudPumping = false
   private nextCloudPump = 0
@@ -90,6 +92,7 @@ export class TeamCodexService {
     this.machine = new TeamCodexMachineJournal(this.db,options.directory,this.now,readJson,atomicJson,options.codexHome)
     this.titles = new TeamCodexDesktopTitleReader(options.codexHome)
     this.captureHealth = new TeamCodexCaptureHealthReader(options.codexHome, this.now)
+    this.timings = new TeamCodexTurnTimingStore(this.db, options.codexHome, this.now)
     this.cloud = options.cloud ? new TeamCodexCloud(this.db, options.cloud, options.currentUserId, this.now, owner => this.rememberEntry(owner)) : undefined
     // The helper is copied into private runtime storage, not into Codex config.
     const helper = join(options.directory, 'bridge.py')
@@ -367,20 +370,33 @@ export class TeamCodexService {
 
   async events(teamRef: string, id: string, before?: number, sourceId?: string, cursor?: string): Promise<TeamCodexEventPage> {
     const userId = await this.user()
+    const generation = this.generation
+    const annotate = async (page:TeamCodexEventPage, source:CodexTimingSource|undefined) => {
+      const scope=JSON.stringify([userId,teamRef,sourceId??'local',id])
+      if(!source) return {...page,items:this.timings.project(scope,{sessionId:''},page.items,new Map())}
+      const fresh=await this.timings.read(source,page.items)
+      if(this.closed || generation!==this.generation || await this.options.currentUserId()!==userId) fail('账号或同步状态已变化，请重试',409)
+      // Re-check exclusion/disconnection after asynchronous source reads.
+      const current=sourceId ? this.captureHealth.timingSource(userId,teamRef,id,sourceId,page.items.map(event=>event.turnId))
+        : source.homeKey ? this.machine.timingSource(userId,teamRef,id) : (this.binding(userId,teamRef,id).status==='active'?source:undefined)
+      if(!current || current.sessionId!==source.sessionId) return page
+      return {...page,items:this.timings.project(scope,current,page.items,fresh)}
+    }
     if (sourceId) {
       if (!this.cloud) fail('当前环境未启用云端记录', 403)
-      return await this.cloud.events(userId, teamRef, id, sourceId, cursor)
+      const page=await this.cloud.events(userId, teamRef, id, sourceId, cursor)
+      return annotate(page,this.captureHealth.timingSource(userId,teamRef,id,sourceId,page.items.map(event=>event.turnId)))
     }
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) fail('分页标识无效')
     const machine=this.machine.events(userId,teamRef,id,before)
-    if(machine) return machine
-    this.binding(userId,teamRef,id)
+    if(machine) return annotate(machine,this.machine.timingSource(userId,teamRef,id))
+    const binding=this.binding(userId,teamRef,id)
     const rows = this.db.prepare('SELECT * FROM events WHERE connection_id=? AND sequence<? ORDER BY sequence DESC LIMIT 51').all(id,before ?? Number.MAX_SAFE_INTEGER) as unknown as EventRow[]
     const visible = rows.slice(0,50)
-    return {
+    return annotate({
       items: visible.reverse().map(row => ({ sequence:row.sequence,turnId:row.turn_id,kind:row.kind,text:row.text,at:row.at,truncated:row.truncated===1 })),
       ...(rows.length > 50 ? { nextBefore: visible[0]!.sequence } : {}),
-    }
+    }, binding.status==='active' && binding.session_id ? {sessionId:binding.session_id,live:true} : undefined)
   }
 
   tick(): Promise<void> {

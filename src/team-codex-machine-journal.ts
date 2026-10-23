@@ -192,6 +192,14 @@ export class TeamCodexMachineJournal {
       ...(rows.length>50?{nextBefore:visible[0]!.sequence}:{})}
   }
 
+  timingSource(user:number,team:string,id:string):{sessionId:string;homeKey:string;live:boolean}|undefined {
+    const task=this.ownedTask(user,team,id)
+    if(!task || task.deleted || task.excluded || this.visibility(task.installation_id,task.session_id)!=='user') return
+    const installation=this.installations(user,team).find(row=>row.id===task.installation_id)
+    if(installation?.status!=='active' || !installation.home_key || this.exclusions(installation.id).some(p=>p.project_key===task.project_key)) return
+    return {sessionId:task.session_id,homeKey:installation.home_key,live:true}
+  }
+
   ingest(user:number):void {
     for(const row of this.installations(user)) {
       if(!['pending','active'].includes(row.status)) continue

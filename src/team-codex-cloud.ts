@@ -4,6 +4,7 @@ import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexInvitation, TeamCodex
 import { ArkmePluginError } from './services/service.js'
 import { DEFAULT_CODEX_SOURCE_NAME, TeamCodexCloudJournal, validCodexSourceName } from './team-codex-cloud-journal.js'
 import { TeamCodexRemoteTaskReview } from './team-codex-remote-task-review.js'
+import { codexTurnTiming } from './team-codex-timing.js'
 
 export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
@@ -292,7 +293,9 @@ export class TeamCodexCloud {
     const items = data.items.map(value => {
       const row = obj(value), kind = row.kind
       if (!str(row.event_id) || !str(row.turn_id) || !Number.isSafeInteger(row.version) || Number(row.version) < 1 || !Number.isSafeInteger(row.turn_seq) || Number(row.turn_seq) < 1 || Number(row.turn_seq) > Math.floor(Number.MAX_SAFE_INTEGER / 3) || !Number.isSafeInteger(row.at) || Number(row.at) < 1 || typeof row.text !== 'string' || typeof row.truncated !== 'boolean' || !['UserPromptSubmit', 'Interrupt', 'Stop'].includes(String(kind))) return invalid()
-      return { eventId: str(row.event_id), version: Number(row.version), sequence: Number(row.turn_seq) * 3 + (kind === 'Stop' ? 2 : kind === 'Interrupt' ? 1 : 0), turnId: str(row.turn_id), kind: kind as TeamCodexEvent['kind'], text: row.text, at: Number(row.at), truncated: row.truncated }
+      const timing=codexTurnTiming(row.timing)
+      return { eventId: str(row.event_id), version: Number(row.version), sequence: Number(row.turn_seq) * 3 + (kind === 'Stop' ? 2 : kind === 'Interrupt' ? 1 : 0), turnId: str(row.turn_id), kind: kind as TeamCodexEvent['kind'], text: row.text, at: Number(row.at), truncated: row.truncated,
+        ...(timing && (kind==='UserPromptSubmit'||kind==='Stop'&&timing.state==='finished'||kind==='Interrupt'&&timing.state==='interrupted')?{timing}:{}) }
     })
     return { items, ...(data.has_more ? { nextCursor: str(data.next_cursor) } : {}) }
   }

@@ -48,6 +48,24 @@ function fixture(cloud?:TeamCodexCloudPort){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('attaches native timing to the exact captured turn and keeps it after restart and pause',async()=>{
+    const f=fixture();await f.enroll();f.record();f.record('Stop');const task=await f.task()
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    mkdirSync(join(f.codex,'sessions'))
+    const path=join(f.codex,'sessions','current.jsonl'),start=Math.floor(Date.now()/1000)-200
+    native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','任务',path);native.close()
+    writeFileSync(path,[{type:'session_meta',payload:{id:'task_current_123'}},
+      {type:'event_msg',timestamp:new Date((start+128)*1000).toISOString(),payload:{type:'task_complete',turn_id:'turn_123',root_turn_id:'turn_123',started_at:start,completed_at:start+128,duration_ms:128012}}].map(x=>JSON.stringify(x)).join('\n')+'\n')
+    expect((await f.service.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    f.service.close();rmSync(path)
+    const restored=new TeamCodexService(f.options);services.push(restored)
+    expect((await restored.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    await restored.change(teamRef,task.installationId!,'pause')
+    expect((await restored.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    f.setUser(22)
+    await expect(restored.events(teamRef,task.id)).rejects.toThrow()
+  })
   it('does not ingest internal suggestion requests or their later Interrupt, but accepts a persistent user quoting that envelope',async()=>{
     const f=fixture();await f.enroll()
     const prompt='This is an app-generated request for a suggested next user message. The user did not write this message.\n\n{"suggestion":null}'

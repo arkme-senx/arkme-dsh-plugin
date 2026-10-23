@@ -80,6 +80,16 @@ export interface TeamCodexInvitation {
     cloudUpload: 'enabled' | 'disabled' | 'unsupported' | 'unavailable'
   }
 }
+/** Source-reported turn lifecycle, never derived from transport timestamps. */
+export interface TeamCodexTurnTiming {
+  startedAt: number
+  completedAt?: number
+  durationMs?: number
+  state: 'working' | 'finished' | 'interrupted'
+  observedAt: number
+  /** Explicit source liveness at observedAt; absent on older cloud contracts. */
+  live?: boolean
+}
 export interface TeamCodexEvent {
   eventId?: string
   version?: number
@@ -89,6 +99,7 @@ export interface TeamCodexEvent {
   text: string
   at: number
   truncated: boolean
+  timing?: TeamCodexTurnTiming
 }
 export interface TeamCodexEventPage {
   items: TeamCodexEvent[]

@@ -12,6 +12,7 @@ import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
 import { codexPromptText } from '../../../team-codex-prompt-text.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
+import { CodexTurnDuration } from './CodexTurnDuration.js'
 
 export interface CodexReadingState {
   items: TeamCodexEvent[]
@@ -106,7 +107,8 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
       const changed = JSON.stringify(merged) !== JSON.stringify(reading.items)
       if (older !== undefined && scroller.current) pendingScroll.current = { top: scroller.current.scrollTop, height: scroller.current.scrollHeight }
       else pendingScroll.current = reading.atBottom ? 'bottom' : 'restore'
-      if (changed && reading.loaded && older === undefined && !reading.atBottom) setNewContent(true)
+      const messageChanged=merged.some(item=>!reading.items.some(old=>(old.eventId??old.sequence)===(item.eventId??item.sequence)&&old.text===item.text&&old.kind===item.kind))
+      if (messageChanged && reading.loaded && older === undefined && !reading.atBottom) setNewContent(true)
       if (!reading.loaded || older !== undefined) {
         reading.before = page.nextBefore; reading.cursor = page.nextCursor
         setBefore(page.nextBefore); setCursor(page.nextCursor)
@@ -152,6 +154,9 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
   const visibleItems = useMemo(() => items.map(event => event.kind === 'UserPromptSubmit'
     ? { ...event, text: codexPromptText(event.text) } : event), [items])
   const interactions=useCodexMessageInteractions({teamRef,task,events:visibleItems,account,userId})
+  const latest=visibleItems.at(-1)
+  const workingTiming=task.state==='working' && latest?.kind==='UserPromptSubmit'
+    && (!task.currentInput || task.currentInput.turnId===latest.turnId) ? latest.timing : undefined
   return <div className="arkme-codex-transcript-wrap" data-codex-source={interactions.sourceRef}>
     <style>{arkmeMarkdownStyles}</style>
     <div className="arkme-codex-reader-viewport">
@@ -162,6 +167,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {!items.length && !current && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
+          {event.kind!=='UserPromptSubmit' && event.timing && <CodexTurnDuration timing={event.timing} task={task}/>}
           <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : '任务已中断')}>
             {interactions.check(event)}<div style={{minWidth:0}}>
             <CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
@@ -172,7 +178,8 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
           </article>
         </div>)}
         {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{codexPromptText(current.text) || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
-        {task.state === 'working' && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working={!task.cloud?.remote&&!codexCollectorUnavailable(task)}/>{tr(codexCollectorUnavailable(task) || task.cloud?.remote ? '尚未收到本轮结束状态，请查看同步状态。' : '等待同步本轮回答…')}</p>}
+        {workingTiming && <CodexTurnDuration timing={workingTiming} task={task}/>}
+        {task.state === 'working' && !workingTiming && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working={!task.cloud?.remote&&!codexCollectorUnavailable(task)}/>{tr(codexCollectorUnavailable(task) || task.cloud?.remote ? '尚未收到本轮结束状态，请查看同步状态。' : '等待同步本轮回答…')}</p>}
       </div>
     </div>
     {awayFromBottom && <button type="button" className="arkme-codex-jump" onClick={() => { const el = scroller.current; if (el) { el.scrollTop = el.scrollHeight; rememberScroll() } }}>{tr(newContent ? '有新内容 ↓' : '回到最新 ↓')}</button>}
