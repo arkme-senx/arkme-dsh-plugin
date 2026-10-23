@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { codexPromptText } from '../src/team-codex-prompt-text.js'
-import { browserContext, wrappedCodexPrompt } from './fixtures/codex-prompt.js'
+import { codexPromptText, codexPromptPresentation } from '../src/team-codex-prompt-text.js'
+import { browserContext, wrappedCodexPrompt, questionReplyPrompt } from './fixtures/codex-prompt.js'
 
 describe('Codex question display text', () => {
+  it('extracts paired questions and answers, decodes JSON once, and omits generated identifiers and clock', () => {
+    const replies = [{question:'先选哪种？\n支持多行',answer:'本机\n保留 \\n 原文'}, {question:'第二项',answer:'继续'}]
+    const raw = questionReplyPrompt([{...replies[0]!,question:`当前时间：2026-10-23 18:29:01 CST (+0800)\n${replies[0]!.question}`},replies[1]!])
+    const result = codexPromptPresentation(raw)
+    expect(result.replies).toEqual(replies)
+    expect(result.text).toBe('问题：先选哪种？\n支持多行\n你的回答：本机\n保留 \\n 原文\n\n问题：第二项\n你的回答：继续')
+    expect(codexPromptText(result.text)).toBe(result.text)
+    expect(codexPromptPresentation(wrappedCodexPrompt(raw))).toEqual(result)
+    expect(result.text).not.toMatch(/questionItemId|call_example|send_user_message_question_reply|当前时间/)
+  })
+  it('keeps malformed, incomplete, foreign and explicitly quoted reply envelopes unchanged', () => {
+    const raw=questionReplyPrompt()
+    for(const text of [`解释这个：\n${raw}`,`\`\`\`json\n${raw}\n\`\`\``,raw.replace('request_user_input_async','other_tool'),raw.slice(0,-10),raw.replace('"answer":','"unknown":'),raw.replace('[{','[{bad')]) {
+      expect(codexPromptPresentation(text)).toEqual({text})
+    }
+    expect(codexPromptPresentation('<send_user_message_question_reply>[]</send_user_message_question_reply>').replies).toBeUndefined()
+  })
+  it('retains the question when an answer was submitted empty', () => {
+    expect(codexPromptText(questionReplyPrompt([{question:'问题',answer:''}]))).toBe('问题：问题\n你的回答：未填写回答')
+  })
   it('removes the generated envelope and request label while retaining body whitespace and URLs', () => {
     const body = '24mm 和 26mm，统一起来对比。\n\n    保留缩进\nhttp://127.0.0.1:8796/\n'
     expect(codexPromptText(wrappedCodexPrompt(body))).toBe(body)

@@ -1853,6 +1853,15 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-message { min-width:0; margin:0 0 32px; overflow-wrap:anywhere; font-size:14px; line-height:1.75; }
 .arkme-codex-message.is-user { max-width:86%; width:fit-content; margin-left:auto; padding:12px 16px 6px; border-radius:18px; background:var(--dsw-alias-bg-layer-2,#f0f1f4); }
 .arkme-codex-user-text { white-space:pre-wrap; }
+.arkme-codex-message.is-user:has(.arkme-codex-question-replies) { background:transparent; padding:0; }
+.arkme-codex-question-replies { display:grid; gap:12px; }
+.arkme-codex-question-reply { min-width:0; border:1px solid var(--arkme-line); border-radius:14px; padding:14px 16px 10px; background:var(--dsw-alias-bg-layer-1,#fff); }
+.arkme-codex-question-reply p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.arkme-codex-question-label { color:var(--dsw-alias-label-secondary,#666a73); }
+.arkme-codex-question-answer { display:flex; align-items:flex-start; gap:8px; margin-top:12px; padding:10px 12px; border-radius:9px; background:var(--dsw-alias-bg-layer-2,#f0f1f4); }
+.arkme-codex-question-answer > svg { flex:none; margin-top:4px; color:var(--dsw-alias-state-success-primary,#298650); }
+.arkme-codex-question-answer > p { min-width:0; font-weight:500; }
+.arkme-codex-question-status { display:block; margin-top:8px; text-align:right; color:var(--dsw-alias-label-secondary,#666a73); font-size:11px; user-select:none; }
 .arkme-codex-message-meta { display:flex; gap:12px; align-items:center; margin-top:8px; min-height:28px; font-size:11px; }
 .arkme-codex-message.is-user .arkme-codex-message-meta { justify-content:flex-end; }
 .arkme-codex-copy-control { display:inline-flex; align-items:center; gap:6px; }
