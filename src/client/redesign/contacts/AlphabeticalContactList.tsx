@@ -5,6 +5,7 @@ import { groupContactDirectoryItems } from '../../../contact-directory-presentat
 import { ArkmeDefaultAvatarFrame, ArkmeSourceAvatar, ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { UnmarkedSpeakerTokenAvatar } from './UnmarkedSpeakerVisuals.js'
+import { ManualSpeakerAvatar } from './ManualSpeakerAvatar.js'
 
 export interface DirectoryItemRowProps {
   item: ArkmeDirectoryItem
@@ -37,6 +38,7 @@ function itemSubtitle(item: ArkmeDirectoryItem): string {
     case 'group': return ''
     case 'bot': return ''
     case 'unmarked-speaker': return item.subtitle
+    case 'manual-speaker': return ''
     case 'team': return item.publicId ?? ''
     case 'contact': return ''
   }
@@ -71,6 +73,8 @@ function rowContent(item: ArkmeDirectoryItem) {
           ? <span className="arkme-contact-directory-avatar">
               <UnmarkedSpeakerTokenAvatar token={item.speakerToken} label={tr("{v0}的说话人头像", { v0: item.displayName })} />
             </span>
+        : item.kind === 'manual-speaker'
+          ? <span className="arkme-contact-directory-avatar"><ManualSpeakerAvatar name={item.displayName}/></span>
         : item.kind === 'team'
           ? <span className="arkme-contact-directory-avatar is-team" role="img" aria-label={tr("{v0}的团队头像", { v0: item.displayName })}>
               <ArkmeTeamAvatar avatar={item.avatar} name={item.displayName} size={38}/>
@@ -78,7 +82,7 @@ function rowContent(item: ArkmeDirectoryItem) {
           : <span className="arkme-contact-directory-avatar">
               <ArkmeUserAvatar
                 {...(avatarRef === undefined ? {} : { avatarRef })}
-                {...(item.avatarFallback === undefined ? {} : { fallback: item.avatarFallback })}
+                {...(!('avatarFallback' in item) || item.avatarFallback === undefined ? {} : { fallback: item.avatarFallback })}
                 size={38}
                 label={tr("{v0}的头像", { v0: item.displayName })}
               />
@@ -106,7 +110,7 @@ export function DirectoryItemRow({
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
     data-directory-row-kind={item.kind}
-    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.kind === 'team' ? item.teamRef : item.candidateRef}
+    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : item.kind === 'manual-speaker' ? item.speakerKey : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.kind === 'team' ? item.teamRef : item.candidateRef}
     {...(selection === undefined ? {} : { 'aria-current': selected as true | false })}
     onClick={() => {
       onSelect(selection)

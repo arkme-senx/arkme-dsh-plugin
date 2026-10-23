@@ -365,10 +365,6 @@ export function ArkmePersistentSidebar({
   }, [maxResizableWidth, renderedSidebarWidth])
   const sidebarSizingStyle = <style data-arkme-owned="persistent-sidebar-resize-handle-style">{`
     :root { --arkme-persistent-sidebar-width: ${String(renderedSidebarWidth)}px; }
-    :root:has([data-arkme-owned="persistent-sidebar"]) [data-side="sidebar"] {
-      left: ${String(renderedSidebarWidth)}px !important;
-      pointer-events: none;
-    }
     [data-arkme-owned="persistent-sidebar-resize-handle"]::after,
     [data-arkme-owned="persistent-sidebar-divider"]::after {
       content: "";

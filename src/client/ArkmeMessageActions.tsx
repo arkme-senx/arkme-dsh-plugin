@@ -14,6 +14,7 @@ import type {
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 
 export interface ArkmeMessageSelectionItem {
   id: string
@@ -165,6 +166,11 @@ export function useArkmeMessageActions(input: {
   items: readonly ArkmeMessageActionViewItem[]
   /** Visible selection facts, independent of the signed action capabilities. */
   selectionItems?: readonly ArkmeMessageSelectionItem[]
+  /** Only owners with an explicit deletion flow expose this action. */
+  deleteSelection?: {
+    disabledReason(items: readonly ArkmeMessageSelectionItem[]): string | undefined
+    onRequest(items: readonly ArkmeMessageSelectionItem[]): void
+  }
   onForwarded?: (target: ArkmeSourceItem, result: ArkmeSourceSendResult) => void
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>()
@@ -179,6 +185,8 @@ export function useArkmeMessageActions(input: {
   const selectedContent = useMemo(() => selectable.filter(item => selectedIds?.has(item.id)), [selectable, selectedIds])
   const completeBatch = selected.length > 0 && selected.length === selectedContent.length && selected.length <= 100
     && arkmeMessageActionConversationRef(selected) !== undefined
+  const deleteDisabledReason = input.deleteSelection?.disabledReason(selectedContent)
+  const deleteDisabled = selectedContent.length === 0 || busy !== undefined || !!deleteDisabledReason
 
   const showStatus = useCallback((value: string, revision = revisionRef.current) => {
     if (revision !== revisionRef.current) return
@@ -443,6 +451,9 @@ export function useArkmeMessageActions(input: {
     <button data-arkme-feedback="neutral" type="button" aria-label={tr("复制文本")} style={{ ...styles.selectButton, ...(selectedContent.length === 1 && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={selectedContent.length !== 1 || busy !== undefined} onClick={() => { const first = selectedContent[0]; if (first !== undefined) void copyOne(first) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="copy" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>{tr("复制文本")}</span></button>
     <button data-arkme-feedback="neutral" type="button" aria-label={tr("复制链接")} style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.copyLinkAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.copyLinkAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void copyLink(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="link" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>{tr("复制链接")}</span></button>
     <button data-arkme-feedback="neutral" type="button" aria-label={tr("转发")} style={{ ...styles.selectButton, ...(completeBatch && selected.every(item => item.forwardAvailable) && busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={!completeBatch || selected.some(item => !item.forwardAvailable) || busy !== undefined} onClick={() => { if (completeBatch) void openForward(selected) }}><span style={styles.icon}><ArkmeSelectActionIcon kind="forward" size={22} /></span><span style={messageSelectionStyles.selectBarLabel}>{busy === 'forward' ? '转发中' : tr("转发")}</span></button>
+    {input.deleteSelection && <button data-arkme-feedback="danger" type="button" aria-label={tr('删除')} title={deleteDisabledReason} aria-description={deleteDisabledReason}
+      style={{ ...styles.selectButton, ...(deleteDisabled ? messageSelectionStyles.selectBarButtonDisabled : {}) }} disabled={deleteDisabled}
+      onClick={() => { if (!deleteDisabled) input.deleteSelection?.onRequest(selectedContent) }}><span style={styles.icon}><Trash size={22} aria-hidden /></span><span style={messageSelectionStyles.selectBarLabel}>{tr('删除')}</span></button>}
     <button data-arkme-feedback="neutral" type="button" style={{ ...styles.selectButton, ...(busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={busy !== undefined} onClick={() => { setSelectedIds(undefined); requestIdsRef.current = undefined }} aria-label={tr("退出多选")}><span style={styles.icon}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={messageSelectionStyles.selectBarLabel}>{tr("退出多选")}</span></button>
   </div></>
 

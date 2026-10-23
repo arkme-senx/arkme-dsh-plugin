@@ -1,3 +1,5 @@
+import { snapshotDshHistoryEntry } from './dsh-event-contract.js'
+import { nativeAnnotationProjection } from './annotation-projection.js'
 import type { ContentProof } from './history-content-proof.js'
 import { ProjectionUpload } from './projection-upload.js'
 import type { DshNativeTransport } from './native-transport.js'
@@ -395,6 +397,21 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.requireActiveAccount(input.accountId)
     this.desktopSessions.report(input, performance.now(), this.now())
     this.scheduleDesktopSelection()
+  }
+
+  async annotationSource(sessionRef: string, seq: number, signal: AbortSignal) {
+    const accountId = this.accountId, runtime = this.runtime
+    if (!accountId || !runtime || !this.options.nativeTransport) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '来源电脑尚未准备好标记同步')
+    const scoped = AbortSignal.any([signal, this.projectionController.signal])
+    const owned = await this.options.sessionOwnership.listOwned(accountId, [sessionRef])
+    this.requireActiveAccount(accountId, runtime.runtimeRef)
+    if (!owned.has(sessionRef)) throw new DshRemoteError('SESSION_NOT_FOUND', '当前账号没有该来源会话')
+    const event = await this.options.nativeTransport.annotationEvent(sessionRef, seq, scoped)
+    const entry = snapshotDshHistoryEntry({ event })
+    const projection = nativeAnnotationProjection(entry)
+    if (!projection) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '这条消息暂不支持云标记')
+    this.requireActiveAccount(accountId, runtime.runtimeRef)
+    return { runtimeRef: runtime.runtimeRef, hostGeneration: runtime.hostGeneration, entry, canonical: projection.canonical }
   }
 
   async currentSession(): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running: boolean; projectionAsOfSeq?: number } | null }> {

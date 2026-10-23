@@ -1,3 +1,4 @@
+import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
 import { arkmeMessageSync } from './message-sync-store.js'
 import { callArkme } from './api.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
@@ -263,6 +264,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          publishNativeAnnotationInvalidation(authenticatedAccountScope)
           void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
           officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
@@ -307,6 +309,7 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
           if (update.projection === 'offline_context') {
             const active = arkmeUi.getSnapshot().selectedSource
             arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])

@@ -3,6 +3,7 @@ import { acceptUnderlineSnapshot, type MessageUnderlineSnapshot, type MessageUnd
 import { messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 
 export interface MessageMarkTransport {
+  subscribe?(invalidate: () => void): () => void
   capabilities(sourceRef: string, signal: AbortSignal): Promise<MessageUnderlineCapabilities>
   list(sourceRef: string, refs: string[], signal: AbortSignal): Promise<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>
   change(sourceRef: string, ref: string, change: MessageUnderlineChange, signal: AbortSignal): Promise<MessageUnderlineSnapshot>
@@ -22,11 +23,13 @@ export class MessageUnderlineSession {
   private epochs = new Map<string, number>()
   private failures = new Map<string, { notice: string; retry: () => Promise<void> }>()
   private loading = false
+  private queuedTargets: MessageSelectionTarget[] | undefined
   capability: MessageUnderlineCapabilities | undefined
   notice = ''
   retry: (() => Promise<void>) | undefined
   constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud', private transport?: MessageMarkTransport) {}
-  dispose() { this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
+  subscribe(invalidate: () => void) { return this.transport?.subscribe?.(invalidate) }
+  dispose() { this.queuedTargets = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
   private publish() {
     const failure = this.failures.values().next().value
     if (failure) { this.notice = failure.notice; this.retry = failure.retry }
@@ -49,10 +52,21 @@ export class MessageUnderlineSession {
     this.publish()
   }
   async read(targets: MessageSelectionTarget[]) {
-    if (this.loading || !this.capability?.supported || this.controller.signal.aborted) return
+    if (!this.capability?.supported || this.controller.signal.aborted) return
+    if (this.loading) { this.queuedTargets = targets; return }
+    this.loading = true
+    let next: MessageSelectionTarget[] | undefined = targets
+    try {
+      while (next && !this.controller.signal.aborted) {
+        this.queuedTargets = undefined
+        await this.readTargets(next)
+        next = this.queuedTargets
+      }
+    } finally { this.loading = false; this.queuedTargets = undefined }
+  }
+  private async readTargets(targets: MessageSelectionTarget[]) {
     const unique = new Map(targets.filter(target => target.sourceRef === this.sourceRef && messageSelectionReference(target)).map(target => [messageSelectionReference(target)!, target]))
     if (!unique.size) return
-    this.loading = true
     const epochs = new Map(this.epochs)
     try {
       const refs = [...unique.keys()]
@@ -68,6 +82,7 @@ export class MessageUnderlineSession {
           const next = acceptUnderlineSnapshot(this.snapshots.get(key), row.snapshot, this.pending.has(key))
           if (next) this.snapshots.set(key, next)
         }
+        this.notice = result.find(row => row.snapshot.syncNotice)?.snapshot.syncNotice ?? ''
         this.publish()
       }
     } catch (error) {
@@ -78,7 +93,7 @@ export class MessageUnderlineSession {
         this.retry = () => this.read(targets)
         this.publish()
       }
-    } finally { this.loading = false }
+    }
   }
   async change(target: MessageSelectionTarget, change: MessageUnderlineChange): Promise<void> {
     const reference = messageSelectionReference(target)
@@ -95,14 +110,14 @@ export class MessageUnderlineSession {
     this.snapshots.set(key, { revision: before?.revision ?? 0, accessible: true,
       items: change.kind === 'remove' ? (before?.items ?? []).filter(item => item.id !== change.annotationId)
         : [...(before?.items ?? []), { id: change.operationId, actorId: this.viewerId, actorName: '你', mine: true, anchor: change.anchor, state: 'available', pending: true }] })
-    this.notice = (this.storage === 'local' ? '正在保存本机标记…' : '正在同步标记…'); this.retry = undefined; this.publish()
+    this.notice = ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…'); this.retry = undefined; this.publish()
     try {
       const result = await (this.transport ? this.transport.change(this.sourceRef, reference, change, this.controller.signal)
         : callArkme<MessageUnderlineSnapshot>(this.storage === 'local' ? 'source.local-message-mark.change' : 'source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: reference, change }, this.controller.signal))
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
       if (current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
-      this.failures.delete(key); this.notice = this.pending.size > 1 ? (this.storage === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
+      this.failures.delete(key); this.notice = this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted) return
       if (accessLost(error)) this.snapshots.clear()

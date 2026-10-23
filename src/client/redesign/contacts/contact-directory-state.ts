@@ -11,6 +11,7 @@ export const CONTACT_DIRECTORY_SECTION_ORDER = [
   'groups',
   'bots',
   'teams',
+  'manual-speakers',
   'contacts',
 ] as const satisfies readonly ArkmeDirectorySectionKind[]
 
@@ -19,7 +20,7 @@ export type ContactDirectoryLoadMode = 'replace' | 'append' | 'count'
 
 export type ArkmeDirectorySelection =
   | { kind: 'none' }
-  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' }>
+  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' | 'manual-speaker' }>
   | { kind: 'contact'; contactRef: string }
   | { kind: 'team'; teamRef: string; view?: 'members' | 'activity' }
   | { kind: 'unmarked-speaker'; candidateRef: string }
@@ -117,6 +118,7 @@ export function createContactDirectoryState(accountKey: string): ContactDirector
       groups: createSection('groups', accountKey),
       bots: createSection('bots', accountKey),
       'unmarked-speakers': createSection('unmarked-speakers', accountKey),
+      'manual-speakers': createSection('manual-speakers', accountKey),
       teams: createSection('teams', accountKey),
       contacts: createSection('contacts', accountKey),
     },
@@ -128,6 +130,7 @@ export function directoryItemKey(item: ArkmeDirectoryItem): string {
     case 'group': return `group:${item.sourceRef}`
     case 'bot': return `bot:${item.bot.botRef}`
     case 'unmarked-speaker': return `unmarked-speaker:${item.candidateRef}`
+    case 'manual-speaker': return `manual-speaker:${item.speakerKey}`
     case 'team': return `team:${item.teamRef}`
     case 'contact': return `contact:${item.contactRef}`
   }
@@ -194,6 +197,9 @@ function selectionAfterReplacement(
     return items.some(item => item.kind === 'team' && item.teamRef === selection.teamRef)
       ? selection
       : { kind: 'none' }
+  }
+  if (section === 'manual-speakers' && selection.kind === 'manual-speaker') {
+    return items.find(item => item.kind === 'manual-speaker' && item.speakerKey === selection.speakerKey) as ArkmeDirectorySelection ?? { kind: 'none' }
   }
   return selection
 }

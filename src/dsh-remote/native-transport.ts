@@ -13,6 +13,15 @@ function list(value: unknown): unknown[] {
   if (!Array.isArray(value)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '原生列表数据无效')
   return value
 }
+function boundedHistoryRequest(request: RecordValue): RecordValue {
+  // Native clients request a 50-message minimum. Keep that window valid when
+  // the relay bounds each source read to 10; readFiveTurns owns backfilling.
+  const window = request.turnWindow === undefined ? undefined : nativeRecord(request.turnWindow)
+  const minimum = window?.minMessages
+  return { ...request, maxMessages: 10, ...(window === undefined ? {} : {
+    turnWindow: { ...window, minMessages: typeof minimum === 'number' && Number.isSafeInteger(minimum) && minimum > 10 ? 10 : minimum },
+  }) }
+}
 type Scope = {
   accountId: string
   createSessionId: string
@@ -161,9 +170,19 @@ export class DshNativeTransport {
   }
 
   private async historyPage(request: RecordValue, signal: AbortSignal): Promise<NativeHistoryPage> {
-    const result = nativeRecord(await this.call('session/page', { args: { request: { ...request, maxMessages: 10 } } }, signal))
+    const result = nativeRecord(await this.call('session/page', { args: { request: boundedHistoryRequest(request) } }, signal))
     if (result.ok !== true) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '源实例历史读取失败')
     return result.value as NativeHistoryPage
+  }
+
+  /** The caller must first prove account ownership; reads one public durable event. */
+  async annotationEvent(sessionId: string, seq: number, signal: AbortSignal) {
+    const result = nativeRecord(await this.call('session/page', { args: { request: { address: { kind: 'session', sessionId }, throughSeq: seq, beforeSeq: seq + 1, maxMessages: 1 } } }, signal))
+    if (result.ok !== true) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', '来源消息读取失败')
+    const page = result.value as NativeHistoryPage
+    const event = page.records.find(record => record.type === 'event' && record.event.seq === seq)?.event
+    if (!event) throw new DshRemoteError('SESSION_NOT_FOUND', '来源消息不可用')
+    return event
   }
 
   async request(body: RecordValue, scope: Scope): Promise<unknown> {
@@ -207,7 +226,7 @@ export class DshNativeTransport {
       await this.authorize(endpoint, body.payload, scope, true)
       const controller = new AbortController(), signal = AbortSignal.any([controller.signal, scope.signal])
       const historyRequest = endpoint === 'session/follow' ? nativeRecord(nativeRecord(body.payload).args).request as RecordValue : undefined
-      const payload = historyRequest ? { args: { request: { ...historyRequest, maxMessages: 10 } } } : body.payload
+      const payload = historyRequest ? { args: { request: boundedHistoryRequest(historyRequest) } } : body.payload
       const stream = await this.gateway.wireStream.open(endpoint, payload, EMPTY_DSH_UPLINK, this.peer, signal)
       lease = { accountId: scope.accountId, endpoint, controller, iterator: stream[Symbol.asyncIterator](), busy: false, events: new Set(), ...(historyRequest ? { historyRequest, afterSeq: body.afterSeq as number | undefined } : {}), timer: setTimeout(() => this.release(id), 45_000) }
       lease.timer.unref(); this.streams.set(id, lease)

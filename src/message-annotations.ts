@@ -9,7 +9,7 @@ export interface MessageUnderline {
   state: 'available' | 'stale'
   pending?: boolean
 }
-export interface MessageUnderlineSnapshot { revision: number; accessible: boolean; items: MessageUnderline[] }
+export interface MessageUnderlineSnapshot { syncNotice?: string; revision: number; accessible: boolean; items: MessageUnderline[] }
 export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud' }
 export type MessageUnderlineChange = { operationId: string; kind: 'add'; anchor: ArkmeMessageQuote }
   | { operationId: string; kind: 'remove'; annotationId: string }
