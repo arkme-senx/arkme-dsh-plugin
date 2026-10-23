@@ -1926,6 +1926,10 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-context select { color:inherit; background:transparent; border:0; max-width:48%; min-width:0; font:inherit; padding:4px; cursor:pointer; }
 .arkme-codex-context button { font:inherit; color:inherit; background:transparent; border:0; cursor:pointer; }
 .arkme-codex-project-context { flex:none; min-width:0; padding:4px 20px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--arkme-muted); font-size:11px; line-height:1.5; }
+.arkme-codex-native-state { display:inline-flex; flex:none; align-items:center; justify-content:center; width:14px; height:14px; }
+.arkme-codex-task-state-label { flex:none; color:var(--arkme-muted); font-size:11px; white-space:nowrap; }
+.arkme-codex-activity-preview { display:flex; align-items:center; gap:5px; min-width:0; max-width:100%; overflow:hidden; color:var(--arkme-muted); font-size:13px; }
+.arkme-codex-activity-preview > span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .arkme-codex-sync-status { grid-column:1/-1; text-align:center; color:var(--arkme-muted); font-size:11px; line-height:1.5; }
 .arkme-codex-sync-status small { font:inherit; }
 .arkme-codex-sync-status button { color:inherit; font:inherit; background:none; border:0; padding:0 4px; text-decoration:underline; cursor:pointer; }

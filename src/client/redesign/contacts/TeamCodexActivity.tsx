@@ -8,8 +8,10 @@ import { TeamCodexConversation, codexReadingKey, newCodexReadingState, type Code
 import type { CodexConversationTarget } from './codex-conversation-target.js'
 import { codexTaskViewKey, readPersonalCodexState, type CodexTeamScope, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
 import { CodexDispatchEntry } from './CodexDispatchEntry.js'
-import { CodexSyncStatus, codexCollectorUnavailable, codexSyncLabel } from './CodexSyncStatus.js'
+import { CodexSyncStatus } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
+import { codexTaskStatus } from './codex-task-status.js'
+import { CodexTaskStateDot, codexTaskStatusLabel } from './CodexTaskStateDot.js'
 
 const taskGroupKey = (task: CodexViewTask): string => {
   const key = task.cloud ? `${task.cloud.sourceId}:${task.projectKey}` : task.installationId ? `${task.installationId}:${task.projectKey}` : 'legacy'
@@ -24,9 +26,7 @@ function status(task: TeamCodexTask): string {
   if (task.status === 'expired') return tr('接入指令已过期')
   if (task.status === 'paused') return tr('已暂停')
   if (task.status === 'disconnected') return tr('已断开')
-  if (task.state === 'working' && codexCollectorUnavailable(task)) return codexSyncLabel(task)
-  if (task.state === 'working' && task.cloud?.remote) return tr('等待结束状态')
-  return tr(task.state === 'working' ? '处理中' : task.state === 'interrupted' ? '已中断' : task.state === 'finished' ? '本轮结束' : '已连接')
+  return codexTaskStatusLabel(codexTaskStatus(task))
 }
 
 const taskPriority = (task: TeamCodexTask): number => !liveTask(task) ? 0 : task.state==='working' ? 2 : queueAvailability(task)==='ready' && !!task.queue?.items.length ? 1 : 0
@@ -242,8 +242,9 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       if (onOpenTask) onOpenTask(task,{page,member,project})
       else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
     }}>
-      {!conversation && <span className="arkme-codex-state-dot" data-working={liveTask(task)&&task.state==='working'} aria-hidden="true"/>}
+      <CodexTaskStateDot status={codexTaskStatus(task)}/>
       <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span>
+      {conversation && <span className="arkme-codex-task-state-label">{status(task)}</span>}
       {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
     </button>
     {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
@@ -284,7 +285,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       <strong className="arkme-codex-identity">Codex</strong>
       <div className="arkme-codex-centered-selector" ref={picker}>
         <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => setPickerOpen(!pickerOpen)}>
-          {selected && <span className="arkme-codex-state-dot" data-working={liveTask(selected)&&selected.state==='working'&&!selected.cloud?.remote&&!codexCollectorUnavailable(selected)} aria-hidden/>}
+          {selected && <CodexTaskStateDot status={codexTaskStatus(selected)}/>}
           <strong title={selected?.title}>{selected?.title ?? tr('选择任务')}</strong>
           {selected && <span className="arkme-team-codex-status" data-state={selected.state}>{status(selected)}</span>}<span aria-hidden>⌄</span>
         </button>

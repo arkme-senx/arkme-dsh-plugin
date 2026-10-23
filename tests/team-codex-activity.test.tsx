@@ -154,7 +154,7 @@ describe('Team Codex activity UI',()=>{
     await selectTask()
     const trigger=renderer!.root.findByProps({className:'arkme-codex-task-trigger'})
     expect(text(trigger)).toContain('改进测试')
-    expect(text(trigger)).toContain('处理中')
+    expect(text(trigger)).toContain('进行中')
     expect(trigger.props['aria-expanded']).toBe(false)
     expect(renderer!.root.findAllByProps({className:'arkme-codex-task-sidebar'})).toHaveLength(0)
     expect(text(renderer!.root)).not.toContain('开启云端同步')
