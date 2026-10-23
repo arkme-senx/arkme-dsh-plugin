@@ -412,7 +412,7 @@ describe('TeamDetailPane', () => {
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
     const members=renderer!.root.findByProps({className:'arkme-team-member-list'})
     const features=renderer!.root.findByProps({className:'arkme-team-feature-list'})
-    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›','团队内部群›','团队的世界›'])
+    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›','团队内部群›','团队的世界›','对外私聊›'])
     expect(text(renderer!.root)).not.toContain('查看团队对话')
     expect(text(renderer!.root)).not.toContain('接收外部消息')
     expect(mocks.callArkme.mock.calls.map(call=>call[0])).toEqual(['team.app.members'])

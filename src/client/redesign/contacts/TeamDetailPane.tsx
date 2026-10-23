@@ -1,3 +1,4 @@
+import {TeamExternalChats} from '../../TeamExternalChats.js'
 import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
 import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
@@ -63,6 +64,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const [messageChannelOpen, setMessageChannelOpen] = useState(false)
   const [internalGroupOpen, setInternalGroupOpen] = useState(false)
   const [addingMembers, setAddingMembers] = useState(false)
+  const [externalChatsOpen,setExternalChatsOpen]=useState(false)
   const [codexBusy, setCodexBusy] = useState(false)
   const navigationRef = useRef<AbortController>()
   useEffect(() => () => navigationRef.current?.abort(), [])
@@ -303,6 +305,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
         </span>
       </div>
     </header>
+    {externalChatsOpen && <TeamExternalChats teamRef={page.team.teamRef} teamName={page.team.name} onClose={()=>setExternalChatsOpen(false)}/>}
     <section className="arkme-team-features" aria-label={tr('团队功能')}>
       <div className="arkme-team-features-container">
         <h2>{tr('团队功能')}</h2>
@@ -331,6 +334,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-feature-icon" aria-hidden="true"><Globe size={22} /></span>
             <span>{tr('团队的世界')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
+          <button type="button" className="arkme-team-feature" onClick={()=>setExternalChatsOpen(true)}><ChatCircle size={22}/><span>对外私聊</span><span>›</span></button>
         </div>
       </div>
     </section>

@@ -126,3 +126,22 @@ describe('Team Host and SDK contract', () => {
     }))
   })
 })
+
+it('external private chat SDK capability checks then calls the same Host owner', async () => {
+  let supported=true
+  const calls: string[]=[]
+  const service={externalChats:vi.fn(async()=>({items:[],hasMore:false}))}
+  const fetchImpl=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+    const input=JSON.parse(String(init?.body))
+    calls.push(input.operation)
+    const data=input.operation==='provider.capabilities'?{contractVersion:1,features:{teamExternalChats:supported}}
+      :await dispatchArkmeHostOperation(service as never,input.operation,input.params)
+    return new Response(JSON.stringify({ok:true,value:data}),{headers:{'content-type':'application/json'}})
+  })
+  const sdk=new ArkmeSdk({fetchImpl:fetchImpl as typeof fetch})
+  await expect(sdk.externalChats('list',{teamRef:'opaque-team'})).resolves.toMatchObject({items:[]})
+  expect(service.externalChats).toHaveBeenCalledWith('list',{teamRef:'opaque-team'},undefined)
+  supported=false
+  await expect(sdk.externalChats('page',{shareRef:'opaque-share'})).rejects.toThrow('不支持')
+  expect(service.externalChats).toHaveBeenCalledTimes(1)
+})

@@ -33,7 +33,9 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
   const contacts = {
     privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()),
-    openSourceRef: vi.fn(async (_ref: string, _user: number) => ({ kind: 'group_chat', ownerRef: 'group-id' }) as never),
+    openSourceRef: vi.fn(async (ref: string, _user: number) => (ref === 'private-ref'
+      ? { kind: 'private_chat', ownerRef: 'original-chat' }
+      : { kind: 'group_chat', ownerRef: 'group-id' }) as never),
   }
   const candidates = { list: vi.fn<import('../src/team-member-add-contract.js').TeamMemberCandidatePort['list']>(async () => ({ items: [], hasMore: false })) }
   const service = new TeamAppService(runtime, avatars, privateChat as never, contacts, candidates)
@@ -951,5 +953,45 @@ describe('team member candidate and pending add boundary', () => {
     await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: Array(51).fill(add.candidateRefs[0]) })).rejects.toThrow()
     const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 3_600_001)
     try { await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow() } finally { clock.mockRestore() }
+  })
+})
+
+describe('explicit external private chats', () => {
+  const grant = {share_uid:'grant-secret',team_id:7,sharer_user_id:90,peer_user_id:91,chat_session_uid:'original-chat',sharer_name:'成员',peer_name:'客户'}
+  const page = {items:[{relation:{rel_uid:'relation-secret',seq:4,display_name_snapshot:'客户',attach_at:1700000000000},record:{status:1,payload:{version:2,text_content:'共享正文',media_display_items:[{file_asset_uid:'asset-private',file_uid:'file-private',file_name:'photo.png',mime_type:'image/png',download_url:'https://userfiles.jotmo.cc/private-signed'}]}}}],has_more:false,next_before_seq:4}
+  it('uses only the grant owner, hides raw identifiers and offers no mutation authority', async () => {
+    const f=fixture(path=>path.endsWith('/page')?page:{items:[grant],has_more:false})
+    const mine=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result=await f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    expect(result.items[0]).toMatchObject({textContent:'共享正文',senderName:'客户'})
+    expect(result.items[0]).not.toHaveProperty('ref')
+    expect(result.items[0]).not.toHaveProperty('mutationTarget')
+    expect(JSON.stringify(result)).not.toMatch(/grant-secret|relation-secret|original-chat|asset-private|file-private|private-signed/)
+    expect(f.requests.map(r=>r.path)).toEqual(['/api/v1/team/external-chats/mine','/api/v1/team/external-chats/page'])
+    expect(f.requests[1]!.body).toEqual({share_uid:'grant-secret',before_seq:0,limit:50})
+    f.changeAccount()
+    await expect(f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref})).rejects.toThrow()
+    expect(f.requests).toHaveLength(2)
+  })
+  it('reauthorizes media and stops before storage when sharing is revoked', async () => {
+    let revoked=false
+    const f=fixture(path=>path.endsWith('/page')?(revoked?new Response(JSON.stringify({code:1001,data:{reason:'external_chat_not_accessible'}}),{headers:{'content-type':'application/json'}}):page):{items:[grant]})
+    const mine=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result=await f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    revoked=true
+    await expect(f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref})).rejects.toMatchObject({code:'team-external_chat_not_accessible'})
+    await expect(f.service.fetchMedia(result.items[0]!.contentBlocks![0]!.mediaRef,undefined,new AbortController().signal)).rejects.toThrow()
+    expect(f.requests.at(-1)!.body).toEqual({share_uid:'grant-secret',before_seq:5,limit:1})
+    expect(f.fetchImpl.mock.calls.every(([url])=>String(url).startsWith('https://team.test/'))).toBe(true)
+  })
+  it('identifies a shared team across freshly sealed references and rejects non-private sources', async () => {
+    const f=fixture(path=>path.endsWith('/my')?{teams:[{team_id:7,name:'团队',jotmo_id:'team'}]}:{items:[grant]})
+    const a=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const b=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as typeof a
+    expect(a.items[0]!.teamKey).toBe(b.items[0]!.teamKey)
+    expect(a.items[0]!.teamRef).not.toBe(b.items[0]!.teamRef)
+    f.contacts.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'group'})
+    await expect(f.service.execute('team.app.external.mine',{sourceRef:'group'})).rejects.toThrow()
+    expect(f.requests).toHaveLength(2)
   })
 })
