@@ -74,6 +74,7 @@ beforeEach(() => {
   testState.callArkme.mockReset()
   testState.callArkme.mockImplementation(async (operation: string, params?: { section?: string }) => {
     if (operation === 'auth.status') return { status: 'authenticated', environment: 'test', userId: 101 }
+    if (operation === 'people.list') return { source: 'speakers', items: [] }
     if (operation === 'auth.config') return { environment: 'test' }
     if (operation === 'calls.outgoing.intent.claim') return null
     if (operation === 'sources.list') return { items: [], hasMore: false }

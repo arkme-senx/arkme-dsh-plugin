@@ -5,6 +5,7 @@ import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
 import { ConversationProfileDetail } from './ConversationProfileDetail.js'
 import { TeamDetailPane } from './TeamDetailPane.js'
+import { ManualSpeakerDetail } from './ManualSpeakerDetail.js'
 
 export interface DirectoryDetailPaneProps {
   accountKey: string
@@ -36,6 +37,7 @@ export function DirectoryDetailPane({
       {renderUnmarkedSpeakerDetail?.(selection.candidateRef)}
     </div>
   }
+  if (selection.kind === 'manual-speaker') return <ManualSpeakerDetail accountKey={accountKey} speaker={selection}/>
   if (selection.kind === 'group' || selection.kind === 'bot') {
     return <ConversationProfileDetail key={`${accountKey}:${selection.kind}:${selection.kind === 'group' ? selection.sourceRef : selection.bot.botRef}`} item={selection} onSourceActivated={onSourceActivated} {...(onBotActivated === undefined ? {} : { onBotActivated })} />
   }

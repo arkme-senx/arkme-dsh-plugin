@@ -10,6 +10,7 @@ const fixtures: Record<ArkmeDirectorySectionKind, ArkmeDirectoryItem[]> = {
   bots: [{ kind: 'bot', bot: { botRef: 'bot-1', name: '设计助手', provider: 'webhook', description: '', status: 'online', directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat' } }],
   'unmarked-speakers': [{ kind: 'unmarked-speaker', candidateRef: 'speaker-1', displayName: '说话人 A', subtitle: '设计评审' }],
   teams: [{ kind: 'team', teamRef: 'team-1', displayName: '设计团队', publicId: 'arkme_team', role: 'member' }],
+  'manual-speakers': [{ kind: 'manual-speaker', speakerKey: 'manual-1', speakerRef: 'manual-ref', displayName: '设计伙伴' }],
   contacts: [
     { kind: 'contact', contactRef: 'lin', displayName: '小林', nickname: 'Lin', remark: '设计伙伴', accountName: 'lin_account', letter: 'S' },
     { kind: 'contact', contactRef: 'alice', displayName: 'Alice', nickname: 'Alice', remark: '', letter: 'A' },
@@ -52,34 +53,34 @@ function deferred<T>() {
 }
 
 describe('contact directory search', () => {
-  it('filters all four sections, counts matches and restores totals and folds without changing selection or cache', async () => {
+  it('filters all five sections, counts matches and restores totals and folds without changing selection or cache', async () => {
     const onStateChange = vi.fn()
     const { renderer, props } = await mount({ onStateChange })
     await search(renderer, '  设计  ')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1, 1])
     expect(sections(renderer).every(node => node.props.section.expanded)).toBe(true)
-    expect(sections(renderer)[3]!.props.section.items.map((item: ArkmeDirectoryItem) => item.kind === 'contact' && item.contactRef)).toEqual(['lin'])
+    expect(sections(renderer)[4]!.props.section.items.map((item: ArkmeDirectoryItem) => item.kind === 'contact' && item.contactRef)).toEqual(['lin'])
     expect(props.onSelectionChange).not.toHaveBeenCalled()
     expect(onStateChange).not.toHaveBeenCalled()
     await act(async () => { sections(renderer)[0]!.props.onToggle() })
     expect(sections(renderer)[0]!.props.section.expanded).toBe(false)
     expect(props.onExpandedChange).not.toHaveBeenCalled()
     await search(renderer, '')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 2])
-    expect(sections(renderer).map(node => node.props.section.expanded)).toEqual([false, false, false, true])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([1, 1, 1, 1, 2])
+    expect(sections(renderer).map(node => node.props.section.expanded)).toEqual([false, false, false, false, true])
     expect(props.onSelectionChange).not.toHaveBeenCalled()
   })
 
   it('matches contact nickname/account and team identifiers case insensitively', async () => {
     const { renderer } = await mount()
     await search(renderer, 'LIN_ACCOUNT')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 1])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0, 1])
     await search(renderer, 'LIN')
-    expect(sections(renderer)[3]!.props.section.total).toBe(1)
+    expect(sections(renderer)[4]!.props.section.total).toBe(1)
     await search(renderer, 'ARKME_TEAM')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 1, 0])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 1, 0, 0])
     await search(renderer, 'no-matches')
-    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0])
+    expect(sections(renderer).map(node => node.props.section.total)).toEqual([0, 0, 0, 0, 0])
     expect(JSON.stringify(renderer.toJSON())).toContain('未找到匹配的项目')
   })
 
@@ -150,9 +151,9 @@ describe('contact directory search', () => {
   it('uses live contact profile updates when searching remarks', async () => {
     const { renderer, props } = await mount()
     await search(renderer, '新备注')
-    expect(sections(renderer)[3]!.props.section.total).toBe(0)
+    expect(sections(renderer)[4]!.props.section.total).toBe(0)
     await act(async () => { renderer.update(<ContactDirectorySurface {...props} contactProfiles={{ lin: { contactRef: 'lin', displayName: '新备注', nickname: 'Lin', remark: '新备注' } }} />) })
-    expect(sections(renderer)[3]!.props.section.total).toBe(1)
+    expect(sections(renderer)[4]!.props.section.total).toBe(1)
   })
 })
 
@@ -181,7 +182,7 @@ it('ignores cached speaker rows and pending pages when searching contacts', asyn
   const { renderer } = await mount({ initialState, loadPage })
   await search(renderer, '说话人')
   expect(loadPage).not.toHaveBeenCalled()
-  expect(sections(renderer).map(node => node.props.section.section)).toEqual(['groups', 'bots', 'teams', 'contacts'])
+  expect(sections(renderer).map(node => node.props.section.section)).toEqual(['groups', 'bots', 'teams', 'manual-speakers', 'contacts'])
   expect(JSON.stringify(renderer.toJSON())).toContain('未找到匹配的项目')
   expect(JSON.stringify(renderer.toJSON())).not.toContain('正在搜索…')
   expect(JSON.stringify(renderer.toJSON())).not.toContain('说话人 A')
