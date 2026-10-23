@@ -62,3 +62,9 @@
 代码入口：`CodexMessageInteractions.tsx`、`CodexQuoteToSelf.tsx`、`codex-message-actions.ts`、`message-action-service.ts`、`message-action-infrastructure.ts`、`native-local-marks.ts`。
 
 本次验证边界：交互在 3102 实际页面核验；发送、重试、存储隔离及请求结构通过自动化测试核验。未向真实账号提交测试快记、未向联系人发送测试转发，未发布到 dev/master。
+
+## 额外观察：云端任务来源偶发不可用
+
+3102 验证中观察到已有任务列表轮询偶发显示“部分来源暂不可用”，随后清空当前任务，导致阅读器、选区和引用弹窗一起卸载。`readPersonalCodexState` 将失败来源排除，`TeamCodexActivity.refresh` 用该结果替换列表，选中项缺失后自动切换或清空。它与本次未变化正文的 DOM 节点稳定性问题是两条不同链路。
+
+当前还不能仅根据 UI 判断失败属于网络、服务异常还是权限撤销。本次没有修改这条既有权限降级路径；需要保留后端错误分类，先取得真实失败响应再修复。推荐仅对明确的临时网络/服务故障保留已有阅读和用户输入、显示更新失败并重试；明确撤权、退出团队或账号切换仍立即清理。不要把所有失败都当作临时错误继续显示历史敏感内容。
