@@ -437,7 +437,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         {confirm?.id===selected.id && confirmation}
         {selected.cloudBlocked && <p className="arkme-codex-inline-notice">{tr('此会话曾关联不同账号或团队，暂不上传云端。')}</p>}
         {selected.projectExcluded && <p className="arkme-codex-inline-notice">{tr('此项目已排除；恢复单项任务不会恢复项目同步。')}</p>}
-        {active && <TeamCodexConversation key={readingKey} teamRef={selectedTeamRef} task={selected} reading={readings.current.get(readingKey)!} inputName={selected.member.displayName}/>}
+        {active && <TeamCodexConversation key={readingKey} teamRef={selectedTeamRef} task={selected} reading={readings.current.get(readingKey)!} inputName={selected.member.displayName}>
         {conversation && <div className="arkme-codex-project-context" aria-label={tr('当前对话项目')} title={selected.projectName || tr('未归属项目')}>
           {tr('项目：{name}',{name:selected.projectName || tr('未归属项目')})}
         </div>}
@@ -447,6 +447,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
           mode={(selected.cloud ? !!selfMember && selected.cloud.ownerRef === selfMember
             : !!state?.self && selected.member.userRef === state.self.userRef)
             ? selected.cloud?.remote ? 'remote' : 'local' : 'readonly'}/>}
+        </TeamCodexConversation>}
       </> : <div className="arkme-codex-reader-empty"><strong>Codex</strong><p>{tr(state?.cloud?.reviewingTasks ? '正在核对任务来源…' : isPersonal && state?.tasks.length===0 ? '暂无自己的同步任务' : '选择一项任务，继续阅读对话')}</p><small>{tr(isPersonal ? '这里展示自己已同步的任务。接入与同事任务请前往团队工作台。' : '按成员和项目查看已同步的输入与回答')}</small>{conversation && <p>{(!isPersonal || !!state?.tasks.length) && <button type="button" onClick={() => setPickerOpen(true)}>{tr('选择任务')}</button>}<button type="button" onClick={onManage}>{tr(isPersonal ? '团队工作台' : target?.fromTeam ? '返回团队' : '团队与同步管理')}</button></p>}</div>}
     </section>}
     </div>}

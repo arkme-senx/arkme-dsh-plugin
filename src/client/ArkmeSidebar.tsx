@@ -1,3 +1,4 @@
+import { registerLocalSnapshotForward } from './local-snapshot-forward.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -7713,6 +7714,24 @@ export function ArkmeSurface({
       nativeForwardRequestRef.current?.finish({ completed: false })
     }
   }, [authenticatedAccountKey, authenticatedUserId])
+  useEffect(() => registerLocalSnapshotForward(async (content, signal) => {
+    if (signal.aborted || !authenticatedAccountKey || authenticatedUserId !== content.userId || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) throw new Error('账号已变化，请重新选择')
+    if (nativeForwardRequestRef.current || forwardPickerScopeRef.current || forwardSubmissionScopeRef.current.sending) throw new Error('请先完成当前转发')
+    return new Promise<NativeForwardResult>(resolve => {
+      let finished = false
+      const cancel = () => { request.finish({ completed: false }); setForwardTargetPicker(current => current?.native === request ? undefined : current) }
+      const request: NativeForwardRequest = { preview: content.preview, signal, delivery: content.delivery, finish(result) {
+        if (finished) return
+        finished = true; signal.removeEventListener('abort', cancel)
+        if (nativeForwardRequestRef.current === request) nativeForwardRequestRef.current = undefined
+        resolve(result)
+      } }
+      nativeForwardRequestRef.current = request
+      signal.addEventListener('abort', cancel, { once: true })
+      forwardPickerScopeRef.current = new AbortController()
+      setForwardTargetPicker({ native: request, sourceKey: '', items: [], itemUids: [], selectedTargetKeys: [], keyword: '', commentText: content.delivery.comment ?? '', sendError: '' })
+    })
+  }), [authenticatedAccountKey, authenticatedUserId])
   useEffect(() => {
     const request = nativeForwardRequestRef.current
     if (request && forwardTargetPicker?.native !== request) request.finish({ completed: false })

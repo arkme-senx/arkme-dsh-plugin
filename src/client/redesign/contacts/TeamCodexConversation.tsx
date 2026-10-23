@@ -1,10 +1,14 @@
-import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { arkmeAuthStore } from '../../auth-store.js'
+import { CodexSelectableBody, useCodexMessageInteractions } from './CodexMessageInteractions.js'
+import { codexSelectable } from './codex-message-actions.js'
+import { arkmeTheme } from '../../arkme-theme.js'
+import { Children, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { callArkme } from '../../api.js'
 import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
-import { arkmeIntlLocale, tr } from '../../locale.js'
+import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
 import { codexPromptText } from '../../../team-codex-prompt-text.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
@@ -47,20 +51,26 @@ export function CodexCopyButton({ value, label }: { value: string; label: string
 }
 
 /** Read-only remote text. No business-link fetching, HTML, image requests or local file navigation. */
-export function CodexMessageBody({ text }: { text: string }) {
+export const CodexMessageBody = memo(function CodexMessageBody({ text }: { text: string }) {
+  useArkmeLocale()
   return <div className="arkme-markdown arkme-codex-markdown"><Markdown remarkPlugins={[remarkGfm, remarkBreaks]} skipHtml components={{
     a: ({ href, children }) => href && /^https?:\/\//i.test(href)
       ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="arkme-codex-media-note">[{alt || tr('图片')} · {tr('图片未同步')}]</span>,
     table: ({ children }) => <div className="arkme-markdown-table"><table>{children}</table></div>,
-    pre: ({ children }) => <div className="arkme-codex-code"><div className="arkme-codex-code-toolbar"><span>{tr('代码')}</span><CodexCopyButton value={plain(children).replace(/\n$/, '')} label={tr('复制代码')}/></div><pre>{children}</pre></div>,
+    pre: ({ children }) => <div className="arkme-codex-code"><div className="arkme-codex-code-toolbar"><span aria-hidden="true">{tr('代码')}</span><CodexCopyButton value={plain(children).replace(/\n$/, '')} label={tr('复制代码')}/></div><pre>{children}</pre></div>,
     input: ({ checked }) => <input type="checkbox" checked={Boolean(checked)} disabled aria-label={tr(checked ? '已完成' : '未完成')}/>,
   }}>{text}</Markdown></div>
-}
+})
 
-export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
-  teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string
-}) {
+interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; children?: ReactNode }
+export function TeamCodexConversation(props: CodexConversationProps) {
+  const auth=useSyncExternalStore(arkmeAuthStore.subscribe,arkmeAuthStore.getSnapshot,arkmeAuthStore.getSnapshot).auth
+  const userId=auth?.status==='authenticated'?auth.userId:undefined
+  const account=userId?`${auth!.environment}:${userId}`:''
+  return <CodexConversationReader key={`${account}:${codexReadingKey(props.teamRef,props.task)}`} {...props} account={account} userId={userId}/>
+}
+function CodexConversationReader({ teamRef, task, reading, inputName, children, account, userId }: CodexConversationProps & { account:string;userId:number|undefined }) {
   const [items, setItems] = useState(reading.items)
   const [before, setBefore] = useState(reading.before)
   const [cursor, setCursor] = useState(reading.cursor)
@@ -141,8 +151,10 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
   // Project cached/local/cloud history alike; copying must use the same visible text.
   const visibleItems = useMemo(() => items.map(event => event.kind === 'UserPromptSubmit'
     ? { ...event, text: codexPromptText(event.text) } : event), [items])
-  return <div className="arkme-codex-transcript-wrap">
+  const interactions=useCodexMessageInteractions({teamRef,task,events:visibleItems,account,userId})
+  return <div className="arkme-codex-transcript-wrap" data-codex-source={interactions.sourceRef}>
     <style>{arkmeMarkdownStyles}</style>
+    <div className="arkme-codex-reader-viewport">
     <div ref={scroller} className="arkme-codex-transcript" aria-label={tr('任务对话记录')} tabIndex={0} onScroll={rememberScroll}>
       <div className="arkme-codex-reading-column">
         {(before !== undefined || cursor !== undefined) && <button type="button" className="arkme-codex-older" disabled={busy} onClick={() => { void load(cursor ?? before) }}>{tr('加载更早记录')}</button>}
@@ -150,12 +162,13 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
         {!items.length && !current && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
-          <article className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : '任务已中断')}>
-            {event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
+          <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : '任务已中断')}>
+            {interactions.check(event)}<div style={{minWidth:0}}>
+            <CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
               : event.text ? event.kind === 'UserPromptSubmit' ? <div className="arkme-codex-user-text">{event.text}</div> : <CodexMessageBody text={event.text}/>
-                : <p>{tr(event.kind === 'Stop' ? '本轮已结束，未收到回答文本。' : '无文本输入')}</p>}
+                : <p>{tr(event.kind === 'Stop' ? '本轮已结束，未收到回答文本。' : '无文本输入')}</p>}</CodexSelectableBody>
             {event.truncated && <small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
-            <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer>
+            <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer></div>
           </article>
         </div>)}
         {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{codexPromptText(current.text) || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
@@ -163,5 +176,10 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
       </div>
     </div>
     {awayFromBottom && <button type="button" className="arkme-codex-jump" onClick={() => { const el = scroller.current; if (el) { el.scrollTop = el.scrollHeight; rememberScroll() } }}>{tr(newContent ? '有新内容 ↓' : '回到最新 ↓')}</button>}
+    </div>
+    {interactions.host}
+    {interactions.feedback}
+    <div style={{position:'relative',flex:'none',minHeight:interactions.selecting?110:undefined}}><div style={{visibility:interactions.selecting?'hidden':undefined}} aria-hidden={interactions.selecting?true:undefined}>{children}</div>{interactions.dock}</div>
+
   </div>
 }

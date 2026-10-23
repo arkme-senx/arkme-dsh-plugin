@@ -1846,7 +1846,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-task-info { flex:0 1 auto; max-height:35%; overflow:auto; padding:12px 20px; background:var(--arkme-soft); border-bottom:1px solid var(--arkme-line); }
 .arkme-codex-task-info p { margin:0 0 8px; }
 .arkme-codex-inline-notice { margin:0; padding:8px 20px; font-size:12px; }
-.arkme-codex-transcript-wrap { flex:1; min-height:0; position:relative; }
+.arkme-codex-transcript-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+.arkme-codex-reader-viewport { flex:1; min-height:0; position:relative; }
 .arkme-codex-transcript { height:100%; min-width:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; overflow-anchor:none; }
 .arkme-codex-reading-column { max-width:760px; margin:auto; padding:22px clamp(16px,4cqi,48px) 40px; box-sizing:border-box; }
 .arkme-codex-message { min-width:0; margin:0 0 32px; overflow-wrap:anywhere; font-size:14px; line-height:1.75; }

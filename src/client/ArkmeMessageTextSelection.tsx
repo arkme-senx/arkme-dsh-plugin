@@ -14,7 +14,7 @@ import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './Ark
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
   /** Owner-local authority is never passed to ordinary Chat actions. */
-  selectionDomain?: 'transcript' | 'native'
+  selectionDomain?: 'transcript' | 'native' | 'codex'
   localMarkRef?: string
 }
 export function messageSelectionReference(target: MessageSelectionTarget): string | undefined {
@@ -143,7 +143,7 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, canReplace, prepareReplace, selectionDomain, getViewport }: {
   /** Embedded native chat may occupy only part of a full-window clipped iframe. */
   getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
-  selectionDomain?: 'transcript' | 'native' | undefined
+  selectionDomain?: 'transcript' | 'native' | 'codex' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
   replyLabel?: string | undefined
@@ -299,7 +299,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     } catch (error) { if (current.current === snapshot) setNotice(error instanceof Error ? error.message : '取消标记失败，请重试') }
   }
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
-    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || (selectionDomain === 'native' && !!replyTarget.localMarkRef))
+    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || ((selectionDomain === 'native' || selectionDomain === 'codex') && !!replyTarget.localMarkRef))
   const find = () => {
     if (!stillValid(snapshot) || !replySourceRef) return
     if (!findSelectedMessageText(replySourceRef, snapshot.text)) { setNotice('当前对话暂不支持查找'); return }
