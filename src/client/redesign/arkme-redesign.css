@@ -1920,7 +1920,13 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-team-codex .arkme-codex-task-trigger { display:flex; align-items:center; gap:8px; min-width:0; max-width:100%; min-height:34px; padding:5px 10px; }
 .arkme-codex-task-trigger strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; min-width:0; }
 .arkme-codex-task-trigger .arkme-team-codex-status { flex:none; }
-.arkme-team-codex .arkme-codex-info-trigger { justify-self:end; border:0; min-width:32px; font-size:20px; line-height:20px; background:transparent; }
+.arkme-codex-information-dialog { padding:20px; }
+.arkme-codex-information-dialog header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.arkme-codex-information-dialog h2 { margin:0; font-size:16px; }
+.arkme-codex-information-dialog dl { display:grid; gap:14px; margin:20px 0 0; font-size:13px; line-height:1.6; }
+.arkme-codex-information-dialog dl > div { display:grid; grid-template-columns:65px minmax(0,1fr); gap:12px; }
+.arkme-codex-information-dialog dt { color:var(--dsw-alias-label-secondary,#68707c); }
+.arkme-codex-information-dialog dd { margin:0; overflow-wrap:anywhere; user-select:text; cursor:text; }
 .arkme-codex-context { grid-column:1/-1; min-width:0; display:flex; justify-content:center; align-items:center; gap:8px; color:var(--arkme-muted); font-size:11px; }
 .arkme-codex-context > span:not([data-arkme-avatar]) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80%; }
 .arkme-codex-context select { color:inherit; background:transparent; border:0; max-width:48%; min-width:0; font:inherit; padding:4px; cursor:pointer; }

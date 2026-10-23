@@ -12,6 +12,7 @@ import { CodexSyncStatus } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
 import { codexTaskStatus } from './codex-task-status.js'
 import { CodexTaskStateDot, codexTaskStatusLabel } from './CodexTaskStateDot.js'
+import { CodexConversationMenu } from './CodexConversationMenu.js'
 
 const taskGroupKey = (task: CodexViewTask): string => {
   const key = task.cloud ? `${task.cloud.sourceId}:${task.projectKey}` : task.installationId ? `${task.installationId}:${task.projectKey}` : 'legacy'
@@ -97,7 +98,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     if (target.project && target.task.cloud) setKnownProjects(current => ({...current,[target.project!]:{name:target.task!.projectName ?? '',sourceId:target.task!.cloud!.sourceId,projectKey:target.task!.projectKey ?? 'unknown'}}))
   }, [target])
   useEffect(() => {
-    if (!active) setPickerOpen(false)
+    if (!active) { setPickerOpen(false); setTaskMenu(false) }
   }, [active])
   useEffect(() => { setConfirm(undefined) }, [expanded,active])
   useEffect(() => {
@@ -284,14 +285,15 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     {conversation && <header className="arkme-codex-unified-header">
       <strong className="arkme-codex-identity">Codex</strong>
       <div className="arkme-codex-centered-selector" ref={picker}>
-        <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => setPickerOpen(!pickerOpen)}>
+        <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => {setTaskMenu(false);setPickerOpen(!pickerOpen)}}>
           {selected && <CodexTaskStateDot status={codexTaskStatus(selected)}/>}
           <strong title={selected?.title}>{selected?.title ?? tr('选择任务')}</strong>
           {selected && <span className="arkme-team-codex-status" data-state={selected.state}>{status(selected)}</span>}<span aria-hidden>⌄</span>
         </button>
         {pickerOpen && <div className="arkme-codex-task-picker" role="dialog" aria-label={tr('切换 Codex 任务')}>{taskList}</div>}
       </div>
-      <div className="arkme-codex-header-actions">{headerActions}<button type="button" className="arkme-codex-info-trigger" aria-label={tr('任务信息与操作')} aria-expanded={taskMenu} onClick={()=>setTaskMenu(!taskMenu)}>⋯</button></div>
+      <div className="arkme-codex-header-actions">{headerActions}<CodexConversationMenu key={readingKey}
+        task={selected} active={active} open={taskMenu} onOpenChange={open => {setTaskMenu(open);if(open)setPickerOpen(false)}}/></div>
       {(scopeControl || !isPersonal && selected) && <div className="arkme-codex-context">{scopeControl}{!isPersonal && selected && <>
         <ArkmeUserAvatar {...(selected.member.avatarRef?{avatarRef:selected.member.avatarRef}:{})} {...(selected.member.avatarFallback?{fallback:selected.member.avatarFallback}:{})} size={20} label={selected.member.displayName}/>
         <span title={selected.member.displayName}>{selected.member.displayName}</span>
@@ -351,7 +353,6 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     </>}
     {conversation && (error || readError) && <p className="arkme-team-codex-error" role="alert">{error || readError} <button type="button" onClick={() => { setError(''); void refresh() }}>{tr('重试')}</button></p>}
     {conversation && unavailable.length>0 && <p className="arkme-codex-inline-notice" role="status">{tr('部分来源暂不可用：{teams}，当前仅显示可读取的记录。',{teams:unavailable.join('、')})} <button type="button" onClick={()=>{void refresh()}}>{tr('重试')}</button></p>}
-    {conversation && taskMenu && taskInfo}
     {!state && !error && !readError && <p role="status">{tr('正在加载工作动态…')}</p>}
     {!managementOnly && !conversation && state?.tasks.length===0 && <div className="arkme-team-codex-empty"><strong>{tr('把正在做的事留在团队里')}</strong><p>{tr(state.localOnly ? '接入本机后，新的工作动态会显示在这里。' : '开启上传后，指定团队成员可跨电脑查看；仅查看云端记录无需接入本机 Codex。')}</p></div>}
     {!managementOnly && <div className="arkme-codex-workspace" data-has-selection={Boolean(selected)}>

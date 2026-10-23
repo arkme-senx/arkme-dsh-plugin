@@ -26,7 +26,7 @@ describe('Team Codex activity UI',()=>{
   afterEach(async()=>{await act(async()=>{renderer?.unmount();await tick()});vi.useRealTimers();vi.unstubAllGlobals()})
   const click=async(label:string)=>{await act(async()=>{const b=renderer!.root.findAllByType('button').find(b=>text(b)===label);expect(b).toBeDefined();b!.props.onClick();await tick()})}
   const selectTask=async()=>{await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})}
-  const taskMenu=async()=>{await act(async()=>{renderer!.root.findByProps({'aria-label':'任务信息与操作'}).props.onClick();await tick()})}
+  const taskMenu=async()=>{await act(async()=>{renderer!.root.findAllByType('button').find(button=>['任务信息与操作','更多 Codex 对话操作'].includes(button.props['aria-label']))!.props.onClick();await tick()})}
   it('asks for a compact source alias inside existing cloud consent, validates bytes, and passes it only on confirmation',async()=>{
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,cloud:{status:'ready',pending:0,blocked:0,page:1,uploadEnabled:false}}:{ok:true})
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} managementOnly/>);await tick()})
@@ -58,19 +58,27 @@ describe('Team Codex activity UI',()=>{
     await act(async()=>{renderer!.update(<TeamCodexActivity {...props} target={{...props.target}}/>);await tick()})
     expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
   })
-  it('moves task management into the personal reader and writes only to the selected task team',async()=>{
-    const task={...base.tasks[0]!,installationId:'device',projectKey:'project'}
+  it('uses the shared floating conversation menu and exposes read-only information without changing the transcript or sync',async()=>{
+    const task={...base.tasks[0]!,installationId:'device',projectKey:'project',projectName:'产品',cwd:'/workspace/product',branch:'dev'}
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,tasks:[task]}:{items:[]})
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11"/>);await tick()})
-    await taskMenu();await click('排除此任务')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:task.id,action:'exclude'},expect.anything())
-    await click('排除此项目')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:'device',action:'exclude',projectKey:'project'},expect.anything())
-    mocks.callArkme.mockClear()
-    await click('删除本地记录')
-    expect(mocks.callArkme).not.toHaveBeenCalled()
-    await click('确认')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:task.id,action:'delete'},expect.anything())
+    const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
+    await taskMenu()
+    expect(renderer!.root.findByProps({role:'menu'}).findAllByProps({role:'menuitem'}).map(text)).toEqual(['对话信息'])
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-task-info'})).toHaveLength(0)
+    await click('对话信息')
+    expect(renderer!.root.findAllByProps({role:'menu'})).toHaveLength(0)
+    const dialog=renderer!.root.findByProps({role:'dialog'})
+    expect(text(dialog)).toContain('/workspace/product')
+    expect(text(dialog)).toContain('产品')
+    expect(text(dialog)).not.toMatch(/排除此任务|排除此项目|删除本地记录|暂停同步|断开连接/)
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    expect(mocks.callArkme.mock.calls.some(call=>call[0]==='team.codex.change')).toBe(false)
+    await act(async()=>{dialog.props.onKeyDown({key:'Escape',preventDefault:vi.fn(),stopPropagation:vi.fn()});await tick()})
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
+    await taskMenu();await click('对话信息')
+    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11" active={false}/>);await tick()})
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
   })
   it('reapplies a member shortcut if that cached reader was subsequently switched to all members',async()=>{
     const props={teamRef,conversation:true,selfMember:'11',target:{accountKey:'prod:11',team:{teamRef,name:'团队',jotmoId:'team'},member:self.userRef,memberName:self.displayName}}
