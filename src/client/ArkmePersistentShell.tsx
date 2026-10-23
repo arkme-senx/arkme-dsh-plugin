@@ -77,6 +77,8 @@ const styles: Record<string, CSSProperties> = {
 const ARKME_PERSISTENT_DIVIDER_BUDGET = 4
 const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = ARKME_NAVIGATION_WIDTH + ARKME_PERSISTENT_DIVIDER_BUDGET
 const ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH = 120
+const ARKME_PERSISTENT_DIRECTORY_DEFAULT_WIDTH = 300
+const ARKME_PERSISTENT_DIRECTORY_MAX_SHARE = 0.4
 const ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH = 200
 const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
   + ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH
@@ -115,16 +117,36 @@ export function writePersistentSidebarWidth(width: number, storage: PersistentSi
   catch { /* Browser privacy settings may make localStorage unavailable. */ }
 }
 
-export function resolvePersistentSidebarWidth(
-  collapsed: boolean,
-  hostWidth: number,
-  preferredWidth?: number,
-  compactWidthOverride?: number,
-): number {
-  if (collapsed) return compactWidthOverride === undefined
-    ? ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH
-    : clampPersistentSidebarWidth(compactWidthOverride)
-  return preferredWidth === undefined ? clampPersistentSidebarWidth(hostWidth) : clampPersistentSidebarWidth(preferredWidth)
+/** Share shrinking space with the chat, retaining the existing 120px compact directory. */
+export function resolvePersistentSidebarWidth(availableWidth: number, preferredWidth?: number): number {
+  const preferred = clampPersistentSidebarWidth(preferredWidth
+    ?? ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH + ARKME_PERSISTENT_DIRECTORY_DEFAULT_WIDTH)
+  const directoryBudget = Math.floor((availableWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH)
+    * ARKME_PERSISTENT_DIRECTORY_MAX_SHARE)
+  return Math.min(preferred, ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+    + Math.max(ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH, directoryBudget))
+}
+
+/** Observe the actual app container, including embedded panes and desktop resizing. */
+function usePersistentFrameWidth(ref: { current: HTMLElement | null }): number {
+  const [width, setWidth] = useState(() => typeof window === 'undefined' ? 1280 : window.innerWidth)
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return
+    const slot = ref.current?.closest('[data-slot="root"]')
+    // Slot wrappers use display:contents and have a zero-size bounding box.
+    const frame = slot?.querySelector(':scope > div:is([data-rightbar-collapsed], [data-details-collapsed])')
+      ?? slot ?? document.documentElement
+    const measure = () => {
+      const next = frame.getBoundingClientRect().width
+      if (next > 0) setWidth(next)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(frame)
+    window.addEventListener('resize', measure)
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure) }
+  }, [ref])
+  return width
 }
 
 /** Permanent browser-side lifecycles that used to be owned by the optional DSH footer entry. */
@@ -205,7 +227,7 @@ function PersistentDirectoryPanel({ active, mode, children }: { active: boolean;
 
 /** Arkme permanently owns the DSH sidebar seat. */
 export function ArkmePersistentSidebar({
-  collapsed, width, useSessions, renderSlot, closeDetails,
+  collapsed, useSessions, renderSlot, closeDetails,
   searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   useArkmeLocale()
@@ -242,19 +264,18 @@ export function ArkmePersistentSidebar({
   const directoryVisible = !loginMode && ui.calendarOpen !== true
     && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || ui.mode === 'notifications' || ui.mode === 'team' || harnessMode || ui.mode === 'codex')
   const [preferredSidebarWidth, setPreferredSidebarWidth] = useState<number | undefined>(() => readPersistentSidebarWidth())
-  const [compactSidebarWidthOverride, setCompactSidebarWidthOverride] = useState<number>()
+  const sidebarRef = useRef<HTMLElement>(null)
+  const frameWidth = usePersistentFrameWidth(sidebarRef)
   const sidebarResizeRef = useRef<{
     pointerId: number
     startX: number
     startWidth: number
-    compact: boolean
+    preferredWidth: number | undefined
     lastWidth: number
   }>()
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const hostSidebarWidth = clampPersistentSidebarWidth(width + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH)
-  const renderedSidebarWidth = resolvePersistentSidebarWidth(
-    collapsed, hostSidebarWidth, preferredSidebarWidth, compactSidebarWidthOverride,
-  )
+  const renderedSidebarWidth = resolvePersistentSidebarWidth(frameWidth, preferredSidebarWidth)
+  const maxResizableWidth = resolvePersistentSidebarWidth(frameWidth, ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH)
   const renderedDirectoryWidth = renderedSidebarWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
   const compactDirectory = !contactsMode && renderedDirectoryWidth <= ARKME_PERSISTENT_DIRECTORY_COMPACT_WIDTH
   useEffect(() => {
@@ -294,9 +315,6 @@ export function ArkmePersistentSidebar({
   useLayoutEffect(() => {
     closeDetails()
   }, [closeDetails])
-  useEffect(() => {
-    if (!collapsed) setCompactSidebarWidthOverride(undefined)
-  }, [collapsed])
   useLayoutEffect(() => { arkmeContactsTab.activateAccount(contactsAccountKey) }, [contactsAccountKey])
   useEffect(() => () => {
     contactsContextRef.current = { ...contactsContextRef.current, contactsMode: false }
@@ -310,23 +328,25 @@ export function ArkmePersistentSidebar({
       pointerId: event.pointerId,
       startX: event.clientX,
       startWidth: renderedSidebarWidth,
-      compact: collapsed,
+      preferredWidth: preferredSidebarWidth,
       lastWidth: renderedSidebarWidth,
     }
     setSidebarResizing(true)
-  }, [collapsed, renderedSidebarWidth])
+  }, [renderedSidebarWidth, preferredSidebarWidth])
   const continueSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const resize = sidebarResizeRef.current
     if (resize === undefined || resize.pointerId !== event.pointerId) return
-    const nextWidth = clampPersistentSidebarWidth(resize.startWidth + event.clientX - resize.startX)
+    const nextWidth = Math.min(maxResizableWidth, clampPersistentSidebarWidth(resize.startWidth + event.clientX - resize.startX))
     resize.lastWidth = nextWidth
-    if (resize.compact) setCompactSidebarWidthOverride(nextWidth)
-    else setPreferredSidebarWidth(nextWidth)
-  }, [])
+    setPreferredSidebarWidth(nextWidth)
+  }, [maxResizableWidth])
   const stopSidebarResize = useCallback((element?: HTMLDivElement, pointerId?: number) => {
     const resize = sidebarResizeRef.current
     if (pointerId !== undefined && element?.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId)
-    if (resize !== undefined && !resize.compact) writePersistentSidebarWidth(resize.lastWidth)
+    if (resize !== undefined) {
+      if (resize.lastWidth === resize.startWidth) setPreferredSidebarWidth(resize.preferredWidth)
+      else writePersistentSidebarWidth(resize.lastWidth)
+    }
     sidebarResizeRef.current = undefined
     setSidebarResizing(false)
   }, [])
@@ -338,22 +358,16 @@ export function ArkmePersistentSidebar({
     else if (event.key === 'ArrowRight') nextWidth = renderedSidebarWidth + 16
     if (nextWidth === undefined) return
     event.preventDefault()
-    const clamped = clampPersistentSidebarWidth(nextWidth)
-    if (collapsed) setCompactSidebarWidthOverride(clamped)
-    else {
-      setPreferredSidebarWidth(clamped)
-      writePersistentSidebarWidth(clamped)
-    }
-  }, [collapsed, renderedSidebarWidth])
+    const clamped = Math.min(maxResizableWidth, clampPersistentSidebarWidth(nextWidth))
+    if (clamped === renderedSidebarWidth) return
+    setPreferredSidebarWidth(clamped)
+    writePersistentSidebarWidth(clamped)
+  }, [maxResizableWidth, renderedSidebarWidth])
   const sidebarSizingStyle = <style data-arkme-owned="persistent-sidebar-resize-handle-style">{`
     :root { --arkme-persistent-sidebar-width: ${String(renderedSidebarWidth)}px; }
     :root:has([data-arkme-owned="persistent-sidebar"]) [data-side="sidebar"] {
       left: ${String(renderedSidebarWidth)}px !important;
       pointer-events: none;
-    }
-    @media (max-width: 760px) {
-      :root:has([data-arkme-owned="team-conversation-layer"]) { --arkme-persistent-sidebar-width: 184px !important; }
-      :root:has([data-arkme-owned="team-conversation-layer"]) [data-side="sidebar"] { left: 184px !important; }
     }
     [data-arkme-owned="persistent-sidebar-resize-handle"]::after,
     [data-arkme-owned="persistent-sidebar-divider"]::after {
@@ -379,7 +393,7 @@ export function ArkmePersistentSidebar({
     aria-label={tr("调整对话列表宽度")}
     aria-orientation="vertical"
     aria-valuemin={ARKME_PERSISTENT_DIRECTORY_MIN_WIDTH}
-    aria-valuemax={ARKME_PERSISTENT_DIRECTORY_MAX_WIDTH}
+    aria-valuemax={maxResizableWidth - ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH}
     aria-valuenow={renderedDirectoryWidth}
     tabIndex={0}
     style={styles.sidebarResizeHandle}
@@ -392,6 +406,7 @@ export function ArkmePersistentSidebar({
   />
 
   if (loginMode) return webLockedMode ? <aside
+    ref={sidebarRef}
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-login-mode="true"
@@ -419,6 +434,7 @@ export function ArkmePersistentSidebar({
   />
 
   return <aside
+    ref={sidebarRef}
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}

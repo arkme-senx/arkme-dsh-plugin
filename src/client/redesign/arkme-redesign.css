@@ -1230,7 +1230,7 @@ body[data-ds-dark-theme] .arkme-workspace-dialog > footer {
 body[data-ds-dark-theme] .arkme-redesign-profile-popover,
 body[data-ds-dark-theme] .arkme-workspace-dialog {
   border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-specific-menu);
+  background: var(--dsw-alias-bg-layer-3, #ffffff);
   box-shadow: var(--dsw-shadow-lv3);
 }
 body[data-ds-dark-theme] .arkme-redesign-profile-head small,
@@ -1298,7 +1298,7 @@ body[data-ds-dark-theme] .arkme-redesign-settings-group {
 }
 body[data-ds-dark-theme] .arkme-account-dialog {
   border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-specific-menu);
+  background: var(--dsw-alias-bg-layer-3, #ffffff);
   color: var(--dsw-alias-label-primary);
   box-shadow: var(--dsw-shadow-lv3);
 }
