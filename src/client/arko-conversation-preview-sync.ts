@@ -1,3 +1,4 @@
+import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import type { ArkmeArkoHistoryPage } from '../types.js'
 import { callArkme } from './api.js'
 import {
@@ -41,11 +42,16 @@ export class ArkmeArkoConversationPreviewSync {
 
   constructor(
     private readonly store: ArkmeArkoConversationPreviewStore = arkmeArkoConversationPreviewStore,
-    private readonly loadHistory: ArkmeArkoPreviewHistoryLoader = async signal => await callArkme<ArkmeArkoHistoryPage>(
-      'arko.history',
-      { limit: 10, offset: 0 },
-      signal,
-    ),
+    private readonly loadHistory: ArkmeArkoPreviewHistoryLoader = async signal => {
+      // Both reads share the foreground owner and cancellation, but neither
+      // endpoint's failure may prevent the other projection from advancing.
+      const [history] = await Promise.allSettled([
+        callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 10, offset: 0 }, signal),
+        arkoLifecycleSync.refresh(signal),
+      ])
+      if (history.status === 'rejected') throw history.reason
+      return history.value
+    },
     private readonly intervalMs = ARKO_CONVERSATION_PREVIEW_SYNC_INTERVAL_MS,
     private readonly visibilityTarget = browserVisibilityTarget(),
   ) {}

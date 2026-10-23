@@ -11,7 +11,7 @@ import { ArkoService } from '../../src/services/arko-service.js'
 import { LocalMessageActionCapabilityCodec } from '../../src/services/message-action-infrastructure.js'
 import { MessageActionService } from '../../src/services/message-action-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { arkoImageInputFromWire } from '../../src/arko-image-contract.js'
 
 const config: ArkmeServiceConfig = {
@@ -49,6 +49,18 @@ describe('ArkoService', () => {
     return { service, runtime, calls, read, upload }
   }
   const imageRef = 'arkme-file-v1.11111111-1111-4111-8111-111111111111'
+
+  it('settles a lifecycle rejection without treating it as an unknown accepted turn', async () => {
+    const { service, runtime, calls } = imageFixture()
+    const original = calls.getMockImplementation()!
+    calls.mockImplementation(async (path, body) => {
+      if (path.endsWith('/new-msg-v2')) throw new ArkmePluginError('arkme-code-1108', 'history changed', true)
+      return original(path, body)
+    })
+    await expect(service.arkoAsk('preserve this input', { sessionId: 88, modelRouteKey: 'deepseek/flash' }))
+      .rejects.toMatchObject({ code: 'arko-history-changed', retryable: false })
+    expect(await runtime.stateStore.arkoPendingTurns(10001)).toHaveLength(0)
+  })
 
   it('returns the accepted receipt even if clearing local recovery fails', async () => {
     const { service, runtime } = imageFixture()

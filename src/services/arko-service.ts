@@ -1,3 +1,5 @@
+import { ArkoLifecycle } from './arko-lifecycle.js'
+import type { ArkmeArkoLifecycleCommand } from '../arko-lifecycle-contract.js'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
@@ -180,6 +182,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
   return {
     messageId,
     sessionId,
+    lifecycleVersion: numberValue(data.lifecycle_version),
     role: roleCode === 2 ? 'user' : 'assistant',
     text: stringValue(data.content ?? data.text_content ?? data.textContent),
     reasoning: stringValue(data.reason_content ?? data.reason_text ?? data.reasonText),
@@ -234,6 +237,7 @@ function safeFailureMessage(error: unknown): string {
 export class ArkoService {
   private readonly historyCodec: EncryptedReferenceCodec
   private readonly generated: GeneratedArtifacts
+  readonly lifecycle: ArkoLifecycle
   readonly localMarks: ArkoLocalMarks
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
@@ -245,8 +249,13 @@ export class ArkoService {
   ) {
     this.localMarks = new ArkoLocalMarks(runtime)
     this.historyCodec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), () => new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404))
+    this.lifecycle = new ArkoLifecycle(runtime, this.historyCodec, (user, session, message) => this.messageRef(user, session, message), async (raw, user) => {
+      const session = await runtime.requireSession()
+      if (session.userId !== user) throw new ArkmePluginError('arko-account-changed', '账号已切换', false, 409)
+      return this.historyFacts(raw, session, true, 100)
+    })
     this.generated = new GeneratedArtifacts(join(runtime.config.fileStateDirectory ?? join(homedir(), '.arkme'), 'generated-downloads'),
-      () => runtime.stateStore.uniqueCode(), async () => (await runtime.requireSession()).userId)
+      () => runtime.stateStore.uniqueCode(), async () => (await runtime.requireSession()).userId, async signal => (await this.lifecycle.query([], signal)).revision)
   }
 
   dispose(): void {
@@ -419,7 +428,7 @@ export class ArkoService {
       ...(query.startAtMillis === undefined ? {} : { start_at: query.startAtMillis }), ...(query.endAtMillis === undefined ? {} : { end_at: query.endAtMillis }) }
   }
   private async messageRef(userId: number, sessionId: number, messageId: number): Promise<string> {
-    return this.historyCodec.seal('arkme-arko-message-v1', { userId, sessionId, messageId, expiresAtMillis: Date.now() + 24 * 60 * 60_000 })
+    return this.historyCodec.seal('arkme-arko-message-v1', { environment: this.runtime.config.environment, userId, sessionId, messageId, expiresAtMillis: Date.now() + 24 * 60 * 60_000 })
   }
   private historyContinuation(data: Record<string, unknown>) {
     const hasMore = data.has_more === true, nextCursor = optionalString(data.next_cursor)
@@ -428,6 +437,9 @@ export class ArkoService {
     }
     return { hasMore, ...(hasMore ? { nextCursor: nextCursor! } : {}), scanned: numberValue(data.scanned), consistency: 'live' as const }
   }
+  async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.lifecycle.query(refs, signal) }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.lifecycle.change(command, signal) }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.lifecycle.recent(cursor, signal) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
     return this.runtime.runCompositeOwnerRead('arko.messages', { ...query }, scoped => this.readMessages(query, scoped), signal, query.cursor ? 'background-read' : 'interactive-read')
   }
@@ -643,7 +655,13 @@ export class ArkoService {
       body,
       session,
       signal,
-    )
+    ).catch(async error => {
+      if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-1108') throw error
+      // A lifecycle rejection proves no admission. Remove this frozen intent;
+      // the caller preserves input and needs a new, explicit send after refresh.
+      await this.runtime.stateStore.acknowledgeArkoTurn(stored.turn.userId, stored.turn.clientTurnUid).catch(() => undefined)
+      throw new ArkmePluginError('arko-history-changed', '对话历史已更改，本次未发送；请刷新后重新发送', false, 409)
+    })
     const userMsgId = numberValue(accepted.user_msg_id)
     const assistantMsgId = numberValue(accepted.assistant_msg_id)
     const acceptedSessionId = numberValue(accepted.session_id) || sessionId

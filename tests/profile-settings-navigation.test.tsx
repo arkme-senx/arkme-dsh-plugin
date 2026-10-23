@@ -68,25 +68,25 @@ describe('profile/settings navigation', () => {
   it('requires explicit restore confirmation; cancel never writes', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('最近删除').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('恢复').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('取消').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('恢复').click())
     await act(async () => button('确认恢复').click())
     expect(mocks.call).toHaveBeenLastCalledWith('data.recover', { expectedAccountScope: 'prod:11', recordUid: 'rec1', version: 2 })
     expect(host.textContent).toContain('已恢复')
     expect(host.querySelectorAll('li')).toHaveLength(0)
   })
-  it('explains Arko backend availability without mixing Arko messages into the Record recovery flow', async () => {
+  it('reads Arko independently without mixing messages into the Record recovery flow', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('最近删除').click())
     const section = host.querySelector('[aria-label="Arko 对话消息"]')!
-    expect(section.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
+    expect(section.textContent).not.toContain('后端接口开发中')
     expect(section.textContent).toContain('30 天内可恢复')
-    expect(section.querySelector('button')).toBeNull()
-    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(['data.deleted'])
+    expect(section.textContent).toContain('刷新核对')
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['data.deleted', 'arko.deleted']))
     expect(button('恢复')).toBeDefined()
   })
   it('makes export limitations explicit without creating an export session', async () => {
