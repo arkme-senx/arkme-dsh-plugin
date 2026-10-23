@@ -18,6 +18,8 @@ import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
 import type { SourceService } from './source-service.js'
 import type { TeamMemberCandidatePort, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
+import { remapLongArticleAssets } from '../long-article-content.js'
+import { sharedAttachments, sharedAttachmentAt, sharedContentBlock, sharedForwardPreview } from '../team-external-chat-presentation.js'
 
 const obj = objectValue
 const str = stringValue
@@ -64,7 +66,7 @@ export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
-    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
+    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'>>,
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
     private readonly memberCandidates?: TeamMemberCandidatePort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
@@ -181,7 +183,7 @@ export class TeamAppService {
   }
 
   private async externalShare(v: Record<string,unknown>, actor: number): Promise<import('../team-external-chat-contract.js').ExternalChatShare> {
-    return { ref: await this.ref('external-share', { share_uid: str(v.share_uid) }, actor), key: await this.key(`external:${str(v.share_uid)}`, actor),
+    return { ref: await this.ref('external-share', { share_uid: str(v.share_uid), sharer_id: v.sharer_user_id, sharer_name: str(v.sharer_name), peer_name: str(v.peer_name) }, actor), key: await this.key(`external:${str(v.share_uid)}`, actor),
       teamKey: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: v.team_id }, actor), sharerKey: await this.key(`person:${String(v.sharer_user_id)}`, actor),
       sharerName: str(v.sharer_name) || '团队成员', peerName: str(v.peer_name) || '外部联系人', own: recordOwnerId(v.sharer_user_id) === actor }
   }
@@ -311,18 +313,21 @@ export class TeamAppService {
         const mediaUrls: Record<string,string> = {}
         const items = await Promise.all(list(data.items).map(async v => {
           const rel = obj(v.relation), record = obj(v.record), body = num(record.status) === 1 ? obj(record.payload) : {}
-          const contentBlocks = await Promise.all(list(body.media_display_items).map(async (f, sortOrder) => {
-            const ref = await this.ref('media', { share_uid: grant.share_uid, seq: num(rel.seq), media_index: sortOrder, file_asset_uid: str(f.file_asset_uid), file_uid: str(f.file_uid), file_name: str(f.file_name), mime_type: str(f.mime_type) }, actor)
+          const attachments = sharedAttachments(body)
+          const blocks = await Promise.all(attachments.map(async ({file: f, path}, sortOrder) => {
+            const ref = await this.ref('media', { share_uid: grant.share_uid, seq: num(rel.seq), media_path: path, record_version: num(body.version), file_asset_uid: str(f.file_asset_uid), file_uid: str(f.file_uid), file_name: str(f.file_name) || str(f.name), mime_type: str(f.mime_type) }, actor)
             mediaUrls[ref] = `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`
-            const mime = str(f.mime_type)
-            return { mediaRef: ref, kind: mime.startsWith('image/') ? 'image' as const : mime.startsWith('audio/') ? 'audio' as const : mime.startsWith('video/') ? 'video' as const : 'file' as const,
-              fileName: str(f.file_name), mimeType: mime, size: num(f.size), sortOrder }
+            return sharedContentBlock(f, ref, sortOrder)
           }))
+          const contentBlocks = blocks.filter((_, index) => attachments[index]?.path[0] === 'media_display_items')
+          const forwardRecords = sharedForwardPreview(body, attachments, blocks, actor, num(rel.attach_at))
+          const sharedRecording = this.privateChat?.chatSharedRecordingPreview?.(v)
           return { itemUid: await this.key(`external:${String(grant.share_uid)}:${str(rel.rel_uid)}`, actor),
-            senderName: str(rel.display_name_snapshot) || str(obj(body.sender_snapshot).display_name) || '用户', isMe: false,
-            sendAtMillis: num(rel.attach_at), title: str(body.title), textContent: num(record.status) === 1 ? str(body.text_content) : '内容当前不可用',
+            senderName: str(rel.display_name_snapshot) || (recordOwnerId(rel.sender_user_id) === recordOwnerId(grant.sharer_id) ? str(grant.sharer_name) || '分享成员' : str(grant.peer_name) || '聊天对方'), isMe: false,
+            sendAtMillis: num(rel.attach_at), title: str(body.title), textContent: num(record.status) === 1 ? remapLongArticleAssets(str(body.text_content), new Map(list(body.media_display_items).map((f, index) => [`arkme-asset:${str(f.file_asset_uid)}`, `arkme-asset:media-${index}`]))) : '内容当前不可用',
             textFormat: obj(body.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const,
-            status: 1, version: num(body.version), templateKind: num(body.template_kind), contentBlocks }
+            status: 1, version: num(body.version), templateKind: num(body.template_kind), displayKind: num(body.display_kind), contentBlocks,
+            ...(forwardRecords ? {forwardRecords} : {}), ...(sharedRecording ? {sharedRecording} : {}) }
         }))
         return { items, hasMore: data.has_more === true, beforeSeq: num(data.next_before_seq), mediaUrls }
       }
@@ -839,7 +844,8 @@ export class TeamAppService {
       const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/external-chats/page', { share_uid: ref.share_uid, before_seq: num(ref.seq) + 1, limit: 1 }, initial, signal, true))
       const item = list(data.items).find(v => num(obj(v.relation).seq) === num(ref.seq))
       const record = obj(obj(item).record)
-      const asset = num(record.status) === 1 ? list(obj(record.payload).media_display_items)[num(ref.media_index)] : undefined
+      const asset = num(record.status) === 1 && num(obj(record.payload).version) === num(ref.record_version)
+        ? sharedAttachmentAt(obj(record.payload), ref.media_path) : undefined
       if (!asset || str(asset.file_asset_uid) !== str(ref.file_asset_uid) || str(asset.file_uid) !== str(ref.file_uid)) throw invalid()
       const url = str(asset?.download_url) || str(asset?.preview_url)
       if (!url) throw invalid()

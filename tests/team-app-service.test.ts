@@ -994,4 +994,39 @@ describe('explicit external private chats', () => {
     await expect(f.service.execute('team.app.external.mine',{sourceRef:'group'})).rejects.toThrow()
     expect(f.requests).toHaveLength(2)
   })
+  it('reads forwarded snapshot media through the grant and rejects stale versions or replaced assets', async () => {
+    const current = structuredClone(page)
+    const payload = current.items[0]!.record.payload as Record<string, unknown>
+    payload.media_display_items = []
+    payload.content_payload = { render_kind: 'forward_records', items: [{
+      source_type: 'record', owner_id: 999, owner_name: '快记作者', text: '已发送快照',
+      files: [{ file_uid: 'forward-file-secret', file_asset_uid: 'forward-asset-secret',
+        name: 'forward.png', mime_type: 'image/png', download_url: 'https://userfiles.jotmo.cc/forward-signed' }],
+      call_record_snapshot: { transcript_segments: [{ text: '通话快照', speaker_name: '说话人',
+        audio_url: 'https://userfiles.jotmo.cc/call-signed' }] },
+    }] }
+    const f = fixture(path => path === '/forward-signed' || path === '/call-signed'
+      ? new Response('media', { headers: { 'content-type': 'image/png' } })
+      : path.endsWith('/page') ? current : { items: [grant] })
+    const mine = await f.service.execute('team.app.external.mine', { sourceRef: 'private-ref' }) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result = await f.service.execute('team.app.external.page', { shareRef: mine.items[0]!.ref }) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    const forwarded = result.items[0]!.forwardRecords!.items[0]!
+    expect(forwarded).toMatchObject({ textContent: '已发送快照', senderName: '快记作者' })
+    expect(forwarded).not.toHaveProperty('senderUserId')
+    expect(JSON.stringify(result)).not.toMatch(/forward-file-secret|forward-asset-secret|forward-signed|call-signed/)
+    const ref = forwarded.contentBlocks![0]!.mediaRef
+    const fetched = await f.service.fetchMedia(ref, undefined, new AbortController().signal)
+    expect(await fetched.response.text()).toBe('media')
+    const call = await f.service.fetchMedia(forwarded.segments![0]!.contentBlocks![0]!.mediaRef, undefined, new AbortController().signal)
+    expect(await call.response.text()).toBe('media')
+    payload.version = 3
+    const before = f.fetchImpl.mock.calls.length
+    await expect(f.service.fetchMedia(ref, undefined, new AbortController().signal)).rejects.toThrow()
+    expect(f.fetchImpl.mock.calls.length).toBe(before + 1)
+    payload.version = 2
+    const forward = (payload.content_payload as { items: Array<{ files: Array<{ file_uid: string }> }> }).items[0]!
+    forward.files[0]!.file_uid = 'replacement-file'
+    await expect(f.service.fetchMedia(ref, undefined, new AbortController().signal)).rejects.toThrow()
+    expect(f.fetchImpl.mock.calls.length).toBe(before + 2)
+  })
 })

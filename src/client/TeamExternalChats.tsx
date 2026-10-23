@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ArkmeTeam } from '../types.js'
+import type { ArkmeTeam, ArkmeTimelineItem } from '../types.js'
 import type { ExternalChatDirectory, ExternalChatShare, ExternalChatTimeline } from '../team-external-chat-contract.js'
 import { callArkme } from './api.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
@@ -15,12 +15,22 @@ function retainMedia(next: ExternalChatTimeline, previous?: ExternalChatTimeline
   const mediaUrls: Record<string, string> = {}
   const items = next.items.map(item => {
     const old = previous?.items.find(value => value.itemUid === item.itemUid)
-    const signature = (value: typeof item) => JSON.stringify({ ...value, contentBlocks: value.contentBlocks?.map(({mediaRef, ...block}) => block) })
+    const signature = (value: typeof item) => JSON.stringify(value, (key, v) => key === 'mediaRef' ? undefined : v)
     const stable = old && signature(old) === signature(item) ? old : item
-    for (const block of stable.contentBlocks ?? []) mediaUrls[block.mediaRef] = (stable === old ? previous?.mediaUrls[block.mediaRef] : next.mediaUrls[block.mediaRef]) ?? ''
+    const blocks = [...stable.contentBlocks ?? [], ...stable.forwardRecords?.items.flatMap(value => [...value.contentBlocks ?? [], ...value.segments?.flatMap(segment => segment.contentBlocks ?? []) ?? []]) ?? []]
+    for (const block of blocks) mediaUrls[block.mediaRef] = (stable === old ? previous?.mediaUrls[block.mediaRef] : next.mediaUrls[block.mediaRef]) ?? ''
     return stable
   })
   return { ...next, items, mediaUrls }
+}
+
+function SharedMessageBody({item, sourceKey}: {item: ArkmeTimelineItem; sourceKey: string}) {
+  if (item.forwardRecords) return <div><h4>{item.forwardRecords.title}</h4>{item.forwardRecords.items.map((part, index) => <section key={index}>
+    <small>{part.senderName}</small>
+    <ArkmeMessageContent item={{...part, status: 1, itemUid: `${item.itemUid}:${index}`, isMe: false}} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/>
+    {part.segments?.map((segment, position) => <div key={position}><small>{segment.speakerName}</small><ArkmeMessageContent item={{status: 1, itemUid: `${item.itemUid}:${index}:${position}`, senderName: segment.speakerName, sendAtMillis: part.sendAtMillis, title: '', textContent: segment.textContent, contentBlocks: segment.contentBlocks ?? [], isMe: false}} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/></div>)}
+  </section>)}</div>
+  return <ArkmeMessageContent item={item} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/>
 }
 
 export function TeamExternalChats(props: {teamRef: string; teamName: string; onClose(): void}) {
@@ -115,7 +125,7 @@ function ExternalChatReader({share, onBack}: {share: ExternalChatShare; onBack()
     {page && <ArkmeMediaAccessContext.Provider value={{url: block => page.mediaUrls[block.mediaRef] ?? ''}}>
       {page.hasMore && <button disabled={busy} onClick={() => void load(true)}>查看更早消息</button>}
       {!page.items.length && <p>暂无消息</p>}
-      {[...page.items].reverse().map(item => <article key={item.itemUid} className="arkme-team-external-message"><small>{item.senderName} · {new Date(item.sendAtMillis).toLocaleString()}</small><ArkmeMessageContent item={item} sessionAttachmentPreview sourceIdentityKey={share.key} mediaSelectionIsExplicit/></article>)}
+      {[...page.items].reverse().map(item => <article key={item.itemUid} className="arkme-team-external-message"><small>{item.senderName} · {new Date(item.sendAtMillis).toLocaleString()}</small><SharedMessageBody item={item} sourceKey={share.key}/></article>)}
     </ArkmeMediaAccessContext.Provider>}
   </div>
 }
