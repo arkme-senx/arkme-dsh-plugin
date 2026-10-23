@@ -16,6 +16,7 @@ import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js
 import { OfflineContextCandidates, OfflineContextConnected, offlineRelinkOptions } from './offline-context/OfflineContextConnected.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { StatisticsSurface } from './statistics/StatisticsSurface.js'
+import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
@@ -47,7 +48,7 @@ import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layo
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionPreview, ReactionAddIcon, ArkmeReactionSelections } from './ArkmeReactionPreview.js'
 import { reactionPreview } from './reaction-preview-store.js'
-import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
+import { SELF_CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
 import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { createNativeCopyLinkEntry, NATIVE_COPY_LINK_ENTRY, type NativeCopyLinkWindow } from './native-copy-link-entry.js'
@@ -3206,6 +3207,12 @@ export function ArkmeSurface({
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [selfCalendarOpen, setSelfCalendarOpen] = useState(false)
+  const [selfHeaderPanel, setSelfHeaderPanel] = useState<'search' | 'statistics'>()
+  const openSelfHeaderPanel = (panel: 'search' | 'statistics', open: boolean) => {
+    if (open) { setRelatedMenuOpen(false); setSelfMenuOpen(false); setSelfCalendarOpen(false) }
+    setSelfHeaderPanel(current => open ? panel : current === panel ? undefined : current)
+  }
+  useEffect(() => { setSelfHeaderPanel(undefined) }, [authenticatedAccountKey, conversationOverlayKey])
   const [conversationExport, setConversationExport] = useState<{
     sourceKey: string
     sourceName: string
@@ -8682,7 +8689,7 @@ export function ArkmeSurface({
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header data-arkme-window-drag-region="conversation" className="arkme-conversation-header"
           data-arkme-centered-header={selfWorkspaceSelected ? 'self' : undefined}
           style={{ ...styles.header, ...(selfWorkspaceSelected ? {
-            display: 'grid', gridTemplateColumns: CONVERSATION_HEADER_COLUMNS, paddingLeft: 20, paddingRight: 20,
+            display: 'grid', gridTemplateColumns: SELF_CONVERSATION_HEADER_COLUMNS, paddingLeft: 20, paddingRight: 20,
           } : {}) }}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
@@ -8715,8 +8722,8 @@ export function ArkmeSurface({
             interactions={source.kind === 'private_chat' ? { moments: interwovenMoments, state: interwovenCalendarState,
               retry: () => setInterwovenRefreshRevision(value => value + 1) } : undefined}
             onSelect={calendarNavigation.select} onOpen={calendarNavigation.cancel} />}
-          {authenticated && activeConversation && source !== undefined && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) && <ArkmeConversationSearch
-            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} hideTrigger={!sourceIsChat} />}
+          {authenticated && activeConversation && source !== undefined && sourceIsChat && <ArkmeConversationSearch
+            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} />}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ConversationAnalysis
             key={`chat-words:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef}
             accountScope={authenticatedAccountKey ?? ''}
@@ -8760,6 +8767,7 @@ export function ArkmeSurface({
               onClick={() => {
                 setRelatedMenuOpen(false)
                 setSelfMenuOpen(false)
+                setSelfHeaderPanel(undefined)
                 if (!selfCalendarOpen) calendarNavigation.cancel()
                 setSelfCalendarOpen(value => !value)
               }}
@@ -8778,6 +8786,11 @@ export function ArkmeSurface({
                 arkmeUi.showConversationTarget(source, item.recordUid, item.sendAtMillis)
               }}
             />
+            <ArkmeConversationSearch key={`self-search:${authenticatedAccountKey}:${conversationOverlayKey}`}
+              source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} label={tr('搜索发给自己')}
+              open={selfHeaderPanel === 'search'} onOpenChange={open => openSelfHeaderPanel('search', open)} />
+            <SelfConversationStatistics host={panelRef} accountScope={authenticatedAccountKey ?? ''}
+              open={selfHeaderPanel === 'statistics'} onOpenChange={open => openSelfHeaderPanel('statistics', open)} />
             <ConversationActionsMenu
               items={[conversationExportActionItem({
                 busy: conversationExport?.status === 'downloading',
@@ -8793,6 +8806,7 @@ export function ArkmeSurface({
                 onOpenChange: open => {
                   setRelatedMenuOpen(false)
                   setSelfCalendarOpen(false)
+                  if (open) setSelfHeaderPanel(undefined)
                   setSelfMenuOpen(open)
                 },
               }}

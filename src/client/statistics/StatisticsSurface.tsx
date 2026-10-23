@@ -29,7 +29,7 @@ function Change({ value }: { value: number | null | undefined }) {
 const palette = { '--stats-bg': theme.base, '--stats-layer': theme.layer1, '--stats-text': theme.text, '--stats-muted': theme.secondary,
   '--stats-border': theme.border, '--stats-accent': theme.info, '--stats-soft': theme.accentSoft, '--stats-hover': theme.hover } as CSSProperties
 
-export function StatisticsSurface({ accountScope, initialMonth }: { accountScope: string; initialMonth?: string | undefined }) {
+export function StatisticsSurface({ accountScope, initialMonth, embedded = false }: { accountScope: string; initialMonth?: string | undefined; embedded?: boolean }) {
   useArkmeLocale()
   const [month, setMonth] = useState(initialMonth ?? ''), [revision, setRevision] = useState(0)
   const [view, setView] = useState<'day' | 'week'>('day'), [keyword, setKeyword] = useState<StatisticsKeyword>(), [showAll, setShowAll] = useState(false)
@@ -58,8 +58,8 @@ export function StatisticsSurface({ accountScope, initialMonth }: { accountScope
     } catch (error) { if (!c.signal.aborted) setSourceError(statisticsError(error)) }
     finally { if (!c.signal.aborted) setOpening('') }
   }
-  return <section className="arkme-statistics" style={palette} aria-label={tr('统计与分析')}>
-    <header className="stats-header"><div className="stats-title"><ChartBar size={23}/><div><h1>{tr('统计与分析')}</h1><small>{tr('个人快记 · 沿用移动端统计口径')}</small></div></div>
+  return <section className="arkme-statistics" data-embedded={embedded || undefined} style={palette} aria-label={tr('统计与分析')}>
+    <header className="stats-header">{!embedded && <div className="stats-title"><ChartBar size={23}/><div><h1>{tr('统计与分析')}</h1><small>{tr('个人快记 · 沿用移动端统计口径')}</small></div></div>}
       <div className="stats-controls"><div className="stats-switch" aria-label={tr('统计范围')}><button aria-pressed={!month} onClick={() => selectMonth('')}>{tr('全部')}</button><button aria-pressed={!!month} onClick={() => selectMonth(month || currentMonth)}>{tr('按月')}</button></div>
       {month && <div className="stats-month"><button title={tr('上个月')} aria-label={tr('上个月')} disabled={!!earliest && month <= earliest} onClick={() => stepMonth(-1)}><CaretLeft/></button><input type="month" aria-label={tr('统计月份')} value={month} max={currentMonth} onInput={e => { if (e.currentTarget.value) selectMonth(e.currentTarget.value) }} onChange={e => { if (e.target.value) selectMonth(e.target.value) }}/><button title={tr('下个月')} aria-label={tr('下个月')} disabled={month >= currentMonth} onClick={() => stepMonth(1)}><CaretRight/></button></div>}
       <button className="stats-icon" aria-label={tr('刷新统计')} title={tr('刷新统计')} onClick={retry}><ArrowClockwise size={18}/></button></div>
