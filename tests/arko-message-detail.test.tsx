@@ -35,8 +35,8 @@ beforeEach(async () => {
   vi.mocked(callArkme).mockImplementation(async method => {
     if (method === 'arko.session') return { sessionId: 88 } as never
     if (method === 'arko.messages') return { items: [
-      { messageId: 1, sessionId: 88, role: 'user', messageActionRef: 'user-action', messageActionConversationRef: 'conversation', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] },
-      { messageId: 2, sessionId: 88, role: 'assistant', messageActionRef: 'assistant-action', messageActionConversationRef: 'conversation', text: '完整回答', reasoning: '已有思考内容', createdAtMillis: 1786000001000, status: 1, createdRecordUids: [] },
+      { messageId: 1, sessionId: 88, role: 'user', runUid: 'completed-turn', runStatus: 'queued', messageActionRef: 'user-action', messageActionConversationRef: 'conversation', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] },
+      { messageId: 2, sessionId: 88, role: 'assistant', runUid: 'completed-turn', runStatus: 'completed', messageActionRef: 'assistant-action', messageActionConversationRef: 'conversation', text: '完整回答', reasoning: '已有思考内容', createdAtMillis: 1786000001000, status: 1, createdRecordUids: [] },
     ] } as never
     if (method === 'arko.models') return { options: [] } as never
     if (method === 'arko.profile') return { displayName: '小助', version: 2 } as never
@@ -187,6 +187,50 @@ it('keeps multi-select semantics and never reopens detail after exiting selectio
   expect(detail()).toBeNull()
   await click(document.querySelector('[aria-label="退出多选"]')!)
   expect(detail()).toBeNull()
+})
+it('offers deletion for selected user and assistant history while honestly keeping it pending backend support', async () => {
+  await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+  await click(document.querySelector('[aria-label="多选"]')!)
+  await click(bubble('完整回答'))
+  const calls = vi.mocked(callArkme).mock.calls.length
+  await click(document.querySelector('[aria-label="删除"]')!)
+  const modal = document.querySelector('[data-arkme-confirm-dialog]')!
+  expect(modal.textContent).toContain('删除所选 2 条 Arko 消息？')
+  expect(modal.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
+  expect(modal.textContent).toContain('30 天内可恢复')
+  const confirm = [...modal.querySelectorAll('button')].find(button => button.textContent === '确认删除')!
+  expect(confirm.disabled).toBe(true)
+  await click(confirm)
+  expect(bubble('我的问题')).toBeDefined(); expect(bubble('完整回答')).toBeDefined()
+  expect(vi.mocked(callArkme).mock.calls).toHaveLength(calls)
+  await click([...modal.querySelectorAll('button')].find(button => button.textContent === '取消')!)
+  expect(document.querySelector('[data-arkme-confirm-dialog]')).toBeNull()
+  expect(host.querySelector('[role="toolbar"][aria-label="已选择 2 条消息"]')).not.toBeNull()
+})
+it('closes the pending deletion confirmation on account change without mutating history', async () => {
+  await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+  await click(document.querySelector('[aria-label="多选"]')!)
+  await click(document.querySelector('[aria-label="删除"]')!)
+  expect(document.querySelector('[data-arkme-confirm-dialog]')).not.toBeNull()
+  await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 }) })
+  expect(document.querySelector('[data-arkme-confirm-dialog]')).toBeNull()
+  await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 }) })
+  expect(document.querySelector('[data-arkme-confirm-dialog]')).toBeNull()
+  expect(vi.mocked(callArkme).mock.calls.some(([operation]) => /delete|recover/.test(operation))).toBe(false)
+})
+it('blocks a mixed deletion selection containing a running reply', async () => {
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  vi.mocked(callArkme).mockImplementation((method, input, signal) => method === 'arko.ask'
+    ? Promise.resolve({ sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'running', runUid: 'run-delete', text: '生成中的回答', reasoning: '', createdRecordUids: [] }) as never
+    : original(method, input, signal))
+  await menuAction('小助 能干什么')
+  await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+  await click(document.querySelector('[aria-label="多选"]')!)
+  await click(bubble('生成中的回答'))
+  const deletion = document.querySelector<HTMLButtonElement>('[aria-label="删除"]')!
+  expect(deletion.disabled).toBe(true)
+  expect(deletion.title).toContain('仍在生成或发送结果待确认')
+  expect(document.querySelector('[data-arkme-confirm-dialog]')).toBeNull()
 })
 it('reserves Escape for a higher modal and closes with the close button', async () => {
   await click(bubble('完整回答'))

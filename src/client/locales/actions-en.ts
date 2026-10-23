@@ -1,5 +1,11 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '后端接口开发中，开发完成后此功能完整可用。': 'The backend API is under development. This feature will be fully available once it is ready.',
+  '功能接通后，删除的消息将放入「数据管理 → 最近删除」，30 天内可恢复，之后自动清空。': 'Once available, deleted messages will move to Data Management → Recently Deleted. They can be restored within 30 days and will then be automatically removed.',
+  '删除所选 {v0} 条 Arko 消息？': 'Delete the {v0} selected Arko messages?',
+  'Arko 对话消息': 'Arko conversation messages',
+  '每次最多删除 100 条消息': 'You can delete up to 100 messages at a time.',
+  '所选消息仍在生成或发送结果待确认，请完成后再删除': 'Some selected messages are still generating or awaiting send confirmation. Wait until they are complete before deleting.',
   '暂缺后端支持，免打扰尚未生效': 'Backend support is not available yet. Notifications have not been muted.',
   '免打扰状态暂未更新，请重新打开菜单重试': 'Mute status could not be updated. Reopen this menu to retry.',
   '免打扰状态读取失败，点击重试': 'Could not load mute status. Click to retry.',
