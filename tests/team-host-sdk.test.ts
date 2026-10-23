@@ -9,6 +9,21 @@ import type { TeamServicePort } from '../src/services/team-service.js'
 
 const teamRef = `team_v1_${'a'.repeat(32)}`
 
+it('requires an origin for both shared-chat write adapters before reaching the owner', async () => {
+  const write = vi.fn()
+  const server = createServer(createArkmeHostApi({executeTeamApp: write, externalChats: write} as never, {expectedPort: 3080, allowNonLoopback: false}))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const endpoint = `http://127.0.0.1:${(server.address() as {port:number}).port}`
+  try {
+    for (const operation of ['team.app.external.share', 'team.app.external.unshare', 'team.external']) {
+      const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({operation, params:{operation:'share'}})})
+      expect(response.status).toBe(403)
+      expect((await response.json()).error.code).toBe('origin-required')
+    }
+    expect(write).not.toHaveBeenCalled()
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+})
+
 function teamFixture(): TeamServicePort {
   return {
     list: vi.fn(async options => ({ items: [], totalCount: 0, hasMore: false, options } as never)),
