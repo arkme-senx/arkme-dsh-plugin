@@ -142,6 +142,18 @@ function cloudFixture() {
   return { cloud, post, selectedTeam, local, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
 }
 describe('cloud coordinator account/team boundaries', () => {
+  it('drains acknowledged batches in one trigger but stops immediately if ACK makes no progress',async()=>{
+    const f=cloudFixture();await f.cloud.enable(11,'opaque-team')
+    const many=Array.from({length:205},(_,i)=>({...events[0]!,sequence:i+1,turnId:`turn-${i}`,at:1000+i,localProgress:[{id:'private-progress',text:'本机过程',at:1,truncated:false}]}))
+    await f.cloud.sync(11,'opaque-team',[task],()=>many)
+    const uploads=f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))
+    expect(uploads).toHaveLength(3)
+    expect(JSON.stringify(uploads)).not.toContain('本机过程')
+    f.post.mockImplementation(async()=>({owner_ref:'11',task_results:[],event_results:[]}) as never)
+    f.post.mockClear()
+    await f.cloud.sync(11,'opaque-team',[task],()=>[...many,{...events[0]!,turnId:'extra'}])
+    expect(f.post).toHaveBeenCalledTimes(1)
+  })
   it('keeps a successful list readable after an upload failed, without falsely clearing upload retries',async()=>{
     const f=cloudFixture(),original=f.post.getMockImplementation()!
     await f.cloud.enable(11,'opaque-team')

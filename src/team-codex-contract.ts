@@ -1,6 +1,6 @@
 import type { ArkmeTeamMember } from './types.js'
 
-/** Versioned, local-only events. No credentials, transcripts, tool results or private reasoning. */
+/** Versioned, local-only events. No credentials, raw tool results or private reasoning. */
 export type TeamCodexEventKind = 'UserPromptSubmit' | 'Stop' | 'Interrupt'
 export type TeamCodexConnectionStatus = 'pending' | 'active' | 'paused' | 'disconnected' | 'expired'
 /** Navigation hint only. It grants neither cloud access nor upload permission. */
@@ -90,6 +90,7 @@ export interface TeamCodexTurnTiming {
   /** Explicit source liveness at observedAt; absent on older cloud contracts. */
   live?: boolean
 }
+export interface TeamCodexProgress { id:string; text:string; at:number; truncated:boolean }
 export interface TeamCodexEvent {
   eventId?: string
   version?: number
@@ -99,6 +100,8 @@ export interface TeamCodexEvent {
   text: string
   at: number
   truncated: boolean
+  /** Owner-local public progress; excluded from the cloud transport until its protocol supports it. */
+  localProgress?: TeamCodexProgress[]
   timing?: TeamCodexTurnTiming
   /** Host-local, owner-only references. Never serialized into the team cloud journal. */
   privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'unavailable' }[]

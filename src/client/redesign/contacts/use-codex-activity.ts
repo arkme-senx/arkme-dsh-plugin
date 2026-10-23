@@ -57,11 +57,11 @@ export function useCodexActivity(accountKey: string | undefined, userId: number 
     const timer = setInterval(()=>{void refresh()},10_000)
     const foreground = () => {void refresh()}
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange',foreground)
-    if (typeof window !== 'undefined') window.addEventListener('focus',foreground)
+    if (typeof window !== 'undefined') {window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
     return () => {
       controller.abort(); clearInterval(timer)
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange',foreground)
-      if (typeof window !== 'undefined') window.removeEventListener('focus',foreground)
+      if (typeof window !== 'undefined') {window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
     }
   },[accountKey,userId,active])
   return value?.accountKey === accountKey ? value?.snapshot : undefined

@@ -200,7 +200,8 @@ export class TeamCodexMachineJournal {
     return {sessionId:task.session_id,homeKey:installation.home_key,live:true}
   }
 
-  ingest(user:number):void {
+  ingest(user:number):boolean {
+    let received=false
     for(const row of this.installations(user)) {
       if(!['pending','active'].includes(row.status)) continue
       const claim=this.claim(row)
@@ -264,7 +265,7 @@ export class TeamCodexMachineJournal {
             if(!task.excluded) {
               const title=task.title
               this.db.prepare(`INSERT INTO codex_events(task_id,turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,?)
-                ON CONFLICT(task_id,turn_id,kind) DO UPDATE SET text=excluded.text,at=excluded.at,truncated=excluded.truncated WHERE excluded.at>=codex_events.at`)
+                ON CONFLICT(task_id,turn_id,kind) DO UPDATE SET text=excluded.text,truncated=excluded.truncated WHERE excluded.at>=codex_events.at`)
                 .run(task.id,String(event.turnId),String(event.kind),String(event.text),Number(event.at),event.truncated===true?1:0)
               // Do not let late delivery move a task back to an old working directory.
               this.db.prepare('UPDATE codex_tasks SET title=? WHERE id=?').run(title,task.id)
@@ -278,6 +279,7 @@ export class TeamCodexMachineJournal {
         rmSync(path,{force:true})
       }
       if(changed) {
+        received=true
         this.db.prepare("UPDATE codex_installations SET status='active',home_key=?,name=?,updated_at=? WHERE id=?").run(row.home_key,row.name,row.updated_at,row.id)
         this.control(row)
       }
@@ -285,6 +287,7 @@ export class TeamCodexMachineJournal {
       this.captureTitles(row)
       this.captureQueues(row)
     }
+    return received
   }
 
   private visibility(installation:string,session:string):CodexThreadVisibility|undefined {

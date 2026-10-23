@@ -176,12 +176,19 @@ export class TeamCodexCloud {
       if (destination !== consent.team) throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH', '已停止向变化后的团队上传', false, 409)
       const active = eligible(tasks)
       this.journal.reconcile(owner, localTeam, destination, active, readEvents,consent.source_name)
-      const batch = this.journal.batch(owner, localTeam, new Set(active.map(t => t.id)))
-      if (!batch) return
-      const result = await this.post(owner, '/api/v1/team-codex/sync', batch, signal)
-      signal.throwIfAborted()
-      this.journal.acknowledge(batch, result)
-      this.failures.delete(`${owner}:${localTeam}`)
+      const eligibleIds=new Set(active.map(t=>t.id))
+      // Drain acknowledged backlog in bounded bursts, instead of waiting five seconds per batch.
+      // No-progress/partial failure never spins or suppresses the normal retry backoff.
+      for(let round=0;round<4;round++) {
+        const batch=this.journal.batch(owner,localTeam,eligibleIds)
+        if(!batch)return
+        const before=this.journal.counts(owner,localTeam,eligibleIds).pending
+        const result=await this.post(owner,'/api/v1/team-codex/sync',batch,signal)
+        signal.throwIfAborted()
+        this.journal.acknowledge(batch,result)
+        this.failures.delete(`${owner}:${localTeam}`)
+        if(this.journal.counts(owner,localTeam,eligibleIds).pending>=before)break
+      }
     } catch (error) { if (!signal.aborted) this.failure(owner, localTeam, error) }
     finally { this.syncing = false }
   }

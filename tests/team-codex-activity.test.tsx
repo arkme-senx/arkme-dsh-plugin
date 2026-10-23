@@ -400,7 +400,7 @@ describe('Team Codex activity UI',()=>{
     expect(text(renderer!.root)).not.toContain('排除此任务')
   })
   it('refreshes remote history without metadata changes and paginates using the opaque cursor',async()=>{
-    vi.useFakeTimers();vi.stubGlobal('document',{hidden:false})
+    vi.useFakeTimers();vi.stubGlobal('document',{hidden:false,addEventListener:vi.fn(),removeEventListener:vi.fn()});vi.stubGlobal('window',{addEventListener:vi.fn(),removeEventListener:vi.fn()})
     const task={...base.tasks[0]!,id:'remote-task',cloud:{taskId:'remote-task',sourceId:'remote-source',sourceName:'电脑B',ownerRef:'22',remote:true}}
     let version=1
     mocks.callArkme.mockImplementation(async(op:string)=>op==='team.codex.state'?{...base,localOnly:false,tasks:[task],cloud:{status:'ready',pending:0,blocked:0,page:1}}:

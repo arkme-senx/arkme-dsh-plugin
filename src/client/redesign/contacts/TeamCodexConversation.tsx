@@ -35,7 +35,7 @@ export function mergeCodexEvents(current: TeamCodexEvent[], incoming: TeamCodexE
     const previous = byId.get(item.eventId ?? item.sequence)
     if (!previous || (item.version ?? 0) >= (previous.version ?? 0)) byId.set(item.eventId ?? item.sequence, item)
   }
-  return [...byId.values()].sort((a, b) => a.sequence - b.sequence)
+  return [...byId.values()].sort((a, b) => a.at - b.at || a.sequence - b.sequence)
 }
 function plain(children: ReactNode): string {
   return Children.toArray(children).map(child => typeof child === 'string' || typeof child === 'number' ? String(child)
@@ -109,7 +109,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
       const changed = JSON.stringify(merged) !== JSON.stringify(reading.items)
       if (older !== undefined && scroller.current) pendingScroll.current = { top: scroller.current.scrollTop, height: scroller.current.scrollHeight }
       else pendingScroll.current = reading.atBottom ? 'bottom' : 'restore'
-      const messageChanged=merged.some(item=>!reading.items.some(old=>(old.eventId??old.sequence)===(item.eventId??item.sequence)&&old.text===item.text&&old.kind===item.kind))
+      const messageChanged=merged.some(item=>!reading.items.some(old=>(old.eventId??old.sequence)===(item.eventId??item.sequence)&&old.text===item.text&&old.kind===item.kind&&JSON.stringify(old.localProgress)===JSON.stringify(item.localProgress)))
       if (messageChanged && reading.loaded && older === undefined && !reading.atBottom) setNewContent(true)
       if (!reading.loaded || older !== undefined) {
         reading.before = page.nextBefore; reading.cursor = page.nextCursor
@@ -132,7 +132,14 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     live.current = true
     void load()
     const timer = setInterval(() => { if (typeof document === 'undefined' || !document.hidden) void load() }, 5000)
-    return () => { live.current = false; clearInterval(timer); for (const controller of controllers.current) controller.abort() }
+    const foreground=()=>{if(typeof document==='undefined'||!document.hidden)void load()}
+    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if(typeof document!=='undefined')document.addEventListener('visibilitychange',foreground)
+    return () => {
+      live.current=false;clearInterval(timer);for(const controller of controllers.current)controller.abort()
+      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if(typeof document!=='undefined')document.removeEventListener('visibilitychange',foreground)
+    }
   }, [load])
   useEffect(() => { void load() }, [load, task.updatedAt, task.eventCount])
   useLayoutEffect(() => {
@@ -178,6 +185,11 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
             {event.truncated && <small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
             <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer></div>
           </article>
+          {event.localProgress?.map(progress=><article key={progress.id} className="arkme-codex-message is-assistant" aria-label={tr('Codex 进度')}>
+            <CodexMessageBody text={progress.text}/>
+            {progress.truncated&&<small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
+            <footer className="arkme-codex-message-meta"><span>{tr('过程回复 · 仅本机')}</span><time dateTime={new Date(progress.at).toISOString()}>{stamp(progress.at)}</time><CodexCopyButton value={progress.text} label={tr('复制进度')}/></footer>
+          </article>)}
         </div>)}
         {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{codexImageSafeText(codexPromptText(current.text)) || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
         {workingTiming && <CodexTurnDuration timing={workingTiming} task={task}/>}

@@ -29,6 +29,24 @@ describe('Codex conversation reader', () => {
     Object.defineProperties(el,{scrollHeight:{configurable:true,get:()=>height},clientHeight:{configurable:true,value:400}})
     return el
   }
+  it('renders local public progress without converting it into a final answer, and refreshes on foreground/online events',async()=>{
+    const input={...event(1,'需求','UserPromptSubmit'),localProgress:[{id:'p1',text:'已定位问题',at:1100,truncated:false}]}
+    mocks.callArkme.mockResolvedValue({items:[input]})
+    const reading=await render({...task,state:'working'})
+    expect(host.querySelector('[aria-label="Codex 进度"]')?.textContent).toContain('已定位问题')
+    expect(host.textContent).toContain('过程回复 · 仅本机')
+    expect(host.querySelector('[aria-label="Codex 回答"]')).toBeNull()
+    expect(reading.items).toHaveLength(1)
+    mocks.callArkme.mockClear()
+    await act(async()=>window.dispatchEvent(new Event('focus')))
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+    await act(async()=>window.dispatchEvent(new Event('online')))
+    expect(mocks.callArkme).toHaveBeenCalledTimes(2)
+  })
+  it('places a recovered earlier final before the next prompt despite its later insertion sequence',()=>{
+    const recovered={...event(3,'补回的回答'),at:1500,turnId:'turn-1'}
+    expect(mergeCodexEvents([event(1),event(2)],[recovered]).map(e=>e.sequence)).toEqual([1,3,2])
+  })
   it('renders readable Markdown, code copying and safe external links without loading images or HTML',async()=>{
     const markdown='# 标题\n\n**重点**\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nconst answer = 42;\n```\n\n[网站](https://example.com) [本机](/private/file) [恶意](javascript:alert)\n\n![截图](https://example.com/tracker.png)\n\n<script>alert(1)</script>\n\n- [x] 完成'
     await act(async()=>root.render(<CodexMessageBody text={markdown}/>))

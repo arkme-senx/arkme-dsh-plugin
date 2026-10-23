@@ -58,6 +58,42 @@ function fixture() {
 }
 
 describe('local Codex team journal and real bridge helper', () => {
+  it('a new question recovers the previous missing final without changing the new turn or trusted Hook commands',async()=>{
+    const f=fixture(),invite=await f.service.invite(teamRef)
+    f.run(['connect',invite.id]);f.record();await f.service.tick()
+    const before=readFileSync(join(f.codex,'hooks.json'),'utf8')
+    mkdirSync(join(f.codex,'sessions'));const path=join(f.codex,'sessions','bound.jsonl')
+    const index=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    index.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,rollout_path TEXT)')
+    index.prepare('INSERT INTO threads VALUES(?,?)').run('task_current_123',path);index.close()
+    const at=Date.now(),line=(type:string,payload:object,time=at)=>JSON.stringify({type,timestamp:new Date(time).toISOString(),payload})+'\n'
+    writeFileSync(path,line('session_meta',{id:'task_current_123'})+line('event_msg',{type:'task_started',turn_id:'turn_123'})+
+      line('response_item',{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'处理中'}]})+
+      line('event_msg',{type:'task_complete',turn_id:'turn_123',last_agent_message:'漏传的最终回答'}))
+    f.record('UserPromptSubmit',{turn_id:'turn_next',prompt:'继续下一问'})
+    await f.service.tick()
+    await vi.waitFor(async()=>expect((await f.service.events(teamRef,invite.id)).items.filter(e=>e.kind==='Stop')).toHaveLength(1))
+    expect((await f.service.state(teamRef)).tasks[0]?.state).toBe('working')
+    await f.service.tick()
+    expect((await f.service.events(teamRef,invite.id)).items.filter(e=>e.kind==='Stop')).toHaveLength(1)
+    expect(readFileSync(join(f.codex,'hooks.json'),'utf8')).toBe(before)
+    f.record('Stop',{turn_id:'turn_123',last_assistant_message:'漏传的最终回答'});await f.service.tick()
+    expect((await f.service.state(teamRef)).tasks[0]?.state).toBe('working')
+    expect((await f.service.events(teamRef,invite.id)).items.filter(e=>e.kind==='Stop')).toHaveLength(1)
+  })
+  it('does not backfill a terminal written while capture was paused',async()=>{
+    const f=fixture(),invite=await f.service.invite(teamRef)
+    f.run(['connect',invite.id]);f.record();await f.service.tick()
+    mkdirSync(join(f.codex,'sessions'));const path=join(f.codex,'sessions','bound.jsonl')
+    const index=new DatabaseSync(join(f.codex,'state_5.sqlite'));index.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,rollout_path TEXT)');index.prepare('INSERT INTO threads VALUES(?,?)').run('task_current_123',path);index.close()
+    await f.service.change(teamRef,invite.id,'pause');f.advance(100)
+    const line=(type:string,payload:object)=>JSON.stringify({type,timestamp:new Date().toISOString(),payload})+'\n'
+    writeFileSync(path,line('session_meta',{id:'task_current_123'})+line('event_msg',{type:'task_started',turn_id:'turn_123'})+line('event_msg',{type:'task_complete',turn_id:'turn_123',last_agent_message:'暂停中不可采集'}))
+    await f.service.change(teamRef,invite.id,'resume');await f.service.tick()
+    await f.service.events(teamRef,invite.id)
+    await new Promise(resolve=>setTimeout(resolve,40))
+    expect((await f.service.events(teamRef,invite.id)).items).toHaveLength(1)
+  })
   it('refreshes an existing single-task connection title without new events, retaining it if the source disappears',async()=>{
     const f=fixture(),invite=await f.service.invite(teamRef)
     f.run(['connect',invite.id,'--title','旧标题']);f.record()

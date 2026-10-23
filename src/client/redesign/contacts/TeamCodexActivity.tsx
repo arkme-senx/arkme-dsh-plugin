@@ -201,7 +201,14 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     if (!active) return
     void refresh()
     const timer = setInterval(() => { if (Date.now() >= retryAfter.current && (typeof document === 'undefined' || !document.hidden)) void refresh() },isPersonal ? 5000 : 3000)
-    return () => { alive.current=false; readEpoch.current++; clearInterval(timer); for (const c of controllers.current) c.abort() }
+    const foreground=()=>{if(typeof document==='undefined'||!document.hidden)void refresh()}
+    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if(typeof document!=='undefined')document.addEventListener('visibilitychange',foreground)
+    return () => {
+      alive.current=false;readEpoch.current++;clearInterval(timer);for(const c of controllers.current)c.abort()
+      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if(typeof document!=='undefined')document.removeEventListener('visibilitychange',foreground)
+    }
   }, [refresh, active,isPersonal])
   useEffect(() => {
     if (!(isPersonal || conversation && target && !target.task) || !active || !state || expanded && state.tasks.some(task=>codexTaskViewKey(task)===expanded)) return
