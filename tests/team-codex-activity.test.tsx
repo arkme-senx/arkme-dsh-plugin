@@ -392,7 +392,7 @@ describe('Team Codex activity UI',()=>{
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef}/>);await tick()})
     expect(text(renderer!.root)).toContain('同事 · 工作电脑 · 项目')
     await selectTask()
-    expect(text(renderer!.root)).toContain('排队请求暂仅在来源电脑可见')
+    expect(text(renderer!.root)).toContain('排队同步后端接口开发中，接通后可跨设备查看')
     expect(text(renderer!.root)).not.toContain('暂无排队请求')
     await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})
     await taskMenu()

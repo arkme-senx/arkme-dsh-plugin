@@ -17,7 +17,7 @@ import { arkmeTheme as theme } from '../arkme-theme.js'
 import type { CSSProperties } from 'react'
 export const exploreIcons = {statistics:ChartBar,profile:IdentificationCard,relations:UsersThree,events:Flag,goals:Target,anniversaries:Gift,world:GlobeHemisphereWest,location:MapPin}
 export function ExploreNavigation({style,active,current,locked,compact=false}:{style:CSSProperties;active:boolean;current?:ExploreModule|'world'|'statistics'|undefined;locked:boolean;compact?:boolean}) {
-  const locationOpen=useSyncExternalStore(arkmeUi.subscribe,()=>arkmeUi.getViewSnapshot().locationOpen===true)
+  const locationOpen=useSyncExternalStore(arkmeUi.subscribe,()=>arkmeUi.getViewSnapshot().locationOpen===true,()=>false)
   const [openMode,setOpenMode]=useState<'hover'|'click'|'keyboard'|null>(null),[position,setPosition]=useState({left:0,top:0})
   const open=openMode!==null
   const trigger=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null)
