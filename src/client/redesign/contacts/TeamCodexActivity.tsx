@@ -13,6 +13,7 @@ import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueue
 import { codexTaskStatus } from './codex-task-status.js'
 import { CodexTaskStateDot, codexTaskStatusLabel } from './CodexTaskStateDot.js'
 import { CodexConversationMenu } from './CodexConversationMenu.js'
+import { codexConversationTime, mergeCodexConversationPages, type CodexConversationPage } from './codex-conversation-pages.js'
 
 const taskGroupKey = (task: CodexViewTask): string => {
   const key = task.cloud ? `${task.cloud.sourceId}:${task.projectKey}` : task.installationId ? `${task.installationId}:${task.projectKey}` : 'legacy'
@@ -52,6 +53,10 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const [pickerOpen, setPickerOpen] = useState(false)
   const picker = useRef<HTMLDivElement>(null)
   const pickerTrigger = useRef<HTMLButtonElement>(null)
+  const pickerList = useRef<HTMLElement>(null)
+  const conversationPages = useRef(new Map<number,CodexConversationPage>())
+  const [loadingMore,setLoadingMore] = useState(false)
+  const [moreError,setMoreError] = useState('')
   const readings = useRef(new Map<string,CodexReadingState>())
   const [taskMenu,setTaskMenu] = useState(false)
   const [confirm, setConfirm] = useState<{ id:string; action:'disconnect'|'delete'; teamRef?:string }>()
@@ -76,6 +81,10 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const reading = useRef(false)
   const retryAfter = useRef(0)
   const controllers = useRef(new Set<AbortController>())
+  const directoryScope = JSON.stringify([conversation,teamRef,selfMember,member,target?.accountKey,personalTeams?.map(team=>team.teamRef).sort()])
+  useEffect(() => {
+    conversationPages.current.clear(); setMoreError(''); setLoadingMore(false)
+  },[directoryScope])
   useEffect(() => {
     if (!personalTeams) return
     const allowed = new Set(personalTeams.map(team=>team.teamRef))
@@ -98,12 +107,15 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     if (target.project && target.task.cloud) setKnownProjects(current => ({...current,[target.project!]:{name:target.task!.projectName ?? '',sourceId:target.task!.cloud!.sourceId,projectKey:target.task!.projectKey ?? 'unknown'}}))
   }, [target])
   useEffect(() => {
-    if (!active) { setPickerOpen(false); setTaskMenu(false) }
+    if (!active) { setPickerOpen(false); setTaskMenu(false); setLoadingMore(false) }
   }, [active])
   useEffect(() => { setConfirm(undefined) }, [expanded,active])
   useEffect(() => {
     if (!pickerOpen || typeof document === 'undefined') return
-    picker.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
+    const list = pickerList.current
+    const selectedRow = list?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
+    ;(selectedRow ?? list?.querySelector<HTMLButtonElement>('.arkme-team-codex-task-toggle'))?.focus({preventScroll:true})
+    if (list && selectedRow && selectedRow.offsetTop > list.clientHeight) list.scrollTop = selectedRow.offsetTop - list.clientHeight / 2
     const outside = (event: PointerEvent) => { if (event.target instanceof Node && !picker.current?.contains(event.target)) setPickerOpen(false) }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setPickerOpen(false); pickerTrigger.current?.focus() } }
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape)
@@ -115,6 +127,11 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     try { return await callArkme<T>(operation,{ teamRef,...params },controller.signal) }
     finally { controllers.current.delete(controller) }
   }, [teamRef])
+  const readPage = useCallback(async (at: number,signal: AbortSignal): Promise<CodexConversationPage> => {
+    if (personalTeams) return readPersonalCodexState(personalTeams,selfMember,at,
+      ref=>request<TeamCodexState>('team.codex.state',{teamRef:ref,page:at,memberRef:selfMember}),signal)
+    return {state:await request<TeamCodexState>('team.codex.state',{page:at,memberRef:member,sourceId:selectedSource,projectKey:selectedProject}),unavailable:[]}
+  },[request,personalTeams,selfMember,member,selectedSource,selectedProject])
   const refresh = useCallback(async () => {
     if (reading.current) return
     const epoch = readEpoch.current
@@ -122,11 +139,24 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     const batch = new AbortController()
     controllers.current.add(batch)
     try {
-      const personalResult = personalTeams ? await readPersonalCodexState(personalTeams,selfMember,page,
-        ref=>request<TeamCodexState>('team.codex.state',{teamRef:ref,page,memberRef:selfMember}),batch.signal) : undefined
-      const result = personalResult?.state ?? await request<TeamCodexState>('team.codex.state',{page,memberRef:member,sourceId:selectedSource,projectKey:selectedProject})
+      let resultPage: CodexConversationPage
+      const refreshed = new Map<number,CodexConversationPage>()
+      if (conversation) {
+        // Refresh the loaded prefix together: retains the selected older conversation,
+        // removes revoked rows, and avoids keeping stale duplicates across page shifts.
+        const lastPage = Math.max(1,page,...conversationPages.current.keys())
+        for (let at=1;at<=lastPage;at++) {
+          batch.signal.throwIfAborted()
+          const value=await readPage(at,batch.signal)
+          refreshed.set(at,value)
+          if (value.state.localOnly || !value.state.cloud?.hasMore) break
+        }
+        resultPage=mergeCodexConversationPages(refreshed)
+      } else resultPage=await readPage(page,batch.signal)
+      const result=resultPage.state
       if (alive.current && epoch === readEpoch.current) {
-        setUnavailable(personalResult?.unavailable ?? [])
+        if(conversation) conversationPages.current=refreshed
+        setUnavailable(resultPage.unavailable)
         setState(result); setReadError(''); retryAfter.current = result.cloud?.status==='offline'||result.cloud?.status==='blocked'?Date.now()+30_000:0
         if(result.cloud?.status==='blocked') {readings.current.clear();setExpanded(undefined)}
         if (!member.startsWith('usr_v1_')) setKnownMembers(current=>({...current,...Object.fromEntries(result.tasks.filter(t=>t.cloud).map(t=>[t.cloud!.ownerRef,t.member.displayName]))}))
@@ -135,9 +165,36 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         }]))}))
         if(result.localOnly && result.cloud?.status==='blocked') {setKnownMembers({});setKnownProjects({})}
       }
-    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; readings.current.clear();setState(undefined);setExpanded(undefined) } }
+    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; readings.current.clear();conversationPages.current.clear();setState(undefined);setExpanded(undefined) } }
     finally { controllers.current.delete(batch); reading.current = false }
-  }, [request,page,member,selectedSource,selectedProject,personalTeams,selfMember])
+  }, [readPage,page,member,conversation,directoryScope])
+  const loadMore = useCallback(async () => {
+    if (!conversation || !active || reading.current || !conversationPages.current.size) return
+    const lastPage=Math.max(...conversationPages.current.keys())
+    const last=conversationPages.current.get(lastPage)!.state
+    if(last.localOnly || !last.cloud?.hasMore || lastPage>=10000) return
+    const epoch=readEpoch.current
+    const batch=new AbortController()
+    controllers.current.add(batch); reading.current=true; setLoadingMore(true); setMoreError('')
+    try {
+      const next=await readPage(lastPage+1,batch.signal)
+      if(alive.current && epoch===readEpoch.current) {
+        if(next.state.cloud?.status==='blocked') {
+          conversationPages.current.clear();readings.current.clear();setExpanded(undefined)
+          setState(next.state);setUnavailable(next.unavailable)
+          return
+        }
+        conversationPages.current.set(lastPage+1,next)
+        const merged=mergeCodexConversationPages(conversationPages.current)
+        setState(merged.state);setUnavailable(merged.unavailable)
+      }
+    } catch(error) { if(alive.current && epoch===readEpoch.current) setMoreError(errorText(error)) }
+    finally {controllers.current.delete(batch);reading.current=false;if(alive.current && epoch===readEpoch.current)setLoadingMore(false)}
+  },[conversation,active,readPage])
+  useEffect(() => {
+    const list=pickerList.current
+    if(pickerOpen && !loadingMore && !moreError && list && list.scrollHeight-list.scrollTop-list.clientHeight<80) void loadMore()
+  },[pickerOpen,state,loadingMore,moreError,loadMore])
   useEffect(() => {
     readEpoch.current++
     alive.current = true
@@ -214,8 +271,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const visibleGroups=[...groups.values()].map(group=>({...group,tasks:group.tasks.filter(task=>
     (!project||group.key===project) && (!search.trim()||[task.title,task.projectName,task.branch,task.cwd].some(value=>value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))))
     .sort((a,b)=>taskPriority(b)-taskPriority(a)||b.updatedAt-a.updatedAt)})).filter(group=>group.tasks.length)
-  const visibleConversations = (state?.tasks ?? []).filter(task=>
-    !search.trim() || task.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  const visibleConversations = [...(state?.tasks ?? [])]
     .sort((a,b)=>b.updatedAt-a.updatedAt)
   const confirmation=<>{confirm && <div className="arkme-team-codex-confirm" role="alert">
     <p>{tr(confirm.action==='delete' ? '停止同步并删除这项任务的本地记录？无法撤销，不会删除 Codex 原任务或已上传的云端记录。' : '断开后保留已有记录，后续需重新接入。确定断开？')}</p>
@@ -245,24 +301,34 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     }}>
       <CodexTaskStateDot status={codexTaskStatus(task)}/>
       <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span>
-      {conversation && <span className="arkme-codex-task-state-label">{status(task)}</span>}
+      {conversation && <time title={time(task.updatedAt)} dateTime={new Date(task.updatedAt).toISOString()}>{codexConversationTime(task.updatedAt,Date.now())}</time>}
       {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
     </button>
     {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
       onClick={()=>{setExpanded(task.id);setTaskMenu(expanded===task.id ? !taskMenu : true)}}>⋯</button>}
     {onOpenTask && expanded===task.id && taskMenu && <div className="arkme-codex-overview-task-info">{taskInfo}{confirm?.id===task.id && confirmation}</div>}
   </article>
-  const taskList = <aside className="arkme-codex-task-sidebar" aria-label={tr('Codex 任务列表')}>
-    {state && <div className="arkme-team-codex-filters">
+  const taskList = <aside className="arkme-codex-task-sidebar" aria-label={tr('Codex 任务列表')} ref={conversation?pickerList:undefined}
+    onScroll={conversation?event=>{const list=event.currentTarget;if(!moreError && list.scrollHeight-list.scrollTop-list.clientHeight<80)void loadMore()}:undefined}
+    onKeyDown={conversation?event=>{
+      if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return
+      const rows=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('.arkme-team-codex-task-toggle')]
+      if(!rows.length)return
+      event.preventDefault()
+      const index=rows.indexOf(event.target as HTMLButtonElement)
+      const next=event.key==='Home'?0:event.key==='End'?rows.length-1:Math.max(0,Math.min(rows.length-1,index+(event.key==='ArrowDown'?1:-1)))
+      rows[next]?.focus()
+    }:undefined}>
+    {state && !conversation && <div className="arkme-team-codex-filters">
       {!isPersonal && state.cloud && state.cloud.status!=='unsupported' && <select aria-label={tr('筛选成员')} value={member} onChange={event=>{setMember(event.target.value);setPage(1);setProject('');setExpanded(undefined);setState(undefined)}}>
         <option value="">{tr('全部成员')}</option>{Object.entries(knownMembers).map(([id,name])=><option key={id} value={id}>{name}</option>)}
       </select>}
       {!conversation && <select aria-label={tr('筛选项目')} value={project} onChange={event=>{setProject(event.target.value);if(!isPersonal)setPage(1);setExpanded(undefined)}}><option value="">{tr('全部项目')}</option>{Object.entries({...Object.fromEntries([...groups.values()].map(g=>[g.key,{name:g.name}])),...(!isPersonal?knownProjects:{})}).map(([key,value])=><option key={key} value={key}>{value.name}</option>)}</select>}
-      <input type="search" aria-label={tr(conversation ? '搜索对话' : '搜索任务或项目')} placeholder={tr(conversation ? '搜索对话…' : '搜索任务或项目')} value={search} onChange={event=>setSearch(event.target.value)}/>
-      {!state.localOnly && <small>{tr(conversation ? '搜索仅筛选当前页已加载的对话' : '搜索仅筛选当前页已加载的任务')}</small>}
+      <input type="search" aria-label={tr('搜索任务或项目')} placeholder={tr('搜索任务或项目')} value={search} onChange={event=>setSearch(event.target.value)}/>
+      {!state.localOnly && <small>{tr('搜索仅筛选当前页已加载的任务')}</small>}
     </div>}
     {!!state?.tasks.length && (conversation ? visibleConversations : visibleGroups).length===0 && <p>{tr('没有匹配的任务')}</p>}
-    {state?.tasks.length===0 && !state.cloud?.reviewingTasks && <p>{tr('没有匹配的任务')}</p>}
+    {state?.tasks.length===0 && !state.cloud?.reviewingTasks && !(conversation && state.cloud?.hasMore) && <p>{tr('没有匹配的任务')}</p>}
     {!!state?.cloud?.reviewingTasks && <p role="status">{tr('正在核对任务来源…')}</p>}
     {!state && <p role="status">{tr('正在加载工作动态…')}</p>}
     {conversation ? visibleConversations.map(renderTask) : visibleGroups.map(group=><section className="arkme-team-codex-project" key={group.key} aria-label={group.name}>
@@ -275,7 +341,9 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       {!collapsed.has(group.key) && group.tasks.slice(0,limits[group.key]??20).map(renderTask)}
       {!collapsed.has(group.key) && group.tasks.length>(limits[group.key]??20) && <button type="button" onClick={()=>setLimits(current=>({...current,[group.key]:(current[group.key]??20)+20}))}>{tr('显示更多任务')}</button>}
     </section>)}
-    {state?.cloud && !state.localOnly && <div className="arkme-team-codex-filters">
+    {conversation && loadingMore && <p className="arkme-codex-picker-status" role="status">{tr('正在加载…')}</p>}
+    {conversation && moreError && <p className="arkme-codex-picker-status" role="alert">{moreError} <button type="button" onClick={()=>{void loadMore()}}>{tr('重试')}</button></p>}
+    {!conversation && state?.cloud && !state.localOnly && <div className="arkme-team-codex-filters">
       <button type="button" disabled={page===1} onClick={()=>{setPage(page-1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('上一页')}</button>
       <small>{tr('第 {page} 页',{page})}</small>
       <button type="button" disabled={!state.cloud.hasMore || page>=10000} onClick={()=>{setPage(page+1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('下一页')}</button>

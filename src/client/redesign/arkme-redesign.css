@@ -1940,8 +1940,14 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-sync-status small { font:inherit; }
 .arkme-codex-sync-status button { color:inherit; font:inherit; background:none; border:0; padding:0 4px; text-decoration:underline; cursor:pointer; }
 .arkme-codex-sync-status p { margin:6px auto 0; max-width:620px; text-align:left; }
-.arkme-codex-task-picker { position:absolute; top:54px; left:50%; transform:translateX(-50%); width:min(520px,calc(100% - 24px)); max-height:min(64vh,620px); display:flex; border:1px solid var(--arkme-line); border-radius:12px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 12px 40px #0003; overflow:hidden; }
-.arkme-codex-task-picker .arkme-codex-task-sidebar { display:block !important; flex:1; padding:10px 12px; border:0; background:transparent; }
+.arkme-codex-task-picker { position:absolute; top:54px; left:50%; transform:translateX(-50%); width:min(320px,calc(100% - 24px)); max-height:min(64vh,560px); display:flex; border:1px solid var(--arkme-line); border-radius:12px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 12px 40px #0003; overflow:hidden; }
+.arkme-codex-task-picker .arkme-codex-task-sidebar { display:block !important; flex:1; padding:6px; border:0; background:transparent; overscroll-behavior:contain; }
+.arkme-codex-task-picker .arkme-team-codex-task-toggle { min-height:34px; padding:0 8px; gap:6px; border-radius:var(--dsw-radius-md,8px); color:var(--dsw-alias-label-primary,var(--arkme-text)); }
+.arkme-codex-task-picker .arkme-team-codex-task-toggle:is(:hover,[aria-pressed="true"]) { background:var(--dsw-alias-interactive-bg-hover,var(--arkme-soft)); }
+.arkme-codex-task-picker .arkme-team-codex-task-toggle:focus-visible { outline:2px solid var(--arkme-primary,#4c7cf3); outline-offset:-2px; }
+.arkme-codex-task-picker .arkme-team-codex-task-title strong { font-size:14px; font-weight:400; margin:0 6px 0 4px; }
+.arkme-codex-task-picker .arkme-team-codex-task-toggle time { flex:none; font-size:10px; line-height:16px; white-space:nowrap; color:var(--dsw-alias-label-tertiary,var(--arkme-muted)); }
+.arkme-codex-task-picker .arkme-codex-picker-status { margin:6px 8px; font-size:12px; color:var(--arkme-muted); }
 .arkme-codex-task-picker .arkme-team-codex-project { margin-bottom:12px; }
 .arkme-codex-task-picker .arkme-team-codex-project-toggle strong { font-size:12px; }
 .arkme-codex-welcome-header { padding:20px 24px; border-bottom:1px solid var(--arkme-line); font-size:16px; }
