@@ -335,6 +335,15 @@ span.arkme-forward-search {
   transition: none !important;
 }
 
+/* Arkme owns sidebar resizing. The host handle retains its old position even
+   on recording/arrangement routes where only the navigation rail remains.
+   Keep it out of hit testing on every route, not just while a directory is shown.
+   Leave the host rightbar and Arkme's actual directory divider available. */
+[data-slot="root"] > div:has([data-arkme-owned="persistent-sidebar"]) > [data-side="sidebar"] {
+  display: none !important;
+  pointer-events: none !important;
+}
+
 /* The directory divider already paints its single line. Remove the host's
    adjacent half-pixel border only while Arkme owns a visible directory. */
 [data-slot="root"] > div > div:has(> [data-slot="sidebar"] > [data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
