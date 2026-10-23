@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
+import { wrappedCodexPrompt } from './fixtures/codex-prompt.js'
 
 const teamRef=`team_v1_${'a'.repeat(32)}`
 const member:ArkmeTeamMember={userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1}
@@ -36,6 +37,14 @@ function fixture(cloud?:TeamCodexCloudPort){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('extracts the current question before truncating its preview and keeps original events intact',async()=>{
+    const f=fixture();await f.enroll()
+    const body='实际问题：'+ '请核对录音器尺寸。'.repeat(40),prompt=wrappedCodexPrompt(body)
+    f.record('UserPromptSubmit',{prompt})
+    const task=await f.task()
+    expect(task.currentInput?.text).toBe(body.slice(0,240))
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(prompt)
+  })
   it('buffers a final reply during a short runtime restart, then ingests it exactly once',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     f.service.close()

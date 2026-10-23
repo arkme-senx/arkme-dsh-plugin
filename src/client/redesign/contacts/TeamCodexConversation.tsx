@@ -1,4 +1,4 @@
-import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -6,6 +6,7 @@ import { callArkme } from '../../api.js'
 import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
 import { arkmeIntlLocale, tr } from '../../locale.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
+import { codexPromptText } from '../../../team-codex-prompt-text.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
 
 export interface CodexReadingState {
@@ -137,6 +138,9 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
     return () => observer.disconnect()
   }, [reading])
   const current = task.state === 'working' && task.currentInput && !items.some(item => item.turnId === task.currentInput?.turnId && item.kind === 'UserPromptSubmit') ? task.currentInput : undefined
+  // Project cached/local/cloud history alike; copying must use the same visible text.
+  const visibleItems = useMemo(() => items.map(event => event.kind === 'UserPromptSubmit'
+    ? { ...event, text: codexPromptText(event.text) } : event), [items])
   return <div className="arkme-codex-transcript-wrap">
     <style>{arkmeMarkdownStyles}</style>
     <div ref={scroller} className="arkme-codex-transcript" aria-label={tr('任务对话记录')} tabIndex={0} onScroll={rememberScroll}>
@@ -144,7 +148,7 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
         {(before !== undefined || cursor !== undefined) && <button type="button" className="arkme-codex-older" disabled={busy} onClick={() => { void load(cursor ?? before) }}>{tr('加载更早记录')}</button>}
         {error && <p role="alert">{error} <button type="button" onClick={() => { void load() }}>{tr('重试')}</button></p>}
         {!items.length && !current && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
-        {items.map((event, index) => <div key={event.eventId ?? event.sequence}>
+        {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
           <article className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : '任务已中断')}>
             {event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
@@ -154,7 +158,7 @@ export function TeamCodexConversation({ teamRef, task, reading, inputName }: {
             <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer>
           </article>
         </div>)}
-        {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{current.text || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
+        {current && <article className="arkme-codex-message is-user" aria-label={inputName}><div className="arkme-codex-user-text">{codexPromptText(current.text) || tr('无文本输入')}</div><footer className="arkme-codex-message-meta">{tr('当前请求')}</footer></article>}
         {task.state === 'working' && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working={!task.cloud?.remote&&!codexCollectorUnavailable(task)}/>{tr(codexCollectorUnavailable(task) || task.cloud?.remote ? '尚未收到本轮结束状态，请查看同步状态。' : '等待同步本轮回答…')}</p>}
       </div>
     </div>

@@ -7,6 +7,7 @@ import type { ArkmeTeamMember } from './types.js'
 import type { TeamCodexConnectionStatus, TeamCodexEventPage, TeamCodexInstallation, TeamCodexQueueSnapshot, TeamCodexTask } from './team-codex-contract.js'
 import { TeamCodexDesktopQueueReader, type QueueObservation } from './team-codex-desktop-queue.js'
 import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
+import { codexPromptText } from './team-codex-prompt-text.js'
 
 interface Installation {
   id:string; user_id:number; team_ref:string; member_json:string; name:string; home_key:string|null
@@ -106,7 +107,7 @@ export class TeamCodexMachineJournal {
         excluded:row.excluded===1,projectExcluded:projects.has(row.project_key),status:this.effectiveStatus(installation),
         state:row.latest_kind==='Stop'?'finished':row.latest_kind==='Interrupt'?'interrupted':row.latest_kind==='UserPromptSubmit'?'working':'waiting',
         updatedAt:row.updated_at,eventCount:row.event_count,member:JSON.parse(installation.member_json) as ArkmeTeamMember,
-        ...(queue ? {queue} : {}), ...(input ? {currentInput:{turnId:input.turn_id,text:input.text.slice(0,240),at:input.at}} : {})})
+        ...(queue ? {queue} : {}), ...(input ? {currentInput:{turnId:input.turn_id,text:codexPromptText(input.text).slice(0,240),at:input.at}} : {})})
       }
     }
     return {tasks,installations:installations.map(row=>({id:row.id,name:row.name,status:this.effectiveStatus(row),

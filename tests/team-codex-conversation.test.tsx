@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodexMessageBody, TeamCodexConversation, codexReadingKey, mergeCodexEvents, newCodexReadingState } from '../src/client/redesign/contacts/TeamCodexConversation.js'
 import type { TeamCodexEvent, TeamCodexTask } from '../src/team-codex-contract.js'
+import { browserContext, wrappedCodexPrompt } from './fixtures/codex-prompt.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), writeText: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
@@ -50,6 +51,40 @@ describe('Codex conversation reader', () => {
     expect(host.querySelector('.is-assistant')?.textContent).toContain('回答')
     expect(host.querySelectorAll('.arkme-team-codex-text')).toHaveLength(0)
     await click('复制回答');expect(mocks.writeText).toHaveBeenCalledWith('回答')
+  })
+  it('cleans cached and refreshed questions for both display and copy without rewriting history',async()=>{
+    const raw=wrappedCodexPrompt('24mm 和 26mm，统一起来对比。')
+    const reading={...newCodexReadingState(),loaded:true,items:[event(1,raw,'UserPromptSubmit')]}
+    let complete!:(value:unknown)=>void
+    mocks.callArkme.mockImplementation(()=>new Promise(resolve=>{complete=resolve}))
+    await render(task,reading)
+    expect(host.querySelector('.arkme-codex-user-text')?.textContent).toBe('24mm 和 26mm，统一起来对比。')
+    expect(host.textContent).not.toContain('ambient-ui-state')
+    await click('复制输入');expect(mocks.writeText).toHaveBeenLastCalledWith('24mm 和 26mm，统一起来对比。')
+    expect(reading.items[0]?.text).toBe(raw)
+    await act(async()=>complete({items:reading.items}))
+    mocks.callArkme.mockResolvedValue({items:[event(1,wrappedCodexPrompt('新的正文'),'UserPromptSubmit')]})
+    await render({...task,updatedAt:2},reading)
+    expect(host.querySelector('.arkme-codex-user-text')?.textContent).toBe('新的正文')
+    await click('复制输入');expect(mocks.writeText).toHaveBeenLastCalledWith('新的正文')
+  })
+  it('uses cleaned current-request text and an honest empty state',async()=>{
+    mocks.callArkme.mockResolvedValue({items:[]})
+    await render({...task,state:'working',currentInput:{turnId:'pending',text:wrappedCodexPrompt('待处理的实际问题'),at:1}})
+    expect(host.querySelector('.arkme-codex-user-text')?.textContent).toBe('待处理的实际问题')
+    mocks.callArkme.mockResolvedValue({items:[event(1,browserContext,'UserPromptSubmit')]})
+    await render({...task,updatedAt:2})
+    expect(host.querySelector('.is-user')?.textContent).toContain('无文本输入')
+    expect(host.querySelector('[aria-label="复制输入"]')).toBeNull()
+  })
+  it('never cleans the assistant response and preserves an explicitly quoted example in the question',async()=>{
+    const quoted=`\`\`\`text\n${wrappedCodexPrompt('示例')}\n\`\`\``
+    const answer=wrappedCodexPrompt('回答里的示例')
+    mocks.callArkme.mockResolvedValue({items:[event(1,wrappedCodexPrompt(quoted),'UserPromptSubmit'),event(2,answer)]})
+    await render()
+    expect(host.querySelector('.arkme-codex-user-text')?.textContent).toBe(quoted)
+    await click('复制输入');expect(mocks.writeText).toHaveBeenLastCalledWith(quoted)
+    await click('复制回答');expect(mocks.writeText).toHaveBeenLastCalledWith(answer)
   })
   it('shows cached content immediately while revalidating and restores the reading position',async()=>{
     const reading=await render()
