@@ -12,6 +12,9 @@ import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
 import { TeamCodexCloud, type TeamCodexCloudPort } from './team-codex-cloud.js'
 import { TeamCodexCaptureHealthReader } from './team-codex-capture-health.js'
 import { TeamCodexTurnTimingStore, type CodexTimingSource } from './team-codex-turn-timing.js'
+import { TeamCodexPrivateImages } from './team-codex-private-images.js'
+import { codexImageSafeText } from './team-codex-image-text.js'
+import { codexPromptText } from './team-codex-prompt-text.js'
 
 interface Binding {
   id: string; user_id: number; team_ref: string; member_json: string; title: string
@@ -55,9 +58,11 @@ export class TeamCodexService {
   private readonly titles: TeamCodexDesktopTitleReader
   private readonly captureHealth: TeamCodexCaptureHealthReader
   private readonly timings: TeamCodexTurnTimingStore
+  private readonly images: TeamCodexPrivateImages
   private readonly cloud: TeamCodexCloud | undefined
   private cloudPumping = false
   private nextCloudPump = 0
+  private nextImageCapture = 0
   private readonly now: () => number
   private readonly identities = new Map<string, { member: ArkmeTeamMember; team: ArkmeTeam; until: number }>()
   private readonly memberFilters = new Map<string, { ref:string; until:number }>()
@@ -93,6 +98,7 @@ export class TeamCodexService {
     this.titles = new TeamCodexDesktopTitleReader(options.codexHome)
     this.captureHealth = new TeamCodexCaptureHealthReader(options.codexHome, this.now)
     this.timings = new TeamCodexTurnTimingStore(this.db, options.codexHome, this.now)
+    this.images = new TeamCodexPrivateImages(this.db, options.codexHome)
     this.cloud = options.cloud ? new TeamCodexCloud(this.db, options.cloud, options.currentUserId, this.now, owner => this.rememberEntry(owner)) : undefined
     // The helper is copied into private runtime storage, not into Codex config.
     const helper = join(options.directory, 'bridge.py')
@@ -111,6 +117,7 @@ export class TeamCodexService {
   /** Called synchronously when the account scope closes, before another account can read. */
   fence(preserveCaptureLease = false): void {
     this.generation += 1
+    this.images?.fence()
     this.cloud?.fence()
     this.identities.clear()
     this.memberFilters.clear()
@@ -372,6 +379,7 @@ export class TeamCodexService {
     const userId = await this.user()
     const generation = this.generation
     const annotate = async (page:TeamCodexEventPage, source:CodexTimingSource|undefined) => {
+      page = {...page,items:page.items.map(event=>{const safe=codexImageSafeText(event.text);return {...event,text:safe!==event.text&&event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe}})}
       const scope=JSON.stringify([userId,teamRef,sourceId??'local',id])
       if(!source) return {...page,items:this.timings.project(scope,{sessionId:''},page.items,new Map())}
       const fresh=await this.timings.read(source,page.items)
@@ -380,7 +388,8 @@ export class TeamCodexService {
       const current=sourceId ? this.captureHealth.timingSource(userId,teamRef,id,sourceId,page.items.map(event=>event.turnId))
         : source.homeKey ? this.machine.timingSource(userId,teamRef,id) : (this.binding(userId,teamRef,id).status==='active'?source:undefined)
       if(!current || current.sessionId!==source.sessionId) return page
-      return {...page,items:this.timings.project(scope,current,page.items,fresh)}
+      this.images.schedule(userId,current,page.items,()=>!this.closed&&generation===this.generation)
+      return {...page,items:this.images.project(userId,current,this.timings.project(scope,current,page.items,fresh))}
     }
     if (sourceId) {
       if (!this.cloud) fail('当前环境未启用云端记录', 403)
@@ -399,6 +408,23 @@ export class TeamCodexService {
     }, binding.status==='active' && binding.session_id ? {sessionId:binding.session_id,live:true} : undefined)
   }
 
+  /** Private media is a separate owner-checked read, never an arbitrary path/URL fetch. */
+  async image(teamRef:string,id:string,turnId:string,kind:string,ref:string,full=false,sourceId?:string):Promise<{dataUrl:string}> {
+    const userId=await this.user(),generation=this.generation
+    if(!['UserPromptSubmit','Stop'].includes(kind)) fail('图片不可访问',404)
+    let source:CodexTimingSource|undefined
+    if(sourceId) source=this.captureHealth.timingSource(userId,teamRef,id,sourceId,[turnId])
+    else {
+      source=this.machine.timingSource(userId,teamRef,id)
+      if(!source) {const binding=this.binding(userId,teamRef,id);if(binding.status==='active'&&binding.session_id)source={sessionId:binding.session_id}}
+    }
+    if(!source) fail('图片仅本人可见，或来源已断开',404)
+    const result=this.images.read(userId,source,turnId,kind,ref,full)
+    if(!result) fail('原图片不可用',404)
+    if(this.closed||generation!==this.generation||await this.options.currentUserId()!==userId) fail('账号已切换',409)
+    return result
+  }
+
   tick(): Promise<void> {
     if (this.closed) return Promise.resolve()
     if (this.ticking) return this.ticking
@@ -413,6 +439,21 @@ export class TeamCodexService {
       for (const row of rows) this.ingest(row)
       this.machine.ingest(userId)
       this.captureLegacyTitles(userId)
+      if(this.now()>=this.nextImageCapture) {
+        this.nextImageCapture=this.now()+10000
+        // Capture newly received own messages even when another page is open.
+        const recent=this.db.prepare(`SELECT t.id,i.team_ref FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
+          WHERE i.user_id=? AND i.status='active' AND t.deleted=0 AND t.excluded=0 AND t.updated_at>?
+          ORDER BY t.updated_at DESC LIMIT 16`).all(userId,this.now()-300000)
+        for(const task of recent) {
+          const source=this.machine.timingSource(userId,String(task.team_ref),String(task.id))
+          if(source) {const page=this.machine.events(userId,String(task.team_ref),String(task.id));if(page)this.images.schedule(userId,source,page.items.slice(-4),()=>!this.closed&&generation===this.generation)}
+        }
+        for(const row of rows.filter(row=>row.status==='active'&&row.session_id&&row.updated_at>this.now()-300000)) {
+          const events=this.db.prepare('SELECT * FROM events WHERE connection_id=? ORDER BY sequence DESC LIMIT 4').all(row.id) as unknown as EventRow[]
+          this.images.schedule(userId,{sessionId:row.session_id!},events.map(e=>({sequence:e.sequence,turnId:e.turn_id,kind:e.kind,text:e.text,at:e.at,truncated:e.truncated===1})),()=>!this.closed&&generation===this.generation)
+        }
+      }
       if (this.cloud && !this.cloudPumping && this.now() >= this.nextCloudPump) {
         this.nextCloudPump = this.now() + 5000
         this.cloudPumping = true

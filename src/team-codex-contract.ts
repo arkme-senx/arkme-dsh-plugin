@@ -100,6 +100,8 @@ export interface TeamCodexEvent {
   at: number
   truncated: boolean
   timing?: TeamCodexTurnTiming
+  /** Host-local, owner-only references. Never serialized into the team cloud journal. */
+  privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'unavailable' }[]
 }
 export interface TeamCodexEventPage {
   items: TeamCodexEvent[]

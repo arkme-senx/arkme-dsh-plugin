@@ -39,7 +39,8 @@ export class TeamCodexTurnTimingReader {
     return work
   }
 
-  private location(source: CodexTimingSource): string | undefined {
+  /** Exact, validated local rollout; callers still enforce account/task ownership. */
+  location(source: CodexTimingSource): string | undefined {
     if (lstatSync(this.home).isSymbolicLink()) return
     const home = realpathSync(this.home)
     if (source.homeKey && createHash('sha256').update(home).digest('hex') !== source.homeKey) return

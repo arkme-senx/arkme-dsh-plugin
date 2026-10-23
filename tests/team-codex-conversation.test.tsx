@@ -38,7 +38,7 @@ describe('Codex conversation reader', () => {
     expect(host.querySelectorAll('a')).toHaveLength(1)
     expect(host.querySelector('a')?.rel).toBe('noopener noreferrer')
     expect(host.querySelectorAll('img,script')).toHaveLength(0)
-    expect(host.textContent).toContain('图片未同步')
+    expect(host.textContent).toContain('图片仅本人可见')
     expect(host.querySelector('input')?.disabled).toBe(true)
     await click('复制代码')
     expect(mocks.writeText).toHaveBeenCalledWith('const answer = 42;')

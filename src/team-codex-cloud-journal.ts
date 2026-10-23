@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import type { TeamCodexEvent, TeamCodexTask } from './team-codex-contract.js'
+import { codexImageSafeText } from './team-codex-image-text.js'
+import { codexPromptText } from './team-codex-prompt-text.js'
 
 export interface CloudEvent {
   event_id: string; version: number; turn_id: string; turn_seq: number
@@ -142,9 +144,11 @@ export class TeamCodexCloudJournal {
           const slot = digest(JSON.stringify([localTurn, event.kind]))
           const previous = this.db.prepare('SELECT * FROM codex_cloud_events WHERE task=? AND slot=?').get(row.id, slot) as unknown as EventRow | undefined
           const oldPayload = previous ? JSON.parse(previous.payload) as CloudEvent : undefined
-          const text = clipUtf8(event.text, 256 * 1024)
+          const safe = codexImageSafeText(event.text)
+          const sharedText = safe!==event.text&&event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe
+          const text = clipUtf8(sharedText, 256 * 1024)
           const eventPayload = JSON.stringify({ turn_id: digest(localTurn), turn_seq: turn.seq, kind: event.kind,
-            text, at: oldPayload?.at ?? event.at, truncated: event.truncated || text !== event.text })
+            text, at: oldPayload?.at ?? event.at, truncated: event.truncated || text !== sharedText })
           if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version) VALUES(?,?,?,?,1)').run(randomUUID(), row.id, slot, eventPayload)
           else if (previous.payload !== eventPayload && !previous.blocked) this.db.prepare('UPDATE codex_cloud_events SET payload=?,version=version+1 WHERE id=?').run(eventPayload, previous.id)
         }

@@ -9,6 +9,7 @@ import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
 import { wrappedCodexPrompt } from './fixtures/codex-prompt.js'
+import sharp from 'sharp'
 
 const teamRef=`team_v1_${'a'.repeat(32)}`
 const member:ArkmeTeamMember={userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1}
@@ -48,6 +49,29 @@ function fixture(cloud?:TeamCodexCloudPort){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('serves private images only through the exact owner, team, task and turn binding',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    mkdirSync(join(f.codex,'sessions'))
+    const path=join(f.codex,'sessions','images.jsonl')
+    native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','任务',path);native.close()
+    const bytes=await sharp({create:{width:4,height:3,channels:3,background:'#49a'}}).png().toBuffer()
+    writeFileSync(path,[{type:'session_meta',payload:{id:'task_current_123'}},
+      {type:'event_msg',payload:{type:'task_started',turn_id:'turn_123',root_turn_id:'turn_123'}},
+      {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+bytes.toString('base64')}]}}
+    ].map(x=>JSON.stringify(x)).join('\n')+'\n')
+    let ref=''
+    await vi.waitFor(async()=>{ref=(await f.service.events(teamRef,task.id)).items[0]?.privateImages?.[0]?.ref??'';expect(ref).not.toBe('')})
+    expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
+    await expect(f.service.image(teamRef,task.id,'other_turn','UserPromptSubmit',ref)).rejects.toThrow()
+    await expect(f.service.image(`team_v1_${'c'.repeat(32)}`,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
+    f.setUser(22)
+    await expect(f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
+    f.setUser(11);f.service.close();rmSync(path)
+    const restored=new TeamCodexService(f.options);services.push(restored)
+    expect((await restored.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
+  })
   it('attaches native timing to the exact captured turn and keeps it after restart and pause',async()=>{
     const f=fixture();await f.enroll();f.record();f.record('Stop');const task=await f.task()
     const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))

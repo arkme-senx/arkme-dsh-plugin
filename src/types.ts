@@ -4208,6 +4208,7 @@ export type ArkmePluginOperation =
   | 'team.codex.entry-availability'
   | 'team.codex.invite'
   | 'team.codex.events'
+  | 'team.codex.image'
   | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
