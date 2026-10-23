@@ -170,13 +170,14 @@ export interface ArkmeContactAddResult {
 }
 
 export type ArkmeDirectorySectionKind =
-  | 'groups' | 'bots' | 'unmarked-speakers' | 'teams' | 'contacts'
+  | 'groups' | 'bots' | 'unmarked-speakers' | 'manual-speakers' | 'teams' | 'contacts'
 
 /** Browser-safe directory row. Provider-private identifiers never cross this boundary. */
 export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
+  | { kind: 'manual-speaker'; speakerKey: string; speakerRef: string; displayName: string }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
