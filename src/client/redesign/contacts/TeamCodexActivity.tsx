@@ -65,7 +65,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const [knownMembers, setKnownMembers] = useState<Record<string,string>>({...(selfMember ? {[selfMember]:tr('我')} : {}),...(target?.member && target.memberName ? {[target.member]:target.memberName} : {})})
   const [knownProjects, setKnownProjects] = useState<Record<string,{name:string;sourceId?:string;projectKey?:string}>>(() =>
     target?.project && target.task?.cloud ? {[target.project]:{name:target.task.projectName ?? '',sourceId:target.task.cloud.sourceId,projectKey:target.task.projectKey ?? 'unknown'}} : {})
-  const selectedSource = knownProjects[project]?.sourceId ?? ''
+  const selectedSource = conversation ? '' : knownProjects[project]?.sourceId ?? ''
   const selectedProject = selectedSource ? knownProjects[project]?.projectKey ?? '' : ''
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -147,7 +147,8 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   }, [refresh, active,isPersonal])
   useEffect(() => {
     if (!(isPersonal || conversation && target && !target.task) || !active || !state || expanded && state.tasks.some(task=>codexTaskViewKey(task)===expanded)) return
-    const recent = state.tasks.filter(task=>!project || taskGroupKey(task)===project).sort((a,b)=>taskPriority(b)-taskPriority(a)||b.updatedAt-a.updatedAt)[0]
+    const recent = state.tasks.filter(task=>conversation || !project || taskGroupKey(task)===project)
+      .sort((a,b)=>(conversation ? 0 : taskPriority(b)-taskPriority(a))||b.updatedAt-a.updatedAt)[0]
     setExpanded(recent ? codexTaskViewKey(recent) : undefined)
   },[isPersonal,conversation,target,active,state,expanded,project])
   const invite = async () => {
@@ -212,6 +213,9 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const visibleGroups=[...groups.values()].map(group=>({...group,tasks:group.tasks.filter(task=>
     (!project||group.key===project) && (!search.trim()||[task.title,task.projectName,task.branch,task.cwd].some(value=>value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))))
     .sort((a,b)=>taskPriority(b)-taskPriority(a)||b.updatedAt-a.updatedAt)})).filter(group=>group.tasks.length)
+  const visibleConversations = (state?.tasks ?? []).filter(task=>
+    !search.trim() || task.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+    .sort((a,b)=>b.updatedAt-a.updatedAt)
   const confirmation=<>{confirm && <div className="arkme-team-codex-confirm" role="alert">
     <p>{tr(confirm.action==='delete' ? '停止同步并删除这项任务的本地记录？无法撤销，不会删除 Codex 原任务或已上传的云端记录。' : '断开后保留已有记录，后续需重新接入。确定断开？')}</p>
     <button type="button" disabled={busy} onClick={() => { void change(confirm.id,confirm.action,undefined,confirm.teamRef ?? teamRef) }}>{tr('确认')}</button><button type="button" onClick={() => setConfirm(undefined)}>{tr('取消')}</button>
@@ -233,37 +237,40 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
           </div>}
           <small>{tr('仅显示已同步的输入与回答，不包含工具过程。')}</small>
         </div>
+  const renderTask = (task: CodexViewTask) => <article className="arkme-team-codex-task" key={codexTaskViewKey(task)}>
+    <button type="button" className="arkme-team-codex-task-toggle" aria-pressed={expanded===codexTaskViewKey(task)} onClick={() => {
+      if (onOpenTask) onOpenTask(task,{page,member,project})
+      else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
+    }}>
+      {!conversation && <span className="arkme-codex-state-dot" data-working={liveTask(task)&&task.state==='working'} aria-hidden="true"/>}
+      <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span>
+      {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
+    </button>
+    {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
+      onClick={()=>{setExpanded(task.id);setTaskMenu(expanded===task.id ? !taskMenu : true)}}>⋯</button>}
+    {onOpenTask && expanded===task.id && taskMenu && <div className="arkme-codex-overview-task-info">{taskInfo}{confirm?.id===task.id && confirmation}</div>}
+  </article>
   const taskList = <aside className="arkme-codex-task-sidebar" aria-label={tr('Codex 任务列表')}>
     {state && <div className="arkme-team-codex-filters">
       {!isPersonal && state.cloud && state.cloud.status!=='unsupported' && <select aria-label={tr('筛选成员')} value={member} onChange={event=>{setMember(event.target.value);setPage(1);setProject('');setExpanded(undefined);setState(undefined)}}>
         <option value="">{tr('全部成员')}</option>{Object.entries(knownMembers).map(([id,name])=><option key={id} value={id}>{name}</option>)}
       </select>}
-      <select aria-label={tr('筛选项目')} value={project} onChange={event=>{setProject(event.target.value);if(!isPersonal)setPage(1);setExpanded(undefined)}}><option value="">{tr('全部项目')}</option>{Object.entries({...Object.fromEntries([...groups.values()].map(g=>[g.key,{name:g.name}])),...(!isPersonal?knownProjects:{})}).map(([key,value])=><option key={key} value={key}>{value.name}</option>)}</select>
-      <input type="search" aria-label={tr('搜索任务或项目')} placeholder={tr('搜索任务或项目')} value={search} onChange={event=>setSearch(event.target.value)}/>
-      {!state.localOnly && <small>{tr('搜索仅筛选当前页已加载的任务')}</small>}
+      {!conversation && <select aria-label={tr('筛选项目')} value={project} onChange={event=>{setProject(event.target.value);if(!isPersonal)setPage(1);setExpanded(undefined)}}><option value="">{tr('全部项目')}</option>{Object.entries({...Object.fromEntries([...groups.values()].map(g=>[g.key,{name:g.name}])),...(!isPersonal?knownProjects:{})}).map(([key,value])=><option key={key} value={key}>{value.name}</option>)}</select>}
+      <input type="search" aria-label={tr(conversation ? '搜索对话' : '搜索任务或项目')} placeholder={tr(conversation ? '搜索对话…' : '搜索任务或项目')} value={search} onChange={event=>setSearch(event.target.value)}/>
+      {!state.localOnly && <small>{tr(conversation ? '搜索仅筛选当前页已加载的对话' : '搜索仅筛选当前页已加载的任务')}</small>}
     </div>}
-    {!!state?.tasks.length && visibleGroups.length===0 && <p>{tr('没有匹配的任务')}</p>}
+    {!!state?.tasks.length && (conversation ? visibleConversations : visibleGroups).length===0 && <p>{tr('没有匹配的任务')}</p>}
     {state?.tasks.length===0 && !state.cloud?.reviewingTasks && <p>{tr('没有匹配的任务')}</p>}
     {!!state?.cloud?.reviewingTasks && <p role="status">{tr('正在核对任务来源…')}</p>}
     {!state && <p role="status">{tr('正在加载工作动态…')}</p>}
-    {visibleGroups.map(group=><section className="arkme-team-codex-project" key={group.key} aria-label={group.name}>
+    {conversation ? visibleConversations.map(renderTask) : visibleGroups.map(group=><section className="arkme-team-codex-project" key={group.key} aria-label={group.name}>
       <header className="arkme-team-codex-project-header">
         {!isPersonal && group.tasks[0]?.cloud && <ArkmeUserAvatar {...(group.tasks[0].member.avatarRef?{avatarRef:group.tasks[0].member.avatarRef}:{})} size={24} label={group.tasks[0].member.displayName}/>}
         <button type="button" className="arkme-team-codex-project-toggle" aria-expanded={!collapsed.has(group.key)} onClick={()=>setCollapsed(current=>{const next=new Set(current);next.has(group.key)?next.delete(group.key):next.add(group.key);return next})}>
           <span aria-hidden>{collapsed.has(group.key)?'▸':'▾'}</span><span className="arkme-codex-project-label"><strong>{group.tasks[0]?.projectName || tr('未归属项目')}</strong><small title={group.name}>{isPersonal ? `${group.tasks[0]?.cloud?.sourceName || tr('本机 Codex')} · ${group.tasks[0]?.viewTeam?.name ?? ''}` : group.tasks[0]?.member.displayName}{!isPersonal && group.tasks[0]?.cloud && ` · ${group.tasks[0].cloud.sourceName}`}</small></span><small>{group.tasks.length}</small>{group.excluded && <small>{tr('已排除')}</small>}
         </button>
       </header>
-      {!collapsed.has(group.key) && group.tasks.slice(0,limits[group.key]??20).map(task => <article className="arkme-team-codex-task" key={codexTaskViewKey(task)}>
-        <button type="button" className="arkme-team-codex-task-toggle" aria-pressed={expanded===codexTaskViewKey(task)} onClick={() => {
-          if (onOpenTask) onOpenTask(task,{page,member,project})
-          else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
-        }}>
-          <span className="arkme-codex-state-dot" data-working={liveTask(task)&&task.state==='working'} aria-hidden="true"/><span className="arkme-team-codex-task-title"><strong>{task.title}</strong>{liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span><time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>
-        </button>
-        {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
-          onClick={()=>{setExpanded(task.id);setTaskMenu(expanded===task.id ? !taskMenu : true)}}>⋯</button>}
-        {onOpenTask && expanded===task.id && taskMenu && <div className="arkme-codex-overview-task-info">{taskInfo}{confirm?.id===task.id && confirmation}</div>}
-      </article>)}
+      {!collapsed.has(group.key) && group.tasks.slice(0,limits[group.key]??20).map(renderTask)}
       {!collapsed.has(group.key) && group.tasks.length>(limits[group.key]??20) && <button type="button" onClick={()=>setLimits(current=>({...current,[group.key]:(current[group.key]??20)+20}))}>{tr('显示更多任务')}</button>}
     </section>)}
     {state?.cloud && !state.localOnly && <div className="arkme-team-codex-filters">
@@ -284,10 +291,10 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         {pickerOpen && <div className="arkme-codex-task-picker" role="dialog" aria-label={tr('切换 Codex 任务')}>{taskList}</div>}
       </div>
       <div className="arkme-codex-header-actions">{headerActions}<button type="button" className="arkme-codex-info-trigger" aria-label={tr('任务信息与操作')} aria-expanded={taskMenu} onClick={()=>setTaskMenu(!taskMenu)}>⋯</button></div>
-      <div className="arkme-codex-context">{scopeControl}{selected && <>
-        {!isPersonal && <ArkmeUserAvatar {...(selected.member.avatarRef?{avatarRef:selected.member.avatarRef}:{})} {...(selected.member.avatarFallback?{fallback:selected.member.avatarFallback}:{})} size={20} label={selected.member.displayName}/>}
-        <span title={`${selected.member.displayName} · ${selected.projectName || tr('未归属项目')}`}>{!isPersonal && `${selected.member.displayName} · `}{selected.projectName || tr('未归属项目')}{isPersonal && ` · ${selected.cloud?.sourceName || tr('本机 Codex')}`}</span>
-      </>}</div>
+      {(scopeControl || !isPersonal && selected) && <div className="arkme-codex-context">{scopeControl}{!isPersonal && selected && <>
+        <ArkmeUserAvatar {...(selected.member.avatarRef?{avatarRef:selected.member.avatarRef}:{})} {...(selected.member.avatarFallback?{fallback:selected.member.avatarFallback}:{})} size={20} label={selected.member.displayName}/>
+        <span title={selected.member.displayName}>{selected.member.displayName}</span>
+      </>}</div>}
       {selected && <CodexSyncStatus key={selected.id} task={selected}/>}
     </header>}
     {!conversation && <><div className="arkme-codex-toolbar">
@@ -361,6 +368,9 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         {selected.cloudBlocked && <p className="arkme-codex-inline-notice">{tr('此会话曾关联不同账号或团队，暂不上传云端。')}</p>}
         {selected.projectExcluded && <p className="arkme-codex-inline-notice">{tr('此项目已排除；恢复单项任务不会恢复项目同步。')}</p>}
         {active && <TeamCodexConversation key={readingKey} teamRef={selectedTeamRef} task={selected} reading={readings.current.get(readingKey)!} inputName={selected.member.displayName}/>}
+        {conversation && <div className="arkme-codex-project-context" aria-label={tr('当前对话项目')} title={selected.projectName || tr('未归属项目')}>
+          {tr('项目：{name}',{name:selected.projectName || tr('未归属项目')})}
+        </div>}
         <CodexQueueDock key={`queue:${readingKey}`} task={selected}/>
         {conversation && active && <CodexDispatchEntry
           scopeKey={JSON.stringify([selfMember, state?.self?.userRef, selectedTeamRef, readingKey])}
