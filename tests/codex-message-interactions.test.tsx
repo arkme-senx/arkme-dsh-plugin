@@ -35,7 +35,10 @@ it('shows all five partial-selection actions and captures rendered Markdown quot
  await render();await select()
  const menu=document.querySelector('[data-arkme-text-selection-toolbar]')!
  expect([...menu.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','发给自己'])
- await click('发给自己');const dialog=document.querySelector('[role="dialog"]')!
+ await click('发给自己')
+ // The quote's WebCrypto digest may finish after the click's React act scope.
+ await vi.waitFor(async()=>{await act(async()=>{});expect(document.querySelector('[role="dialog"]')).not.toBeNull()})
+ const dialog=document.querySelector('[role="dialog"]')!
  expect(dialog?.textContent).toContain('引用 · Codex · 任务标题');expect(dialog?.querySelector('blockquote')?.textContent).toBe('重要内容')
  expect(vi.mocked(callArkme).mock.calls.some(c=>c[0]==='source.send-text')).toBe(false)
  await click('取消');expect(document.querySelector('[role="dialog"]')).toBeNull()
