@@ -1725,6 +1725,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-team-member-conversations { border:0; border-radius:8px; background:transparent; color:var(--dsw-alias-state-business-primary,#4f5fbf); min-height:36px; padding:6px 8px; font:inherit; font-size:12px; white-space:nowrap; cursor:pointer; }
 .arkme-team-member-conversations:hover { background:var(--arkme-soft); }
 .arkme-team-member-conversations:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary,#4f5fbf); outline-offset:2px; }
+.arkme-team-member-sync { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:4px; min-height:36px; }
+.arkme-team-member-sync-status { color:var(--arkme-muted); font-size:12px; }
 @container arkme-team-detail (max-width: 480px) {
   .arkme-team-member-row { grid-template-columns:40px minmax(0,1fr) auto; gap:6px 10px; }
   .arkme-team-member-conversations { grid-column:2 / -1; justify-self:end; }
