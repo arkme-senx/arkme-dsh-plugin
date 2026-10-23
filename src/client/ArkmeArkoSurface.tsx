@@ -1,3 +1,4 @@
+import { attachmentPreparationHint } from './attachment-preparation.js'
 import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
 import type { ArkmeArkoContextWindow, ArkmeArkoMessagePage } from '../arko-history-contract.js'
 import { ArkmeSelectableMessageText, ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
@@ -49,7 +50,7 @@ import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-stor
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft, type ArkmeComposerDraftSnapshot } from './composer-draft-store.js'
+import { arkmeAttachmentsPending, arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft, type ArkmeComposerDraftSnapshot } from './composer-draft-store.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
   arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
@@ -61,7 +62,6 @@ import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
-import { ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkoImageDraftStrip, ArkoMessageImages, useArkoImageDraft } from './ArkoImageAttachments.js'
 import { arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
 import { localFileBlock } from './file-send-tasks.js'
@@ -998,7 +998,7 @@ export function ArkmeArkoSurface() {
     const text = (presetText ?? serializeArkmeComposerDraft(currentDraft).text).trim()
     const attachments = presetText === undefined ? currentDraft.attachments : []
     const images = attachments.flatMap(attachment => attachment.localFile ? [attachment.localFile] : [])
-    if ((text === '' && attachments.length === 0) || sendInFlightRef.current || sendDisabled
+    if (arkmeAttachmentsPending(attachments) || (text === '' && attachments.length === 0) || sendInFlightRef.current || sendDisabled
       || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
     if (text.length > arkoQuestionMaxLength) {
       setError('内容长度超过上限，请删减后再发送')
@@ -1138,7 +1138,7 @@ export function ArkmeArkoSurface() {
       : selectingModel ? '正在切换模型'
     : pendingTurn !== undefined && !sending
       ? '请先确认上一次发送结果'
-      : imageDraft.preparing ? imageDraft.preparing : sending
+      : sending
         ? pendingTurn?.images?.length ? '正在发送图片并等待回复' : '等待回复'
         : continuation === undefined ? '' : '继续当前任务'
 
@@ -1388,7 +1388,7 @@ export function ArkmeArkoSurface() {
         style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
           ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
       {!imageDraftSending && draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
-        attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled || imageDraft.preparing !== ''} /></div>}
+        attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled} /></div>}
       {imageDraftSending && <div aria-hidden style={{ ...styles.textarea, color: colors.secondary }}>{composerPlaceholder}</div>}
       <ArkmeDocumentComposerInput
         format="text"
@@ -1419,7 +1419,7 @@ export function ArkmeArkoSurface() {
       <div style={styles.tools}>
         <ArkmeComposerToolButton ref={addButtonRef} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addMenuOpen}
           disabled={inputDisabled || messageActions.selecting} onPointerDown={event => event.stopPropagation()} onClick={() => setAddMenuOpen(value => !value)}>
-          {imageDraft.preparing ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}
+          <ArkmeComposerPlusIcon />
         </ArkmeComposerToolButton>
         <ArkmeEmojiPicker
           key={accountKey}
@@ -1445,7 +1445,7 @@ export function ArkmeArkoSurface() {
         ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
         {activeRun === undefined ? <ArkmeComposerSendButton
           ariaLabel={tr("发送")}
-          shortcutHint="Enter"
+          shortcutHint={attachmentPreparationHint(draftSnapshot.attachments) ?? "Enter"}
           disabled={sendDisabled || !hasDraftContent}
           onClick={() => { void send() }}
         /> : <button data-arkme-feedback="neutral"

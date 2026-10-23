@@ -199,6 +199,7 @@ import {
   ArkmeMediaPreview, ArkmeMessageContent, arkmeContentMediaUrl, arkmeRelatedRecordingItemFromSharedRecording,
   arkmeRelatedRecordingItemFromSharedRecordingPreview,
 } from './ArkmeRichContent.js'
+import { attachmentPreparationHint, prepareComposerAttachments } from './attachment-preparation.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
@@ -272,7 +273,7 @@ import {
   insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeComposerAtomicDeletion,
   arkmeComposerCanSend,
   arkmeComposerDraftStore,
-  arkmeAttachmentId,
+  arkmeAttachmentId, arkmeAttachmentsPending,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
   serializeArkmeComposerDraft,
@@ -2656,17 +2657,17 @@ export function ArkmeSurface({
   useEffect(() => { setDraftPreview(undefined) }, [authenticatedUserId])
   useEffect(() => () => { for (const controller of stageControllers.current) controller.abort() }, [authenticatedUserId])
   const [busy, setBusy] = useState(false)
-  const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
+  const preparingFiles = arkmeAttachmentsPending(attachments)
   const preparingReeditFiles = activeRecordReeditComposer !== undefined
     && preparingKeys.has(arkmeRecordReeditPreparationKey(activeRecordReeditComposer))
   const composerFilesDisabled = activeRecordReeditComposer === undefined
-    ? preparingFiles || directAdmission.blocked
+    ? directAdmission.blocked
     : activeRecordReeditComposer.snapshot === undefined || preparingReeditFiles
       || activeRecordReeditComposer.loading || activeRecordReeditComposer.busy
   const composerFileAddingDisabled = composerFilesDisabled || activeRecordReeditComposer?.snapshot?.maxAttachments === 0
   const messagePreparing = useMessagePreparing({
     source, accountScope: authenticatedAccountKey,
-    enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles && !directAdmission.blocked,
+    enabled: activeConversation && activeRecordReeditComposer === undefined && !directAdmission.blocked,
     focused: composerInputFocused,
   })
   // Transport is per message.  It must never lock the next draft while a previous
@@ -4072,8 +4073,8 @@ export function ArkmeSurface({
     }
     // Recover the acceptance boundary after a page refresh without producing a second send.
     const current = arkmeComposerDraftStore.get(composerDraftKey)
-    const refs = current.attachments.map(arkmeAttachmentId)
-    if ((current.fileSendIdentity !== undefined || arkmeComposerDraftStore.isRestored(composerDraftKey)) && refs.length > 0 && fileTasks.tasks.some(task =>
+    const refs = current.attachments.flatMap(item => item.localFile ? [item.localFile.fileRef] : [])
+    if ((current.fileSendIdentity !== undefined || arkmeComposerDraftStore.isRestored(composerDraftKey)) && refs.length > 0 && refs.length === current.attachments.length && fileTasks.tasks.some(task =>
       (current.fileSendIdentity === undefined || current.fileSendIdentity.recordUid === task.recordUid) &&
       task.content.textContent === serializeArkmeComposerDraft(current).text.trim() && JSON.stringify(task.fileRefs) === JSON.stringify(refs))) {
       arkmeComposerDraftStore.clear(composerDraftKey)
@@ -5018,6 +5019,17 @@ export function ArkmeSurface({
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     if (targetDraftKey === undefined || targetUserId === undefined) return
+    if (reeditTarget === undefined) {
+      setAddMenuOpen(false)
+      setError('')
+      syncComposerUserInput(true)
+      const picked = Array.from(files)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      try { prepareComposerAttachments(targetDraftKey, targetUserId, picked) }
+      catch (error) { setError(errorMessage(error)) }
+      if (!pasted) textareaRef.current?.focus()
+      return
+    }
     const preparationKey = reeditTarget === undefined ? targetDraftKey : arkmeRecordReeditPreparationKey(reeditTarget)
     if (reeditTarget !== undefined && (reeditTarget.snapshot === undefined || reeditTarget.loading
       || reeditTarget.busy || preparationJobs.current.has(preparationKey))) return
@@ -5163,6 +5175,7 @@ export function ArkmeSurface({
     if (preparationSucceeded === false) return
     if (!sameTargetAccount()) return
     const readyDraft = arkmeComposerDraftStore.get(targetDraftKey)
+    if (arkmeAttachmentsPending(readyDraft.attachments)) return
     const extensionTarget = readyDraft.extensionTarget
     if (extensionTarget?.quote && (!quoteReplySupport.ready || extensionTarget.quote.text.length > quoteReplySupport.maxQuoteLength)) {
       if (sameTargetComposer()) setError(quoteReplySupport.ready ? `引用最多 ${quoteReplySupport.maxQuoteLength} 个字符，请缩小选区` : quoteReplySupport.message)
@@ -9359,10 +9372,10 @@ export function ArkmeSurface({
                 }
               }} />
             </div>
-            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{(activeRecordReeditComposer === undefined ? preparingFiles : preparingReeditFiles) ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
+            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
               key={`emoji-picker:${authenticatedAccountKey}:${conversationOverlayKey}`}
               accountKey={authenticatedAccountKey}
-              disabled={activeSelectMode !== undefined || preparingFiles || directAdmission.blocked || activeRecordReeditComposer !== undefined}
+              disabled={activeSelectMode !== undefined || directAdmission.blocked || activeRecordReeditComposer !== undefined}
               scopeKey={composerDraftKey}
               {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
               getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
@@ -9404,7 +9417,7 @@ export function ArkmeSurface({
               <ArkmeComposerSendButton
                 disabled={!canSend}
                 ariaLabel={activeRecordReeditComposer === undefined ? pendingArticle ? '发送长文' : tr("发送消息") : '保存重新编辑'}
-                shortcutHint={tr("Enter发送 / Shift+Enter换行")}
+                shortcutHint={attachmentPreparationHint(visibleComposerAttachments) ?? tr("Enter发送 / Shift+Enter换行")}
                 onClick={() => { void send() }}
               />
             </div></div>
