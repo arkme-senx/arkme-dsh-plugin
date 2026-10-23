@@ -1,3 +1,4 @@
+import { nativeAnnotationTools } from './native-annotations.js'
 import { messageSyncToolModules } from './message-sync.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
 import { archiveToolModules } from './archive.js'
@@ -22,6 +23,7 @@ import { startCallToolModule } from './start-call.js'
 import { conversationMarkReadToolModule, unreadConversationsToolModule } from './unread.js'
 
 export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
+  ...nativeAnnotationTools,
   ...messageSyncToolModules,
   listSourcesToolModule,
   topicHomeVisibilityToolModule,
