@@ -1183,6 +1183,10 @@ export async function dispatchArkmeHostOperation(
     case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
     case 'auth.logout.feedback': return service.logoutFailureFeedback()
+    case 'chat.notification.get':
+      return await service.conversationNotification(stringParam(params, 'sourceRef'), undefined, requestSignal)
+    case 'chat.notification.set':
+      return await service.conversationNotification(stringParam(params, 'sourceRef'), requiredBooleanParam(params, 'enabled'), requestSignal)
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
     case 'chat.direct-message-refusal.set':
@@ -2425,6 +2429,7 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'native-chat.annotations': return await service.nativeAnnotations(params.request as import('./native-annotations.js').NativeAnnotationRequest, requestSignal)
     case 'native-chat.local-mark.capabilities': return await service.nativeLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'native-chat.local-mark.list': return await service.nativeLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)
     case 'native-chat.local-mark.change': return await service.changeNativeLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'markRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)

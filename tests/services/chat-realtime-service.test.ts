@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ArkmeChatRealtimeRuntime } from '../../src/chat-realtime.js'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import {
   ChatRealtimeService,
@@ -1338,4 +1339,53 @@ it('projects current counterpart names through realtime display refresh without 
     expect(post).toHaveBeenCalledTimes(3)
     expect(reader.chatTimelineItems).not.toHaveBeenCalled()
   } finally { stop(); service.dispose(); runtime.dispose() }
+})
+
+it.each(['current','other-account','aborted','disposed'] as const)('fences native annotation hints to the receiving login: %s', async scenario => {
+ const runtime=new ServiceRuntime(config,{async read(){return {userId:42,accessToken:'access',refreshToken:'refresh'}},async write(){},async delete(){}} as ArkmeSessionStore,{} as StateStore)
+ const source=new SourceService(runtime,new ProfileService(runtime),{async summary(){return {recordCount:0,wordsCount:0,totalSec:0}},recordItem(){return undefined}})
+ const service=new ChatRealtimeService(runtime,source,{chatTimelineItems:vi.fn(async()=>[])})
+ const events:ArkmeChatClientEvent[]=[];service.subscribeChatRealtime(event=>events.push(event))
+ const controller=new AbortController();if(scenario==='aborted')controller.abort()
+ if(scenario==='disposed')service.dispose()
+ service.handleChatRealtimeNotice({cause:'projection-invalidation',state:{revision:1,connected:true,connectionGeneration:1},connectionUserId:scenario==='other-account'?43:42,connectionSignal:controller.signal,projectionInvalidation:{eventUid:'annotation-event',projection:'dsh_annotations',eventAtMillis:1}})
+ await new Promise(resolve=>setTimeout(resolve,10))
+ if(scenario==='current')expect(events).toEqual([expect.objectContaining({type:'projection-invalidated',projection:'dsh_annotations'})]);else expect(events).toEqual([])
+ service.dispose();runtime.dispose()
+})
+
+it('forwards a real annotation SSE frame through the receiving account fence', async () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = new ServiceRuntime(config, {
+    async read() { return session }, async write() {}, async delete() {},
+  } as ArkmeSessionStore, {} as StateStore)
+  const source = new SourceService(runtime, new ProfileService(runtime), {
+    async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+  })
+  const service = new ChatRealtimeService(runtime, source, { chatTimelineItems: vi.fn(async () => []) })
+  let stream!: ReadableStreamDefaultController<Uint8Array>
+  const realtime = new ArkmeChatRealtimeRuntime({
+    imBaseUrl: config.imBaseUrl, readSession: async () => session,
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }),
+      { headers: { 'Content-Type': 'text/event-stream' } }),
+  })
+  const events: ArkmeChatClientEvent[] = []
+  const unsubscribe = service.subscribeChatRealtime(event => events.push(event))
+  const disconnect = realtime.subscribe(notice => {
+    if (notice.cause === 'projection-invalidation') service.handleChatRealtimeNotice(notice)
+  })
+  const stop = realtime.start()
+  try {
+    await vi.waitFor(() => expect(realtime.state().connected).toBe(true))
+    stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({
+      t: 25, event_uid: 'native-annotation-sse', projection: 'dsh_annotations', event_at: 1,
+    })}\n\n`))
+    await vi.waitFor(() => expect(events).toEqual([
+      expect.objectContaining({ type: 'projection-invalidated', projection: 'dsh_annotations' }),
+    ]))
+    expect(events[0]).not.toHaveProperty('connectionUserId')
+    expect(events[0]).not.toHaveProperty('connectionSignal')
+  } finally {
+    stop(); disconnect(); unsubscribe(); stream.close(); service.dispose(); runtime.dispose()
+  }
 })

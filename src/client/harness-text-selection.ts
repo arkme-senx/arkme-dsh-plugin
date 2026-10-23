@@ -16,7 +16,7 @@ export function insertNativeQuote(actions: NativeTextInputActions, text: string,
 }
 
 export function nativeTextNode(chat: NativeChat, key: string) {
-  const value = chat.nodes.get(key) as { key?: string; kind?: string; target?: string; visibility?: string; data?: { status?: string; content?: unknown[]; blocks?: unknown[]; time?: number } } | undefined
+  const value = chat.nodes.get(key) as { key?: string; kind?: string; target?: string; visibility?: string; data?: { seq?: number; finalNode?: { seq?: number }; status?: string; content?: unknown[]; blocks?: unknown[]; time?: number } } | undefined
   if (!value || value.key !== key || value.target !== 'chat' || value.visibility !== 'visible' || !['user', 'assistant-step'].includes(value.kind ?? '')) return
   const blocks = value.kind === 'user' ? value.data?.content : value.data?.blocks
   if (!Array.isArray(blocks)) return
@@ -26,7 +26,8 @@ export function nativeTextNode(chat: NativeChat, key: string) {
     return (value.kind === 'user' ? b.type : b.kind) === 'text' && typeof b.text === 'string' ? [b.text] : []
   }).join('')
   if (!text.trim()) return
-  return { text, settled: value.kind === 'user' || value.data?.status === 'settled', isMe: value.kind === 'user', time: value.data?.time ?? 0 }
+  const eventSeq = value.kind === 'user' ? value.data?.seq : value.data?.finalNode?.seq
+  return { text, eventSeq: Number.isSafeInteger(eventSeq) && eventSeq! >= 0 ? eventSeq : undefined, settled: value.kind === 'user' || value.data?.status === 'settled', isMe: value.kind === 'user', time: value.data?.time ?? 0 }
 }
 
 const rowSelector = '[data-chat-anchor-key][data-chat-flow-kind]'
@@ -73,7 +74,7 @@ export function observeNativeTextTargets(doc: Document, chat: NativeChat, source
       active.get(row)?.dispose()
       // Dispose removes old prose attributes too, so restore the current ones.
       for (const element of prose) element.setAttribute('data-arkme-quote-prose', '')
-      const target: MessageSelectionTarget = { sourceRef, selectionDomain: 'native', localMarkRef: JSON.stringify([sourceRef, key, text]), item: {
+      const target: MessageSelectionTarget = { sourceRef, selectionDomain: 'native', localMarkRef: JSON.stringify([sourceRef, key, text, node.eventSeq === undefined ? null : { eventSeq: node.eventSeq, role: node.isMe ? 'user' : 'assistant' }]), item: {
         itemUid: key, title: '', textContent: text, textFormat: 'plain', status: node.settled ? 1 : 0,
         senderName: node.isMe ? '你' : 'DeepSeek Harness', isMe: node.isMe, sendAtMillis: node.time,
       } }

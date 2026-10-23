@@ -356,6 +356,13 @@ export class ChatRealtimeService {
       void this.selfRoleInvalidation?.().then(() => this.emitChatClientEvent({type:'projection-invalidated',projection:'self_role',revision:this.nextChatClientRevision()})).catch(() => undefined)
       return
     }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'dsh_annotations') {
+      void this.runtime.accountScopedSession().then(session => {
+        if (this.disposed || notice.connectionSignal?.aborted || !session || session.userId !== notice.connectionUserId) return
+        this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'dsh_annotations', revision: this.nextChatClientRevision() })
+      }).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'official_notification') {
       void this.runtime.sessionStore.read().then(session => {
         if (!session || notice.connectionSignal?.aborted || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return

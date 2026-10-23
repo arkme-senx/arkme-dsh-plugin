@@ -20,6 +20,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_speaker_correct',
   'arkme_team_profile_update',
   'arkme_reactions_write',
+  'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
   'arkme_topic_home_visibility',
@@ -96,6 +97,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
+  if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'
   if (name === 'arkme_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
     if (request.action === 'history-policy-set') return request.locked === true

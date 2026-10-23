@@ -57,7 +57,8 @@ export function usePrivateChatActions(account: string | undefined, userId: numbe
 
 export interface ConversationActionItem {
   id: string
-  label: string
+  label: ReactNode
+  keepOpenOnSelect?: boolean
   icon: ReactNode
   checked?: boolean
   busy?: boolean
@@ -156,7 +157,7 @@ export function ConversationActionsMenu({ items, anchor, onClose, label = 'æ›´å¤
     onSelect={id => {
       const item = items.find(value => value.id === id)
       if (item === undefined) return
-      close()
+      if (!item.keepOpenOnSelect) close()
       item.invoke()
     }}
     anchor={trigger === undefined

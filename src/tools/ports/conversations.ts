@@ -11,6 +11,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  nativeAnnotations(request: import('../../native-annotations.js').NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown>
   messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   sharedRecordingDetail(detailRef: string, options?: { signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSharedRecordingPreview>

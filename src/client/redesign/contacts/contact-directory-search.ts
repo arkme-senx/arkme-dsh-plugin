@@ -11,6 +11,7 @@ function matchesDirectorySearch(item: ArkmeDirectoryItem, query: string): boolea
     case 'group': fields = [item.displayName]; break
     case 'bot': fields = [item.bot.name]; break
     case 'unmarked-speaker': fields = [item.displayName, item.subtitle, item.speakerToken]; break
+    case 'manual-speaker': fields = [item.displayName]; break
     case 'team': fields = [item.displayName, item.publicId]; break
     case 'contact': fields = [item.displayName, item.nickname, item.remark, item.accountName]; break
   }

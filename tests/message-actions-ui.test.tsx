@@ -83,6 +83,16 @@ describe('shared owner message action UI', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not expose delete for message owners without a deletion flow', async () => {
+    await act(async () => { renderer = create(<Harness conversationRef="conversation-one" />) })
+    await act(async () => { renderer!.root.findByProps({ 'data-message': 'one' }).props.onContextMenu({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 10, clientY: 10,
+    }) })
+    await act(async () => { button(renderer!, '多选')?.props.onClick() })
+    expect(button(renderer!, '退出多选')).toBeDefined()
+    expect(button(renderer!, '删除')).toBeUndefined()
+  })
+
   it('forwards the single message chosen directly from the right-click menu', async () => {
     await act(async () => { renderer = create(<Harness conversationRef="conversation-one" />) })
     await act(async () => {
