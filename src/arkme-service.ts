@@ -267,6 +267,7 @@ import type {
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
+  ArkmeChatNotificationResult,
   ArkmeGroupNotificationResult,
   ArkmeGroupProjectionResult,
   ArkmeGroupSettingsSnapshot,
@@ -1894,6 +1895,10 @@ arkoImagesV1:true,
         } catch { /* The normal authoritative member read remains available. */ }
       }
     }
+  }
+
+  async conversationNotification(sourceRef: string, enabled?: boolean, signal?: AbortSignal): Promise<ArkmeChatNotificationResult> {
+    return await this.chat.conversationNotification(sourceRef, enabled, signal)
   }
 
   async setGroupMessageDnd(

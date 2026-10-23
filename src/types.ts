@@ -3147,10 +3147,13 @@ export interface ArkmeGroupSettingsSnapshot {
   chatNotificationPolicyUpdatedAtMillis: number
 }
 
-export interface ArkmeGroupNotificationResult {
+export interface ArkmeChatNotificationResult {
   messageDnd: boolean
   chatNotificationPolicyUpdatedAtMillis: number
 }
+
+/** Group menus keep the same shared conversation-policy contract. */
+export type ArkmeGroupNotificationResult = ArkmeChatNotificationResult
 
 export interface ArkmeGroupProjectionResult {
   source: ArkmeSourceItem
@@ -4419,6 +4422,8 @@ export type ArkmePluginOperation =
   | 'group.bot.add'
   | 'group.bot.remove'
   | 'group.settings'
+  | 'chat.notification.get'
+  | 'chat.notification.set'
   | 'group.notification.set'
   | 'group.rename'
   | 'group.leave'

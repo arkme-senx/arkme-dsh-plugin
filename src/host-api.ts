@@ -1183,6 +1183,10 @@ export async function dispatchArkmeHostOperation(
     case 'auth.cancellation.login.resolve': return await service.resolveCancellationLogin(requiredBooleanParam(params, 'continueLogin'))
     case 'auth.logout': return await service.logout()
     case 'auth.logout.feedback': return service.logoutFailureFeedback()
+    case 'chat.notification.get':
+      return await service.conversationNotification(stringParam(params, 'sourceRef'), undefined, requestSignal)
+    case 'chat.notification.set':
+      return await service.conversationNotification(stringParam(params, 'sourceRef'), requiredBooleanParam(params, 'enabled'), requestSignal)
     case 'chat.direct-message-admission':
       return await service.directMessageAdmission(stringParam(params, 'sourceRef'), requestSignal)
     case 'chat.direct-message-refusal.set':

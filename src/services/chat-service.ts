@@ -16,7 +16,7 @@ import { recordDeletionCapability } from '../record-deletion-ref.js'
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
 import { arkmeTopicDisplayName } from '../topic-policy.js'
 import { CallHistoryService } from './call-history-service.js'
-import { patchChatPolicy } from './chat-policy.js'
+import { patchChatPolicy, readChatPolicy } from './chat-policy.js'
 import { readTopicMetadata } from './topic-metadata.js'
 import { readTopicRecordPage } from './topic-record-page.js'
 import { invalidatesMemberSnapshot } from '../member-directory.js'
@@ -30,6 +30,7 @@ import { projectForwardRecordsWithAvatars } from '../forward-records-presentatio
 import { projectOwnedRecordExtensions, projectOwnedRecordParent } from '../record-extension-tree.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
+  ArkmeChatNotificationResult,
   ArkmeConversationMemberJoinEvent,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
@@ -1694,6 +1695,26 @@ export class ChatService {
       botMessages: [],
       status: 'ok',
     }
+  }
+
+  async conversationNotification(
+    sourceRef: string, enabled?: boolean, signal?: AbortSignal,
+  ): Promise<ArkmeChatNotificationResult> {
+    const session = await this.runtime.requireSession()
+    const target = await this.source.openSourceRef(sourceRef, session.userId)
+    if (target.kind !== 'private_chat' && target.kind !== 'group_chat') {
+      throw new ArkmePluginError('chat-policy-source-invalid', '仅支持私聊和群聊的消息免打扰', false, 400)
+    }
+    const policy = enabled === undefined
+      ? await readChatPolicy(this.runtime, session, target.ownerRef, signal)
+      : await patchChatPolicy(this.runtime, session, target.ownerRef, {
+        mute_state: enabled ? 2 : 1, notify_state: enabled ? 2 : 1,
+      }, signal)
+    // Project only these policy fields; never replace messages, unread cursors or the directory row.
+    this.source.applyConfirmedChatPolicy(policy)
+    if (enabled !== undefined) void this.realtime.refreshAttentionSummary()
+    return { messageDnd: policy.mute_state === 2 || policy.notify_state === 2,
+      chatNotificationPolicyUpdatedAtMillis: policy.update_at }
   }
 
   async directBotNotificationPreference(
