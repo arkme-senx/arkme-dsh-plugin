@@ -142,6 +142,29 @@ function cloudFixture() {
   return { cloud, post, selectedTeam, local, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
 }
 describe('cloud coordinator account/team boundaries', () => {
+  it('drains acknowledged batches in one trigger but stops immediately if ACK makes no progress',async()=>{
+    const f=cloudFixture();await f.cloud.enable(11,'opaque-team')
+    const many=Array.from({length:205},(_,i)=>({...events[0]!,sequence:i+1,turnId:`turn-${i}`,at:1000+i,localProgress:[{id:'private-progress',text:'本机过程',at:1,truncated:false}]}))
+    await f.cloud.sync(11,'opaque-team',[task],()=>many)
+    const uploads=f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))
+    expect(uploads).toHaveLength(3)
+    expect(JSON.stringify(uploads)).not.toContain('本机过程')
+    f.post.mockImplementation(async()=>({owner_ref:'11',task_results:[],event_results:[]}) as never)
+    f.post.mockClear()
+    await f.cloud.sync(11,'opaque-team',[task],()=>[...many,{...events[0]!,turnId:'extra'}])
+    expect(f.post).toHaveBeenCalledTimes(1)
+  })
+  it('keeps a successful list readable after an upload failed, without falsely clearing upload retries',async()=>{
+    const f=cloudFixture(),original=f.post.getMockImplementation()!
+    await f.cloud.enable(11,'opaque-team')
+    f.post.mockImplementation(async(owner,path,body)=>{if(path.endsWith('/sync'))throw new Error('network');return original(owner,path,body)})
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    const result=await f.cloud.state(11,'opaque-team',f.local)
+    expect(result.cloud).toMatchObject({status:'ready',pending:3})
+    expect(result.tasks[0]?.title).toBe('开发任务')
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    expect(f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))).toHaveLength(1)
+  })
   it('checks only account connection status for reader-only computers',async()=>{
     const f=cloudFixture()
     f.post.mockResolvedValue({owner_ref:'11',has_connected_codex:false,first_connected_at:null} as never)

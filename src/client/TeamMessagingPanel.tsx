@@ -1,3 +1,4 @@
+import { arkmeAuthStore } from './auth-store.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { canAskDshTeamMessage, prepareTeamAskDsh } from './team-ask-dsh.js'
@@ -77,7 +78,8 @@ import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRic
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, openSessionAttachmentPreview } from './ArkmeRichContent.js'
-import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
+import { attachmentPreparationHint, AttachmentPreparationQueue } from './attachment-preparation.js'
+import { ArkmeAttachmentStrip } from './ArkmeAttachmentStrip.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { Fragment } from 'react'
@@ -92,7 +94,7 @@ import { useResizableComposer } from './use-resizable-composer.js'
 import { focusArkmeComposerFromClick } from './composer-focus.js'
 import { useComposerPasteFocus } from './composer-paste-focus.js'
 import type { ArkmeComposerSelectionRequest } from './composer-selection-request.js'
-import { arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { arkmeAttachmentsPending, arkmeAttachmentId, releaseArkmeComposerAttachment, type ArkmeComposerAttachment, arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
 
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
@@ -262,7 +264,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
-  const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false)
+  const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false)
+  const draftAttachments = draft.attachments ?? (draft.localFiles ?? []).map(localFile => ({ localFile }))
+  const uploading = arkmeAttachmentsPending(draftAttachments)
   const [draftPreview, setDraftPreview] = useState<ArkmeContentBlock>()
   const [outgoing, setOutgoing] = useState<TeamMessage | undefined>(() => pendingTeamMessage(draft, conversation, new Map()))
   const localMedia = useRef(new Map<string, string>())
@@ -324,7 +328,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     if (draftPreview && !draft.localFiles?.some(file => file.fileRef === draftPreview.localFileRef)) setDraftPreview(undefined)
   }, [draft.localFiles, draftPreview])
   const viewport = useRef<ArkmeConversationViewportSnapshot>()
-  const uploadBusy = useRef(false)
+  const attachmentQueue = useRef<AttachmentPreparationQueue>()
   const sendBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
   const draftRef = useRef(draft); draftRef.current = draft
@@ -332,7 +336,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const recovering = useRef(false), recoverAgain = useRef(false)
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
-  useEffect(() => () => { ctrl.current.abort() }, [])
+  useEffect(() => () => { ctrl.current.abort(); attachmentQueue.current?.dispose(); for (const item of draftRef.current.attachments ?? []) releaseArkmeComposerAttachment(item) }, [])
   useEffect(() => receiptStore.subscribeAccessLost(() => {
     accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined);
     latest.current = undefined; setTimeline(undefined); receiptRef.current = undefined;
@@ -454,7 +458,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }, [delivery.tasks, conversation.key, refresh, onChanged])
   const send = async () => {
     const timeline = latest.current, draft = draftRef.current
-    if (!timeline || sendBusy.current || uploading || busy) return
+    if (!timeline || sendBusy.current || arkmeAttachmentsPending(draft.attachments ?? []) || busy) return
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
     sendBusy.current = true
     try { await requirePhoneForSocialAction('发送消息', ctrl.current.signal) }
@@ -476,6 +480,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       // on-disk attempt keeps its UID so a remount can only replay the same send.
       try { persistTeamDraft(localStorage, storageKey, next) }
       catch { setError(tr('消息已加入发送队列，草稿未能更新到本机')) }
+      for (const item of draftRef.current.attachments ?? []) releaseArkmeComposerAttachment(item)
       draftRef.current = next; setDraft(next); setOutgoing(undefined)
     } catch (e) {
       if (!ctrl.current.signal.aborted) {
@@ -494,50 +499,42 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     } finally { sendBusy.current = false; if (!ctrl.current.signal.aborted) setBusy(false) }
   }
   resumeSend.current = send
-  const upload = async (files: FileList | readonly File[] | null) => {
-    if (!files?.length || editing || busy || uploadBusy.current || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
-    // The file picker is reset synchronously after onChange; retain its selection
-    // before awaiting capabilities, just as the ordinary Chat composer does.
-    const picked = Array.from(files)
-    uploadBusy.current = true; setUploading(true); setError('')
+  const updateAttachments = (change: (files: readonly ArkmeComposerAttachment[]) => readonly ArkmeComposerAttachment[]) => {
+    const current = draftRef.current
+    const attachments = change(current.attachments ?? (current.localFiles ?? []).map(localFile => ({ localFile })))
+    const next = updateTeamDraftText({ ...current, attachments, localFiles: attachments.flatMap(item => item.localFile ? [item.localFile] : []) }, current.text)
+    const previousFiles = current.localFiles ?? []
+    if (previousFiles.length !== next.localFiles!.length || previousFiles.some((file, index) => file !== next.localFiles![index])) persistTeamDraft(localStorage, storageKey, next)
+    draftRef.current = next; setDraft(next)
+  }
+  const changeDraftAttachments = (change: (files: readonly ArkmeComposerAttachment[]) => readonly ArkmeComposerAttachment[], removed?: ArkmeComposerAttachment) => {
     try {
-      const sdk = createArkmeSdk(), policy = await sdk.fileCapabilities()
-      const userId = Number(accountKey.split(':').at(-1))
-      const errors: string[] = []
-      for (const file of picked) {
-        if (ctrl.current.signal.aborted) return
-        if (draftRef.current.assets.length + (draftRef.current.localFiles?.length ?? 0) >= policy.maxAttachments) {
-          errors.push(tr('最多添加 {v0} 个附件：{v1}', {v0:policy.maxAttachments,v1:file.name})); continue
-        }
-        const limit = file.type.startsWith('image/') ? policy.maxImageBytes : policy.maxFileBytes
-        if (file.size === 0 || file.size > limit) {
-          errors.push(tr('{v0} 为空或超过 {v1} MiB', {v0:file.name,v1:Math.floor(limit / 1024 / 1024)})); continue
-        }
-        let local
-        try { local = await sdk.stageFile(file, { signal: ctrl.current.signal, ...(userId > 0 ? {expectedUserId:userId} : {}) }) }
-        catch (e) { if (ctrl.current.signal.aborted) return; errors.push(`${file.name}：${errorText(e)}`); continue }
-        if (ctrl.current.signal.aborted) return
-        // Persist before exposing a staged file. A storage failure stops the batch;
-        // an individual invalid file does not discard the remaining selections.
-        const next = { ...draftRef.current, startedAtMillis: draftRef.current.startedAtMillis ?? Date.now(), localFiles: [...(draftRef.current.localFiles ?? []), local] }
-        persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
-      }
-      if (errors.length) setError(errors.join('；'))
-    } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
-    finally { uploadBusy.current = false; if (!ctrl.current.signal.aborted) setUploading(false) }
+      updateAttachments(change)
+      if (removed) releaseArkmeComposerAttachment(removed)
+    } catch (error) { setError(errorText(error)) }
+  }
+  const upload = async (files: FileList | readonly File[] | null) => {
+    if (!files?.length || editing || busy || draftRef.current.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
+    if (!attachmentQueue.current) {
+      const sdk = createArkmeSdk(), userId = Number(accountKey.split(':').at(-1))
+      attachmentQueue.current = new AttachmentPreparationQueue({
+        get: () => draftRef.current.attachments ?? (draftRef.current.localFiles ?? []).map(localFile => ({ localFile })),
+        update: updateAttachments,
+        current: () => { const auth = arkmeAuthStore.getSnapshot().auth; return !ctrl.current.signal.aborted && auth?.status === 'authenticated' && `${auth.environment}:${auth.userId}` === accountKey },
+        policy: async signal => { const policy = await sdk.fileCapabilities(signal); return { ...policy, maxAttachments: Math.max(0, policy.maxAttachments - draftRef.current.assets.length) } },
+        stage: (file, signal) => sdk.stageFile(file, { signal, expectedUserId: userId }),
+        discard: file => sdk.removeLocalFile(file.fileRef),
+      })
+    }
+    try { attachmentQueue.current.add(Array.from(files)) }
+    catch (error) { setError(errorText(error)) }
   }
   const selectFiles = (files: FileList | readonly File[] | null, pasted = false) => {
-    if (!files?.length || editing || busy || uploadBusy.current || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
+    if (!files?.length || editing || busy || draft.attempt || !latest.current?.conversation.channel.enabled || latest.current.conversation.blocked) return
     if (!pasted) editor.current?.focus({ preventScroll: true })
     const restoreFocus = beginPasteFocus()
     setSelectionRequest(undefined)
     void upload(files).finally(restoreFocus)
-  }
-  const updateLocalFiles = (update: (files: ArkmeLocalFile[]) => ArkmeLocalFile[]) => {
-    if (busy || uploadBusy.current || draftRef.current.attempt) return
-    const next = updateTeamDraftText({...draftRef.current, localFiles: update([...(draftRef.current.localFiles ?? [])])}, draftRef.current.text)
-    try { persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next) }
-    catch (e) { setError(errorText(e)) }
   }
   const previewLocalFile = (file: ArkmeLocalFile) => {
     const block = localFileBlock(file)
@@ -679,7 +676,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }
   return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref}
+    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove}
       canReplace={target => !!latest.current?.messages.find(message => message.key === target.item.itemUid)?.canEdit && current.channel.enabled && !current.blocked}
       prepareReplace={async (target, quote, signal) => {
@@ -808,8 +805,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
 
 
 
-    <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !uploading && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
-      onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !uploading && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
+    <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
+      onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
       style={{...composerLayout.composer, flexDirection: 'column', ...(selection.ids ? { display: 'none' } : {})}} data-team-composer={editing ? 'reedit' : 'message'}>
       <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused && !editing}>
         <ArkmeComposerInputStats active visible={composerFocused || !!richDraft.text || !!draft.localFiles?.length || !!draft.assets.length}
@@ -827,32 +824,32 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         {addOpen && <ArkmeActionMenu label={tr('添加内容')} getAnchorRect={() => addTrigger.current?.getBoundingClientRect() ?? null} side="top" onClose={() => setAddOpen(false)} actions={[{id:'file',label:tr('添加附件'),icon:<Paperclip />,onSelect:()=>{setAddOpen(false);fileInput.current?.click()}}]} />}
         {(!current.channel.enabled || current.blocked) && <p>{tr(current.blocked ? '此对话已被屏蔽，双方暂时不能发送或编辑消息' : '团队已暂停接收新消息')}</p>}
         <div className="arkme-conversation-input-card"><ArkmeRichComposerInput ref={editor} className="arkme-conversation-textarea" key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={arkmeComposerPlaceholderText({kind:'team_conversation',recipient:current.side === 'team' ? 'person' : 'team',displayName:current.side === 'team' ? current.visitor?.nickname ?? '' : current.channel.name})} value={richDraft.text} mentions={richDraft.mentions} emojis={richDraft.emojis} maxLength={20_000 - ((editing?.text ?? draft.text).length - richDraft.text.length)}
-          disabled={editing ? busy : uploading}
+          disabled={!!editing && busy}
           style={{ ...composerLayout.textarea, ...resize.editorStyle, background: 'transparent', color: arkmeTheme.text }}
-          selectionRequest={uploading ? undefined : selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
+          selectionRequest={selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
           onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
           onTextChange={(text, emojis) => updateText(serializeArkmeComposerDraft({...richDraft,text,emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)}).text)}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send() } }}
           onPaste={event => {
-            if (editing || busy || uploading || draft.attempt || !current.channel.enabled || current.blocked) return
+            if (editing || busy || draft.attempt || !current.channel.enabled || current.blocked) return
             const files = arkmeClipboardFiles(event.clipboardData)
             if (files.length) { event.preventDefault(); selectFiles(files, true) }
           }} /></div>
         {!editing && !draft.attempt && draft.assets.length > 0 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>{draft.assets.map((asset, index) => <ArkmeAttachmentDraftTile key={`${asset.fileAssetUid}:${index}`} asset={asset} {...(localMedia.current.has(asset.fileAssetUid) ? {previewUrl: localMedia.current.get(asset.fileAssetUid)!} : {})} disabled={!!draft.attempt || busy} onRemove={() => setDraft(value => ({ ...value, assets: value.assets.filter((_, i) => i !== index) }))} />)}</div>}
-        {!editing && !draft.attempt && (draft.localFiles?.length ?? 0) > 0 && <ArkmeAttachmentStrip
-          attachments={draft.localFiles!.map(localFile => ({localFile}))} disabled={busy || uploading}
+        {!editing && !draft.attempt && draftAttachments.length > 0 && <ArkmeAttachmentStrip
+          attachments={draftAttachments} disabled={busy}
           onPreview={attachment => { if (attachment.localFile) previewLocalFile(attachment.localFile) }}
-          onRemove={attachment => updateLocalFiles(files => files.filter(file => file.fileRef !== attachment.localFile?.fileRef))}
-          onMove={(from,to) => updateLocalFiles(files => {
-            const file = files[from]
-            if (!file || to < 0 || to >= files.length) return files
-            files.splice(from,1); files.splice(to,0,file); return files
+          onRemove={attachment => changeDraftAttachments(files => files.filter(file => arkmeAttachmentId(file) !== arkmeAttachmentId(attachment)), attachment)}
+          onMove={(from,to) => changeDraftAttachments(files => {
+            const next = [...files], file = next[from]
+            if (!file || to < 0 || to >= next.length) return files
+            next.splice(from,1); next.splice(to,0,file); return next
           })} />}
         <div data-arkme-composer-footer="tools" style={composerLayout.tools}>
           <div style={{display:'flex',alignItems:'center',gap:2}}>
-          {!editing && <><ArkmeComposerToolButton ref={addTrigger} title={tr('添加内容')} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addOpen} disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onClick={() => setAddOpen(value => !value)}>{uploading ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton>
-          <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked} onChange={e => { selectFiles(e.target.files); e.target.value = '' }} /></>}
-          <ArkmeEmojiPicker mode="text" accountKey={accountKey} scopeKey={storageKey} disabled={busy || uploading || !!editing || !current.channel.enabled || current.blocked}
+          {!editing && <><ArkmeComposerToolButton ref={addTrigger} title={tr('添加内容')} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addOpen} disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onClick={() => setAddOpen(value => !value)}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton>
+          <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onChange={e => { selectFiles(e.target.files); e.target.value = '' }} /></>}
+          <ArkmeEmojiPicker mode="text" accountKey={accountKey} scopeKey={storageKey} disabled={busy || !!editing || !current.channel.enabled || current.blocked}
             getCaretGeometry={() => editor.current?.getCaretGeometry()} getEditorGeometry={() => editor.current?.getEditorGeometry()} onBeforeToggle={captureSelection}
             onSelect={emoji => {
               const {start,end} = editorSelection.current
@@ -864,14 +861,14 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
               return true
             }} onError={setError} />
           {!editing && Number(accountKey.split(':').at(-1)) > 0 && <ArkmeComposerScreenshotButton userId={Number(accountKey.split(':').at(-1))} scope={composerScope}
-            disabled={!!draft.attempt || uploading || busy || !current.channel.enabled || current.blocked}
+            disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked}
             isCurrent={() => !ctrl.current.signal.aborted && currentScope.current === composerScope}
             onBegin={options => { editor.current?.focus({preventScroll:true}); return beginPasteFocus({nativeDialog:true,...options}) }}
             onFile={file => upload([file])} onError={setError} />}
           </div>
           {editing && !editing.needsReload && <span />}
           {editing?.needsReload && <ArkmeComposerToolButton disabled={busy} onClick={() => { void reloadEdit() }}>{tr('读取最新版本')}</ArkmeComposerToolButton>}
-          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton shortcutHint={tr('Enter发送 / Shift+Enter换行')} ariaLabel={draft.attempt ? tr('重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
+          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton shortcutHint={attachmentPreparationHint(draftAttachments) ?? tr('Enter发送 / Shift+Enter换行')} ariaLabel={draft.attempt ? tr('重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
 
         </div>
       </div>

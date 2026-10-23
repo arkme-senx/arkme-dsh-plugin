@@ -200,6 +200,16 @@ export class MessageActionService {
     return await this.deliver(references, session, options)
   }
 
+  async forwardCodex(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
+    const session = await this.gateway.requireSession()
+    if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) throw new ArkmePluginError('codex-account-changed', '账号已变化，请重新选择', false, 409)
+    const raw = snapshot as { taskTitle?: unknown; inputName?: unknown }
+    if (!raw || typeof raw.taskTitle !== 'string' || !raw.taskTitle.trim() || raw.taskTitle.length > 500 || typeof raw.inputName !== 'string' || raw.inputName.length > 200) throw new ArkmePluginError('codex-selection-invalid', 'Codex 对话来源无效，请重新选择', false, 400)
+    const references = this.nativeMessages(snapshot, session.userId).map(message => ({ ...message, ownerKind: 'codex' as const, taskTitle: raw.taskTitle as string,
+      senderUserId: 0, senderName: message.role === 'user' ? (raw.inputName as string || '用户') : 'Codex' }))
+    return this.deliver(references, session, options)
+  }
+
   async copyLinkNative(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> {
     const session = await this.gateway.requireSession()
     if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) {

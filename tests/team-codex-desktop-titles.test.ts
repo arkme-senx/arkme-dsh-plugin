@@ -27,6 +27,19 @@ function fixture() {
 const entry = (name: string, at = '2026-09-30T10:00:00Z', id = session) => ({ id, thread_name: name, updated_at: at })
 
 describe('read-only native Codex display names', () => {
+  it('recognizes persistent unnamed root tasks, excludes subagents and defers unregistered sessions',()=>{
+    const f=fixture(),db=f.database()
+    db.exec('ALTER TABLE threads ADD COLUMN source TEXT; ALTER TABLE threads ADD COLUMN thread_source TEXT; ALTER TABLE threads ADD COLUMN agent_path TEXT')
+    const insert=db.prepare('INSERT INTO threads(id,title,name,source,thread_source,agent_path) VALUES(?,?,?,?,?,?)')
+    insert.run(session,'prompt',null,'vscode','user',null)
+    insert.run('child_123','prompt','子代理','{"subagent":{}}',null,'/root/child')
+    insert.run('created_123','prompt','用户要求创建的任务','vscode','agent_created_thread',null)
+    f.index([entry('不应从旧索引恢复子代理',undefined,'child_123')])
+    const state=f.reader.inspect(f.key,[session,'child_123','created_123','pending_123'])!
+    expect([...state.visibility]).toEqual([[session,'user'],['child_123','internal'],['created_123','user'],['pending_123','pending']])
+    expect([...state.names]).toEqual([['created_123','用户要求创建的任务']])
+    expect(f.reader.inspect('wrong-home',[session])).toBeUndefined()
+  })
   it('uses name, not first-prompt title, and observes rename in a live WAL without modifying sources', () => {
     const f = fixture(), db = f.database()
     db.prepare('INSERT INTO threads VALUES(?,?,?)').run(session, '# Files mentioned by the user:', '完善录音板块前端优化')

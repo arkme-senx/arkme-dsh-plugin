@@ -24,3 +24,5 @@
 
 .stats-weekday-labels{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;text-align:center;color:var(--stats-muted);font-size:10px;margin:0 0 7px}
 .stats-keyword-detail .stats-frequency-list{max-height:none;overflow:visible;scrollbar-gutter:auto}
+@container (max-width:760px){.arkme-statistics[data-embedded] .stats-metric:nth-child(4){grid-column:span 2}}
+@container (max-width:430px){.arkme-statistics[data-embedded] .stats-metric:nth-child(4){order:1}}

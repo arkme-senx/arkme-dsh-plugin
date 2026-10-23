@@ -1,5 +1,6 @@
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
+import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
 
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
@@ -62,7 +63,7 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
-  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
   avatarState?: 'pending' | 'ready' | 'unavailable'
 }

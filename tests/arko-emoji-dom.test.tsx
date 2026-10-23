@@ -286,8 +286,10 @@ describe('Arko emoji input and send boundary', () => {
       expect(event.defaultPrevented).toBe(true)
     })
     expect(stage).toHaveBeenCalledTimes(2)
-    expect(arkmeComposerDraftStore.get(draftKey).attachments.map(item => item.localFile?.fileName)).toEqual(['test.png', 'second.png'])
-    expect(host.textContent).toContain('text.txt')
+    const attachments = arkmeComposerDraftStore.get(draftKey).attachments
+    expect(attachments.map(item => item.localFile?.fileName)).toEqual(['test.png', undefined, 'second.png'])
+    expect(attachments[1]?.preparation).toMatchObject({ state: 'failed', fileName: 'text.txt' })
+    expect(host.querySelector('[aria-label="text.txt：准备失败，点击重试"]')).not.toBeNull()
     expect(ask).not.toHaveBeenCalled()
   })
 
@@ -320,7 +322,7 @@ describe('Arko emoji input and send boundary', () => {
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 20002 }) })
     await act(async () => { finish(imageFile) })
     expect(arkmeComposerDraftStore.get(arkmeArkoComposerDraftKey(20002)).attachments).toHaveLength(0)
-    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
+    expect(arkmeComposerDraftStore.get(draftKey).attachments.every(item => !item.localFile)).toBe(true)
   })
   it('keeps the recipient row and card geometry stable while focus reveals the shared border', async () => {
     await mount()

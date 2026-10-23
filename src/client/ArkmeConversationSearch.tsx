@@ -1,6 +1,6 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -30,9 +30,14 @@ function searchMonth(millis: number): string {
 }
 const status: CSSProperties = { padding: 24, textAlign: 'center', color: arkmeTheme.secondary, fontSize: 13 }
 
-export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger = false }: { source: ArkmeSourceItem; host: RefObject<HTMLElement>; accountKey: string; hideTrigger?: boolean }) {
+export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger = false, open: controlledOpen, onOpenChange, label }: {
+  source: ArkmeSourceItem; host: RefObject<HTMLElement>; accountKey: string; hideTrigger?: boolean
+  open?: boolean; onOpenChange?: (open: boolean) => void; label?: string
+}) {
   useArkmeLocale()
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = useCallback((value: boolean) => { setInternalOpen(value); onOpenChange?.(value) }, [onOpenChange])
   const [selectionQuery, setSelectionQuery] = useState<{ text: string }>()
   useSelectedMessageSearch(source.sourceRef, text => {
     setPreferences(value => ({ ...value, global: false }))
@@ -43,7 +48,7 @@ export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger 
     const closeForWords = () => setOpen(false)
     window.addEventListener('arkme:conversation-analysis-open', closeForWords)
     return () => window.removeEventListener('arkme:conversation-analysis-open', closeForWords)
-  }, [])
+  }, [setOpen])
   const preferenceKey = source.sourceKey === undefined ? undefined : `arkme:chat-search:${accountKey}:${source.sourceKey}`
   const [preferences, setPreferences] = useState<{ scene: ArkmeSearchSceneKind; global: boolean }>(() => {
     try {
@@ -57,7 +62,7 @@ export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger 
   }, [preferenceKey, preferences])
   const close = () => { setOpen(false); trigger.current?.focus() }
   return <>
-    {!hideTrigger && <ArkmeConversationHeaderIconButton buttonRef={trigger} label={tr("搜索聊天记录")} expanded={open} onClick={() => { setSelectionQuery(undefined); setOpen(value => !value) }}><MagnifyingGlass size={22} /></ArkmeConversationHeaderIconButton>}
+    {!hideTrigger && <ArkmeConversationHeaderIconButton buttonRef={trigger} label={label ?? tr("搜索聊天记录")} expanded={open} onClick={() => { setSelectionQuery(undefined); setOpen(!open) }}><MagnifyingGlass size={22} /></ArkmeConversationHeaderIconButton>}
     {open && host.current !== null && createPortal(<ArkmeConversationSearchPanel source={source} scene={preferences.scene} global={preferences.global}
       selectionQuery={selectionQuery}
       onScene={scene => setPreferences(value => ({ ...value, scene }))} onGlobal={global => setPreferences(value => ({ ...value, global }))} onClose={close} />, host.current)}

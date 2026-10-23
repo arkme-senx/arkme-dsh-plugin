@@ -17,6 +17,7 @@ import type { ArkmeTeam, ArkmeTeamMember, ArkmeTeamRole } from '../../../types.j
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import { TeamCodexSyncDialog } from './TeamCodexSyncDialog.js'
+import { TeamMemberCodexEntry } from './TeamMemberCodexEntry.js'
 import { arkmeUi } from '../../ui-controller.js'
 
 interface TeamDetailState {
@@ -65,6 +66,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
   const avatarRequests = useRef(new Map<string, AbortController>())
+  const memberPages = useRef(new Map<string, string | undefined>())
+  const syncRequests = useRef(new Map<string, AbortController>())
 
   const hydrateAvatars = useCallback(async (appRef: string, pageCursor?: string) => {
     const key = pageCursor ?? 'first'
@@ -112,6 +115,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       for (const request of avatarRequests.current.values()) request.abort()
       avatarRequests.current.clear()
     }
+    for (const request of syncRequests.current.values()) request.abort()
+    syncRequests.current.clear()
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
@@ -134,6 +139,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       }, controller.signal)
       if (controller.signal.aborted || generationRef.current !== generation) return
       page.team.teamRef = appRef
+      if (pageCursor === undefined) memberPages.current.clear()
+      for (const member of page.items) memberPages.current.set(member.key, pageCursor)
       setState(current => {
         // A refresh with pending decoration must not erase already visible photos.
         if (page.avatarState === 'pending' || page.avatarState === 'unavailable') {
@@ -170,8 +177,35 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       controllerRef.current?.abort()
       for (const request of avatarRequests.current.values()) request.abort()
       avatarRequests.current.clear()
+      for (const request of syncRequests.current.values()) request.abort()
+      syncRequests.current.clear()
     }
   }, [load])
+
+  const refreshMemberSync = async (member: TeamMembers['items'][number]) => {
+    if (!state.page || !memberPages.current.has(member.key)) throw new Error('成员状态已变化')
+    const generation = generationRef.current, controller = new AbortController()
+    syncRequests.current.get(member.key)?.abort()
+    syncRequests.current.set(member.key, controller)
+    const pageCursor = memberPages.current.get(member.key)
+    try {
+      const page = await callArkme<TeamMembers>('team.app.members', {
+        teamRef: state.page.team.teamRef, limit: 50, avatarMode: 'deferred',
+        ...(pageCursor === undefined ? {} : { pageCursor }),
+      }, controller.signal)
+      controller.signal.throwIfAborted()
+      if (generation !== generationRef.current || page.team.teamRef !== state.page.team.teamRef) throw new Error('成员状态已变化')
+      const fresh = page.items.find(item => item.key === member.key)
+      if (!fresh) throw new Error('成员状态已变化')
+      setState(current => !current.page ? current : { ...current, page: { ...current.page,
+        items: current.page.items.map(item => item.key === member.key ? { ...item,
+          codexSync: fresh.codexSync ?? { state: 'unavailable', reason: 'unsupported' },
+        } : item),
+      } })
+    } finally {
+      if (syncRequests.current.get(member.key) === controller) syncRequests.current.delete(member.key)
+    }
+  }
 
   useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly)=>{if(account===accountKey&&!receiptOnly)void load(undefined,true)}),[accountKey,load])
   const openProfile=async()=>{
@@ -307,11 +341,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
             </span>
-            <button type="button" className="arkme-team-member-conversations"
-              aria-label={tr('查看 {name} 的 Codex 对话',{name:member.displayName})}
-              disabled={codexBusy || !member.jotmoId} onClick={() => { void openCodex(member) }}>
-              {tr('查看对话')} <span aria-hidden>›</span>
-            </button>
+            <TeamMemberCodexEntry sync={member.codexSync} name={member.displayName} identityAvailable={!!member.jotmoId}
+              busy={codexBusy} onOpen={() => { void openCodex(member) }} onRetry={() => refreshMemberSync(member)} />
             {member.canRemove && <button type="button" className="arkme-team-action" disabled={!!removing} onClick={() => { setConfirmRemoval({ userRef: member.userRef, name: member.displayName }) }}>{tr('移除')}</button>}</span>
           </div>)}
           {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}

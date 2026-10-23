@@ -102,8 +102,30 @@ describe('DSH-style Codex queue dock', () => {
   })
   it('keeps a remote-only availability hint, not a fabricated empty or local queue', () => {
     render({ ...taskWith([queued('private')]), cloud: { taskId: 'remote', sourceId: 'device', sourceName: 'Laptop', ownerRef: 'self', remote: true } })
-    expect(host.textContent).toBe('排队请求暂仅在来源电脑可见')
+    expect(host.textContent).toBe('排队同步后端接口开发中，接通后可跨设备查看')
     expect(rows()).toHaveLength(0)
+  })
+  it('renders authenticated cloud queues with the same collapsed order and ages offline data without a network timer',()=>{
+    vi.useFakeTimers()
+    const task={...taskWith([queued('a'),queued('b')]),queueCloud:'ready' as const,
+      cloud:{taskId:'remote',sourceId:'device',sourceName:'Laptop',ownerRef:'self',remote:true}}
+    render(task)
+    expect(header()?.textContent).toBe('2 条排队消息')
+    act(()=>header()!.click())
+    expect(rows().map(row=>row.textContent)).toEqual(['需求 a','需求 b'])
+    act(()=>vi.advanceTimersByTime(90_001))
+    expect(host.textContent).toContain('上次队列 2 条')
+    expect(host.textContent).toContain('上次更新')
+    expect(rows()).toHaveLength(2)
+    render({...task,queue:{...task.queue!,items:[],checkedAt:Date.now()}})
+    expect(host.innerHTML).toBe('')
+  })
+  it.each(['private','unavailable'] as const)('never leaks a remote queue marked %s',queueCloud=>{
+    render({...taskWith([queued('private')]),queueCloud,
+      cloud:{taskId:'remote',sourceId:'device',sourceName:'Laptop',ownerRef:'self',remote:true}})
+    expect(rows()).toHaveLength(0)
+    expect(host.textContent).not.toContain('private')
+    expect(host.textContent).not.toContain('0 条')
   })
   it.each([
     [{ state: 'unknown' }, '发送结果待确认'],
