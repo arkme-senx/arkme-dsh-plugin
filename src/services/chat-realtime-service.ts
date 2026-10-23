@@ -140,6 +140,7 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ChatRealtimeService {
+  teamPublication?: (notice: ArkmeChatRealtimeNotice) => void
   directoryInvalidation?: (hint: ArkmeChatPolicyUpdatedHint | ArkmeConversationListPreferenceUpdatedHint) => Promise<void>
   directoryAttention?: (retry: boolean) => Promise<ArkmeChatAttentionSummary>
   directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
@@ -301,6 +302,7 @@ export class ChatRealtimeService {
   }
 
   handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
+    if (notice.cause === 'team-message-published') { this.teamPublication?.(notice); return }
     if (notice.cause === 'team-invalidation') {
       void this.runtime.accountScopedSession().then(session => {
         if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) {

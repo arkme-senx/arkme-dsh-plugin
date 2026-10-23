@@ -1,34 +1,35 @@
+import type { TeamConversation } from '../team-app-contract.js'
 import type { ArkmeSourceItem } from '../types.js'
 
-export interface ArkmeNotificationActivationSnapshot {
+export interface ArkmeNotificationActivationSnapshot<T extends object = ArkmeSourceItem> {
   revision: number
   activationId?: string
-  source?: ArkmeSourceItem
+  source?: T
   navigationApplied: boolean
   surfaceCommitted: boolean
 }
 
-export class ArkmeNotificationActivationStore {
-  private snapshot: ArkmeNotificationActivationSnapshot = {
+export class ArkmeNotificationActivationStore<T extends object = ArkmeSourceItem> {
+  private snapshot: ArkmeNotificationActivationSnapshot<T> = {
     revision: 0,
     navigationApplied: false,
     surfaceCommitted: false,
   }
   private readonly listeners = new Set<() => void>()
 
-  readonly getSnapshot = (): ArkmeNotificationActivationSnapshot => this.snapshot
+  readonly getSnapshot = (): ArkmeNotificationActivationSnapshot<T> => this.snapshot
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
 
-  publish(source: ArkmeSourceItem): ArkmeNotificationActivationSnapshot | undefined
-  publish(activationId: string | undefined, source: ArkmeSourceItem): ArkmeNotificationActivationSnapshot | undefined
+  publish(source: T): ArkmeNotificationActivationSnapshot<T> | undefined
+  publish(activationId: string | undefined, source: T): ArkmeNotificationActivationSnapshot<T> | undefined
   publish(
-    activationIdOrSource: string | ArkmeSourceItem | undefined,
-    resolvedSource?: ArkmeSourceItem,
-  ): ArkmeNotificationActivationSnapshot | undefined {
+    activationIdOrSource: string | T | undefined,
+    resolvedSource?: T,
+  ): ArkmeNotificationActivationSnapshot<T> | undefined {
     const source = typeof activationIdOrSource === 'string' || activationIdOrSource === undefined
       ? resolvedSource
       : activationIdOrSource
@@ -55,7 +56,7 @@ export class ArkmeNotificationActivationStore {
   }
 
   /** Atomically take an activation only after both independent UI owners commit it. */
-  takeReady(revision: number): ArkmeNotificationActivationSnapshot | undefined {
+  takeReady(revision: number): ArkmeNotificationActivationSnapshot<T> | undefined {
     const current = this.snapshot
     if (current.revision !== revision || current.source === undefined
       || !current.navigationApplied || !current.surfaceCommitted) return undefined
@@ -98,3 +99,5 @@ export class ArkmeNotificationActivationStore {
 }
 
 export const arkmeNotificationActivation = new ArkmeNotificationActivationStore()
+
+export const teamNotificationActivation = new ArkmeNotificationActivationStore<TeamConversation>()

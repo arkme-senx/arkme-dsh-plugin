@@ -20,11 +20,11 @@ export interface ArkmeDesktopBridgeConfig {
 
 export interface ArkmeDesktopNotificationPayload {
   idempotencyKey: string
-  kind: 'chat.message'
+  kind: 'chat.message' | 'team.message'
   occurredAtMillis: number
   expiresAtMillis: number
   presentation: { title: string; body: string }
-  activation: { kind: 'chat-source'; sourceRef: string; sourceKey?: string }
+  activation: { kind: 'chat-source' | 'team-conversation'; sourceRef: string; sourceKey?: string }
 }
 
 export interface ArkmeDesktopBadgeSnapshotPayload {

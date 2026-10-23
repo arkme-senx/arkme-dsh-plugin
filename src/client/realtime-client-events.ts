@@ -307,7 +307,7 @@ export function useArkmeRealtimeClientEvents(
           arkmeAttentionSummary.apply(update.summary)
           return
         }
-        if (update.type === 'message-notification') {
+        if (update.type === 'message-notification' || update.type === 'team-message-notification') {
           if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
           return
         }
