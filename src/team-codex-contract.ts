@@ -50,6 +50,8 @@ export interface TeamCodexTask {
   excluded?: boolean
   projectExcluded?: boolean
   queue?: TeamCodexQueueSnapshot
+  /** Set only after checking the cloud contract and row ownership; never authorizes dispatch. */
+  queueCloud?: 'ready' | 'unsupported' | 'unavailable' | 'private'
   currentInput?: { turnId: string; text: string; at: number }
   /** Local, account-checked source evidence. Absence does not mean another physical computer. */
   captureHealth?: { status: 'online' | 'buffering' | 'offline' | 'paused'; checkedAt: number; lastReceivedAt: number }

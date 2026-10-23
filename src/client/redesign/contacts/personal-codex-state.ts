@@ -38,7 +38,8 @@ export async function readPersonalCodexState(
     for (const task of result.tasks) {
       // Cloud rows use canonical owner ids; local rows are account-bound by the host.
       const own = task.cloud ? task.cloud.ownerRef === memberRef : !!result.self && task.member.userRef === result.self.userRef
-      if (!own || (task.cloud?.remote && result.cloud?.status !== 'ready')) continue
+      const retainedOwnQueue=result.cloud?.status==='offline' && task.queueCloud==='ready' && task.queue?.availability==='stale'
+      if (!own || (task.cloud?.remote && result.cloud?.status !== 'ready' && !retainedOwnQueue)) continue
       if (page > 1 && (result.localOnly || result.cloud?.status === 'unsupported')) continue
       tasks.push({...task,viewTeam:team})
     }

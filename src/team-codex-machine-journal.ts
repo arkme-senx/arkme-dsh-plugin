@@ -285,7 +285,7 @@ export class TeamCodexMachineJournal {
       }
       else if(visibilityChanged) this.control(row)
       this.captureTitles(row)
-      this.captureQueues(row)
+      received=this.captureQueues(row)||received
     }
     return received
   }
@@ -316,7 +316,8 @@ export class TeamCodexMachineJournal {
     }
   }
 
-  private captureQueues(installation:Installation):void {
+  private captureQueues(installation:Installation):boolean {
+    let anyChanged=false
     const tasks=this.db.prepare('SELECT * FROM codex_tasks WHERE installation_id=? AND deleted=0').all(installation.id) as unknown as Task[]
     const excluded=new Set(this.exclusions(installation.id).map(p=>p.project_key))
     // Read only sessions already bound through the trusted Hook. Never claim unrelated queues.
@@ -338,10 +339,12 @@ export class TeamCodexMachineJournal {
       // Unrelated desktop settings may change this file's mtime; only queue changes advance revision.
       const changed=!previous || JSON.stringify([observation.availability,observation.reason,observation.items])
         !==JSON.stringify([previous.availability,previous.reason,previous.items])
+      anyChanged ||= changed
       this.db.prepare(`INSERT INTO codex_queue_snapshots VALUES(?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET
         version=excluded.version,payload=excluded.payload,checked_at=excluded.checked_at,changed_at=excluded.changed_at`)
         .run(task.id,(previous?.version??0)+(changed?1:0),payload,now,changed?now:previous!.changedAt)
     }
+    return anyChanged
   }
 
   private adoptLegacy(installation:Installation):void {

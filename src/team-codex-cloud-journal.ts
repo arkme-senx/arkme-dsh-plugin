@@ -105,6 +105,9 @@ export class TeamCodexCloudJournal {
     try {
       this.db.prepare('DELETE FROM codex_cloud_events WHERE task=?').run(mapping.taskId)
       this.db.prepare('DELETE FROM codex_cloud_turns WHERE task=?').run(mapping.taskId)
+      if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_cloud_queue_outbox'").get()) {
+        this.db.prepare('DELETE FROM codex_cloud_queue_outbox WHERE task=?').run(mapping.taskId)
+      }
       this.db.prepare('DELETE FROM codex_cloud_tasks WHERE id=?').run(mapping.taskId)
       this.db.exec('COMMIT')
     } catch (error) { this.db.exec('ROLLBACK'); throw error }

@@ -2,6 +2,8 @@
 
 > 2026-09-30 后续对接说明：同事已返回 `team-codex-integration-guide.md`，实现以其 `/api/v1/team-codex/sync`、`tasks/list`、`events/list` 及登录 JWT 合同为准，参见 [当前实现](team-codex-local-activity.md)。本文件保留原始需求，其中队列 work_state、Token 等尚未进入已返回协议，不能当成现有字段发送。
 
+> 2026-10-23 队列续接：使用独立 owner-only `queue_snapshot`，详见 [最新交接](Codex排队请求跨设备同步-后端交接-20261023.md)。以下历史 `work_state` 不作为当前实现字段；队列不向其他团队成员开放。
+
 日期：2026-09-30。状态：**按用户确认的精简方向整理，接口待后端实现与确认，尚未上线。**
 
 **本轮以这份文档为准。之前的完整云端方案仅保留作后续参考，不是本轮开发清单。**

@@ -5,6 +5,8 @@ import { ArkmePluginError } from './services/service.js'
 import { DEFAULT_CODEX_SOURCE_NAME, TeamCodexCloudJournal, validCodexSourceName } from './team-codex-cloud-journal.js'
 import { TeamCodexRemoteTaskReview } from './team-codex-remote-task-review.js'
 import { codexTurnTiming } from './team-codex-timing.js'
+import { TeamCodexQueueCloud } from './team-codex-queue-cloud.js'
+import { supportsCodexCloudQueue } from './team-codex-queue-wire.js'
 
 export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
@@ -24,6 +26,10 @@ const eligible = (tasks: readonly TeamCodexTask[]) => tasks.filter(t => t.status
 
 export class TeamCodexCloud {
   readonly journal: TeamCodexCloudJournal
+  private readonly queues: TeamCodexQueueCloud
+  private readonly queueCapabilities = new Map<number, {supported:boolean;until:number}>()
+  private readonly queueRetries = new Map<string, {attempts:number;at:number}>()
+  private readonly lastReads = new Map<string, {tasks:TeamCodexTask[];hasMore:boolean}>()
   private readonly taskReview: TeamCodexRemoteTaskReview
   private controller = new AbortController()
   private readonly destinations = new Map<string, { id: string | null; until: number }>()
@@ -33,6 +39,7 @@ export class TeamCodexCloud {
   constructor(private readonly db: DatabaseSync, private readonly port: TeamCodexCloudPort, private readonly currentUser: () => Promise<number | undefined>, private readonly now = Date.now,
     private readonly onConnectionEvidence: (owner:number) => void = () => undefined) {
     this.journal = new TeamCodexCloudJournal(db)
+    this.queues = new TeamCodexQueueCloud(db,this.journal)
     this.taskReview = new TeamCodexRemoteTaskReview(db,now)
     db.exec(`CREATE TABLE IF NOT EXISTS codex_cloud_consent (owner INTEGER NOT NULL, local_team TEXT NOT NULL,
       team TEXT NOT NULL, enabled INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(owner,local_team))`)
@@ -77,6 +84,9 @@ export class TeamCodexCloud {
     this.controller = new AbortController()
     this.destinations.clear()
     this.failures.clear()
+    this.queueCapabilities.clear()
+    this.queueRetries.clear()
+    this.lastReads.clear()
   }
   private async guard(owner: number, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
@@ -132,6 +142,7 @@ export class TeamCodexCloud {
         ? !Number.isSafeInteger(data.first_connected_at) || Number(data.first_connected_at) <= 0
         : data.first_connected_at !== null)) return invalid()
     if (data.has_connected_codex) this.onConnectionEvidence(owner)
+    this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
     return data.has_connected_codex
   }
   private async destination(owner: number, localTeam: string, signal: AbortSignal): Promise<string | null> {
@@ -181,7 +192,7 @@ export class TeamCodexCloud {
       // No-progress/partial failure never spins or suppresses the normal retry backoff.
       for(let round=0;round<4;round++) {
         const batch=this.journal.batch(owner,localTeam,eligibleIds)
-        if(!batch)return
+        if(!batch)break
         const before=this.journal.counts(owner,localTeam,eligibleIds).pending
         const result=await this.post(owner,'/api/v1/team-codex/sync',batch,signal)
         signal.throwIfAborted()
@@ -189,14 +200,40 @@ export class TeamCodexCloud {
         this.failures.delete(`${owner}:${localTeam}`)
         if(this.journal.counts(owner,localTeam,eligibleIds).pending>=before)break
       }
+      await this.syncQueues(owner,localTeam,active,signal)
     } catch (error) { if (!signal.aborted) this.failure(owner, localTeam, error) }
     finally { this.syncing = false }
+  }
+
+  private async syncQueues(owner:number,team:string,tasks:readonly TeamCodexTask[],signal:AbortSignal):Promise<void> {
+    if(!tasks.some(task=>task.queue))return
+    this.queues.reconcile(owner,team,tasks)
+    const key=JSON.stringify([owner,team]),retry=this.queueRetries.get(key)
+    if(retry && retry.at>this.now())return
+    try {
+      if((this.queueCapabilities.get(owner)?.until??0)<=this.now())await this.connectionStatus(owner)
+      if(!this.queueCapabilities.get(owner)?.supported)return
+      const ids=new Set(tasks.map(task=>task.id))
+      for(let round=0;round<4;round++) {
+        const batch=this.queues.batch(owner,team,ids)
+        if(!batch){this.queueRetries.delete(key);return}
+        const result=await this.post(owner,'/api/v1/team-codex/sync',batch,signal)
+        if(!this.queues.acknowledge(batch,result))throw new Error('QUEUE_ACK_PENDING')
+      }
+      this.queueRetries.delete(key)
+    } catch {
+      signal.throwIfAborted()
+      // Queue protocol failures must not block ordinary prompt/answer synchronization.
+      const attempts=(retry?.attempts??0)+1
+      this.queueRetries.set(key,{attempts,at:this.now()+Math.min(60_000,5000*2**Math.min(attempts-1,4))})
+    }
   }
 
   async state(owner: number, localTeam: string, local: TeamCodexState, page = 1, memberRef = '', sourceId = '', projectKey = ''): Promise<TeamCodexState> {
     if (!Number.isSafeInteger(page) || page < 1 || page > 10000 || (memberRef && !decimal(memberRef)) || (sourceId && !validId(sourceId)) || (projectKey && (!sourceId || Buffer.byteLength(projectKey) > 1024))) throw new ArkmePluginError('team-codex-invalid', '云端筛选参数无效', false, 400)
     const signal = this.controller.signal
     const active = new Set(eligible(local.tasks).map(t => t.id))
+    const readKey=JSON.stringify([owner,localTeam,page,memberRef,sourceId,projectKey])
     const counts = this.journal.counts(owner, localTeam, active)
     const ambiguous = local.tasks.filter(t=>t.cloudBlocked && t.status==='active' && !t.excluded && !t.projectExcluded).length
     counts.blocked += ambiguous
@@ -205,6 +242,7 @@ export class TeamCodexCloud {
       if (!team) return { ...local, cloud: { status: 'unsupported', ...counts, page, message: '当前团队仅保留本机记录；本次云端试用仅面向即我团队。' } }
       const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { view: 'team', team_ref: team, page, limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
       if (!Array.isArray(data.items) || data.items.length > 50 || data.page !== page || typeof data.has_more !== 'boolean') return invalid()
+      if(Object.hasOwn(data,'capabilities'))this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
       const own = new Map<string, TeamCodexTask>()
       for (const task of local.tasks) {
         const mapping = this.journal.mapping(owner, localTeam, task.id)
@@ -228,10 +266,14 @@ export class TeamCodexCloud {
           userRef: `cloud:${user}`, displayName: str(row.display_name) || '团队成员', role: 'member', joinedAtMillis: 0,
           identityState: row.identity_state === 'ready' ? 'ready' : row.identity_state === 'incomplete' ? 'incomplete' : 'unavailable',
         }
+        // Team access to conversation text does not grant access to another member's queued inputs.
+        const queue=user===String(owner)?this.queues.read(owner,localTeam,sourceId,id,row.queue_snapshot,this.now()):undefined
+        const queueCloud:TeamCodexTask['queueCloud']=user!==String(owner)?'private':queue?'ready'
+          :this.queueCapabilities.get(owner)?.supported?'unavailable':'unsupported'
         remote.set(id, { id, title: str(row.task_title) || 'Codex', status: 'active',
           state: row.state === 'in_progress' ? 'working' : row.state === 'interrupted' ? 'interrupted' : row.state === 'turn_ended' ? 'finished' : 'waiting',
           updatedAt: Number(row.latest_at), eventCount: Number(row.event_count), member, projectKey: str(row.project_key), projectName: str(row.project_name), branch: str(row.branch),
-          cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true } })
+          cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true },queueCloud,...(queue?{queue}:{}) })
       }
       if ([...remote.values()].some(task => task.cloud?.ownerRef === String(owner))) this.onConnectionEvidence(owner)
       // Local pending/excluded records remain on page one, never overwrite another member/device.
@@ -247,6 +289,9 @@ export class TeamCodexCloud {
         if(result==='checking') reviewingTasks++
         return result==='visible'
       })
+      this.lastReads.delete(readKey)
+      this.lastReads.set(readKey,{tasks:visible.filter(task=>task.cloud?.remote),hasMore:data.has_more})
+      if(this.lastReads.size>100)this.lastReads.delete(this.lastReads.keys().next().value!)
       return { ...local, localOnly: false, tasks: visible.sort((a, b) => b.updatedAt - a.updatedAt),
         // Successful list reads must not be discarded because an earlier upload failed.
         cloud: { status:'ready', ...(failure ? {message:failure.state.message} : {}), ...counts, page, hasMore: data.has_more, reviewingTasks,
@@ -256,8 +301,15 @@ export class TeamCodexCloud {
     } catch (error) {
       signal.throwIfAborted()
       await this.guard(owner, signal)
-      return { ...local, tasks:page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : [],
-        cloud: { ...this.failure(owner, localTeam, error), ...counts, page, uploadEnabled:this.consent(owner,localTeam)?.enabled === 1,
+      const failure=this.failure(owner,localTeam,error)
+      const cached=failure.status==='offline'?this.lastReads.get(readKey):undefined
+      const retained=(cached?.tasks??[]).map(task=>({...task,
+        ...(task.queue?{queue:{...task.queue,availability:'stale' as const}}:{})}))
+      if(failure.status!=='offline')this.lastReads.clear()
+      const current=page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : []
+      const currentIds=new Set(current.map(task=>this.journal.mapping(owner,localTeam,task.id)?.taskId??task.id))
+      return { ...local, tasks:[...current,...retained.filter(task=>!currentIds.has(task.id))],
+        cloud: { ...failure, ...counts, page, ...(cached?{hasMore:cached.hasMore}:{}), uploadEnabled:this.consent(owner,localTeam)?.enabled === 1,
           sourceName:this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME } }
     }
   }
