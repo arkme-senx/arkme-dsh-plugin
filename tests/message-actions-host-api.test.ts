@@ -3,6 +3,25 @@ import { createServer } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
+import type { TeamCodexService } from '../src/team-codex-service.js'
+
+it('revalidates Codex task access before forwarding and never delivers after revocation', async () => {
+  const forwardCodexChat = vi.fn(async () => ({ itemUid: 'sent' }))
+  const service = { forwardCodexChat } as unknown as ArkmeService
+  const events = vi.fn(async () => ({ items: [] }))
+  const codex = { events } as unknown as TeamCodexService
+  const signal = new AbortController().signal
+  const params = { teamRef: 'team', id: 'task', sourceId: 'remote', snapshot: { taskTitle: 'task' }, expectedUserId: 42,
+    targetSourceRef: 'target', requestId: 'request', recordUid: 'record', sendAtMillis: 100 }
+  const send = () => dispatchArkmeHostOperation(service, 'codex.forward', params,
+    undefined, undefined, undefined, undefined, signal, undefined, undefined, undefined, undefined, undefined, undefined, codex)
+  await send()
+  expect(events).toHaveBeenCalledWith('team', 'task', undefined, 'remote')
+  expect(forwardCodexChat).toHaveBeenCalledWith(params.snapshot, 42, expect.objectContaining({ targetSourceRef: 'target', signal }))
+  events.mockRejectedValueOnce(new Error('任务访问权已撤销'))
+  await expect(send()).rejects.toThrow('任务访问权已撤销')
+  expect(forwardCodexChat).toHaveBeenCalledTimes(1)
+})
 
 describe('owner-neutral message action Host operations', () => {
   it('passes only opaque conversation and message references to the owner service', async () => {

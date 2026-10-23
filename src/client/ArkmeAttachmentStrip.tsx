@@ -4,7 +4,7 @@ import { ArkmeAttachmentDraftTile } from './ArkmeRichContent.js'
 import { arkmeLocalFileUrl } from './ArkmeFileViewer.js'
 import { arkmeAttachmentId, arkmeAttachmentMetadata, type ArkmeComposerAttachment } from './composer-draft-store.js'
 
-/** Local preparation stays in the existing add button, not in a separate workflow. */
+/** Legacy preparation indicator for the record re-edit composer. */
 export function ArkmeFilePreparingIndicator() {
   return <svg width="18" height="18" viewBox="0 0 20 20" role="progressbar" aria-label={tr("正在准备附件")}>
     <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="30 14">
@@ -59,6 +59,7 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
           if (to >= 0 && to < attachments.length) onMove(index, to)
         }}>
         <ArkmeAttachmentDraftTile asset={metadata} disabled={disabled} keyboardFocused={focusedId === id}
+          {...(attachment.preparation === undefined ? {} : { preparation: attachment.preparation })}
           {...(previewUrl === undefined ? {} : { previewUrl })}
           {...((canPreview?.(attachment) ?? attachment.localFile !== undefined) ? { onOpen: () => onPreview(attachment) } : {})}
           onRemove={() => { if (!disabled) onRemove(attachment) }} />

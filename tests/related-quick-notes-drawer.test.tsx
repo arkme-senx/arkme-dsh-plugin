@@ -1,3 +1,5 @@
+import { socialAccessStore } from '../src/client/social-access-store.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { emojiSample } from './fixtures/emoji.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -431,6 +433,8 @@ describe('normal timeline related quick note drawer', () => {
   })
 
   beforeEach(() => {
+    arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:11})
+    socialAccessStore.confirm('test:11', true)
     mocks.callArkme.mockReset()
     mocks.fileCapabilities.mockClear()
     mocks.stageFile.mockClear()
@@ -453,7 +457,7 @@ describe('normal timeline related quick note drawer', () => {
     })
   })
 
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+  afterEach(() => { socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
   it('refusal disables detail extension text, attachments and send without losing the draft', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
@@ -1632,6 +1636,7 @@ describe('normal timeline related quick note drawer', () => {
       throw new Error(`unexpected operation: ${operation}`)
     })
     const uuids = [
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', // Immediate attachment placeholder.
       '22222222-2222-4222-8222-222222222222',
       '33333333-3333-4333-8333-333333333333',
     ]

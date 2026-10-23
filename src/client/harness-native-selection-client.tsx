@@ -16,7 +16,7 @@ import { watchNativeSelectionGeometry, nativeSelectionActionOverlayCss, observeN
 import type {} from './harness-slots-contract.js'
 
 const SLOT = 'conversation.session.header.actions'
-const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], cramped: false, viewport: null }
+const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], viewport: null }
 type HeaderProps = {
   sessionId: string
   useChat?: SnapshotSelectorHook<unknown>
@@ -225,7 +225,6 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
       <style>{nativeSelectionActionOverlayCss}</style>
       <div data-arkme-native-selection="summary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, maxWidth: '100%', color: arkmeTheme.text, fontSize: 12 }}>
         <span role="status" aria-live="polite" style={{ whiteSpace: 'nowrap' }}>{tr("已选")} {state.keys.size} {tr("条")}</span>
-        {layout.cramped && <span role="status" style={{ color: arkmeTheme.secondary }}>{tr("请扩大窗口以勾选消息")}</span>}
       </div>
       <div data-arkme-native-selection="action-buttons" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '100%', gap: messageSelectionStyles.selectBar.gap }}>
       <NativeCopyTextAction key={state.keys.size === 1 ? [...state.keys][0] : 'no-single-selection'} chat={chat} selectedKey={state.keys.size === 1 ? [...state.keys][0] : undefined} doc={doc} />
@@ -240,8 +239,10 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
     {state.active && layout.viewport && createPortal(<div ref={layer} data-arkme-native-selection="controls" onKeyDown={escape}
       style={{ position: 'relative', width: 0, height: 0, overflowAnchor: 'none', pointerEvents: 'none', zIndex: 20 }}>
       <style>{'[data-arkme-native-selection] button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }'}</style>
-      {!layout.cramped && layout.seats.map(seat => <div key={seat.key} data-arkme-native-selection-key={seat.key}
-        style={{ position: 'absolute', left: `calc(${seat.left}px - var(--arkme-selection-origin-x, 0px))`, top: `calc(${seat.top}px - var(--arkme-selection-origin-y, 0px))`, pointerEvents: 'auto' }}>
+      {layout.seats.map(seat => <div key={seat.key} data-arkme-native-selection-key={seat.key} data-arkme-selection-placement={seat.overlay ? 'inside' : 'gutter'}
+        style={{ position: 'absolute', left: `calc(${seat.left}px - var(--arkme-selection-origin-x, 0px))`, top: `calc(${seat.top}px - var(--arkme-selection-origin-y, 0px))`, pointerEvents: 'auto',
+          ...(seat.overlay ? { borderRadius: 999, background: arkmeTheme.menu, boxShadow: `0 0 0 2px ${arkmeTheme.menu}` } : {}),
+        }}>
         <ArkmeMessageSelectionControl anchor="card-center" checked={state.keys.has(seat.key)} disabled={false} onToggle={() => {
           try {
             if (watcher.current?.valid(seat)) dispatch({ type: 'toggle', key: seat.key })

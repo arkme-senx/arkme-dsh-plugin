@@ -455,12 +455,30 @@ describe('Team App owner adapter', () => {
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(members.items[0]?.canRemove).toBe(true)
+    expect(members.items[0]?.codexSync).toEqual({state:'unavailable',reason:'unsupported'})
     const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(refreshed.items[0]?.userRef).not.toBe(members.items[0]?.userRef)
     expect(refreshed.items[0]?.key).toBe(members.items[0]?.key)
     expect(JSON.stringify(members)).not.toContain('user_id')
     await f.service.execute('team.app.member.remove', { userRef: members.items[0]!.userRef })
     expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })
+  })
+  it('passes only validated member sync status without additional member-by-member calls', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [
+      { user_id: 11, display_name: '甲', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:false,can_view_conversations:true,private_path:'/private'} },
+      { user_id: 12, display_name: '乙', role: 3, codex_sync: {version:1,state:'not_connected',has_conversations:false,can_view_conversations:false} },
+      { user_id: 13, display_name: '丙', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:0,can_view_conversations:'true'} },
+    ], total_count: 3 } : { teams: [{ ...channel, role: 1 }] })
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const result = await f.service.execute('team.app.members', {teamRef:c.teamRef,avatarMode:'deferred'}) as TeamMembers
+    expect(result.items.map(item => item.codexSync)).toEqual([
+      {state:'enabled',hasConversations:false,canViewConversations:true},
+      {state:'not_connected',hasConversations:false,canViewConversations:false},
+      {state:'unavailable',reason:'invalid'},
+    ])
+    expect(JSON.stringify(result)).not.toContain('/private')
+    expect(f.requests.filter(r => r.path.includes('members/list'))).toHaveLength(1)
+    expect(f.requests.some(r => r.path.includes('connection/status'))).toBe(false)
   })
   it('preserves optional profile avatars and unavailable identity without changing member authority', async () => {
     const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {

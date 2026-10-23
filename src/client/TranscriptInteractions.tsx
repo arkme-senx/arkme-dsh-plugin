@@ -184,7 +184,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
   const selectedRows = rows.filter(row => selected?.has(row.id)).sort((a,b) => a.at - b.at)
   const toggle = (id: string) => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const host = enabled && typeof document !== 'undefined' && document.body && typeof window !== 'undefined' ? <>
-    <ArkmeMessageTextSelectionToolbar selectionDomain="transcript" replySourceRef={sourceRef} markStorage="local"
+    <ArkmeMessageTextSelectionToolbar selectionDomain="transcript" replySourceRef={sourceRef} markStorage="local" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canReplace={() => !!account}
       prepareReplace={async (t, quote, signal) => {
         const row = latest.current.rows.find(row => row.id === t.item.itemUid)

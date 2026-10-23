@@ -1,4 +1,6 @@
 import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
+import { selectedTextNotePresentation } from '../selected-text-note.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
@@ -1011,6 +1013,10 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     setRetryVersions(new Map())
   }, [mediaRevision])
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
+  const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
+  if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={selectionRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
+    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} />
+  </div>
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
@@ -1178,6 +1184,7 @@ export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false
   showOriginal?: boolean
 }) {
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} />
+  if (item.localSelfQuote) return <ArkmeMessageContent item={item} {...(sourceRef ? { sourceRef } : {})} presentation="detail" />
   const text = showOriginal && item.aiPolish?.originalText !== undefined
     ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined
@@ -1190,13 +1197,14 @@ export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false
   return <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' }}><ArkmeRichText text={text || item.title || '非文本内容'} highlightMentions linkLabelMode="raw" /></p>
 }
 
-export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, disabled = false, keyboardFocused = false }: {
+export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, disabled = false, keyboardFocused = false, preparation }: {
   asset: Pick<ArkmeUploadedAsset, 'fileName' | 'fileKind'> & Partial<Pick<ArkmeUploadedAsset, 'mimeType'>>
   previewUrl?: string
   onRemove: () => void
   onOpen?: () => void
   disabled?: boolean
   keyboardFocused?: boolean
+  preparation?: { state: 'queued' | 'preparing' | 'failed'; error?: string; retry(): void }
 }) {
   useArkmeLocale()
   const hintAnchor = useRef<HTMLSpanElement>(null)
@@ -1230,6 +1238,11 @@ export function ArkmeAttachmentDraftTile({ asset, previewUrl, onRemove, onOpen, 
       : imagePreviewFailed
         ? <span role="status" aria-label={`${asset.fileName} 图片预览失败`} style={{ maxWidth: 42, color: 'var(--dsw-alias-label-tertiary, #7f8792)', fontSize: 9, lineHeight: '12px', textAlign: 'center' }}>{tr("图片预览失败")}</span>
         : <ArkmeFileIcon fileName={asset.fileName} {...(asset.mimeType === undefined ? {} : { mimeType: asset.mimeType })} size={32} />}</button>
+    {preparation && (preparation.state === 'failed'
+      ? <button type="button" disabled={disabled} aria-label={`${asset.fileName}：${tr('准备失败，点击重试')}`} title={preparation.error}
+          onClick={preparation.retry} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, border: 0, padding: '3px 0', background: arkmeTheme.menu, color: arkmeTheme.danger, fontSize: 10, cursor: 'pointer' }}>{tr('重试')}</button>
+      : <span role="status" aria-label={`${asset.fileName}：${tr(preparation.state === 'queued' ? '等待中' : '准备中')}`}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '3px 0', background: arkmeTheme.menu, color: arkmeTheme.text, fontSize: 10, textAlign: 'center', pointerEvents: 'none' }}>{tr(preparation.state === 'queued' ? '等待中' : '准备中…')}</span>)}
     <button
       type="button"
       aria-label={`移除${asset.fileName}`}

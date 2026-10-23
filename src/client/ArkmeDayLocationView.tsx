@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeSearchRecordItem } from '../types.js'
 import { worldLocationViewport, type LocationSource } from '../location-search.js'
 import { ArkmeLocationMapFrame } from './ArkmeLocationMapFrame.js'
@@ -16,8 +16,9 @@ function searchRecord(point: DayLocationPoint): ArkmeSearchRecordItem {
     title: record?.title ?? '', textContent: '', snippet: record?.preview ?? '',
     sourceTitle: record?.source?.displayName ?? record?.topicTitle ?? '', media: [], files: [] }
 }
-export function ArkmeDayLocationView({ account, browserAk, date, initialLocation, onOpenRecord }: {
+export function ArkmeDayLocationView({ account, browserAk, date, initialLocation, toolbar, onOpenRecord }: {
   account: string; browserAk: string; date: LocationDateFilter; initialLocation?: { latitude: number; longitude: number }
+  toolbar?: ReactNode
   onOpenRecord(record: ArkmeSearchRecordItem): void
 }) {
   const scope = `day:${date.bucketDate}:${date.timezone}`
@@ -59,7 +60,7 @@ export function ArkmeDayLocationView({ account, browserAk, date, initialLocation
     : state.loading && !state.data.points.length ? tr('正在读取当天位置…') : !state.data.complete && !state.loading ? <>{tr('当天位置尚未读取完整，请重试')} <button type="button" onClick={() => { void dayLocationCache.load(account, date, true) }}>{tr('重试')}</button></>
       : sources.length === 0 ? tr('请选择位置来源') : !markers.length ? tr('当天暂无位置记录') : tr('已加载 {count} 条位置记录', { count: state.data.points.length })}
     {state.loading && state.data.points.length > 0 && ` · ${tr('正在更新…')}`}</>
-  return <ArkmeLocationMapFrame account={account} browserAk={browserAk} scope={scope} markers={markers} initialViewport={initialViewport}
+  return <ArkmeLocationMapFrame toolbar={toolbar} account={account} browserAk={browserAk} scope={scope} markers={markers} initialViewport={initialViewport}
     fitWhileLoading sources={sources} availableSources={daySources} onSourcesChange={next => { setSources(next); setSelectedKey(undefined); scroll.current = 0 }}
     {...(selected ? { selectedKey: selected.marker.key, recordTitle: selected.marker.label, recordCount: selected.points.length } : {})}
     onViewport={value => { viewport.current = value; save() }} onSelect={marker => { scroll.current = 0; setRecordLimit(6); setSelectedKey(marker.key) }}

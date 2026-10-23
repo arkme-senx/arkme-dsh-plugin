@@ -2009,6 +2009,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
+  localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
@@ -4206,6 +4208,7 @@ export type ArkmePluginOperation =
   | 'team.codex.entry-availability'
   | 'team.codex.invite'
   | 'team.codex.events'
+  | 'team.codex.image'
   | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
@@ -4396,6 +4399,7 @@ export type ArkmePluginOperation =
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'
+  | 'self-note.quote.send'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
   | 'related-recordings.share'
@@ -4635,6 +4639,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.cancel'
   | 'app.migration.install' | 'app.migration.reveal'
   | 'app.migration.dismiss'
+  | 'codex.forward'
+  | 'codex.local-mark.capabilities'
+  | 'codex.local-mark.list'
+  | 'codex.local-mark.change'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
   | 'native-chat.annotations'

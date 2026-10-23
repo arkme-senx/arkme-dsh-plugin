@@ -11,6 +11,7 @@ import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue,
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
+import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
 import type { SourceService } from './source-service.js'
 
@@ -371,6 +372,7 @@ export class TeamAppService {
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
             identityState: v.identity_state === 'ready' ? 'ready' as const : v.identity_state === 'unavailable' ? 'unavailable' as const : 'incomplete' as const,
             role: role(v.role), joinedAtMillis: num(v.joined_at), canRemove: v.can_remove === true,
+            codexSync: readTeamMemberCodexSync(v.codex_sync),
           }))),
         } satisfies TeamMembers
       }

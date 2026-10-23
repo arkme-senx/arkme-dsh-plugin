@@ -3,11 +3,13 @@ import { useArkmeComposerInputTimePreference } from '../src/client/ArkmeComposer
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), stage: vi.fn(), policy: vi.fn() }))
+vi.mock('../src/client/social-action-guard.js', () => ({requirePhoneForSocialAction: async()=>{}, isSocialBindingRequired:()=>false}))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({fileCapabilities:mocks.policy,stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}`}) }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({fileCapabilities:mocks.policy,stageFile:mocks.stage,removeLocalFile:async()=>{},localFileUrl:(ref:string)=>`/local/${ref}`}) }))
 const conversation: TeamConversation = {ref:'conv',key:'key',channel:{teamRef:'team',name:'团队',jotmoId:'fixture',publicRef:'a'.repeat(32),link:'',enabled:true,revision:1,canManage:false},side:'external',lastSeq:0,latestTeamReplySeq:0,myReadSeq:0,unread:0,needsReply:false,blocked:false,revision:1,updatedAt:1}
 let host: HTMLDivElement, root: Root, finish: (value?: unknown) => void, fail: (e: Error) => void
 const local = {fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10}
@@ -21,10 +23,11 @@ async function paste(itemsOnly = false) {
     Object.defineProperty(event,'clipboardData',{value:{files:itemsOnly?[]:[file],items:itemsOnly?[{kind:'file',getAsFile:()=>file}]:[],getData:()=>''}})
     editor().dispatchEvent(event)
   })
-  await act(async () => editor().blur()) // browsers blur disabled contenteditable
+  // Preparation keeps the editable surface focused and usable.
 }
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:7777})
   vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} })
   localStorage.clear(); mocks.call.mockReset(); mocks.stage.mockReset()
   mocks.policy.mockReset().mockResolvedValue({maxAttachments:9,maxImageBytes:1024,maxFileBytes:2048})
@@ -37,8 +40,10 @@ beforeEach(async () => {
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
 it.each([false,true])('pasted image restores focus then plain Enter sends once (itemsOnly=%s)',async itemsOnly=>{
   await paste(itemsOnly)
-  expect(editor().getAttribute('contenteditable')).toBe('false')
-  expect(host.querySelector('button[aria-label="添加内容"] [role=progressbar]')).not.toBeNull()
+  expect(editor().getAttribute('contenteditable')).toBe('true')
+  expect(host.querySelector('button[aria-label="添加内容"] [role=progressbar]')).toBeNull()
+  expect(host.querySelector('[role=listitem]')).not.toBeNull()
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="添加内容"]')!.disabled).toBe(false)
   expect(host.textContent).not.toContain('正在准备附件')
   await act(async()=>finish(local))
   expect(document.activeElement).toBe(editor())
@@ -53,10 +58,20 @@ it.each([false,true])('pasted image restores focus then plain Enter sends once (
 it('restores focus on staging failure and keeps the next paste usable',async()=>{
   await paste();await act(async()=>fail(new Error('图片准备失败')))
   expect(document.activeElement).toBe(editor())
-  expect(host.textContent).toContain('图片准备失败')
-  await paste();await act(async()=>finish(local))
-  expect(host.textContent).not.toContain('图片准备失败')
+  expect(host.querySelector('[title="图片准备失败"]')).not.toBeNull()
+  await key({key:'Enter'}); expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false)
+  await act(async()=>host.querySelector<HTMLButtonElement>('[title="图片准备失败"]')!.click()); await act(async()=>finish(local))
+  expect(host.querySelector('[title="图片准备失败"]')).toBeNull()
   await key({key:'Enter'});expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.send.enqueue')).toHaveLength(1)
+})
+it('keeps a ready attachment when saving its removal fails',async()=>{
+  await paste(); await act(async()=>finish(local))
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(()=>{throw new Error('草稿保存失败')})
+  try {
+    await act(async()=>host.querySelector<HTMLButtonElement>('button[aria-label="移除image.png"]')!.click())
+    expect(host.querySelector('button[aria-label="移除image.png"]')).not.toBeNull()
+    expect(host.textContent).toContain('草稿保存失败')
+  } finally { write.mockRestore() }
 })
 it.each(['pointer','tab','unmount'])('does not steal focus after %s during preparation',async action=>{
   await paste()
@@ -75,13 +90,13 @@ it('file picker and drag/drop restore the editor for keyboard sending',async()=>
   const input=host.querySelector<HTMLInputElement>('input[type=file]')!
   Object.defineProperty(input,'files',{configurable:true,value:[file]})
   await act(async()=>input.dispatchEvent(new Event('change',{bubbles:true})))
-  await act(async()=>{editor().blur();finish(local)})
+  await act(async()=>{finish(local)})
   expect(document.activeElement).toBe(editor())
   await key({key:'Enter'});
   const drop=new Event('drop',{bubbles:true,cancelable:true})
   Object.defineProperty(drop,'dataTransfer',{value:{files:[file],types:['Files']}})
   await act(async()=>host.querySelector('[data-team-composer]')!.dispatchEvent(drop))
-  await act(async()=>{editor().blur();finish({...local,fileRef:'second-image'})})
+  await act(async()=>{finish({...local,fileRef:'second-image'})})
   expect(document.activeElement).toBe(editor())
   expect(mocks.stage).toHaveBeenCalledTimes(2)
 })
@@ -97,13 +112,14 @@ it('keeps valid files after a failed selection and applies the actual attachment
   Object.defineProperty(drop,'dataTransfer',{value:{files,types:['Files']}})
   await act(async()=>host.querySelector('[data-team-composer]')!.dispatchEvent(drop))
   expect(mocks.stage.mock.calls.map(([selected])=>selected.name)).toEqual(['bad.png','one.png','two.png'])
-  expect(host.textContent).toContain('bad.png：图片无法读取')
-  expect(host.textContent).toContain('最多添加 2 个附件：three.png')
+  expect(host.querySelector('[title="图片无法读取"]')).not.toBeNull()
+  expect(host.querySelector('[title="最多添加 2 个附件"]')).not.toBeNull()
+  await act(async()=>{for (const name of ['empty.png','large.png','bad.png','three.png']) host.querySelector<HTMLButtonElement>(`button[aria-label="移除${name}"]`)!.click()})
   expect(document.activeElement).toBe(editor())
   await key({key:'Enter'})
   expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].fileRefs).toEqual(['one.png','two.png'])
 })
-it('does not stage a duplicated drop while the first preparation is pending',async()=>{
+it('queues another selection while the first preparation is pending',async()=>{
   const drop=()=>{
     const event=new Event('drop',{bubbles:true,cancelable:true})
     Object.defineProperty(event,'dataTransfer',{value:{files:[file],types:['Files']}})
@@ -111,9 +127,12 @@ it('does not stage a duplicated drop while the first preparation is pending',asy
   }
   await act(async()=>{drop();drop()})
   expect(mocks.stage).toHaveBeenCalledTimes(1)
+  expect(host.querySelectorAll('[role=listitem]')).toHaveLength(2)
   await act(async()=>finish(local))
-  await key({key:'Enter'})
-  expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].fileRefs).toEqual(['local-image'])
+  expect(mocks.stage).toHaveBeenCalledTimes(2)
+  await act(async()=>finish({...local,fileRef:'local-image-2'}))
+  await act(async()=>editor().focus()); await key({key:'Enter'})
+  expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].fileRefs).toEqual(['local-image','local-image-2'])
 })
 it('uses the shared attachment preview and sends the retained files in the chosen order',async()=>{
   mocks.stage.mockImplementation(async (selected:File)=>({...local,fileRef:selected.name,fileName:selected.name}))

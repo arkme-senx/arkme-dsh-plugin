@@ -18,7 +18,7 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON() {} }
 }
 
-it('keeps 32px controls and a 10px gap without changing native layout', () => {
+it('keeps 32px controls in the gutter or inside narrow messages without changing native layout', () => {
   const viewport = document.createElement('div'); const flow = document.createElement('div'); const row = document.createElement('div')
   document.body.append(viewport); viewport.append(flow); flow.append(row)
   vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect(0, 60, 800, 500))
@@ -28,7 +28,11 @@ it('keeps 32px controls and a 10px gap without changing native layout', () => {
   expect(measureNativeSelection(viewport, flow, row)).toEqual({ left: 38, top: 100 })
   const before = row.outerHTML
   vi.mocked(flow.getBoundingClientRect).mockReturnValue(rect(32, 70, 720, 900))
-  expect(measureNativeSelection(viewport, flow, row)).toBeUndefined()
+  vi.mocked(row.getBoundingClientRect).mockReturnValue(rect(32, 100, 720, 90))
+  expect(measureNativeSelection(viewport, flow, row)).toEqual({ left: 0, top: 100, overlay: true })
+  vi.mocked(flow.getBoundingClientRect).mockReturnValue(rect(0, 70, 800, 900))
+  vi.mocked(row.getBoundingClientRect).mockReturnValue(rect(0, 100, 800, 90))
+  expect(measureNativeSelection(viewport, flow, row)).toEqual({ left: 0, top: 100, overlay: true })
   expect(row.outerHTML).toBe(before)
   vi.mocked(flow.getBoundingClientRect).mockReturnValue(rect(80, 70, 680, 900))
   vi.mocked(row.getBoundingClientRect).mockReturnValue(rect(80, 45, 680, 90))
@@ -49,6 +53,24 @@ it('keeps 32px controls and a 10px gap without changing native layout', () => {
   document.elementsFromPoint = () => [composer, viewport]
   expect(measureNativeSelection(viewport, flow, row)).toBeUndefined()
   document.elementsFromPoint = original
+})
+
+it('keeps the inset control within a narrow viewport and does not cover another message', () => {
+  const viewport = document.createElement('div'); const flow = document.createElement('div'); const row = document.createElement('div')
+  document.body.append(viewport); viewport.append(flow); flow.append(row)
+  vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect(300, 60, 200, 500))
+  vi.spyOn(flow, 'getBoundingClientRect').mockReturnValue(rect(316, 70, 168, 900))
+  vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(rect(470, 100, 30, 90))
+  Object.defineProperty(viewport, 'clientWidth', { value: 200 }); Object.defineProperty(viewport, 'clientHeight', { value: 500 })
+  expect(measureNativeSelection(viewport, flow, row)).toEqual({ left: 300, top: 100, overlay: true })
+  const other = document.createElement('div'); flow.append(other)
+  const original = document.elementsFromPoint
+  try {
+    document.elementsFromPoint = () => [other, flow, viewport]
+    expect(measureNativeSelection(viewport, flow, row)).toBeUndefined()
+    document.elementsFromPoint = x => x < 468 ? [other, viewport] : [row, flow, viewport]
+    expect(measureNativeSelection(viewport, flow, row)).toEqual({ left: 468, top: 100, overlay: true })
+  } finally { document.elementsFromPoint = original }
 })
 
 it('hides partial controls and rejects stale geometry', () => {
