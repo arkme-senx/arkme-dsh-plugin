@@ -27,7 +27,7 @@ export class NativeLocalMarks {
       if (typeof ref !== 'string' || Buffer.byteLength(ref, 'utf8') > 300_000) throw invalid()
       let target: unknown
       try { target = JSON.parse(ref) } catch { throw invalid() }
-      if (!Array.isArray(target) || target.length !== 3 || target[0] !== sourceRef || typeof target[1] !== 'string'
+      if (!Array.isArray(target) || (target.length !== 3 && target.length !== 4) || target[0] !== sourceRef || typeof target[1] !== 'string'
         || !target[1].trim() || target[1].length > 1024 || typeof target[2] !== 'string'
         || !target[2] || normalizeQuoteText(target[2]) !== target[2]) throw invalid()
       return { key: target[1], canonical: target[2], digest: createHash('sha256').update(quoteSourceContent({ title: '', textContent: target[2], textFormat: 'plain' })).digest('hex') }

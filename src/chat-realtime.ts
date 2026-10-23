@@ -775,7 +775,7 @@ export class ArkmeChatRealtimeRuntime {
         { conversationListPreferenceUpdated },
       )
     } else if (projectionInvalidation !== undefined) {
-      this.advanceRevision('projection-invalidation', { projectionInvalidation })
+      this.advanceRevision('projection-invalidation', { projectionInvalidation, connectionUserId, connectionSignal })
     } else if (timelineChanged !== undefined) {
       this.advanceRevision('chat-hint', {
         timelineChanged, connectionUserId, connectionSignal,

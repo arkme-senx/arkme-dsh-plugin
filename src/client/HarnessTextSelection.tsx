@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
-import { nativeTextMarkTransport } from './harness-text-marks.js'
+import { createNativeTextMarkTransport } from './harness-text-marks.js'
 import { insertNativeQuote, observeNativeTextTargets, nativeTextRows, type NativeTextInputActions } from './harness-text-selection.js'
 import { quoteDomProjection } from './message-quote-selection.js'
 import type { NativeChat } from './harness-native-selection.js'
@@ -32,7 +32,8 @@ function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   sessionId: string; chat: NativeChat; doc: Document; inputActions?: NativeTextInputActions | undefined; account: { id: number; scope: string }
 }) {
   const sourceRef = JSON.stringify(['dsh-native', account.id, sessionId])
-  const marks = useMessageUnderlines(`${account.scope}:${sessionId}`, sourceRef, account.id, nativeTextMarkTransport)
+  const transport = useMemo(() => createNativeTextMarkTransport(account.scope), [account.scope, sessionId])
+  const marks = useMessageUnderlines(`${account.scope}:${sessionId}`, sourceRef, account.id, transport)
   const [query, setQuery] = useState<string>()
   const getViewport = useCallback(() => {
     const flow = [...doc.querySelectorAll('[data-chat-flow]')].find(element => !element.parentElement?.closest('[data-chat-flow]'))
@@ -44,7 +45,7 @@ function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   return <>
     <style>{'[data-arkme-text-selection] { cursor: text; } [data-arkme-text-selection] a, [data-arkme-text-selection] button { cursor: pointer; }'}</style>
     <ArkmeMessageTextSelectionToolbar selectionDomain="native" replySourceRef={sourceRef} replyLabel="引用" getViewport={getViewport}
-      onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local"
+      onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage={marks.storage}
       onReply={inputActions ? (target, quote) => {
         const editor = doc.querySelector<HTMLElement>('[contenteditable="true"][role="textbox"]')
         if (!editor || editor.getAttribute('aria-disabled') === 'true') throw new Error('当前会话输入框不可用，请连接源电脑后引用')

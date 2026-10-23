@@ -1,3 +1,4 @@
+import { startMessageMarkRefresh } from './message-mark-refresh.js'
 import { useEffect, useId, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { openMarkedMessageSelection, registeredMessageTargets, messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
@@ -53,6 +54,7 @@ export function useMessageUnderlines(scope: string, sourceRef: string | undefine
   if (session && sourceRef) session.sourceRef = sourceRef
   useEffect(() => { if (session) void session.prepare(); return () => session?.dispose() }, [session])
   return {
+    storage: session?.capability?.storage ?? 'local',
     mark: session ? async (target: MessageSelectionTarget, anchor: ArkmeMessageQuote) => {
       if (!session.capability?.supported) {
         await session.prepare()
@@ -89,6 +91,23 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
   const forceRead = useRef<() => void>()
   const digestCache = useRef(new Map<string, Promise<string>>())
   const signature = useRef('')
+  const requestRead = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => {
+    if (!session.capability?.supported) return
+    const refresh = startMessageMarkRefresh({
+      read: async () => await session.read(registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element)).map(({ target }) => target)),
+      visible: () => !document.hidden,
+      subscribe: invalidate => session.subscribe(invalidate) ?? (() => undefined),
+      onError: error => session.report(error),
+    })
+    const sync = () => refresh.request(0)
+    requestRead.current = () => refresh.request()
+    window.addEventListener('focus', sync); document.addEventListener('visibilitychange', sync)
+    return () => {
+      requestRead.current = undefined; refresh.dispose()
+      window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync)
+    }
+  }, [session, session.capability?.supported])
   useEffect(() => {
     if (!session.capability?.supported) {
       highlightApi?.delete(highlightName)
@@ -103,7 +122,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
       const nextSignature = targets.map(({ target }) => messageSelectionReference(target)).join('|')
       if (force || nextSignature !== signature.current) {
         signature.current = nextSignature
-        void session.read(targets.map(({ target }) => target))
+        requestRead.current?.()
       }
       const painted: MarkPosition[] = []
       const ranges: Range[] = []
@@ -153,7 +172,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         && geometry(previous) === geometry(merged) ? previous : merged)
     }
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { void scan() }) }
-    const sync = () => { void scan(true) }
+    const sync = () => requestRead.current?.()
     forceRead.current = sync
     const observer = new MutationObserver(records => {
       if (records.some(record => !(record.target instanceof Element ? record.target : record.target.parentElement)?.closest('[data-arkme-underline-layer]'))) schedule()
@@ -161,14 +180,10 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
     const resize = new ResizeObserver(schedule); resize.observe(document.body)
     document.addEventListener('scroll', schedule, true); window.addEventListener('resize', schedule)
-    window.addEventListener('focus', sync); document.addEventListener('visibilitychange', sync)
-    // Lightweight, visible-message reconciliation until a backend annotation event is available.
-    const interval = setInterval(sync, 15_000)
     void scan()
     return () => {
-      disposed = true; ++generation; cancelAnimationFrame(frame); clearInterval(interval); observer.disconnect(); resize.disconnect()
+      disposed = true; ++generation; cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect()
       document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule)
-      window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync)
     }
   }, [session, revision, highlightName, nativeHighlight])
   useEffect(() => () => {

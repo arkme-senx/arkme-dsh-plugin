@@ -4057,7 +4057,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4113,6 +4113,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'native-chat.annotations'
   | 'arko.models'
   | 'arko.ask'
   | 'arko.history'
@@ -4630,6 +4631,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.dismiss'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
+  | 'native-chat.annotations'
   | 'native-chat.local-mark.capabilities'
   | 'native-chat.local-mark.list'
   | 'native-chat.local-mark.change'

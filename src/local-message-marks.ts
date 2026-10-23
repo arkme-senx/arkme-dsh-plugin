@@ -2,10 +2,17 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { readUnderlineSnapshot, type MessageUnderlineChange, type MessageUnderlineSnapshot } from './message-annotations.js'
 
-/** Private client data. No cloud outbox: sharing requires a separate, explicit migration. */
+/** Legacy local marks stay private; cloud cache and durable intents use separate account scopes. */
 export class LocalMessageMarkStore {
   constructor(private readonly db: DatabaseSync, private readonly transaction: (work: () => void) => void) {
     db.exec(`
+      CREATE TABLE IF NOT EXISTS native_annotation_cache (
+        scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(scope,key)
+      );
+      CREATE TABLE IF NOT EXISTS native_annotation_outbox (
+        scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY(scope,key)
+      );
       CREATE TABLE IF NOT EXISTS local_message_marks (
         scope TEXT NOT NULL, target TEXT NOT NULL, payload TEXT NOT NULL,
         PRIMARY KEY(scope, target)
@@ -16,6 +23,39 @@ export class LocalMessageMarkStore {
       );
     `)
   }
+
+  readCloudCache<T>(scope: string, key: string): T | undefined {
+    const row = this.db.prepare('SELECT payload FROM native_annotation_cache WHERE scope=? AND key=?').get(scope, key) as { payload: string } | undefined
+    return row ? JSON.parse(row.payload) as T : undefined
+  }
+  writeCloudCache(scope: string, key: string, value: unknown) {
+    const payload = JSON.stringify(value)
+    if (Buffer.byteLength(payload) > 1024 * 1024) return
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO native_annotation_cache(scope,key,payload,updated_at) VALUES(?,?,?,?) ON CONFLICT(scope,key) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at').run(scope, key, payload, Date.now())
+      const rows = this.db.prepare('SELECT key,length(CAST(payload AS BLOB)) AS bytes FROM native_annotation_cache WHERE scope=? ORDER BY updated_at DESC,rowid DESC LIMIT 1001').all(scope) as { key: string; bytes: number }[]
+      let bytes = 0
+      for (let index = 0; index < rows.length; index++) {
+        bytes += rows[index]!.bytes
+        if (index >= 500 || bytes > 8 * 1024 * 1024) this.db.prepare('DELETE FROM native_annotation_cache WHERE scope=? AND key=?').run(scope, rows[index]!.key)
+      }
+    })
+  }
+  stageCloudOperation(scope: string, key: string, value: { path: string; body: Record<string, unknown> }) {
+    const payload = JSON.stringify(value)
+    this.transaction(() => {
+      const old = this.db.prepare('SELECT payload FROM native_annotation_outbox WHERE scope=? AND key=?').get(scope, key) as { payload: string } | undefined
+      if (old) { if (old.payload !== payload) throw new Error('同步操作已变化，请重新选择'); return }
+      const size = this.db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(length(CAST(payload AS BLOB))),0) AS bytes FROM native_annotation_outbox WHERE scope=?').get(scope) as { n: number; bytes: number }
+      if (size.n >= 200 || size.bytes + Buffer.byteLength(payload) > 2 * 1024 * 1024) throw new Error('待同步标记已达上限，请联网同步后重试')
+      this.db.prepare('INSERT INTO native_annotation_outbox(scope,key,payload,created_at) VALUES(?,?,?,?)').run(scope, key, payload, Date.now())
+    })
+  }
+  cloudOperations(scope: string) {
+    const rows = this.db.prepare('SELECT key,payload,created_at FROM native_annotation_outbox WHERE scope=? ORDER BY created_at,rowid LIMIT 200').all(scope) as { key: string; payload: string; created_at: number }[]
+    return rows.map(row => ({ key: row.key, value: JSON.parse(row.payload) as { path: string; body: Record<string, unknown> }, createdAt: row.created_at }))
+  }
+  completeCloudOperation(scope: string, key: string) { this.db.prepare('DELETE FROM native_annotation_outbox WHERE scope=? AND key=?').run(scope, key) }
 
   read(scope: string, target: string, viewerId: number, digest: string): MessageUnderlineSnapshot {
     const row = this.db.prepare('SELECT payload FROM local_message_marks WHERE scope=? AND target=?').get(scope, target) as { payload: string } | undefined

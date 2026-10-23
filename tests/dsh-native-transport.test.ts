@@ -126,3 +126,35 @@ it('validates history resume cursors without accepting them on writes or unrelat
   for (const invalid of [-2, 0.5, '10', Number.MAX_SAFE_INTEGER + 1]) expect(() => parse({ ...body, afterSeq: invalid })).toThrow()
   expect(() => parse({ ...body, mode: 'call', endpoint: 'session/prompt' })).toThrow()
 })
+it('reads one annotation event through the bounded public session page API', async () => {
+ const event={seq:7,time:1,type:'user/message',surfaceOp:'append',data:{content:[]}}
+ const f=fixture([],{ok:true,value:{records:[{type:'event',event}]}})
+ expect(await f.relay.annotationEvent('mine',7,f.scope.signal)).toEqual(event)
+ const request=f.fetch.mock.calls[0]![0]
+ expect(await request.json()).toMatchObject({method:'session/page',payload:{args:{request:{address:{kind:'session',sessionId:'mine'},throughSeq:7,beforeSeq:8,maxMessages:1}}}})
+})
+
+it('keeps native turn windows valid for bounded follow and older-page reads', async () => {
+  const snapshot = { type: 'snapshot', cursor: 0, records: [], hasMore: false }
+  for (const minimum of [50, 3]) {
+    const request = { address: { kind: 'session', sessionId: 'mine' }, assistantStream: true, maxMessages: 500, turnWindow: { minMessages: minimum, minTurns: 2 } }
+    const stream = fixture([snapshot])
+    const original = stream.open.getMockImplementation()!
+    stream.open.mockImplementation(async (endpoint, payload, ...args) => {
+      const native = payload.args.request
+      if (native.turnWindow.minMessages > native.maxMessages) throw new Error('turnWindow.minMessages exceeds maxMessages')
+      return await original(endpoint, payload, ...args)
+    })
+    await expect(stream.relay.request({ mode: 'pull', streamRef: `bounded-${minimum}`, endpoint: 'session/follow', payload: { args: { request } } }, stream.scope)).resolves.toEqual({ items: [snapshot] })
+    const page = fixture([], { ok: true, value: snapshot })
+    page.fetch.mockImplementation(async (input, peer) => {
+      expect(peer).toBe(page.peer)
+      const native = (await input.json()).payload.args.request
+      if (native.turnWindow.minMessages > native.maxMessages) throw new Error('turnWindow.minMessages exceeds maxMessages')
+      expect(native.turnWindow).toEqual({ minMessages: Math.min(minimum, 10), minTurns: 2 })
+      return Response.json({ result: { ok: true, value: snapshot } })
+    })
+    await expect(page.relay.request({ mode: 'call', endpoint: 'session/page', payload: { args: { request } } }, page.scope)).resolves.toMatchObject({ ok: true })
+    expect(request.turnWindow.minMessages).toBe(minimum)
+  }
+})
