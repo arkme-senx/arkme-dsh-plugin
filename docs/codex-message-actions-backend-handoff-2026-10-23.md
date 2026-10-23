@@ -2,6 +2,8 @@
 
 日期：2026-10-23。范围：Arkme 插件内已同步的 Codex 任务对话，不是 DSH 原生会话。
 
+更新说明：本文的复制链接、Codex 私人标记和结构化来源仍需后端。发给自己后续已升级为共享发送弹窗及本机持久化引用视觉；云端结构协议以《选中文字发给自己-跨来源引用云端交接-20261023.md》为准，避免另建重复接口。
+
 ## 当前实现
 
 - 消息右键使用统一菜单，支持复制、多选。多选计数和复制文本、复制链接、转发、退出多选全部位于底部；最多 100 条，保持消息顺序。轮询更新不清空未变化的选项，正文变化后取消对应选择，切换账号或任务关闭选区和弹窗。
@@ -59,7 +61,7 @@
 4. 标记两设备同步、取消标记、离线重连、正文变化、账号切换和旧本机迁移无串号、无复活。
 5. 转发和发给自己的发送幂等：网络结果不明后重试不重复创建；部分目标失败只重试失败目标。
 
-代码入口：`CodexMessageInteractions.tsx`、`CodexQuoteToSelf.tsx`、`codex-message-actions.ts`、`message-action-service.ts`、`message-action-infrastructure.ts`、`native-local-marks.ts`。
+代码入口：`CodexMessageInteractions.tsx`、`SelectedTextSelfNote.tsx`、`codex-message-actions.ts`、`message-action-service.ts`、`message-action-infrastructure.ts`、`native-local-marks.ts`。
 
 本次验证边界：交互在 3102 实际页面核验；发送、重试、存储隔离及请求结构通过自动化测试核验。未向真实账号提交测试快记、未向联系人发送测试转发，未发布到 dev/master。
 
