@@ -1,5 +1,6 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '暂缺后端支持，免打扰尚未生效': 'Backend support is not available yet. Notifications have not been muted.',
   '免打扰状态暂未更新，请重新打开菜单重试': 'Mute status could not be updated. Reopen this menu to retry.',
   '免打扰状态读取失败，点击重试': 'Could not load mute status. Click to retry.',
   '免打扰未确认保存，请重试': 'Mute setting could not be confirmed. Please retry.',

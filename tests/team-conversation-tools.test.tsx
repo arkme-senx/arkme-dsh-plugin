@@ -12,7 +12,7 @@ vi.mock('../src/client/outgoing-call-ui-controller.js',()=>({outgoingCallUi:{req
 vi.mock('../src/client/conversation-export.js',()=>({downloadArkmeConversationMarkdown:download}))
 vi.mock('../src/client/ArkmeDetailShell.js',()=>({ArkmeDetailShell:({children,onClose}:any)=><section data-test-panel><button onClick={onClose}>关闭面板</button>{children}</section>}))
 vi.mock('../src/client/ArkmeCalendarSurface.js',()=>({ArkmeSelfCalendarPopover:({open,index,onSelectIndexedDay}:any)=>open?<section data-test-calendar>{index.notice}{index.value.days.map((d:any)=><button key={d.bucketDate} onClick={()=>onSelectIndexedDay(d.bucketDate)}>{d.bucketDate}</button>)}</section>:null}))
-vi.mock('../src/client/PrivateChatActions.js',()=>({conversationExportActionItem:(a:any)=>({id:'export',label:'导出',invoke:a.invoke}),ConversationActionsMenu:({trigger,items}:any)=><><button aria-label="更多团队对话操作" onClick={()=>trigger.onOpenChange(!trigger.open)}>更多</button>{trigger.open&&items.map((a:any)=><button key={a.id} onClick={a.invoke}>{a.label}</button>)}</>}))
+vi.mock('../src/client/PrivateChatActions.js',()=>({conversationExportActionItem:(a:any)=>({id:'export',label:'导出',invoke:a.invoke}),ConversationActionsMenu:({trigger,items}:any)=><><button aria-label="更多团队对话操作" onClick={()=>trigger.onOpenChange(!trigger.open)}>更多</button>{trigger.open&&items.map((a:any)=><div key={a.id}><button onClick={()=>{if(!a.keepOpenOnSelect)trigger.onOpenChange(false);a.invoke()}}>{a.label}</button>{a.error&&<span role="status">{a.error}</span>}</div>)}</>}))
 const conversation:TeamConversation={ref:'team-ref',key:'conv',side:'team',visitor:{nickname:'访客'},channel:{teamRef:'team',name:'即我',jotmoId:'arkme',publicRef:'public',link:'',enabled:true,revision:1,canManage:false},lastSeq:20,latestTeamReplySeq:0,myReadSeq:20,unread:0,needsReply:false,blocked:false,revision:1,updatedAt:1}
 const message=(seq:number):TeamMessage=>({key:`m${seq}`,ref:`r${seq}`,seq,revision:1,version:1,own:false,side:'external',sender:{nickname:'访客',personKey:'v'},state:'published',createdAt:new Date(2026,9,19,10).getTime(),canEdit:false,canDelete:false,contentStatus:'available',media:[],content:{template_kind:1,text_content:`关键词 ${seq}`}})
 const page=(messages:TeamMessage[],hasMore=false,beforeSeq=0):TeamTimeline=>({conversation,messages,hasMore,beforeSeq})
@@ -71,4 +71,13 @@ it('keeps export in the header menu without duplicating avatar private chat or d
   expect(byText('导出')).toBeDefined()
   expect(byText('发起私聊')).toBeUndefined();expect(byText('置顶')).toBeUndefined();expect(byText('取消置顶')).toBeUndefined()
   expect(call).not.toHaveBeenCalled()
+})
+it('keeps the team mute entry actionable and explains missing backend support without saving a fake setting',async()=>{
+  await act(async()=>mount());await act(async()=>byLabel('更多团队对话操作').click())
+  expect(byText('消息免打扰').disabled).toBe(false)
+  await act(async()=>byText('消息免打扰').click())
+  expect(host.querySelector('[role="status"]')?.textContent).toBe('暂缺后端支持，免打扰尚未生效')
+  expect(byText('导出')).toBeDefined();expect(call).not.toHaveBeenCalled();expect(localStorage.length).toBe(0)
+  await act(async()=>byLabel('更多团队对话操作').click());await act(async()=>byLabel('更多团队对话操作').click())
+  expect(host.querySelector('[role="status"]')).toBeNull();expect(byText('消息免打扰')).toBeDefined()
 })
