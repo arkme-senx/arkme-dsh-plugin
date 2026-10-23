@@ -448,12 +448,13 @@ describe('Arkme search surface', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
+    expect(renderer.root.findAllByType('button').some(button => content(button.props.children) === '位置')).toBe(false)
     for (const label of ['图片', '语音', '外部链接', '文件', '长文']) {
       const entry = renderer.root.findAllByType('button').find(button => content(button.props.children) === label)
       expect(entry).toBeDefined()
       await act(async () => { entry!.props.onClick(); await vi.advanceTimersByTimeAsync(1) })
       expect(content(renderer.toJSON())).not.toContain('AI 视频')
-      expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '外部链接', '文件', '长文', '位置'])
+      expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '外部链接', '文件', '长文'])
       await act(async () => { renderer.root.findByProps({ 'aria-label': '返回搜索' }).props.onClick() })
       expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('')
     }

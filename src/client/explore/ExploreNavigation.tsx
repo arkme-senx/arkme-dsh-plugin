@@ -1,6 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
+import { ArkmeLocationDialog } from '../ArkmeLocationDialog.js'
+import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import { Compass } from '@phosphor-icons/react/dist/icons/Compass'
 import { IdentificationCard } from '@phosphor-icons/react/dist/icons/IdentificationCard'
 import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
@@ -13,8 +15,9 @@ import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import type { CSSProperties } from 'react'
-export const exploreIcons = {statistics:ChartBar,profile:IdentificationCard,relations:UsersThree,events:Flag,goals:Target,anniversaries:Gift,world:GlobeHemisphereWest}
+export const exploreIcons = {statistics:ChartBar,profile:IdentificationCard,relations:UsersThree,events:Flag,goals:Target,anniversaries:Gift,world:GlobeHemisphereWest,location:MapPin}
 export function ExploreNavigation({style,active,current,locked,compact=false}:{style:CSSProperties;active:boolean;current?:ExploreModule|'world'|'statistics'|undefined;locked:boolean;compact?:boolean}) {
+  const locationOpen=useSyncExternalStore(arkmeUi.subscribe,()=>arkmeUi.getViewSnapshot().locationOpen===true)
   const [openMode,setOpenMode]=useState<'hover'|'click'|'keyboard'|null>(null),[position,setPosition]=useState({left:0,top:0})
   const open=openMode!==null
   const trigger=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null)
@@ -47,6 +50,8 @@ export function ExploreNavigation({style,active,current,locked,compact=false}:{s
     {open&&createPortal(<div ref={panel} id="arkme-explore-menu" aria-label={tr('探索板块')} onPointerEnter={keepOpen} onPointerLeave={leave}
       onBlur={event=>{if(!within(event.relatedTarget))close()}}
       style={{position:'fixed',...position,width:190,padding:8,zIndex:1600,border:`1px solid ${theme.border}`,borderRadius:12,background:theme.menu,boxShadow:theme.shadow,color:theme.text}}>
-      {['statistics' as const,...EXPLORE_MODULES,'world' as const].map(module=>{const Icon=exploreIcons[module];return <button key={module} type="button" aria-current={current===module?'page':undefined} style={{display:'flex',alignItems:'center',gap:12,width:'100%',border:0,borderRadius:7,padding:'11px 12px',font:'inherit',fontSize:13,textAlign:'left',cursor:'pointer',background:current===module?theme.active:'transparent',color:theme.text}} onClick={()=>{close();module==='statistics'?arkmeUi.showStatistics():module==='world'?arkmeUi.showWorld():arkmeUi.showExplore(module)}}><Icon size={20}/>{tr(module==='statistics'?'统计与分析':EXPLORE_LABELS[module])}</button>})}
-    </div>,document.body)}</>
+      {['statistics' as const,...EXPLORE_MODULES,'location' as const,'world' as const].map(module=>{const Icon=exploreIcons[module];return <button key={module} type="button" aria-current={current===module?'page':undefined} style={{display:'flex',alignItems:'center',gap:12,width:'100%',border:0,borderRadius:7,padding:'11px 12px',font:'inherit',fontSize:13,textAlign:'left',cursor:'pointer',background:current===module?theme.active:'transparent',color:theme.text}} onClick={()=>{close();module==='location'?arkmeUi.openLocation():module==='statistics'?arkmeUi.showStatistics():module==='world'?arkmeUi.showWorld():arkmeUi.showExplore(module)}}><Icon size={20}/>{tr(module==='location'?'位置':module==='statistics'?'统计与分析':EXPLORE_LABELS[module])}</button>})}
+    </div>,document.body)}
+    {locationOpen&&!locked&&<ArkmeLocationDialog onClose={()=>arkmeUi.closeLocation()} returnFocusRef={trigger}/>}
+  </>
 }

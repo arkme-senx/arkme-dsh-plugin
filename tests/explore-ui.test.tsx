@@ -8,6 +8,7 @@ import { ExploreSurface } from '../src/client/explore/ExploreSurface.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 const mocks=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.call}))
+vi.mock('../src/client/ArkmeLocationDialog.js',()=>({ArkmeLocationDialog:({onClose}:{onClose():void})=><button onClick={onClose}>关闭位置</button>}))
 vi.mock('../src/client/ArkmeNoteDetails.js',()=>({ArkmeTimelineDetailDrawer:()=>null}))
 let host:HTMLDivElement,root:Root,scope=0
 const item=(id:string)=>({key:id,ref:id,title:'档案 '+id,summary:'真实保存的内容',category:'偏好',status:'',date:0})
@@ -31,12 +32,12 @@ afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreA
 async function click(text:string){const button=[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===text);expect(button).toBeTruthy();await act(async()=>button!.click())}
 async function renderSurface(){await act(async()=>root.render(<ExploreSurface module="profile" accountScope={'test:'+ ++scope}/>))}
 describe('Explore interactions',()=>{
-  it('groups all seven destinations and publishes module changes before closing the menu',async()=>{
+  it('groups all destinations and publishes module changes before closing the menu',async()=>{
     await act(async()=>root.render(<ExploreNavigation style={{}} active current="profile" locked={false}/>))
     const trigger=host.querySelector('button')!
     await act(async()=>trigger.click())
     const panel=document.querySelector('#arkme-explore-menu')!
-    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','世界'])
+    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','位置','世界'])
     await click('统计与分析');expect(arkmeUi.getViewSnapshot().mode).toBe('statistics')
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click())
@@ -44,6 +45,11 @@ describe('Explore interactions',()=>{
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click());await click('纪念日')
     expect(arkmeUi.getViewSnapshot()).toMatchObject({mode:'explore',exploreModule:'anniversaries'})
+    const beforeLocation = arkmeUi.getViewSnapshot()
+    await act(async()=>trigger.click());await click('位置')
+    expect(arkmeUi.getViewSnapshot()).toMatchObject({...beforeLocation,locationOpen:true})
+    expect(document.querySelector('#arkme-explore-menu')).toBeNull()
+    await click('关闭位置');expect(arkmeUi.getViewSnapshot()).toEqual(beforeLocation)
     await act(async()=>trigger.click());await click('世界');expect(arkmeUi.getViewSnapshot().mode).toBe('world')
     await act(async()=>trigger.click());await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
     expect(document.querySelector('#arkme-explore-menu')).toBeNull();expect(document.activeElement).toBe(trigger)

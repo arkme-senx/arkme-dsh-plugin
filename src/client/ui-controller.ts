@@ -71,6 +71,7 @@ export interface ArkmeUiState {
   extensionShareAction?: ArkmeExtensionShareAction
   extensionDetailId?: string
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
+  locationOpen?: boolean
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldViewTarget
   worldInteractionRef?: string
@@ -182,6 +183,7 @@ export class ArkmeUiController {
 
   authChanged(authenticated = false, resetSelection = false): void {
     this.leaveContacts()
+    if (!authenticated || resetSelection) this.closeLocation()
     if (authenticated) {
       if (resetSelection) {
         this.lastConversationDestination = undefined
@@ -325,6 +327,13 @@ export class ArkmeUiController {
     this.leaveContacts()
     const { productMode: _product, ...rest } = this.state
     this.publish({ ...rest, calendarOpen: true, calendarInitialDate: date })
+  }
+
+  openLocation(): void { this.publish({ ...this.state, locationOpen: true }) }
+
+  closeLocation(): void {
+    const { locationOpen: _locationOpen, ...rest } = this.state
+    this.publish(rest)
   }
 
   showExplore(module: ExploreModule): void {
@@ -636,6 +645,7 @@ export class ArkmeUiController {
       && next.teamIntent === this.state.teamIntent
       && next.teamDirectory === this.state.teamDirectory
       && next.productMode === this.state.productMode
+      && next.locationOpen === this.state.locationOpen
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
       && next.conversationUnreadJumpRevision === this.state.conversationUnreadJumpRevision
