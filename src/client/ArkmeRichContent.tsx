@@ -1,4 +1,6 @@
 import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
+import { selectedTextNotePresentation } from '../selected-text-note.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
@@ -1011,6 +1013,10 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     setRetryVersions(new Map())
   }, [mediaRevision])
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
+  const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
+  if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={selectionRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
+    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} />
+  </div>
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
@@ -1178,6 +1184,7 @@ export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false
   showOriginal?: boolean
 }) {
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} />
+  if (item.localSelfQuote) return <ArkmeMessageContent item={item} {...(sourceRef ? { sourceRef } : {})} presentation="detail" />
   const text = showOriginal && item.aiPolish?.originalText !== undefined
     ? item.aiPolish.originalText
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined

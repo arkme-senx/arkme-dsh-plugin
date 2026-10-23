@@ -1144,7 +1144,7 @@ export function ArkmeArkoSurface() {
 
   return <div ref={shellRef} style={styles.shell}>
     {messageMarks.layer}
-    <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef}
+    <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef} selfNote={{ sourceLabel: displayName || 'Arko', ...(accountKey ? { accountKey } : {}) }}
       markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove} />
     <style>{`
       [data-arkme-arko-composer] .ProseMirror { min-height: 38px; }

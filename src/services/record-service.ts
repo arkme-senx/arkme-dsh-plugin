@@ -1885,7 +1885,11 @@ export class RecordService {
         numberValue(item.send_at ?? core.send_at), this.media)
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
     const callRecord = projectCallRecord(raw, userId)
+    const localSelfQuote = (options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId) && numberValue(item.status ?? core.status) === 1
+      ? this.runtime.stateStore?.selfNoteQuotes?.project(`${this.runtime.config.environment}:${userId}`,
+        stringValue(item.record_uid ?? core.record_uid).trim(), stringValue(item.text_content ?? core.text_content)) : undefined
     return {
+      ...(localSelfQuote === undefined ? {} : { localSelfQuote }),
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       ...recordSenderSnapshot(raw),
       ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),

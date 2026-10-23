@@ -679,7 +679,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }
   return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref}
+    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove}
       canReplace={target => !!latest.current?.messages.find(message => message.key === target.item.itemUid)?.canEdit && current.channel.enabled && !current.blocked}
       prepareReplace={async (target, quote, signal) => {

@@ -23,6 +23,7 @@ import {readProfileImage} from './services/profile-image.js'
 import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from './team-profile-contract.js'
 import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
+import { sendSelectedTextSelfNote } from './services/selected-text-self-note.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
 import type { ArkmeOfficialNotificationRead } from './official-notification-contract.js'
@@ -2308,6 +2309,14 @@ arkoImagesV1:true,
   nativeLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).list(sourceRef, refs, signal) }
   changeNativeLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).change(sourceRef, ref, change, signal) }
   async forwardMessageActions(conversationRef: string, actionRefs: readonly string[], options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> { return await this.messageActions.forward(conversationRef, actionRefs, options) }
+
+  async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal) {
+    return sendSelectedTextSelfNote(this.runtime, input, async (text, userId) => {
+      const target = await this.source.selfTarget(signal)
+      if (target.kind !== 'send_to_self') throw new ArkmePluginError('self-note-target-invalid', '发给自己入口暂不可用', true, 503)
+      return this.chat.sendSourceText(target.sourceRef, text, { recordUid: input.recordUid, expectedUserId: userId, ...(signal ? { signal } : {}) })
+    }, signal)
+  }
 
   async sendSourceText(
     sourceRef: string,

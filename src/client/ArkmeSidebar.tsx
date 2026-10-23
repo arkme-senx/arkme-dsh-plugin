@@ -8558,6 +8558,7 @@ export function ArkmeSurface({
     {messageUnderlines.layer}
     {ui.mode !== 'arko' && ui.mode !== 'team' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
+      selfNote={{ sourceLabel: source?.displayName || '发给自己', ...(authenticatedAccountKey ? { accountKey: authenticatedAccountKey } : {}) }}
       replyLabel={sourceIsChat ? '回复' : '延展'}
       markStorage="local"
       onUnderline={messageUnderlines.mark}

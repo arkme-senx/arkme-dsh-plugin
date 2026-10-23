@@ -13,7 +13,6 @@ import type { MessageMarkTransport } from '../../message-underline-session.js'
 import { copyText } from '../../clipboard-text.js'
 import { nativeForwardDelivery } from '../../native-forward-entry.js'
 import { openLocalSnapshotForward } from '../../local-snapshot-forward.js'
-import { CodexQuoteToSelf, type CodexSelfQuote } from './CodexQuoteToSelf.js'
 import { codexEventKey, codexSelectable, codexSelectionSnapshot } from './codex-message-actions.js'
 import type { TeamCodexEvent, TeamCodexTask } from '../../../team-codex-contract.js'
 import type { ArkmeSourceSendResult } from '../../../types.js'
@@ -41,7 +40,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   useEffect(()=>()=>controller.abort(),[controller])
   const [selection,setSelection]=useState<Map<string,string>>()
   const [menu,setMenu]=useState<{id:string;x:number;y:number}>()
-  const [query,setQuery]=useState<string>(),[quote,setQuote]=useState<CodexSelfQuote>()
+  const [query,setQuery]=useState<string>()
   const [notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
   const working=useRef(false),latest=useRef(events);latest.current=events
   const marks=useMessageUnderlines(`${account}:${sourceRef}`,userId?sourceRef:undefined,userId,marksTransport)
@@ -57,9 +56,9 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   },[events])
   useEffect(()=>{
     if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return
-    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!working.current&&!quote&&!query){setMenu(undefined);setSelection(undefined)}}
+    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!working.current&&!document.querySelector('[role="dialog"][aria-label="发给自己"]')&&!query){setMenu(undefined);setSelection(undefined)}}
     document.addEventListener('keydown',escape);return()=>document.removeEventListener('keydown',escape)
-  },[quote,query])
+  },[query])
   const toggle=(event:TeamCodexEvent)=>{
     if(working.current)return
     const key=codexEventKey(event)
@@ -104,11 +103,9 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
         {id:'copy',label:'复制',icon:<ArkmeSelectActionIcon kind="copy"/>,onSelect:()=>{setMenu(undefined);void act(()=>copyText(row.text))}},
         {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row.text);return next})}},
       ]}/>}
-      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local" replyLabel="发给自己"
-        onReply={userId?((target,selectedQuote)=>setQuote({text:selectedQuote.text,title:task.title,sender:target.item.senderName,at:target.item.sendAtMillis})):undefined}/>
+      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local" selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
       {marks.layer}
       {query!==undefined&&<MessageTextFind doc={document} getRows={getRows} query={query} setQuery={setQuery} onClose={()=>setQuery(undefined)}/>}
-      {quote&&userId&&<CodexQuoteToSelf quote={quote} userId={userId} signal={controller.signal} onClose={()=>setQuote(undefined)} onSent={()=>{setQuote(undefined);setNotice('已发送到发给自己')}}/>}
     </>:null,
     feedback:notice?<div role="status" style={{flex:'none',fontSize:12,padding:'7px 14px',background:arkmeTheme.menu,color:arkmeTheme.secondary,display:'flex',gap:8,alignItems:'center'}}><span style={{flex:1}}>{notice}</span><button type="button" aria-label="关闭提示" onClick={()=>setNotice('')} style={{border:0,background:'transparent',color:'inherit',cursor:'pointer'}}>×</button></div>:null,
   }

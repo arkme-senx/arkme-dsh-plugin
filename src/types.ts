@@ -2009,6 +2009,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
+  localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
@@ -4396,6 +4398,7 @@ export type ArkmePluginOperation =
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'
+  | 'self-note.quote.send'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
   | 'related-recordings.share'

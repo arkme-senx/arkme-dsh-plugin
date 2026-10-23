@@ -43,7 +43,7 @@ function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   useSelectedMessageSearch(sourceRef, setQuery)
   return <>
     <style>{'[data-arkme-text-selection] { cursor: text; } [data-arkme-text-selection] a, [data-arkme-text-selection] button { cursor: pointer; }'}</style>
-    <ArkmeMessageTextSelectionToolbar selectionDomain="native" replySourceRef={sourceRef} replyLabel="引用" getViewport={getViewport}
+    <ArkmeMessageTextSelectionToolbar selectionDomain="native" replySourceRef={sourceRef} replyLabel="引用" getViewport={getViewport} selfNote={{ sourceLabel: 'DeepSeek Harness', accountKey: account.scope }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage={marks.storage}
       onReply={inputActions ? (target, quote) => {
         const editor = doc.querySelector<HTMLElement>('[contenteditable="true"][role="textbox"]')
