@@ -16,4 +16,6 @@ PC 通知的 kind 为 team.message，激活类型为 team-conversation。随本�
 
 运行入口：先以官方 CLI 将包安装到独立 `DSH_HOME` 的 web Profile，再向脚本提供 `ARKME_DSH_RUNTIME`（含已发布官方 DSH 的 Node 项目）、`ARKME_PLAYWRIGHT_ANCHOR`（含 Playwright 的 package.json）、`ARKME_E2E_TLS_KEY` 和 `NODE_EXTRA_CA_CERTS`（仅本地 fixture 证书），最后运行 `node tests/e2e/team-notifications-installed.mjs`。可用 `ARKME_E2E_CAPTURE_DIR` 保存截图。脚本禁用继承的桌面桥地址，避免向常驻桌面实例发送测试提醒。
 
-真实 macOS/Windows/Linux 通知中心、移动端厂商到达与真实后端联调属于发布前环境验收。本轮桌面壳通知/激活专项 67 项和壳构建通过；Electron 下载失败与已有依赖缺失导致扩大壳测试未全绿。
+后续 `tests/e2e/team-notifications-services.mjs` 已连接真实 Team/Record/IM/Push main 和 Mongo/MySQL/Redis/RabbitMQ，完成菜单持久化、个人静音、未读保留、同事多设备推送、解除不补弹、新消息与授权点击、页面回复访客、访客静音、编辑不提醒和撤权拒绝。启动器与环境说明位于同级 jotmo-meta 仓库的 `scripts/e2e/team_notification_services.md`。账号/搜索/厂商和 Browser Notification 仍为明确的外部边界替身。
+
+真实 macOS/Windows/Linux 通知中心、移动端厂商到达与发布环境接线仍属于发布前环境验收。本轮桌面壳通知/激活专项 67 项和壳构建通过；Electron 下载失败与已有依赖缺失导致扩大壳测试未全绿。

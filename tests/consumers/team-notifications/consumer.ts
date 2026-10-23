@@ -1,10 +1,12 @@
 import { ArkmeSdk, type TeamNotificationPolicy } from '@senguoyun/dsh-arkme/sdk';
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
-export async function verifyInstalledNotifications(fetchImpl: typeof fetch) {
+export async function verifyInstalledNotifications(fetchImpl: typeof fetch, expectedName?: string) {
  const sdk = new ArkmeSdk({fetchImpl});
  const page = await sdk.listTeamNotificationConversations('team');
- assert(page.items.length === 1, 'current conversation discovery');
- const ref = page.items[0]!.conversationRef;
+ assert(page.items.length >= 1, 'current conversation discovery');
+ const item = expectedName ? page.items.find(item => item.displayName === expectedName) : page.items[0];
+ assert(item, 'expected conversation discovered');
+ const ref = item.conversationRef;
  const before: TeamNotificationPolicy = await sdk.getTeamNotificationPolicy(ref);
  const after = await sdk.setTeamNotificationPolicy(ref, !before.muted);
  assert(after.muted !== before.muted && after.policyVersion > before.policyVersion, 'explicit committed preference');
