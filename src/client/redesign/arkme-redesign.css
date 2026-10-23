@@ -1618,6 +1618,15 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-contact-profile-fields dd, .arkme-contact-profile-row dd { color: var(--dsw-alias-label-primary, #17191c); }
 .arkme-contact-profile-section { padding: 24px 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
 .arkme-contact-profile-section-title { margin: 0 0 16px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 14px; line-height: 22px; font-weight: 500; }
+.arkme-manual-speaker-muted { color: var(--dsw-alias-label-secondary, #68707c); font-size: 13px; line-height: 20px; }
+.arkme-manual-speaker-link { flex: none; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-state-business-primary, #4f5fbf); font: inherit; font-size: 13px; cursor: pointer; }
+.arkme-manual-speaker-recent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.arkme-manual-speaker-members { padding: 0; margin: 20px 0 0; list-style: none; }
+.arkme-manual-speaker-members li { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+.arkme-manual-speaker-members .arkme-unmarked-speaker-token-avatar { min-width: 40px; padding: 0 3px; white-space: nowrap; overflow: hidden; }
+.arkme-manual-speaker-members li > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.arkme-manual-speaker-members strong { font-size: 14px; font-weight: 500; }
+.arkme-manual-speaker-members small { color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; }
 .arkme-contact-profile-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 18px; margin: 0; font-size: 14px; line-height: 22px; }
 .arkme-contact-profile-remark { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .arkme-contact-profile-remark > span { min-width: 0; }

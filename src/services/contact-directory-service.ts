@@ -133,7 +133,7 @@ export class ContactDirectoryService {
   ): Promise<ArkmeDirectoryPage> {
     options.signal?.throwIfAborted()
     if (options.refresh && options.cursor) throw new ArkmePluginError('directory-cursor-invalid', '刷新目录需要从首页开始', false, 400)
-    if (section === 'unmarked-speakers' || section === 'teams') {
+    if (section === 'unmarked-speakers' || section === 'manual-speakers' || section === 'teams') {
       throw new ArkmePluginError('directory-section-not-owned', '该目录由独立业务服务提供', false, 501)
     }
     if (options.countOnly === true) return await this.count(section, options)
@@ -144,7 +144,7 @@ export class ContactDirectoryService {
     }
   }
 
-  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'teams'>, options: { refresh?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage> {
+  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'manual-speakers' | 'teams'>, options: { refresh?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     let total = 0
     switch (section) {

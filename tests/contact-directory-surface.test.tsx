@@ -30,6 +30,7 @@ const items: Record<ArkmeDirectorySectionKind, ArkmeDirectoryItem[]> = {
     kind: 'unmarked-speaker', candidateRef: 'candidate-ref', speakerToken: 'B', displayName: '说话人 B', subtitle: '3 天 · 最新：今天 09:28',
   }],
   teams: [{ kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}`, displayName: 'Arkme 产品组', publicId: 'arkme_team', role: 'member' }],
+  'manual-speakers': [{ kind: 'manual-speaker', speakerKey: 'manual-1', speakerRef: 'manual-ref', displayName: '设计伙伴' }],
   contacts: [
     { kind: 'contact', contactRef: 'alice', displayName: 'Alice', nickname: 'Alice', remark: '', letter: 'A' },
     { kind: 'contact', contactRef: 'zhang', displayName: '张三', nickname: '张三', remark: '', letter: 'Z' },
@@ -73,7 +74,7 @@ describe('ContactDirectorySurface content', () => {
     expect(CONTACT_DIRECTORY_SECTION_ORDER.flatMap(section => next.sections[section].items)).toEqual([])
   })
 
-  it('renders the four section headings in order with counts and controlled expansion semantics', () => {
+  it('renders the five section headings in order with counts and controlled expansion semantics', () => {
     const state = readyState()
     state.sections.bots.expanded = false
     const markup = renderToStaticMarkup(<ContactDirectoryContent
@@ -87,7 +88,7 @@ describe('ContactDirectorySurface content', () => {
     />)
 
     expect(markup).not.toContain('未标记说话人')
-    const headings = ['群聊', 'Bot', '团队', '联系人']
+    const headings = ['群聊', 'Bot', '团队', '手动说话人', '联系人']
     expect(headings.map(heading => markup.indexOf(`<strong>${heading}</strong>`)))
       .toEqual([...headings.map(heading => markup.indexOf(`<strong>${heading}</strong>`))].sort((a, b) => a - b))
     expect(markup).toContain('data-directory-section="groups"')
@@ -371,7 +372,7 @@ describe('ContactDirectorySurface content', () => {
     }
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ContactDirectorySurface {...props} />) })
-    expect(loadPage.mock.calls.map(call => call[0])).toEqual(['groups', 'bots', 'teams', 'contacts'])
+    expect(loadPage.mock.calls.map(call => call[0])).toEqual(['groups', 'bots', 'teams', 'manual-speakers', 'contacts'])
     expect(onStateChange.mock.calls.at(-1)?.[1]).toBe(true)
     const initialState = onStateChange.mock.calls.at(-1)![0] as ContactDirectoryState
     expect(initialState.sections['unmarked-speakers'].status).toBe('idle')
@@ -422,7 +423,7 @@ describe('ContactDirectorySurface content', () => {
     expect(renderer.root.findAllByProps({ 'data-directory-row-ref': 'alice' })).toHaveLength(0)
   })
 
-  it('loads all four first pages on entry and does not reload a collapsed section when it opens', async () => {
+  it('loads all five first pages on entry and does not reload a collapsed section when it opens', async () => {
     const loadPage = vi.fn(async (
       section: ArkmeDirectorySectionKind,
       options: { limit: number; cursor?: string; countOnly?: boolean },
@@ -448,6 +449,7 @@ describe('ContactDirectorySurface content', () => {
       ['groups', { limit: 50 }],
       ['bots', { limit: 50 }],
       ['teams', { limit: 50 }],
+      ['manual-speakers', { limit: 50 }],
       ['contacts', { limit: 50 }],
     ])
     expect(renderer.root.findByProps({ 'data-directory-section': 'groups' })
