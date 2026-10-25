@@ -1,3 +1,6 @@
+import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
+import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
+import { dayKey, dayLabel } from './conversation-message-presentation.js'
 import { SharedPersonRecords, personRecordKey, type PersonRecordItem, type SharedPersonSnapshot } from './shared-person-records.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
@@ -192,7 +195,7 @@ const styles: Record<string, CSSProperties> = {
   recordMain: { minWidth: 0, maxWidth: 'calc(100% - 44px)', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
   recordName: { margin: '0 0 4px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
   recordBubble: {
-    minWidth: 0, maxWidth: '100%', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
+    minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
     borderRadius: '5px 14px 14px 14px', background: ARKME_MEMBER_RECORD_OTHER_BUBBLE,
     color: arkmeTheme.text, fontSize: 14, lineHeight: '22px', overflowWrap: 'anywhere',
     '--arkme-bubble-fade': ARKME_MEMBER_RECORD_OTHER_BUBBLE,
@@ -451,6 +454,7 @@ export type ArkmeMemberRecordTimelineEntry =
 export function arkmeMemberRecordTimeline(
   items: readonly ArkmeTimelineItem[],
   nowMillis = Date.now(),
+  dateOnly = false,
 ): ArkmeMemberRecordTimelineEntry[] {
   const sorted = [...items].sort((left, right) => left.sendAtMillis - right.sendAtMillis)
   const entries: ArkmeMemberRecordTimelineEntry[] = []
@@ -458,13 +462,13 @@ export function arkmeMemberRecordTimeline(
   for (const item of sorted) {
     const timestamp = item.sendAtMillis
     if (lastVisibleTimestamp === undefined || !Number.isFinite(timestamp)
-      || Math.abs(timestamp - lastVisibleTimestamp) > RECORD_TIME_GAP_MILLIS) {
+      || (dateOnly ? dayKey(timestamp) !== dayKey(lastVisibleTimestamp) : Math.abs(timestamp - lastVisibleTimestamp) > RECORD_TIME_GAP_MILLIS)) {
       if (Number.isFinite(timestamp) && timestamp > 0) {
         entries.push({
           kind: 'time',
           key: `time:${personRecordKey(item)}:${String(timestamp)}`,
           timestamp,
-          label: formatArkmeMemberRecordTime(timestamp, nowMillis),
+          label: dateOnly ? dayLabel(timestamp, nowMillis) : formatArkmeMemberRecordTime(timestamp, nowMillis),
         })
         lastVisibleTimestamp = timestamp
       }
@@ -698,7 +702,9 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
     ? (props.member.isSelf ? '@我的快记' : tr("@{v0}的快记", { v0: props.member.displayName }))
     : (props.member.isSelf ? '我的快记' : tr("{v0}的快记", { v0: props.member.displayName }))
   const total = !props.onlyCurrent || props.member.statsKnown === false ? undefined : arkmeMemberRecordTotal(props.member, props.mode)
-  const timeline = useMemo(() => arkmeMemberRecordTimeline(visibleItems.map(item => props.mode === 'owner' && (!props.onlyCurrent || item.memberRef === props.member.memberRef) ? { ...item, senderName: props.member.displayName, ...(props.member.avatarRef ? { avatarRef: props.member.avatarRef } : {}) } : item)), [visibleItems, props.mode, props.member, props.onlyCurrent])
+  const compactPerson = props.mode === 'owner'
+  const originName = (item: PersonRecordItem) => item.personSource?.kind === 'private_chat' ? tr('与TA的私聊') : item.personSource?.displayName ?? props.sourceName ?? ''
+  const timeline = useMemo(() => arkmeMemberRecordTimeline(visibleItems.map(item => props.mode === 'owner' && (!props.onlyCurrent || item.memberRef === props.member.memberRef) ? { ...item, senderName: props.member.displayName, ...(props.member.avatarRef ? { avatarRef: props.member.avatarRef } : {}) } : item), Date.now(), compactPerson), [visibleItems, props.mode, props.member, props.onlyCurrent])
   const effectiveWidth = availableWidth === undefined
     ? preferredWidth
     : clampArkmeMemberRecordsWidth(preferredWidth, availableWidth)
@@ -814,12 +820,18 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
               label={tr("{v0} 的头像", { v0: entry.item.senderName })}
             />}
             <div style={{ ...styles.recordMain, alignItems: entry.item.isMe ? 'flex-end' : 'flex-start' }}>
-              {props.unified && props.sourceName && <button type="button" data-arkme-member-record-origin style={{fontSize:11,color:arkmeTheme.tertiary,padding:0,border:0,background:'transparent',textAlign:'left',cursor:props.onOpenOrigin?'pointer':'default'}} onClick={() => props.onOpenOrigin?.(entry.item, entry.item.personSource)} aria-label={tr('回到原对话并定位')}>{entry.item.personSource?.kind === 'private_chat' ? tr('与TA的私聊') : entry.item.personSource?.displayName ?? props.sourceName} · {formatArkmeMemberRecordTime(entry.item.sendAtMillis)}</button>}
-              <div style={styles.recordName}>{entry.item.senderName}</div>
-              <div style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
+              {!compactPerson && <div style={styles.recordName}>{entry.item.senderName}</div>}
+              <div className={compactPerson ? 'arkme-timed-bubble' : undefined} style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
                 <ArkmeMessageContent item={entry.item} sourceRef={entry.item.personSource?.sourceRef ?? props.sourceRef}
                   {...((entry.item.personSource?.sourceKey ?? props.sourceIdentityKey) === undefined ? {} : { sourceIdentityKey: (entry.item.personSource?.sourceKey ?? props.sourceIdentityKey)! })} highlightMentions />
+                {compactPerson && <ArkmeMessageTimestamp at={entry.item.sendAtMillis} />}
               </div>
+              {props.unified && originName(entry.item) && <button type="button" data-arkme-member-record-origin
+                style={{ ...arkmeDetailSourceBadgeStyle, alignSelf: 'flex-start', marginTop: 4, minHeight: 22, padding: '1px 5px', fontSize: 11, cursor: props.onOpenOrigin ? 'pointer' : 'default' }}
+                onClick={() => props.onOpenOrigin?.(entry.item, entry.item.personSource)} aria-label={tr('回到原对话并定位')}
+                title={tr('所在对话：{v0}', { v0: originName(entry.item) })}>
+                <span aria-hidden style={{ flex: 'none' }}>↗</span><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{originName(entry.item)}</span>
+              </button>}
             </div>
             {entry.item.isMe && <ArkmeUserAvatar
               {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}

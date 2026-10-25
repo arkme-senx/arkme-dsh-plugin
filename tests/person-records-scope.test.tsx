@@ -71,7 +71,7 @@ it('keeps each shared message origin and separate occurrence identity when recor
  await act(async()=>{view=create(<ArkmeMemberRecordsPanel sourceRef="ref" source={entry} sourceName="产品群" sourceIdentityKey="entry" accountKey="prod:11" member={member} mode="owner" onClose={()=>{}} onOpenOrigin={open}/>)})
  const origins=view!.root.findAll(x=>x.props['data-arkme-member-record-origin']===true)
  expect(origins).toHaveLength(2)
- const otherButton=origins.find(x=>JSON.stringify(x.props.children).includes('另一个共同群'))!
+ const otherButton=origins.find(x=>x.props.title==='所在对话：另一个共同群')!
  await act(async()=>otherButton.props.onClick())
  expect(open).toHaveBeenCalledWith(expect.objectContaining({itemUid:'one'}),expect.objectContaining({sourceRef:'other-ref'}))
  expect(new Set(view!.root.findAll(x=>typeof x.props['data-arkme-member-record-id']==='string').map(x=>x.props['data-arkme-member-record-id'])).size).toBe(2)
