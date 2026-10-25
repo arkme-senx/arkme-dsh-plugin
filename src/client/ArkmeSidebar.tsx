@@ -197,7 +197,10 @@ import { ArkmeDirectRecordingStatus, useDirectRecordingOwner } from './recording
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRetainedCallPage } from './ArkmeRetainedCallPage.js'
-import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
+import { ArkmeWorldSurface, PublishDialog } from './ArkmeWorldSurface.js'
+import { ArkmeComposerCard } from './ArkmeComposerCard.js'
+import { canPublishSelfNote } from '../world-publish-source.js'
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
 import { TeamWorldSurface } from './TeamWorldSurface.js'
 import {
   ArkmeMediaPreview, ArkmeMessageContent, arkmeContentMediaUrl, arkmeRelatedRecordingItemFromSharedRecording,
@@ -285,7 +288,7 @@ import {
   type ArkmeComposerEmoji,
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
-import { arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -2798,6 +2801,8 @@ export function ArkmeSurface({
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
   const [messageWithdrawalItem, setMessageWithdrawalItem] = useState<ArkmeTimelineItem>()
+  const [worldPublication, setWorldPublication] = useState<{ accountKey: string; conversationKey: string; sourceRef: string; itemUid: string }>()
+  useEffect(() => setWorldPublication(undefined), [authenticatedAccountKey, conversationKey])
 
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -9198,7 +9203,7 @@ export function ArkmeSurface({
             {activeRecordReeditComposer === undefined && composerExtensionTarget?.quote && !quoteReplySupport.ready && <div role="status" data-arkme-quote-support style={{ padding: '6px 10px', fontSize: 12, color: arkmeTheme.secondary }}>
               {quoteReplySupport.message} <button type="button" onClick={quoteReplySupport.retry} style={{ font: 'inherit', color: arkmeTheme.text, border: 0, background: 'transparent', cursor: 'pointer' }}>重新检查</button>
             </div>}
-            <div
+            <ArkmeComposerCard focused={composerInputFocused} hasTarget={composerHasTarget} highlighted={composerResize.highlighted} borderColor={colors.border}
               ref={composerRef}
               className="arkme-conversation-composer-inner"
               data-arkme-primary-composer="true"
@@ -9206,8 +9211,6 @@ export function ArkmeSurface({
               data-arkme-composer-resize-highlighted={composerResize.highlighted ? 'true' : undefined}
               style={{
               ...styles.composerInner,
-              ...arkmeConversationComposerFocusStyle(composerInputFocused),
-              ...arkmeConversationComposerBorder(composerInputFocused || composerHasTarget ? colors.border : 'transparent', composerHasTarget, composerResize.highlighted),
               }}
             >
             {composerResize.handle}
@@ -9481,7 +9484,7 @@ export function ArkmeSurface({
               owner={recordInputCaptureOwner}
               draftKey={composerDraftKey}
             />}
-          </div>
+          </ArkmeComposerCard>
           </div></footer>}
           {activeSelectMode !== undefined && selectedMessageCount > 0 && !selectedMessagesSupportSnapshotBatch && <div
             role="status" style={{ padding: '6px 16px', color: arkmeTheme.secondary, fontSize: 12 }}
@@ -9515,6 +9518,10 @@ export function ArkmeSurface({
         </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
         {forwardDialog}
+        {activeConversation && worldPublication && worldPublication.accountKey === authenticatedAccountKey && worldPublication.conversationKey === conversationKey && <PublishDialog
+          origin={{ sourceRef: worldPublication.sourceRef, itemUid: worldPublication.itemUid }}
+          actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
+          onClose={() => setWorldPublication(undefined)} onPublished={result => { setWorldPublication(undefined); showMessageActionStatus(result.visibility === 'pending_review' ? '已提交审核' : '已发布到世界') }} />}
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeMessageContextMenu
           selectedText={messageMenu.selectedText} copyIcon={<ArkmeMessageActionIcon kind="copy" />}
           onCopySelection={text => { void copyMessageTextValue(text) }} onCopyMessage={() => { void copyMessageText(messageMenuItem) }}
@@ -9531,6 +9538,10 @@ export function ArkmeSurface({
             source !== undefined && isArkmeSelfWorkspaceSource(source) && { id: 'assign', label: '指定主题', icon: <ArkmeSelectActionIcon kind="assign" size={16} />, disabled: !canAssignRecordTopics([messageMenuItem]), onSelect: () => openRecordTopicAssignment([messageMenuItem], messageMenu.anchor) },
             { id: 'select', label: ARKME_MESSAGE_ACTION_MENU_LABELS[3], icon: <ArkmeMessageActionIcon kind="select" />, onSelect: () => enterMessageSelectMode(messageMenuItem) },
             { id: 'forward', label: ARKME_MESSAGE_ACTION_MENU_LABELS[4], icon: <ArkmeMessageActionIcon kind="forward" />, disabled: arkmeTimelineMessageActionRef(messageMenuItem) === '', onSelect: () => openForwardTargetPicker([messageMenuItem]) },
+            canPublishSelfNote(source, messageMenuItem) && authenticatedAccountKey !== undefined && { id: 'world', label: '发到世界', icon: <Globe size={16} />, onSelect: () => {
+              if (!source) return
+              setWorldPublication({ accountKey: authenticatedAccountKey, conversationKey, sourceRef: source.sourceRef, itemUid: messageMenuItem.itemUid }); closeMessageMenu()
+            } },
             { id: 'ask-dsh', label: askDsh.busy ? '准备中' : '问 DSH', icon: <AskDshIcon size={20} />,
               disabled: source === undefined || arkmeTimelineMessageActionRef(messageMenuItem) === '' || messageMenuItem.quickNoteDetailsSupported === false || messageActionBusy !== undefined,
               onSelect: () => {

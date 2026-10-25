@@ -1,5 +1,18 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "发到世界": "Post to World",
+  "正在读取原快记…": "Loading the original note…",
+  "原快记内容返回异常，请重试": "Invalid original note response. Please retry.",
+  "原快记暂时无法读取": "The original note is temporarily unavailable",
+  "来自发给自己 · 发布副本": "From Notes to Self · Publication copy",
+  "发布到{v0}的世界 · 由{v1}发布": "Publish to {v0} World · by {v1}",
+  "请选择不超过 20MB 的图片": "Choose images up to 20 MB each",
+  "最多添加 27 张图片": "Add up to 27 images",
+  "请先调整正文或移除世界暂不支持的附件": "Edit the text or remove unsupported attachments first",
+  "世界正文最多 2000 字，请调整发布副本后继续。": "World posts support up to 2,000 characters. Edit the publication copy to continue.",
+  "请从发布副本中移除世界暂不支持或不可用的附件；原快记不受影响。": "Remove unsupported or unavailable attachments from this publication copy. The original note is unchanged.",
+  "上传中断，请重试": "Upload interrupted. Please retry.",
+  "Ctrl/Cmd+Enter 发布，Enter 换行": "Ctrl/Cmd+Enter to publish; Enter for a new line",
   "团队的世界": "Team's World",
   "由{v0}发布": "Published by {v0}",
   "个人内容": "Personal content",

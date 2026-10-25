@@ -625,6 +625,26 @@ export class RecordService {
     }
   }
 
+  async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<import('../world-publish-source.js').WorldPublishSourceDraft> {
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (!['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('world-source-invalid', '仅支持将自己的个人快记发到世界', false, 403)
+    const owner = await this.recordReeditOwnerSnapshot(sourceRef, itemUid, session, source, signal)
+    const blocks = await this.recordReeditMediaBlocks(owner, session)
+    const attachments = await this.recordReeditAttachmentViews(owner, recordReeditMediaGroups(owner.contentPayload).map(group => ({ fileAssetUid: group.fileAssetUid })), blocks)
+    const voiceUid = stringValue(objectValue(owner.contentPayload?.voice).source_file_asset_uid)
+    if (voiceUid && !attachments.some(item => item.asset?.fileAssetUid === voiceUid)) {
+      const block = blocks.find(item => item.fileAssetUid === voiceUid)
+      attachments.push({ selection: { fileAssetUid: voiceUid }, asset: { fileAssetUid: voiceUid, fileName: block?.fileName ?? '语音', mimeType: block?.mimeType ?? 'audio/mpeg', fileKind: 2, size: block?.size ?? 0 }, ...(block ? { block } : {}), ...(block ? {} : { unavailable: true }) })
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { sourceRef, itemUid: owner.itemUid, version: owner.version, title: owner.title, textContent: owner.textContent,
+      textFormat: arkmeRecordTextFormat(owner.contentPayload), sendAtMillis: owner.sendAtMillis, attachments }
+  }
+
   async recordReeditEditor(sourceRefInput: string, itemUidInput: string): Promise<ArkmeRecordReeditEditorSnapshot> {
     const session = await this.runtime.requireSession()
     return (await this.loadRecordReeditEditor(sourceRefInput.trim(), itemUidInput.trim(), session)).view
@@ -1115,10 +1135,11 @@ export class RecordService {
     itemUid: string,
     session: ArkmeSessionCredentials,
     openedSource?: ArkmeSourceRefPayload,
+    signal?: AbortSignal,
   ): Promise<RecordReeditOwnerSnapshot> {
     const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/detail', { record_uid: itemUid }, session,
+      '/api/v1/records/detail', { record_uid: itemUid }, session, signal,
     )
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid).trim() !== itemUid) {

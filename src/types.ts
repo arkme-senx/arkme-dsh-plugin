@@ -4484,6 +4484,7 @@ export type ArkmePluginOperation =
   | 'source.long-article.draft.get'
   | 'source.long-article.draft.put'
   | 'source.long-article.draft.delete'
+  | 'world.source-draft'
   | 'source.record-reedit.detail'
   | 'source.record-reedit.draft.put'
   | 'source.record-reedit.draft.delete'

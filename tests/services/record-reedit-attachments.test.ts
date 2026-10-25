@@ -69,6 +69,43 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
 const target = { sourceRef: 'source', itemUid: 'r1' }
 
 describe('Record attachment re-edit', () => {
+  it('reads only committed personal content for World without restoring or changing an edit draft', async () => {
+    const x = await setup()
+    try {
+      await x.service.saveRecordReeditDraft({ ...target, newText: '未保存的编辑', expectedVersion: 7 })
+      const page = await x.service.worldPublishSource('source', 'r1')
+      expect(page).toMatchObject({ sourceRef: 'source', itemUid: 'r1', version: 7, textContent: '原文' })
+      expect(page.attachments.map(item => item.asset?.fileAssetUid)).toEqual(['a', 'b'])
+      expect(page).not.toHaveProperty('draft'); expect(x.writes).toEqual([])
+      expect((await x.service.recordReeditEditor('source', 'r1')).draft?.textContent).toBe('未保存的编辑')
+    } finally { x.service.dispose() }
+  })
+  it('rejects other owners, chat sources, account changes and cancelled World reads', async () => {
+    const x = await setup()
+    try {
+      x.core.owner_user_id = 99
+      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'record-reedit-not-editable' })
+      x.core.owner_user_id = 42
+      const controller = new AbortController(); controller.abort()
+      await expect(x.service.worldPublishSource('source', 'r1', controller.signal)).rejects.toThrow()
+      const source = vi.spyOn(x.sourceReader, 'openSourceRef')
+      source.mockResolvedValueOnce({ kind: 'group_chat' } as never)
+      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'world-source-invalid' })
+      x.readMedia.mockImplementationOnce(async () => { x.switchAccount(); return { items: [] } })
+      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'world-source-account-changed' })
+      expect(x.writes).toEqual([])
+    } finally { x.service.dispose() }
+  })
+  it('keeps voice visible as an unsupported attachment and excludes private ambient capture', async () => {
+    const x = await setup({ template_kind: 3, content_payload: { payload_kind: 3, schema_version: 1, text_state: 1, voice: { source_file_asset_uid: 'voice' } } })
+    try {
+      const page = await x.service.worldPublishSource('source', 'r1')
+      expect(page.attachments).toContainEqual(expect.objectContaining({ asset: expect.objectContaining({ fileAssetUid: 'voice', fileKind: 2 }) }))
+      x.core.template_kind = 1; x.core.content_payload = { payload_kind: 1, schema_version: 1, text_state: 1, media_refs: [{ ...media('ambient'), content_file_role: 4 }] }
+      expect((await x.service.worldPublishSource('source', 'r1')).attachments).toEqual([])
+      expect(x.writes).toEqual([])
+    } finally { x.service.dispose() }
+  })
   it.each([
     { kind: 'default_category', originKind: 1, ownerRef: 'uncategorized', originRef: '' },
     { kind: 'send_to_self', originKind: 1, ownerRef: 'self', originRef: '' },

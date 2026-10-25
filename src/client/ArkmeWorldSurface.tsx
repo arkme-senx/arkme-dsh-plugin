@@ -28,6 +28,9 @@ import type {
 } from '../types.js'
 import { TEAM_WORLD_PENDING_TEXT, type TeamWorldPrepareResult } from '../team-world-contract.js'
 import { TeamWorldPublisherPicker, useTeamWorldPublisher } from './TeamWorldPublisher.js'
+import { ArkmePublishComposer } from './ArkmePublishComposer.js'
+import { WorldPublishAttachments, worldPublishAttachmentBlocked, type WorldPublishAttachment } from './WorldPublishAttachments.js'
+import type { WorldPublishSource, WorldPublishSourceDraft } from '../world-publish-source.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../extensions/types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -217,34 +220,7 @@ const styles: Record<string, CSSProperties> = {
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow },
   modalError: { color: arkmeTheme.danger, fontSize: 12 },
-  publishModal: { width: 'min(720px, 100%)', maxHeight: 'min(780px, calc(100vh - 48px))', padding: 30, overflowX: 'hidden', borderRadius: 24 },
-  publishHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
-  publishTitle: { margin: 0, fontSize: 24, lineHeight: 1.3, fontWeight: 700, letterSpacing: '-.025em' },
-  publishIntro: { maxWidth: 560, margin: '8px 0 0', color: arkmeTheme.secondary, fontSize: 13, lineHeight: 1.7 },
   publishClose: { flex: '0 0 auto', width: 36, height: 36, marginTop: -3, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.secondary, cursor: 'pointer' },
-  publishEditor: { marginTop: 22, overflow: 'hidden', border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.input },
-  publishTextarea: { width: '100%', minHeight: 190, resize: 'vertical', padding: '18px 18px 10px', boxSizing: 'border-box', border: 0, color: arkmeTheme.text, background: 'transparent', font: 'inherit', fontSize: 14, lineHeight: 1.7, outline: 0 },
-  publishEditorMeta: { minHeight: 36, padding: '0 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, color: arkmeTheme.secondary, fontSize: 11 },
-  publishImageSection: { marginTop: 20 },
-  publishImageHeader: { marginBottom: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 },
-  publishImageTitle: { display: 'grid', gap: 3, color: arkmeTheme.text, fontSize: 13, fontWeight: 650 },
-  publishImageHint: { color: arkmeTheme.secondary, fontSize: 11, fontWeight: 400 },
-  publishImageCount: { color: arkmeTheme.secondary, fontSize: 11 },
-  publishHiddenInput: { display: 'none' },
-  publishUploadEmpty: { width: '100%', minHeight: 104, padding: 18, boxSizing: 'border-box', display: 'grid', placeItems: 'center', gap: 5, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 15, background: arkmeTheme.subtle, color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit' },
-  publishUploadIcon: { width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: arkmeTheme.accentSoft, color: arkmeTheme.accent },
-  publishUploadTitle: { color: arkmeTheme.text, fontSize: 13, fontWeight: 650 },
-  publishUploadHint: { fontSize: 11 },
-  publishImageGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 10 },
-  publishImageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', borderRadius: 13, background: arkmeTheme.subtle },
-  publishImagePreview: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  publishImagePlaceholder: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: arkmeTheme.secondary, fontSize: 10 },
-  publishImageRemove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, padding: 0, display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.65)', borderRadius: '50%', background: 'rgba(21,23,29,.72)', color: arkmeTheme.foreground, cursor: 'pointer' },
-  publishAddTile: { minWidth: 0, aspectRatio: '1', padding: 10, display: 'grid', placeItems: 'center', alignContent: 'center', gap: 6, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 13, background: arkmeTheme.subtle, color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  publishFooter: { margin: '24px -30px -30px', padding: '18px 30px 22px', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18, borderTop: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.layer1 },
-  publishStatus: { minHeight: 18, color: arkmeTheme.secondary, fontSize: 12, lineHeight: 1.5 },
-  publishActions: { flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10 },
-  publishActionButton: { minWidth: 88, minHeight: 44, padding: '0 20px', borderRadius: 12, fontSize: 14 },
   inviteModal: { width: 'min(420px, 100%)', padding: 0, overflow: 'hidden', borderRadius: 20 },
   inviteContent: { padding: '28px 24px 26px', textAlign: 'center' },
   inviteTitle: { margin: 0, color: arkmeTheme.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
@@ -1494,64 +1470,74 @@ export function removeWorldPublishFile(current: readonly File[], index: number):
   return current.filter((_file, currentIndex) => currentIndex !== index)
 }
 
-function WorldPublishImagePreview({ file, index }: { file: File; index: number }) {
-  useArkmeLocale()
-  const [url, setUrl] = useState('')
-  useEffect(() => {
-    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
-    const next = URL.createObjectURL(file)
-    setUrl(next)
-    return () => { URL.revokeObjectURL(next) }
-  }, [file])
-  return url === ''
-    ? <span style={styles.publishImagePlaceholder}>{tr("待预览")}</span>
-    : <img src={url} alt={tr("待发布图片 {v0}", { v0: String(index + 1) })} style={styles.publishImagePreview} />
-}
-
 interface PublishDialogProps {
   onClose(): void; onPublished(result: ArkmeWorldPublishResult): void
   initialTeam?: ArkmeTeam; actorName?: string | undefined; actorAvatarRef?: string | undefined
+  origin?: WorldPublishSource
 }
 export function PublishDialog(props: PublishDialogProps) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
-  return <ScopedPublishDialog key={`${accountKey}:${props.initialTeam?.jotmoId ?? ''}`} {...props} accountKey={accountKey} />
+  return <ScopedPublishDialog key={`${accountKey}:${props.initialTeam?.jotmoId ?? ''}:${props.origin?.sourceRef ?? ''}:${props.origin?.itemUid ?? ''}`} {...props} accountKey={accountKey} />
 }
-function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, actorAvatarRef, accountKey }: PublishDialogProps & { accountKey: string }) {
+function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, actorAvatarRef, accountKey, origin }: PublishDialogProps & { accountKey: string }) {
   useArkmeLocale()
   const publisher = useTeamWorldPublisher(accountKey, initialTeam)
   const [text, setText] = useState('')
-  const [files, setFiles] = useState<File[]>([])
+  const [attachments, setAttachments] = useState<WorldPublishAttachment[]>([])
+  const [sourceState, setSourceState] = useState<{ loading: boolean; error?: string; snapshot?: WorldPublishSourceDraft }>({ loading: !!origin })
+  const [sourceRevision, setSourceRevision] = useState(0)
+  const previewUrls = useRef(new Set<string>())
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const sendingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
-  const uploadedAssetsRef = useRef<{ mutationId: string; assets: ArkmeUploadedAsset[] }>()
   const requestRef = useRef<AbortController>()
-  useEffect(() => () => requestRef.current?.abort(), [])
+  useEffect(() => () => { requestRef.current?.abort(); for (const url of previewUrls.current) URL.revokeObjectURL(url) }, [])
+  useEffect(() => {
+    if (!origin) return
+    const controller = new AbortController()
+    setSourceState({ loading: true })
+    void callArkme<WorldPublishSourceDraft>('world.source-draft', { ...origin }, controller.signal).then(snapshot => {
+      if (controller.signal.aborted) return
+      if (snapshot.itemUid !== origin.itemUid || snapshot.sourceRef !== origin.sourceRef || !Number.isSafeInteger(snapshot.version) || snapshot.version <= 0 || !Array.isArray(snapshot.attachments)) throw new Error(tr('原快记内容返回异常，请重试'))
+      setText([snapshot.title.trim(), snapshot.textContent].filter(Boolean).join('\n\n'))
+      setAttachments(snapshot.attachments.map((item, index) => ({ id: `source:${index}`, ...(item.asset ? { asset: item.asset } : {}), ...(item.block ? { block: item.block } : {}), ...(!item.asset || item.unavailable ? { unavailable: true } : {}) })))
+      setSourceState({ loading: false, snapshot })
+    }).catch(error => { if (!controller.signal.aborted) setSourceState({ loading: false, error: messageOf(error, '原快记暂时无法读取') }) })
+    return () => controller.abort()
+  }, [origin?.sourceRef, origin?.itemUid, sourceRevision])
   const resetMutationId = () => {
     mutationIdRef.current = uuid()
-    uploadedAssetsRef.current = undefined
   }
-  const chooseFiles = (selectedFiles: FileList | null) => {
+  const chooseFiles = (selectedFiles: FileList | readonly File[] | null) => {
     const selected = Array.from(selectedFiles ?? [])
     if (selected.length === 0) return
-    setFiles(current => appendWorldPublishFiles(current, selected))
+    if (selected.some(file => !file.type.startsWith('image/') || file.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES || file.size <= 0)) { setMessage(tr('请选择不超过 20MB 的图片')); return }
+    if (selected.length + attachments.length > ARKME_WORLD_PUBLISH_MAX_IMAGES) { setMessage(tr('最多添加 27 张图片')); return }
+    const next = selected.map(file => {
+      const url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined
+      if (url) previewUrls.current.add(url)
+      return { id: uuid(), file, ...(url ? { previewUrl: url } : {}) }
+    })
+    setAttachments(current => [...current, ...next])
     resetMutationId()
     setMessage('')
   }
-  const removeFile = (index: number) => {
-    setFiles(current => removeWorldPublishFile(current, index))
+  const removeFile = (id: string) => {
+    const url = attachments.find(item => item.id === id)?.previewUrl
+    if (url) { URL.revokeObjectURL(url); previewUrls.current.delete(url) }
+    setAttachments(current => current.filter(item => item.id !== id))
     resetMutationId()
     setMessage('')
   }
   const submit = async () => {
     if (sendingRef.current) return
+    if (sourceState.loading || sourceState.error) return
     const textContent = text.trim()
-    if (textContent === '') { setMessage(files.length > 0 ? '图片动态也需要写一点文字' : '请输入要发到世界的内容'); return }
-    if (files.some(file => !file.type.startsWith('image/'))) { setMessage('只能上传图片'); return }
-    if (files.some(file => file.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) { setMessage('单张图片不能超过 20MB'); return }
+    if (textContent === '') { setMessage(attachments.length > 0 ? '图片动态也需要写一点文字' : '请输入要发到世界的内容'); return }
+    if (textContent.length > 2000 || attachments.length > ARKME_WORLD_PUBLISH_MAX_IMAGES || attachments.some(worldPublishAttachmentBlocked)) { setMessage(tr('请先调整正文或移除世界暂不支持的附件')); return }
     if (publisher.selected && (publisher.loading || !publisher.team || !accountKey)) {
       setMessage(tr(publisher.loading ? '正在核验团队身份…' : '当前团队身份不可用，请重新选择；草稿已保留。')); return
     }
@@ -1563,11 +1549,13 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
       if (current?.status !== owner?.status || current?.environment !== owner?.environment || current?.userId !== owner?.userId) controller.abort()
     })
     sendingRef.current = true
+    setSending(true)
     try {
       if (publisher.selected) {
         setSending(true); setMessage(tr('正在核验团队身份…'))
         const result = await callArkme<TeamWorldPrepareResult>('team.app.world.prepare', {
           expectedAccountKey: accountKey, teamRef: publisher.team!.teamRef, requestUid: mutationIdRef.current,
+          ...(sourceState.snapshot ? { origin: { sourceRef: sourceState.snapshot.sourceRef, itemUid: sourceState.snapshot.itemUid, version: sourceState.snapshot.version } } : {}),
         }, controller.signal)
         controller.signal.throwIfAborted()
         if (result.state !== 'backend_pending') throw new Error(tr('团队发布协议需要更新插件后使用'))
@@ -1576,25 +1564,25 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
       }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
       setSending(true)
-      setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
-      const cachedUploads = uploadedAssetsRef.current
-      let assets: ArkmeUploadedAsset[] = []
-      if (files.length > 0) {
-        if (cachedUploads?.mutationId === mutationIdRef.current) assets = cachedUploads.assets
-        else {
-          setMessage('正在优化图片…')
-          const uploadFiles: File[] = []
-          for (const file of files) uploadFiles.push(await optimizeWorldPublishImage(file))
-          setMessage('正在上传图片…')
-          assets = await withTimeout(Promise.all(uploadFiles.map(async file => await worldSdk.upload(file, {
-            fileName: file.name || 'world-image', signal: controller.signal,
-          }))), 60_000, '图片上传等待太久，请检查网络后重试', () => { controller.abort() })
-          uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }
+      setMessage(attachments.length > 0 ? '正在上传图片…' : '正在发布…')
+      const assets = await withTimeout(Promise.all(attachments.map(async item => {
+        if (item.asset) return item.asset
+        setAttachments(current => current.map(value => value.id === item.id ? { ...value, state: 'preparing' } : value))
+        try {
+          const file = await optimizeWorldPublishImage(item.file!)
+          controller.signal.throwIfAborted()
+          const asset = await worldSdk.upload(file, { fileName: file.name || 'world-image', signal: controller.signal })
+          controller.signal.throwIfAborted()
+          setAttachments(current => current.map(value => { if (value.id !== item.id) return value; const { state: _state, error: _error, ...rest } = value; return { ...rest, asset } }))
+          return asset
+        } catch (error) {
+          if (!controller.signal.aborted) setAttachments(current => current.map(value => value.id === item.id ? { ...value, state: 'failed', error: messageOf(error, '图片上传失败') } : value))
+          throw error
         }
-      }
+      })), 60_000, '图片上传等待太久，请检查网络后重试', () => { controller.abort() })
       controller.signal.throwIfAborted()
       setMessage('正在发布…')
-      const result = await withTimeout<ArkmeWorldPublishResult>(files.length > 0
+      const result = await withTimeout<ArkmeWorldPublishResult>(assets.length > 0
         ? worldSdk.publishWorldFileAssets({
             clientMutationId: mutationIdRef.current,
             textContent,
@@ -1619,47 +1607,38 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
       onPublished(result)
       onClose()
     } catch (error) { if (!isSocialBindingRequired(error)) setMessage(messageOf(error, '发布失败，请稍后重试')) }
-    finally { stopAccount(); controller.abort(); sendingRef.current = false; setSending(false) }
+    finally {
+      stopAccount(); controller.abort(); sendingRef.current = false; setSending(false)
+      const current = arkmeAuthStore.getSnapshot().auth
+      if (current?.userId === owner?.userId && current?.environment === owner?.environment) setAttachments(items => items.map(item => item.state === 'preparing' ? { ...item, state: 'failed', error: tr('上传中断，请重试') } : item))
+    }
   }
-  return <div role="dialog" aria-modal="true" aria-label={tr("发世界")} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
-    <section style={{ ...styles.modal, ...styles.publishModal }} data-world-publish-dialog="spacious">
-      <header style={styles.publishHeader}>
-        <div>
-          <h2 style={styles.publishTitle}>{tr("发世界")}</h2>
-          <p style={styles.publishIntro}>{tr("记录此刻，也分享给世界。发布失败时会显示原因，草稿不会被清空，可以继续编辑后重试。")}</p>
-        </div>
-        <button data-arkme-feedback="neutral" type="button" style={styles.publishClose} disabled={sending} aria-label={tr("关闭发布窗口")} onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
+  const blocked = text.length > 2000 || attachments.length > ARKME_WORLD_PUBLISH_MAX_IMAGES || attachments.some(worldPublishAttachmentBlocked)
+  const disabled = sending || sourceState.loading || !!sourceState.error
+  const destination = publisher.selected
+    ? tr('发布到{v0}的世界 · 由{v1}发布', { v0: publisher.displayTeam?.name ?? tr('团队'), v1: actorName ?? tr('我') })
+    : tr('发布到世界')
+  return <div role="dialog" aria-modal="true" aria-label={tr('发世界')} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
+    <section style={{ ...styles.modal, width: 'min(640px, 100%)', maxHeight: 'calc(100vh - 48px)', padding: 20, borderRadius: 16 }} data-world-publish-dialog="shared-self">
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16 }}>{tr('发世界')}</h2>
+        <button type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose}><X size={18} /></button>
       </header>
-      <TeamWorldPublisherPicker state={publisher} actorName={actorName} actorAvatarRef={actorAvatarRef} disabled={sending}
-        onSelect={id => { publisher.select(id); resetMutationId(); setMessage('') }} />
-      <div style={styles.publishEditor} data-world-publish-editor="true">
-        <textarea style={styles.publishTextarea} value={text} disabled={sending} maxLength={2000} autoFocus aria-label={tr("世界内容")} placeholder={tr("分享此刻的想法…")} onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
-        <div style={styles.publishEditorMeta}><span>{tr("发布后会作为公开动态展示")}</span><span>{text.length} / 2000</span></div>
-      </div>
-      <section style={styles.publishImageSection} data-world-publish-images="true">
-        <div style={styles.publishImageHeader}>
-          <span style={styles.publishImageTitle}>{tr("图片")}<span style={styles.publishImageHint}>{tr("最多")} {ARKME_WORLD_PUBLISH_MAX_IMAGES} {tr("张，单张不超过 20MB")}</span></span>
-          <span style={styles.publishImageCount}>{files.length} / {ARKME_WORLD_PUBLISH_MAX_IMAGES}</span>
-        </div>
-        <input ref={fileInputRef} style={styles.publishHiddenInput} type="file" accept="image/*" multiple disabled={sending || files.length >= ARKME_WORLD_PUBLISH_MAX_IMAGES} aria-label={tr("选择世界图片")} onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
-        {files.length === 0
-          ? <button data-arkme-feedback="neutral" type="button" style={styles.publishUploadEmpty} disabled={sending} onClick={() => { fileInputRef.current?.click() }}>
-              <span style={styles.publishUploadIcon}><Plus size={18} weight="regular" aria-hidden /></span>
-              <span style={styles.publishUploadTitle}>{tr("添加图片")}</span>
-              <span style={styles.publishUploadHint}>{tr("可一次选择多张图片")}</span>
-            </button>
-          : <div style={styles.publishImageGrid}>
-              {files.map((file, index) => <div key={`${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`} style={styles.publishImageTile}>
-                <WorldPublishImagePreview file={file} index={index} />
-                <button data-arkme-feedback="neutral" type="button" style={styles.publishImageRemove} disabled={sending} aria-label={tr("移除图片 {v0}", { v0: String(index + 1) })} onClick={() => { removeFile(index) }}><X size={12} weight="bold" aria-hidden /></button>
-              </div>)}
-              {files.length < ARKME_WORLD_PUBLISH_MAX_IMAGES && <button data-arkme-feedback="neutral" type="button" style={styles.publishAddTile} disabled={sending} aria-label={tr("继续添加图片")} onClick={() => { fileInputRef.current?.click() }}><Plus size={19} weight="regular" aria-hidden /><span>{tr("继续添加")}</span></button>}
-            </div>}
-      </section>
-      <div style={styles.publishFooter}>
-        <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') && !message.includes(tr(TEAM_WORLD_PENDING_TEXT)) ? styles.modalError : {}) }}>{message}</span>
-        <span style={styles.publishActions}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : tr("发布")}</button></span>
-      </div>
+      {origin && <p style={{ margin: '0 0 8px', fontSize: 11, color: arkmeTheme.secondary }}>{tr('来自发给自己 · 发布副本')}</p>}
+      {sourceState.loading && <p role="status">{tr('正在读取原快记…')}</p>}
+      {sourceState.error && <p role="alert">{sourceState.error} <button type="button" onClick={() => setSourceRevision(value => value + 1)}>{tr('重试')}</button></p>}
+      <input ref={fileInputRef} hidden type="file" accept="image/*" multiple disabled={disabled} aria-label={tr('选择世界图片')}
+        onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+      <ArkmePublishComposer value={text} textFormat={sourceState.snapshot?.textFormat ?? 'plain'} accountKey={accountKey} disabled={disabled}
+        onChange={value => { setText(value); resetMutationId(); setMessage('') }} destination={destination}
+        canPublish={!blocked && !!text.trim()} onPublish={() => { void submit() }}
+        onAdd={files => { if (files) chooseFiles(files); else fileInputRef.current?.click() }}
+        attachments={attachments.length > 0 && <WorldPublishAttachments items={attachments} disabled={disabled} onRemove={removeFile}
+          onMove={(from, to) => { setAttachments(current => { const next = [...current], item = next.splice(from, 1)[0]; if (item) next.splice(to, 0, item); return next }); resetMutationId() }} onRetry={() => { void submit() }} />}
+        identity={<TeamWorldPublisherPicker compact state={publisher} actorName={actorName} actorAvatarRef={actorAvatarRef} disabled={disabled}
+          onSelect={id => { publisher.select(id); resetMutationId(); setMessage('') }} />} />
+      {blocked && <p role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{text.length > 2000 ? tr('世界正文最多 2000 字，请调整发布副本后继续。') : tr('请从发布副本中移除世界暂不支持或不可用的附件；原快记不受影响。')}</p>}
+      <div role="status" style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: arkmeTheme.secondary }}>{message || (publisher.selected ? tr(TEAM_WORLD_PENDING_TEXT) : '')}</div>
     </section>
   </div>
 }

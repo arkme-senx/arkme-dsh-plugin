@@ -51,9 +51,10 @@ export function TeamWorldAuthor({ team, actorName = '我', actorAvatarRef }: {
   </div>
 }
 
-export function TeamWorldPublisherPicker({ state, actorName, actorAvatarRef, disabled, onSelect }: {
+export function TeamWorldPublisherPicker({ state, actorName, actorAvatarRef, disabled, onSelect, compact = false }: {
   state: TeamWorldPublisherState; actorName?: string | undefined; actorAvatarRef?: string | undefined
   disabled: boolean; onSelect(id: string): void
+  compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const close = useCallback(() => setOpen(false), [])
@@ -65,15 +66,15 @@ export function TeamWorldPublisherPicker({ state, actorName, actorAvatarRef, dis
     ...(state.loading ? [{ type: 'label' as const, id: 'loading', text: tr('正在核验团队身份…') }] : []),
     ...(state.error ? [{ id: 'retry', label: tr('重试加载团队身份'), description: state.error, onSelect: state.refresh }] : []),
   ]
-  return <section aria-label={tr('发布身份')} style={{ marginTop: 16 }}>
+  return <section aria-label={tr('发布身份')} style={{ marginTop: compact ? 0 : 16, minWidth: 0 }}>
     <ArkmeSelfRoleMenu open={open && !disabled} onClose={close} actions={actions} selectedIds={[state.selected ? `team:${state.selected}` : 'personal']} showSelectionIndicator anchor={
       <button type="button" style={trigger} aria-label={tr('发布身份：{v0}', { v0: state.selected ? state.displayTeam?.name ?? tr('团队身份待核验') : tr('我') })}
         aria-haspopup="dialog" aria-expanded={open && !disabled} disabled={disabled} onClick={() => { if (!open) state.refresh(); setOpen(value => !value) }}>
         {state.selected && state.displayTeam ? <ArkmeTeamAvatar name={state.displayTeam.name} avatar={state.displayTeam.avatar} size={22} /> : <ArkmeUserAvatar avatarRef={actorAvatarRef} size={22} label={tr('我的头像')} />}
-        <span>{state.selected ? state.displayTeam?.name ?? tr('团队身份待核验') : tr('我')}</span><CaretDown size={12} />
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{state.selected ? state.displayTeam?.name ?? tr('团队身份待核验') : tr('我')}</span><CaretDown size={12} />
       </button>
     } />
-    {!!state.selected && <div style={{ padding: 12, background: arkmeTheme.subtle, borderRadius: 10, marginTop: 10 }}>
+    {!!state.selected && !compact && <div style={{ padding: 12, background: arkmeTheme.subtle, borderRadius: 10, marginTop: 10 }}>
       {state.displayTeam && <TeamWorldAuthor team={state.displayTeam} actorName={actorName ?? tr('我')} actorAvatarRef={actorAvatarRef} />}
       <p style={{ fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary, marginBottom: 0 }}>{tr('内容归团队所有，记录实际发布成员。')}</p>
       <p role="status" style={{ fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary, marginBottom: 0 }}>{tr(TEAM_WORLD_PENDING_TEXT)}</p>

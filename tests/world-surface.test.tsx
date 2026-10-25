@@ -283,27 +283,19 @@ describe('Arkme native World surface', () => {
     expect(returningToWorld).toEqual({ positions: { all: 1680, mine: 240 }, restoreTop: 1680 })
   })
 
-  it('renders a spacious World publisher with a custom image picker and complete action area', () => {
+  it('reuses the compact self-chat editor, tools and send action for World publication', () => {
     const markup = renderToStaticMarkup(<PublishDialog onClose={noop} onPublished={noop} />)
-
-    expect(markup).toContain('data-world-publish-dialog="spacious"')
-    expect(markup).toContain('width:min(720px, 100%)')
-    expect(markup).toContain('data-world-publish-editor="true"')
-    expect(markup).toContain('min-height:190px')
+    expect(markup).toContain('data-world-publish-dialog="shared-self"')
+    expect(markup).toContain('width:min(640px, 100%)')
+    expect(markup).toContain('data-world-publish-editor="shared-self"')
+    expect(markup).toContain('data-arkme-primary-composer="true"')
+    expect(markup).toContain('contenteditable="true"')
     expect(markup).toContain('aria-label="世界内容"')
-    expect(markup).toContain('data-world-publish-images="true"')
-    expect(markup).toContain('>添加图片<')
-    expect(markup).toContain('最多 27 张，单张不超过 20MB')
-    expect(markup).toContain('0 / 27')
-    expect(markup).toContain('0 / 2000')
+    expect(markup).toContain('aria-label="添加图片"')
+    expect(markup).toContain('aria-label="发布"')
     expect(markup).toContain('aria-label="关闭发布窗口"')
-    expect(markup).not.toContain('选择文件')
-    expect(styleForDataAttribute(markup, 'data-world-publish-dialog', 'spacious'))
-      .toContain('background:var(--dsw-alias-bg-layer-3, #ffffff)')
-    expect(styleForDataAttribute(markup, 'data-world-publish-editor', 'true'))
-      .toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
-    expect(markup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
-    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+    expect(markup).not.toContain('可一次选择多张图片')
+    expect(markup).not.toContain('min-height:190px')
   })
 
   it('appends publish images up to the product limit and removes one selection without touching the others', () => {

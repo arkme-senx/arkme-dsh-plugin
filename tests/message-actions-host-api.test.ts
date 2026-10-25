@@ -5,6 +5,13 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 import type { TeamCodexService } from '../src/team-codex-service.js'
 
+it('forwards a read-only personal World source request with cancellation', async () => {
+  const service = { worldPublishSource: vi.fn(async () => ({ itemUid: 'owned' })) } as unknown as ArkmeService
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service, 'world.source-draft', { sourceRef: 'self', itemUid: 'owned' }, undefined, undefined, undefined, undefined, signal)
+  expect(service.worldPublishSource).toHaveBeenCalledWith('self', 'owned', signal)
+})
+
 it('never silently publishes a team intent through a personal World route', async () => {
   const service = { publishWorldText: vi.fn(), publishWorldFileAssets: vi.fn() } as unknown as ArkmeService
   for (const operation of ['world.publish-text', 'world.publish-file-assets'] as const) {

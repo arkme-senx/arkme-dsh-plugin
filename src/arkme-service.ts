@@ -2676,6 +2676,7 @@ arkoImagesV1:true,
   async recordReeditSubmissions(sourceRef: string) { return await this.record.recordReeditSubmissions(sourceRef) }
   async resumeRecordReeditSubmissions(sourceRef: string, reconcile = false) { return await this.record.resumeRecordReeditSubmissions(sourceRef, reconcile) }
   async acknowledgeRecordReeditSubmission(sourceRef: string, submissionId: string, version: number) { return await this.record.acknowledgeRecordReeditSubmission(sourceRef, submissionId, version) }
+  async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal) { return await this.record.worldPublishSource(sourceRef, itemUid, signal) }
   async recordReeditEditor(sourceRef: string, itemUid: string): Promise<ArkmeRecordReeditEditorSnapshot> { return await this.record.recordReeditEditor(sourceRef, itemUid) }
   async commitRecordReedit(context: ArkmeRecordReeditPreparedContext): Promise<ArkmeRecordReeditCommitResult> {
     return await this.record.commitRecordReedit(context)
