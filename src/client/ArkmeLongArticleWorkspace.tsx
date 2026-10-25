@@ -13,6 +13,7 @@ import css from './long-article-workspace.css?inline'
 export interface ArticleWorkspaceFrame {
   bodyRef(node: HTMLDivElement | null): void
   leading: ReactNode; trailing: ReactNode
+  renderTrailing(actions: ReactNode): ReactNode
   registerClose(handler: () => void): () => void
   onLeaveFailed(): void
   closeTransient(): boolean
@@ -94,15 +95,17 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
     cancelClose: () => { pending.current = undefined; props.windowMode?.cancelClose() },
     subscribeClose: (listener: () => void) => props.windowMode!.subscribeClose(() => { pending.current = undefined; listener() }),
   } : undefined, [props.windowMode, selection.displayName])
+  const renderTrailing = (actions?: ReactNode) => <div className="arkme-article-workspace-controls">
+    {entries.length > 0 && <button type="button" className="arkme-article-workspace-control" aria-label={tr(showRight ? '收起大纲' : '展开大纲')} title={tr(showRight ? '收起大纲' : '展开大纲')}
+      aria-expanded={showRight} onClick={() => compact ? setMobile(showRight ? undefined : 'outline') : setRight(value => !value)}><ListBullets size={20} /></button>}
+    {actions}
+    {!props.windowMode && <button type="button" className="arkme-article-workspace-control" aria-label={tr('关闭长文')} onClick={requestExit}><X size={22} /></button>}
+  </div>
   const frame: ArticleWorkspaceFrame = {
     bodyRef, registerClose, onLeaveFailed, closeTransient,
     leading: <button type="button" className="arkme-article-workspace-control" aria-label={tr(showLeft ? '收起长文列表' : '展开长文列表')} title={tr(showLeft ? '收起长文列表' : '展开长文列表')}
       aria-expanded={showLeft} onClick={() => compact ? setMobile(showLeft ? undefined : 'directory') : setLeft(value => !value)}><SidebarSimple size={20} /></button>,
-    trailing: <div className="arkme-article-workspace-controls">
-      {entries.length > 0 && <button type="button" className="arkme-article-workspace-control" aria-label={tr(showRight ? '收起大纲' : '展开大纲')} title={tr(showRight ? '收起大纲' : '展开大纲')}
-        aria-expanded={showRight} onClick={() => compact ? setMobile(showRight ? undefined : 'outline') : setRight(value => !value)}><ListBullets size={20} /></button>}
-      {!props.windowMode && <button type="button" className="arkme-article-workspace-control" aria-label={tr('关闭长文')} title={tr('关闭长文')} onClick={requestExit}><X size={20} /></button>}
-    </div>,
+    trailing: renderTrailing(), renderTrailing,
   }
   const minLevel = Math.min(...entries.map(entry => entry.level))
   return <div className="arkme-article-workspace-backdrop" data-standalone={standalone || !!props.windowMode} style={{ zIndex: props.overlayZIndex ?? 1200 }}

@@ -2504,6 +2504,9 @@ export interface ArkmeLongArticleUpdateInput {
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
+  /** Verified current record and account-bound action capabilities; never inferred by the reader. */
+  actionItem?: ArkmeTimelineItem
+  createdAtMillis?: number
   contentBlocks?: ArkmeContentBlock[]
   sourceRef: string
   itemUid: string

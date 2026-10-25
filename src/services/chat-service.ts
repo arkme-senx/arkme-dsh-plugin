@@ -5270,11 +5270,11 @@ export class ChatService {
     return { sourceRef, itemUid: input.recordUid, status: Number(objectValue(item.record).status ?? 0), sequence: Number(objectValue(item.relation).seq ?? 0), localState: 'synced' }
   }
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal, actionRef?: string): Promise<ArkmeLongArticleDetail> {
-    if (!actionRef) return await this.record.longArticleDetail(sourceRef, itemUid, signal)
+    if (!actionRef) return await this.withLongArticleActions(await this.record.longArticleDetail(sourceRef, itemUid, signal))
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
-      return await this.record.longArticleDetail(sourceRef, itemUid, signal)
+      return await this.withLongArticleActions(await this.record.longArticleDetail(sourceRef, itemUid, signal))
     }
     const reference = await this.openMessageActionRef(actionRef, session.userId, source)
     if (reference.sourceKind !== 'chat_relation' || reference.recordUid !== itemUid.trim() || !reference.relationUid || !reference.recordOwnerUserId) {
@@ -5298,15 +5298,41 @@ export class ChatService {
     }
     const recordDurationMillis = Math.max(0, numberValue(core.record_duration_millis))
     const editDurationMillis = Math.max(0, numberValue(core.edit_duration_millis))
+    const contentBlocks = this.media.richContentBlocks(raw, session.userId)
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    const actionItem: ArkmeTimelineItem = {
+      ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      senderName: reference.senderName, isMe: reference.senderUserId === session.userId,
+      recordOwnerUserId: reference.recordOwnerUserId,
+      messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({ ...reference,
+        title: stringValue(core.title), textContent: stringValue(core.text_content),
+        textFormat: arkmeRecordTextFormat(core), contentBlocks,
+      }), signingKey),
+      ...recordDeletionCapability({ userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
+        recordUid: itemUid, recordVersion: numberValue(core.version), recordOwnerUserId: numberValue(core.owner_user_id),
+        isMe: reference.senderUserId === session.userId, status: numberValue(core.status) }, signingKey),
+    }
     return {
+      actionItem,
+      ...(numberValue(core.create_at ?? core.created_at) > 0 ? { createdAtMillis: numberValue(core.create_at ?? core.created_at) } : {}),
       sourceRef, itemUid: reference.recordUid, title: stringValue(core.title),
       textContent: stringValue(core.text_content), textFormat: arkmeRecordTextFormat(core),
-      contentBlocks: this.media.richContentBlocks(raw, session.userId),
+      contentBlocks,
       sendAtMillis: numberValue(core.send_at), updateAtMillis: numberValue(core.update_at),
       recordDurationMillis, editDurationMillis, thinkingDurationMillis: recordDurationMillis + editDurationMillis,
       version: numberValue(core.version),
       editable: numberValue(core.owner_user_id) === session.userId && numberValue(core.creator_user_id) === session.userId,
     }
+  }
+
+  private async withLongArticleActions(detail: ArkmeLongArticleDetail): Promise<ArkmeLongArticleDetail> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(detail.sourceRef, session.userId)
+    const item = detail.actionItem
+    if (!item || item.recordOwnerUserId !== session.userId || item.status !== 1) return detail
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    return { ...detail, actionItem: this.withRecordMessageActionRef(source,
+      this.withPersonalRecordCapabilities(source, item, session.userId, signingKey, session.userId, undefined), session.userId, signingKey) }
   }
 
   /** Resolve a complete, owned article, never trust a search excerpt as send content. */
@@ -5330,7 +5356,7 @@ export class ChatService {
       itemUid: string,
       input: import('../types.js').ArkmeLongArticleUpdateInput & { assets?: import('../types.js').ArkmeUploadedAsset[] },
     ): Promise<ArkmeLongArticleDetail> {
-      return await this.record.updateLongArticle(sourceRef, itemUid, input)
+      return await this.withLongArticleActions(await this.record.updateLongArticle(sourceRef, itemUid, input))
     }
   
   async getLongArticleDraft(sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
@@ -6897,7 +6923,7 @@ export class ChatService {
       senderUserId: recordOwnerId(input.senderUserId),
       senderName: input.senderName.trim() || 'Arkme用户',
       title: arkmeEmojiTokenSafePrefix(input.title, 500, 'codeUnits'),
-      textContent: arkmeEmojiTokenSafePrefix(input.textContent, this.runtime.config.maxTextLength, 'codeUnits'),
+      textContent: arkmeEmojiTokenSafePrefix(input.textContent, input.displayKind === 1 || input.templateKind === 8 ? 40_000 : this.runtime.config.maxTextLength, 'codeUnits'),
       textFormat: input.textFormat ?? 'plain',
       sendAtMillis: Math.trunc(input.sendAtMillis),
       sourceSequence: Math.max(0, Math.trunc(numberValue(input.sourceSequence))),
@@ -7129,6 +7155,7 @@ export class ChatService {
       text: reference.textContent,
       text_format: reference.textFormat ?? 'plain',
       template_kind: reference.templateKind,
+      display_kind: reference.displayKind,
       image_count: reference.imageCount,
       voice_count: reference.voiceCount,
       file_count: reference.fileCount,

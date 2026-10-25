@@ -156,6 +156,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
         overlayZIndex={10060}
         initialDirectoryPage={scope === 'recent' ? page : undefined}
         onClose={closeArticle}
+        onDeleted={uid => { setPage(current => current ? { ...current, items: current.items.filter(item => item.recordUid !== uid) } : current) }}
         onUpdated={detail => {
           setPage(current => current === undefined ? current : { ...current, items: current.items.map(item => identity(item) !== identity(selected) ? item : { ...item, title: detail.title, textContent: detail.textContent, snippet: '', ...(detail.textFormat === undefined ? {} : { textFormat: detail.textFormat }) }) })
         }}

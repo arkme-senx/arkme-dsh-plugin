@@ -5963,16 +5963,31 @@ describe('ArkmeService', () => {
     await expect(service.longArticleDetail(source.sourceRef, 'article-1')).resolves.toMatchObject({
       itemUid: 'article-1', editable: true, version: 1, thinkingDurationMillis: 3200,
     })
+    const actionsBefore = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(actionsBefore.messageActionRef).toMatch(/^arkme-message-action-v1\./)
+    const { openRecordDeletionRef } = await import('../src/record-deletion-ref.js')
+    expect(openRecordDeletionRef(actionsBefore.recordDeletionRef!, await state.uniqueCode())).toMatchObject({
+      recordUid: 'article-1', recordVersion: 1, sourceKind: 'send_to_self', userId: 10001,
+    })
     await expect(service.updateLongArticle(source.sourceRef, 'article-1', {
       title: '更新标题', textContent: '更新正文', version: 1, editDurationMillis: 1400,
     })).resolves.toMatchObject({
       itemUid: 'article-1', title: '更新标题', textContent: '更新正文', version: 2,
       thinkingDurationMillis: 4600,
     })
+    const actionsAfter = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(openRecordDeletionRef(actionsAfter.recordDeletionRef!, await state.uniqueCode()).recordVersion).toBe(2)
+    expect(actionsAfter.textContent).toBe('更新正文')
     expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
       record_uid: 'article-1', template_kind: 1, version: 1,
       record_duration_millis: 3200, edit_duration_millis: 1400,
     })
+    textContent = '完整长文'.repeat(7500)
+    const completeArticle = await service.longArticleDetail(source.sourceRef, 'article-1')
+    await service.forwardSourceMessages(source.sourceRef, [completeArticle.actionItem!.messageActionRef!], { recordUid: 'forwarded-article', relationUid: 'forwarded-relation' })
+    const forwardBody = calls.filter(call => call.url.endsWith('/api/v1/records/create')).at(-1)!.body
+    const payload = forwardBody.content_payload as { forward_records: { items: Array<{ text: string; display_kind: number }> } }
+    expect(payload.forward_records.items[0]).toMatchObject({ text: textContent, display_kind: 1 })
   })
 
   it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {

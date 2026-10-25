@@ -936,6 +936,9 @@ export class RecordService {
     const recordDurationMillis = Math.max(0, Math.trunc(numberValue(core.record_duration_millis)))
     const editDurationMillis = Math.max(0, Math.trunc(numberValue(core.edit_duration_millis)))
     return {
+      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId), contentBlocks,
+        recordOwnerUserId: numberValue(core.owner_user_id) },
+      ...(numberValue(core.create_at ?? core.created_at) > 0 ? { createdAtMillis: numberValue(core.create_at ?? core.created_at) } : {}),
       sourceRef,
       itemUid: recordUid,
       title: stringValue(core.title),
