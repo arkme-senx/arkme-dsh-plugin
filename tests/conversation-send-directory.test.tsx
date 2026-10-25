@@ -1,3 +1,5 @@
+import { openLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
+import { selectedTextForwardContent } from '../src/client/selected-text-forward.js'
 import { mentionBotCache } from '../src/client/mention-bot-cache.js'
 vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
@@ -3247,6 +3249,30 @@ describe('conversation send directory projection', () => {
       act(() => { renderer?.unmount() }); renderer = undefined
       vi.useRealTimers()
     }
+  })
+
+  it('opens selected text with no selected recipients and keeps preview/comment while choosing destinations', async () => {
+    const doc = { body: {}, querySelectorAll: () => [], addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('document', doc); Object.assign(window, { document: doc })
+    await act(async () => { renderer = create(<ArkmeSurface active={false} productChrome={false} productNavigation={false} />) })
+    const content = selectedTextForwardContent('prod:42', { version: 1, sourceLabel: '群聊 · 产品', senderName: '同事', sourceAtMillis: 1000, text: '只转发这一段' })
+    let result!: Promise<NativeForwardResult>
+    const controller = new AbortController()
+    await act(async () => { result = openLocalSnapshotForward(content, controller.signal) })
+    const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+    expect(dialog.findAll(node => node.type === 'button' && node.props['aria-pressed'] === true)).toHaveLength(0)
+    expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(true)
+    expect(dialog.findByType('blockquote').children).toEqual(['只转发这一段'])
+    const targets = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')
+    expect(renderedText(targets[0]!)).toContain('发给自己')
+    act(() => dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '自己的想法' } }))
+    await act(async () => { targets[0]!.props.onClick(); targets[1]!.props.onClick() })
+    expect(dialog.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('自己的想法')
+    expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(false)
+    expect(dialog.findByType('blockquote').children).toEqual(['只转发这一段'])
+    await act(async () => controller.abort())
+    await expect(result).resolves.toEqual({ completed: false })
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'selected-text.forward')).toBe(false)
   })
 
   it('opens DSH content in the original Arkme picker while its conversation surface is inactive', async () => {

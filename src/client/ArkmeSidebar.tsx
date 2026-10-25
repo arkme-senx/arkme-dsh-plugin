@@ -1,4 +1,4 @@
-import { registerLocalSnapshotForward } from './local-snapshot-forward.js'
+import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -2821,7 +2821,7 @@ export function ArkmeSurface({
   useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
 
   type NativeForwardRequest = {
-    preview: ReturnType<typeof nativeForwardPreview>
+    preview: LocalForwardPreview
     delivery: NativeForwardDelivery
     signal: AbortSignal
     finish(result: NativeForwardResult): void
@@ -8480,8 +8480,8 @@ export function ArkmeSurface({
               </ul>
               {forwardDirectory.error !== '' && <div role="alert" style={styles.forwardTargetStatus}>{forwardDirectory.error}</div>}
             </div>
-            {forwardSelectedTargets.length > 0 && <footer style={styles.forwardTargetFooter}>
-              <div style={styles.forwardTargetRecipients}>
+            {(forwardSelectedTargets.length > 0 || forwardTargetPicker.native?.preview.quote) && <footer style={styles.forwardTargetFooter}>
+              {forwardSelectedTargets.length > 0 && <div style={styles.forwardTargetRecipients}>
                 <span>{tr("发送给：")}</span>
                 <span style={styles.forwardTargetAvatarStack}>
                   {forwardSelectedTargets.slice(0, 6).map(target => <ArkmeDirectorySourceAvatar
@@ -8491,8 +8491,9 @@ export function ArkmeSurface({
                   />)}
                 </span>
               </div>
+              }
               <div style={styles.forwardTargetFooterDivider} />
-              <div style={styles.forwardTargetPreview}>
+              {!forwardTargetPicker.native?.preview.quote && <div style={styles.forwardTargetPreview}>
                 <span style={styles.forwardTargetPreviewIcon}><ArkmeForwardLinearIcon size={18} /></span>
                 <span style={styles.forwardTargetPreviewText}>
                   <span style={styles.forwardTargetPreviewTitle}><ArkmeRichText text={forwardTargetPicker.native?.preview.title ?? arkmeForwardPreviewTitle(forwardPickerMessageItems, source)} presentation="preview" /></span>
@@ -8506,6 +8507,12 @@ export function ArkmeSurface({
                   onClick={() => { if (messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}
                 ><ArkmeForwardCloseBorderIcon /></button>
               </div>
+              }
+              {forwardTargetPicker.native?.preview.quote && <div data-arkme-selected-forward-preview style={{ margin: '8px 2px', padding: '6px 10px', borderLeft: `2px solid ${arkmeTheme.accent}`, background: arkmeTheme.extensionSource, borderRadius: 4 }}>
+                <div style={{ whiteSpace: 'pre-wrap', color: arkmeTheme.secondary, fontSize: 11 }}>{forwardTargetPicker.native.preview.title}</div>
+                <blockquote style={{ margin: '5px 0 0', maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{forwardTargetPicker.native.preview.quote.text}</blockquote>
+                <div style={{ marginTop: 5, fontSize: 11, color: arkmeTheme.tertiary }}>引用样式仅本机显示，接收方及其他设备显示分段文本。</div>
+              </div>}
               {forwardTargetPicker.sendError !== '' && <div role="alert" style={styles.forwardTargetSendError}>{forwardTargetPicker.sendError}</div>}
               <div style={styles.forwardTargetComposer}>
                 <textarea
@@ -8531,9 +8538,9 @@ export function ArkmeSurface({
                   type="button"
                   style={{
                     ...styles.forwardTargetSend,
-                    ...(messageActionBusy === 'forward' ? styles.forwardTargetSendDisabled : {}),
+                    ...(messageActionBusy === 'forward' || forwardSelectedTargets.length === 0 ? styles.forwardTargetSendDisabled : {}),
                   }}
-                  disabled={messageActionBusy === 'forward'}
+                  disabled={messageActionBusy === 'forward' || forwardSelectedTargets.length === 0}
                   aria-label={messageActionBusy === 'forward' ? '转发中' : '发送转发'}
                   onClick={() => { void confirmForwardTargets() }}
                 >

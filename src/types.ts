@@ -4416,6 +4416,7 @@ export type ArkmePluginOperation =
   | 'source.forward-messages'
   | 'source.send-text'
   | 'self-note.quote.send'
+  | 'selected-text.forward'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
   | 'related-recordings.share'
