@@ -1414,6 +1414,16 @@ AI 润色设置|AI polish settings
 长文正文|Article content
 长文快速查找|Find articles
 长文库|Article library
+长文工作区|Article workspace
+所有长文|All articles
+展开长文列表|Expand article list
+收起长文列表|Collapse article list
+文章大纲|Article outline
+大纲|Outline
+展开大纲|Expand outline
+收起大纲|Collapse outline
+标题导航|Heading navigation
+关闭侧栏|Close sidebar
 关闭长文库|Close article library
 新建长文|New article
 长文分类|Article categories

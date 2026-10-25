@@ -42,14 +42,14 @@ export function ArkmeLongArticleWindow() {
     cancelClose: () => { void bridge?.cancelClose() },
   }), [bridge, target, invalidated])
   useEffect(() => {
-    if ((!target || target.article?.mode === 'snapshot') && bridge) return bridge.onClose(() => { void bridge.close() })
+    if (!target && bridge) return bridge.onClose(() => { void bridge.close() })
   }, [bridge, target])
   useEffect(() => { document.title = `${tr(target?.article ? '长文' : '写长文')} · ${target?.displayName ?? 'Arkme'}` }, [target])
   if (!target) return <div style={{ position: 'fixed', inset: 0, display: 'grid', placeContent: 'center', gap: 16, background: theme.base, color: theme.text }}>
     <div role={error ? 'alert' : 'status'}>{error || tr('正在加载长文…')}</div>
     {error && <button onClick={() => { void bridge?.close() }}>{tr('关闭')}</button>}
   </div>
-  if (target.article?.mode === 'snapshot') return <ArkmeLongArticleSnapshotDialog standalone item={target.article.item} onClose={() => { void bridge?.close() }} />
+  if (target.article?.mode === 'snapshot') return <ArkmeLongArticleSnapshotDialog standalone windowMode={mode} item={target.article.item} onClose={() => { void bridge?.close() }} />
   return <ArkmeLongArticleDialog sourceRef={target.sourceRef} windowMode={mode} {...(target.article ? { item: target.article.item } : {})}
     onUpdated={async detail => { if (!await bridge?.published({ ...target.article!.item, ...detail, recordVersion: detail.version })) throw new Error('更新回执同步失败，请重新打开长文核对') }}
     onCreated={async item => { await bridge?.published(item) }} onClose={() => { void bridge?.close() }} />

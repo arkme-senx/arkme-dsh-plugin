@@ -12,6 +12,7 @@ import type { ArkmeLongArticleDetail, ArkmeLongArticleDraft, ArkmeSourceSendResu
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeLongArticleDraftDialog } from './ArkmeLongArticleDraftDialog.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
+import { ArkmeLongArticleWorkspace, type ArticleWorkspaceFrame } from './ArkmeLongArticleWorkspace.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_CONTENT_LENGTH = 40000
@@ -58,9 +59,10 @@ export interface ArkmeLongArticleDialogProps {
     verifyAccount: () => Promise<void>
     subscribeClose: (listener: () => void) => () => void
     cancelClose: () => void
-  }
-  item?: Pick<ArkmeTimelineItem, 'itemUid' | 'title' | 'textContent' | 'sendAtMillis' | 'recordDurationMillis' | 'editDurationMillis' | 'messageActionRef' | 'textFormat' | 'contentBlocks'>
+  } | undefined
+  item?: Pick<ArkmeTimelineItem, 'itemUid' | 'title' | 'textContent' | 'sendAtMillis' | 'recordDurationMillis' | 'editDurationMillis' | 'messageActionRef' | 'textFormat' | 'contentBlocks' | 'recordOwnerUserId'> | undefined
   overlayZIndex?: number
+  initialDirectoryPage?: import('../types.js').ArkmeRecordSearchResult | undefined
   onClose: () => void
   onCreated?: (item: ArkmeTimelineItem) => void | Promise<void>
   onUpdated?: (detail: ArkmeLongArticleDetail) => void | Promise<void>
@@ -69,24 +71,40 @@ export interface ArkmeLongArticleDialogProps {
 }
 
 /** Forwarded content is a read-only snapshot, not an editable source record. */
-export function ArkmeLongArticleSnapshotDialog({ item, onClose, standalone = false }: { item: ArkmeTimelineItem; onClose: () => void; standalone?: boolean }) {
+export function ArkmeLongArticleSnapshotDialog({ item, onClose, standalone = false, windowMode }: {
+  item: ArkmeTimelineItem; onClose: () => void; standalone?: boolean; windowMode?: ArkmeLongArticleDialogProps['windowMode']
+}) {
+  const props: ArkmeLongArticleDialogProps = { sourceRef: 'snapshot', item, onClose, windowMode }
+  return <ArkmeLongArticleWorkspace initial={{ sourceRef: 'snapshot', item }} props={props} standalone={standalone}
+    renderArticle={(selection, workspace, close, updated, mode) => selection.sourceRef === 'snapshot'
+      ? <ArkmeLongArticleSnapshotContent item={item} onClose={close} workspace={workspace} windowMode={mode} />
+      : <ArkmeLongArticleContent key={`${selection.sourceRef}:${selection.item?.itemUid}`} sourceRef={selection.sourceRef} item={selection.item}
+          onClose={close} onUpdated={updated} windowMode={mode} workspace={workspace} />} />
+}
+
+function ArkmeLongArticleSnapshotContent({ item, onClose, workspace, windowMode }: {
+  item: ArkmeTimelineItem; onClose: () => void; workspace: ArticleWorkspaceFrame; windowMode: ArkmeLongArticleDialogProps['windowMode']
+}) {
   useArkmeLocale()
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); if (!workspace.closeTransient()) onClose() } }
     window.addEventListener('keydown', onKeyDown, true)
     return () => { window.removeEventListener('keydown', onKeyDown, true) }
-  }, [onClose])
-  return <div style={{ ...styles.overlay, ...(standalone ? { padding: 0, background: theme.base } : {}) }} role="dialog" aria-modal={standalone ? undefined : true} aria-label={tr("转发长文详情")} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <article style={{ ...styles.dialog, ...(standalone ? { width: "100%", maxWidth: "100%", height: "100%", maxHeight: "100%", borderRadius: 0 } : {}) }} data-arkme-long-article-dialog="snapshot">
-      <header style={styles.header}>
-        <h2 style={styles.titleRead}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></h2>
-        <button data-arkme-feedback="neutral" autoFocus type="button" style={styles.close} aria-label={tr("关闭长文")} onClick={onClose}>×</button>
+  }, [onClose, workspace.closeTransient])
+  useEffect(() => workspace.registerClose(onClose), [onClose, workspace.registerClose])
+  useEffect(() => windowMode?.subscribeClose(onClose), [windowMode, onClose])
+  return <div style={{ height: '100%', minHeight: 0, display: 'flex' }} role="region" aria-label={tr("转发长文详情")}>
+    <article style={{ ...styles.dialog, width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base }} data-arkme-long-article-dialog="snapshot">
+      <header style={{ ...styles.header, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '20px 24px 14px' }}>
+        {workspace.leading}
+        <h2 style={{ ...styles.titleRead, flex: 1, minWidth: 0 }}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></h2>
+        {workspace.trailing}
       </header>
       <div style={styles.metaRow}>
         {item.sendAtMillis > 0 && <span style={styles.meta}>▦ {formatDate(item.sendAtMillis)}</span>}
         <span style={styles.meta}>▤ {String(item.textContent.length)}{tr("字")}</span>
       </div>
-      <div style={styles.body}>
+      <div ref={workspace.bodyRef} data-arkme-article-scroll style={styles.body}>
         {item.textFormat === 'markdown'
           ? <ArkmeLongArticleBody text={item.textContent} blocks={item.contentBlocks} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} />
           : <p style={styles.bodyRead}><ArkmeRichText text={item.textContent} linkLabelMode="raw" /></p>}
@@ -95,7 +113,14 @@ export function ArkmeLongArticleSnapshotDialog({ item, onClose, standalone = fal
   </div>
 }
 
-export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose, onCreated, onUpdated, onPrepared, windowMode }: ArkmeLongArticleDialogProps) {
+export function ArkmeLongArticleDialog(props: ArkmeLongArticleDialogProps) {
+  if (props.onPrepared) return <ArkmeLongArticleContent {...props} />
+  return <ArkmeLongArticleWorkspace initial={{ sourceRef: props.sourceRef, ...(props.item ? { item: props.item } : {}) }} props={props}
+    renderArticle={(selection, workspace, onClose, onUpdated, windowMode) => <ArkmeLongArticleContent key={`${selection.sourceRef}:${selection.item?.itemUid ?? 'new'}`}
+      {...props} sourceRef={selection.sourceRef} item={selection.item} onClose={onClose} onUpdated={onUpdated} windowMode={windowMode} workspace={workspace} />} />
+}
+
+function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCreated, onUpdated, onPrepared, windowMode, workspace }: ArkmeLongArticleDialogProps & { workspace?: ArticleWorkspaceFrame }) {
   useArkmeLocale()
   const { notice: imageNotice, showNotice: showImageNotice } = useArkmeFileActionNotice(5000)
   const messageActionRef = useRef(item?.messageActionRef)
@@ -103,6 +128,8 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
   const itemUid = item?.itemUid
   const creating = item === undefined
   const [detail, setDetail] = useState<ArkmeLongArticleDetail>()
+  const detailRequest = useRef<AbortController>()
+  useEffect(() => () => detailRequest.current?.abort(), [])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(creating)
   const [title, setTitle] = useState('')
@@ -204,12 +231,17 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
 
   const loadDetail = useCallback(async () => {
     if (itemUid === undefined) return
+    detailRequest.current?.abort()
+    const controller = new AbortController(); detailRequest.current = controller
     setLoading(true)
     setError('')
     try {
       const value = await callArkme<ArkmeLongArticleDetail>('source.long-article.detail', {
         sourceRef, itemUid, messageActionRef: messageActionRef.current,
-      })
+      }, controller.signal)
+      const auth = arkmeAuthStore.getSnapshot().auth
+      if (controller.signal.aborted || (authAtOpen.current?.status === 'authenticated'
+        && (auth?.status !== 'authenticated' || auth.userId !== authAtOpen.current.userId || auth.environment !== authAtOpen.current.environment))) return
       setDetail(value)
       setDraftFormat(value.textFormat ?? 'plain')
       setTitle(value.title)
@@ -217,9 +249,9 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
       originalRef.current = { title: value.title, textContent: value.textContent }
       setDurationBaseMillis(value.editDurationMillis)
     } catch (caught) {
-      setError(errorMessage(caught))
+      if (!controller.signal.aborted) setError(errorMessage(caught))
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
   }, [itemUid, sourceRef])
 
@@ -296,22 +328,24 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
       if (editing && dirty) { setClosePrompt(true); return }
       skipUnmountSaveRef.current = true; onClose(); return
     }
-    if (submitting) return
+    if (submitting || (workspace && preparingImages)) { workspace?.onLeaveFailed(); return }
     if (editing && dirty) {
       const keep = window.confirm('保留这篇长文的未发布修改吗？\n确定：保留草稿；取消：放弃修改。')
-      if (keep) void saveDraft().then(() => { skipUnmountSaveRef.current = true; onClose() }).catch(caught => setError(errorMessage(caught)))
-      else { skipUnmountSaveRef.current = true; void deleteDraft().then(onClose).catch(caught => { skipUnmountSaveRef.current = false; setError(errorMessage(caught)) }) }
+      if (keep) void saveDraft().then(() => { skipUnmountSaveRef.current = true; onClose() }).catch(caught => { workspace?.onLeaveFailed(); setError(errorMessage(caught)) })
+      else { skipUnmountSaveRef.current = true; void deleteDraft().then(onClose).catch(caught => { workspace?.onLeaveFailed(); skipUnmountSaveRef.current = false; setError(errorMessage(caught)) }) }
       return
     }
     skipUnmountSaveRef.current = true
     onClose()
-  }, [deleteDraft, dirty, editing, onClose, saveDraft, submitting, windowMode, accountChanged, preparingImages, closingDraft])
+  }, [deleteDraft, dirty, editing, onClose, saveDraft, submitting, windowMode, accountChanged, preparingImages, closingDraft, workspace?.onLeaveFailed])
+
+  useEffect(() => workspace?.registerClose(requestClose), [workspace?.registerClose, requestClose])
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); if (recoveryDraft) { if (draftPreview) setDraftPreview(false); else setRecoveryDraft(undefined) } else if (windowMode && closePrompt && !closingDraft) { setClosePrompt(false); windowMode.cancelClose() } else requestClose() } }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); if (recoveryDraft) { if (draftPreview) setDraftPreview(false); else setRecoveryDraft(undefined) } else if (windowMode && closePrompt && !closingDraft) { setClosePrompt(false); windowMode.cancelClose() } else if (!workspace?.closeTransient()) requestClose() } }
     window.addEventListener('keydown', onKeyDown, true)
     return () => { window.removeEventListener('keydown', onKeyDown, true) }
-  }, [requestClose, windowMode, closePrompt, closingDraft, recoveryDraft, draftPreview])
+  }, [requestClose, windowMode, closePrompt, closingDraft, recoveryDraft, draftPreview, workspace?.closeTransient])
 
   const requestCloseRef = useRef(requestClose); requestCloseRef.current = requestClose
   useEffect(() => windowMode?.subscribeClose(() => requestCloseRef.current()), [windowMode])
@@ -493,14 +527,16 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
 
   const publishAction = <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, ...(windowMode ? { background: theme.primaryAction, color: theme.onPrimaryAction, padding: '8px 18px', fontSize: 14 } : {}), opacity: submitting ? .55 : 1 }} disabled={loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || closingDraft || closePrompt || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish() }}>{windowMode ? (creating ? (submitting ? tr('发送中…') : tr('发送')) : (submitting ? tr('正在保存…') : tr('确认修改'))) : creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : tr("发布"))}</button>
 
-  return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}) }} role="dialog" aria-modal={windowMode ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
-    <article style={{ ...styles.dialog, ...(windowMode ? { width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base } : {}) }} data-arkme-long-article-dialog={creating ? 'create' : editing ? 'edit' : 'detail'}>
+  return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}), ...(workspace ? { position: 'relative', inset: 'auto', display: 'flex', height: '100%', minHeight: 0, width: '100%', padding: 0, zIndex: 'auto', background: 'transparent' } : {}) }} role={workspace ? 'region' : 'dialog'} aria-modal={windowMode || workspace ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
+    <article style={{ ...styles.dialog, ...(windowMode || workspace ? { width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base } : {}) }} data-arkme-long-article-dialog={creating ? 'create' : editing ? 'edit' : 'detail'}>
       {windowMode && <div data-arkme-article-window-toolbar style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 32px', borderBottom: `1px solid ${theme.border}` }}><span style={{ flex: 1, minWidth: 0, color: theme.secondary, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{creating ? tr('发送到：') : tr('所属会话：')}{windowMode.displayName}</span>{editing && publishAction}</div>}
-      <header style={{ ...styles.header, ...(windowMode && editing ? { paddingBottom: 12 } : {}) }}>
-        {editing
+      <header style={{ ...styles.header, ...(windowMode && editing ? { paddingBottom: 12 } : {}), ...(workspace ? { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '20px 24px 14px' } : {}) }}>
+        {workspace?.leading}
+        <div style={workspace ? { flex: 1, minWidth: 0 } : undefined}>{editing
           ? <input autoFocus style={styles.titleInput} value={title} maxLength={MAX_TITLE_LENGTH} placeholder={tr("请输入标题")} aria-label={tr("长文标题")} disabled={submitting || closingDraft || closePrompt} readOnly={accountChanged} onChange={event => { changeRevision.current++; setDraftState('unsaved'); setTitle(event.target.value) }} />
-          : <h2 style={styles.titleRead}><ArkmeRichText text={titleValue || '无标题长文'} presentation="preview" /></h2>}
-        {!windowMode && <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭长文")} disabled={submitting} onClick={requestClose}>×</button>}
+          : <h2 style={styles.titleRead}><ArkmeRichText text={titleValue || '无标题长文'} presentation="preview" /></h2>}</div>
+        {workspace?.trailing}
+        {!windowMode && !workspace && <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭长文")} disabled={submitting} onClick={requestClose}>×</button>}
       </header>
       {windowMode && editing && <hr style={{ flex: 'none', border: 0, borderTop: `1px solid ${theme.border}`, margin: '0 32px' }} />}
       {!statsInFooter && <div style={styles.metaRow}>
@@ -513,7 +549,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, overlayZIndex, onClose
       {error !== '' && <div style={styles.error} role="alert">{error}{!creating && detail === undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { void loadDetail() }}>{tr("重试")}</button>}</div>}
       {loading || (editing && !capabilityReady)
         ? <div style={styles.state} role="status">{tr("正在加载长文…")}</div>
-        : <div style={{ ...styles.body, ...(windowMode && editing ? { paddingTop: 12 } : {}) }}>
+        : <div ref={workspace?.bodyRef} data-arkme-article-scroll style={{ ...styles.body, ...(windowMode && editing ? { paddingTop: 12 } : {}) }}>
           {editing && draftFormat === 'markdown' && !markdownEnabled
             ? <div role="status">{tr("Markdown 长文暂不可编辑，草稿已保留。")}<button type="button" onClick={() => { setCapabilityEpoch(value => value + 1) }}>{tr("重试")}</button></div>
             : editing && markdownEnabled && !accountChanged
