@@ -12,6 +12,23 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('keeps team and personal World targets separate and restores a team detail entry', () => {
+    const controller = new ArkmeUiController()
+    controller.showUserWorld({ userId: 17, displayName: '个人' })
+    controller.showTeamWorld({ name: '团队', jotmoId: 'our_team', returnTeamRef: 'sealed-team' })
+    expect(controller.getSnapshot().worldTarget).toBeUndefined()
+    expect(controller.getSnapshot().worldTeamTarget?.jotmoId).toBe('our_team')
+    const select = vi.spyOn(arkmeContactsTab, 'select')
+    controller.backFromWorld()
+    expect(select).toHaveBeenCalledWith({ kind: 'team', teamRef: 'sealed-team' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', productMode: 'contacts' })
+    expect(controller.getSnapshot().worldTeamTarget).toBeUndefined()
+    controller.showTeamWorld({ name: '团队', jotmoId: 'our_team' })
+    controller.showUserWorld({ userId: 18, displayName: '其他人' })
+    expect(controller.getSnapshot().worldTeamTarget).toBeUndefined()
+    expect(() => controller.showTeamWorld({ name: '团队', jotmoId: '' })).toThrow('团队世界身份无效')
+    select.mockRestore()
+  })
   it('publishes each Explore module change while retaining the conversation return target', () => {
     const controller = new ArkmeUiController(), listener = vi.fn()
     controller.showConversations()

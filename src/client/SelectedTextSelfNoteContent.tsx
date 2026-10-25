@@ -21,7 +21,7 @@ export function SelectedTextSelfNoteContent({ value, detail = false }: { value: 
       <div ref={prose} data-arkme-quote-prose style={{ marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: expanded ? undefined : 2, overflow: 'hidden' }}><ArkmeRichText text={value.quote.text} linkLabelMode="raw" /></div>
       {(clipped || expanded || value.quote.text.length > 90 || value.quote.text.includes('\n')) && <button type="button" onClick={e => { e.stopPropagation(); setExpanded(v => !v) }} style={{ padding: 0, border: 0, font: 'inherit', color: arkmeTheme.tertiary, background: 'transparent', cursor: 'pointer' }}>{expanded ? '收起引用' : '展开引用'}</button>}
     </div>
-    <div data-arkme-quote-prose style={{ color: arkmeTheme.secondary, fontSize: 11 }}>我的笔记</div>
-    <div data-arkme-quote-prose style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><ArkmeRichText text={value.noteText} linkLabelMode="raw" /></div>
+    {(value.kind !== 'forward' || value.noteText) && <div data-arkme-quote-prose style={{ color: arkmeTheme.secondary, fontSize: 11 }}>{value.kind === 'forward' ? '附言' : '我的笔记'}</div>}
+    {(value.kind !== 'forward' || value.noteText) && <div data-arkme-quote-prose style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><ArkmeRichText text={value.noteText} linkLabelMode="raw" /></div>}
   </div>
 }

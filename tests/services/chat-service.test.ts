@@ -3771,3 +3771,60 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
   raw.record.payload.owner_user_id = 7
   await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).rejects.toMatchObject({ code: 'message-snapshot-detail-unavailable' })
 })
+
+describe('chat member world target', () => {
+  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7}]) {
+    const session={userId,accessToken:'fixture',refreshToken:'fixture'}
+    const read=vi.fn(async()=>({items:members}))
+    const runtime={stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
+    const source={openSourceRef:vi.fn(async()=>({kind,ownerRef:'chat'}))}
+    const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+    return {chat,read,session}
+  }
+  it.each(['group_chat','private_chat'])('resolves %s member by viewer/session-bound reference only after a fresh membership check', async kind=>{
+    const {chat,read,session}=fixture(kind), signal=new AbortController().signal
+    await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),signal)).resolves.toEqual({userId:7})
+    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/list',{chat_session_uid:'chat',active_only:true},session,signal)
+    expect(read).toHaveBeenCalledOnce()
+  })
+  it('rejects cross-account, cross-conversation, tampered, removed and unsupported members', async()=>{
+    const {chat,read}=fixture()
+    for (const ref of [chatMemberRef(43,'chat',7),chatMemberRef(42,'other',7),chatMemberRef(42,'chat',7)+'tampered']) {
+      await expect(chat.memberWorldTarget('source',ref)).rejects.toMatchObject({code:'chat-member-ref-invalid'})
+    }
+    expect(read).not.toHaveBeenCalled()
+    await expect(fixture('private_chat',42,[]).chat.memberWorldTarget('source',chatMemberRef(42,'chat',7))).rejects.toMatchObject({code:'chat-member-ref-stale'})
+    await expect(fixture('send_to_self').chat.memberWorldTarget('source',chatMemberRef(42,'chat',7))).rejects.toMatchObject({code:'chat-members-source-invalid'})
+  })
+  it('does not resolve after cancellation',async()=>{
+    const {chat,read}=fixture()
+    await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),AbortSignal.abort())).rejects.toThrow()
+    expect(read).not.toHaveBeenCalled()
+  })
+})
+
+it('returns the fast member-record body without waiting for entire-member profiles or avatar presentation',async()=>{
+ const session={userId:42,accessToken:'fixture',refreshToken:'fixture'}
+ const profile={publicProfileSummariesByUserIds:vi.fn(()=>new Promise(()=>{})),publicProfilesByUserIds:vi.fn(()=>new Promise(()=>{}))}
+ const read=vi.fn(async(path:string)=>path==='/api/v1/chats/members/list'?{items:[{user_id:7,status:1,display_name_snapshot:'成员'},...Array.from({length:50},(_,n)=>({user_id:n+100,status:1}))]}:{items:[],has_more:false})
+ const runtime={config,stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
+ const source={openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'}),sourceItem:async()=>({sourceRef:'ref'})}
+ const chat=new ChatService(runtime as never,source as never,profile as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const signal=new AbortController().signal
+ const page=await chat.sourceMemberRecords('ref',chatMemberRef(42,'chat',7),'owner',{limit:12,basicPresentation:true,signal})
+ expect(page.items).toEqual([]);expect(page.member.memberRef).toBe(chatMemberRef(42,'chat',7))
+ expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled();expect(profile.publicProfilesByUserIds).not.toHaveBeenCalled()
+ expect(read.mock.calls[1]).toEqual(['/api/v1/chats/members/records/page',expect.objectContaining({member_user_id:7,limit:12}),session,signal,expect.any(Object)])
+})
+
+it.each([99, '9223372036854775806'])('keeps the original record owner %s for locating another person’s record',async owner=>{
+ const runtime={config,stateStore:{uniqueCode:async()=> 'sign'},requireSession:async()=>({userId:42})}
+ const source={chatTimelineItemKey:async()=> 'timeline-key'}
+ const profile={publicProfilesByUserIds:vi.fn(()=>new Promise(()=>{}))}
+ const media={recordContentPayload:()=>({}),richContentBlocks:()=>[],recordMediaUnavailable:()=>false}
+ const polish={timelineAiPolish:()=>undefined}
+ const chat=new ChatService(runtime as never,source as never,profile as never,media as never,{} as never,{} as never,{} as never,polish as never,{} as never)
+ const items=await chat.projectChatTimelineItems([{relation:{rel_uid:'relation',record_uid:'record',record_owner_user_id:owner,sender_user_id:7,seq:10},record:{status:1,payload:{text_content:'原文'}}}],{kind:'private_chat',ownerRef:'chat'} as never,{userId:42} as never,undefined,{basicPresentation:true})
+ expect(items[0]).toMatchObject({itemUid:'record',recordOwnerUserId:owner,textContent:'原文'})
+ expect(profile.publicProfilesByUserIds).not.toHaveBeenCalled()
+})

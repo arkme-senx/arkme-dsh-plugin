@@ -1,3 +1,5 @@
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import { openWorldPublish } from '../../world-publish-entry.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { callArkme } from '../../api.js'
 import { arkmeTheme } from '../../arkme-theme.js'
@@ -102,6 +104,10 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
       {menu&&row&&<ArkmeActionMenu point={menu} label="Codex 消息操作" autoFocus onClose={()=>setMenu(undefined)} actions={[
         {id:'copy',label:'复制',icon:<ArkmeSelectActionIcon kind="copy"/>,onSelect:()=>{setMenu(undefined);void act(()=>copyText(row.text))}},
         {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row.text);return next})}},
+        ...(row.kind === 'UserPromptSubmit' && userId && (!task.cloud ? task.member.userRef === String(userId) : task.cloud.ownerRef === String(userId)) ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => {
+          try { openWorldPublish({ accountKey: account, origin: { kind: 'local', sourceRef, itemUid: codexEventKey(row), sourceLabel: `Codex · ${task.title}`, textContent: codexSelectionSnapshot(teamRef, task, [row], new Set([codexEventKey(row)])).messages[0]!.text, sendAtMillis: row.at, hasAttachments: !!row.privateImages?.length } }, controller.signal); setMenu(undefined) }
+          catch (error) { setNotice(error instanceof Error ? error.message : '暂时无法打开') }
+        } }] : []),
       ]}/>}
       <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local" selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
       {marks.layer}

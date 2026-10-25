@@ -10,7 +10,7 @@ import type { MessageUnderline } from '../message-annotations.js'
 import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 import { findSelectedMessageText } from './message-selection-search.js'
 import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './ArkmeSelectedTextReplace.js'
-import { SelectedTextSelfNoteDialog } from './SelectedTextSelfNote.js'
+import { forwardSelectedText } from './selected-text-forward.js'
 import type { SelectedTextNoteQuote } from '../selected-text-note.js'
 import { arkmeAuthStore } from './auth-store.js'
 
@@ -166,9 +166,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     setSelfController(controller)
     return () => controller.abort()
   }, [accountKey, replySourceRef])
-  const [selfQuote, setSelfQuote] = useState<{ quote: SelectedTextNoteQuote; scope: string }>()
   const [selfSent, setSelfSent] = useState(false)
-  useEffect(() => { setSelfQuote(undefined); setSelfSent(false) }, [accountKey, replySourceRef])
+  useEffect(() => { setSelfSent(false) }, [accountKey, replySourceRef])
   useEffect(() => { if (selfSent) { const timer = setTimeout(() => setSelfSent(false), 3500); return () => clearTimeout(timer) } }, [selfSent])
   const [replacing, setReplacing] = useState<{ target: MessageSelectionTarget; quote: ArkmeMessageQuote; rect: DOMRect }>()
   const [verified, setVerified] = useState<{ snapshot: Snapshot; quote: ArkmeMessageQuote }>()
@@ -295,12 +294,9 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     setPosition({ left, top: Math.max(viewport.top + 8, Math.min(viewport.bottom - box.height - 8, top)) })
   }, [snapshot, notice, verified, getViewport])
   if (typeof document === 'undefined') return null
-  if (selfQuote && selfController && !selfController.signal.aborted && selfQuote.scope === `${accountKey}:${replySourceRef}`) return <SelectedTextSelfNoteDialog
-    quote={selfQuote.quote} accountKey={accountKey} signal={selfController.signal} getViewport={getViewport} onClose={() => setSelfQuote(undefined)}
-    onSent={() => { setSelfQuote(undefined); setSelfSent(true) }} />
   if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
     {...replacing} prepare={prepareReplace} onClose={() => setReplacing(undefined)} />
-  if (!snapshot) return selfSent ? createPortal(<div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 12000, padding: '8px 14px', borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}>已发送到发给自己</div>, document.body) : null
+  if (!snapshot) return selfSent ? createPortal(<div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 12000, padding: '8px 14px', borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}>已转发</div>, document.body) : null
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const quote = verified?.snapshot === snapshot ? verified.quote : undefined
   const marks = quote && replyTarget ? (getMarks?.(replyTarget) ?? []).filter(mark => mark.state === 'available'
@@ -359,10 +355,17 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         const message = await onUnderline?.(freshTarget, quote)
         if (current.current !== snapshot) return
         if (message) { setNotice(message); return }
-      } else if (sendSelf && selfNote) setSelfQuote({ scope: `${accountKey}:${replySourceRef}`, quote: {
-        version: 1, sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
-        sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,
-      } })
+      } else if (sendSelf && selfNote && selfController && !selfController.signal.aborted) {
+        const frozen: SelectedTextNoteQuote = {
+          version: 1, sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
+          sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,
+        }
+        const signal = selfController.signal
+        document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
+        try { const result = await forwardSelectedText(accountKey, frozen, signal); if (!signal.aborted && result.completed) setSelfSent(true) }
+        catch (error) { if (!signal.aborted) { setSnapshot(snapshot); setNotice(error instanceof Error ? error.message : '转发失败，请重试') } }
+        return
+      }
       else onReply!(freshTarget, quote)
       document.getSelection()?.removeAllRanges()
       setSnapshot(undefined)
@@ -413,7 +416,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     {prepareReplace && replyTarget && replyTarget.sourceRef === replySourceRef && canReplace?.(replyTarget)
       && <button type="button" style={buttonStyle} onClick={() => { void replace() }}>{tr('替换')}</button>}
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
-    {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('发给自己')}</button>}
+    {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('转发')}</button>}
     </div>
     {(authors.length > 0 || (markStorage === 'local' && onUnderline && replyTarget?.sourceRef === replySourceRef)) && <div data-arkme-mark-authors style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}

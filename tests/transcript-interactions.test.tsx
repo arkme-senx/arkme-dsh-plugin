@@ -47,7 +47,7 @@ afterEach(async()=>{await act(async()=>root.unmount());host.remove();document.ge
 it('shows exactly one toolbar, copies only the selection, and selects the current block',async()=>{
  await act(async()=>root.render(<Fixture/>));await select()
  expect(document.querySelectorAll('[aria-label="选中文字操作"]')).toHaveLength(1)
- expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','替换','发给自己'])
+ expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','替换','转发'])
  await click('复制');expect(mocks.copy).toHaveBeenCalledWith('重复词')
  await select();await click('全选');expect(document.getSelection()?.toString()).toBe(original)
 })

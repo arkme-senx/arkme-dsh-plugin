@@ -1,3 +1,7 @@
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import type { WorldPublishOrigin } from '../world-publish-source.js'
+import { openWorldPublish } from './world-publish-entry.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { tr } from './locale.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
@@ -22,6 +26,7 @@ export interface ArkmeMessageSelectionItem {
 }
 
 export interface ArkmeMessageActionViewItem extends ArkmeMessageSelectionItem {
+  worldOrigin?: WorldPublishOrigin
   actionRef: string
   conversationRef: string
   copyLinkAvailable: boolean
@@ -224,10 +229,10 @@ export function useArkmeMessageActions(input: {
   }, [busy])
 
   const enter = useCallback((item: ArkmeMessageActionViewItem) => {
-    if (item.actionRef.trim() === '' || busy !== undefined) return
+    if ((input.selectionItems === undefined && item.actionRef.trim() === '') || busy !== undefined) return
     setMenu(undefined)
     setSelectedIds(new Set([item.id]))
-  }, [busy])
+  }, [busy, input.selectionItems])
 
   const toggle = useCallback((item: ArkmeMessageSelectionItem) => {
     if (busy !== undefined || !selectable.some(value => value.id === item.id)) return
@@ -418,6 +423,12 @@ export function useArkmeMessageActions(input: {
         { id: 'link', label: '复制链接', icon: <MessageActionIcon kind="link" size={16} />, disabled: !menuItem.copyLinkAvailable, onSelect: () => { void copyLink([menuItem]) } },
         { id: 'select', label: '多选', icon: <MessageActionIcon kind="select" size={16} />, onSelect: () => enter(menuItem) },
         { id: 'forward', label: '转发', icon: <MessageActionIcon kind="forward" size={16} />, disabled: !menuItem.forwardAvailable, onSelect: () => { void openForward([menuItem]) } },
+        ...(menuItem.worldOrigin ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => {
+          const auth = arkmeAuthStore.getSnapshot().auth
+          if (auth?.status !== 'authenticated' || !auth.userId) { showStatus('请先登录'); return }
+          try { openWorldPublish({ accountKey: `${auth.environment}:${auth.userId}`, origin: menuItem.worldOrigin! }); setMenu(undefined) }
+          catch (error) { showStatus(errorMessage(error)) }
+        } }] : []),
       ]} />}
     {status !== '' && <div style={styles.status} role="status">{status}</div>}
     {picker !== undefined && <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget && busy !== 'forward') setPicker(undefined) }}>

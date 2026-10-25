@@ -27,3 +27,12 @@ it('does not publish a stale last page when cancellation races with the response
   await expect(readMemberRecordWindow(read, { refresh: true, signal: controller.signal })).rejects.toThrow()
   expect(read).toHaveBeenCalledTimes(1)
 })
+
+it('can publish verified refreshed batches while retaining the final coverage cursor',async()=>{
+ const first={items:[{itemUid:'new',sendAtMillis:3}],hasMore:true,nextCursor:{beforeSequence:20}} as ArkmeConversationMemberRecordPage
+ const last={items:[{itemUid:'old',sendAtMillis:1}],hasMore:false} as ArkmeConversationMemberRecordPage
+ const updates=vi.fn(),read=vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(last)
+ const result=await readMemberRecordWindow(read,{refresh:true,signal:new AbortController().signal,onPage:updates})
+ expect(updates.mock.calls.map(([value])=>value.items.length)).toEqual([1,2])
+ expect(result.items.map(i=>i.itemUid)).toEqual(['new','old']);expect(result.hasMore).toBe(false)
+})

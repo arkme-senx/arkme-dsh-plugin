@@ -72,3 +72,14 @@ it('does not require host ordering for an in-place selection that only reads nod
   const value = { nodes: { get: () => undefined, source: () => ({ subscribe: () => () => {} }) } }
   expect(readNativeChat(value)).toBe(value)
 })
+
+it('only prepares visible own inputs for World and preserves an explicit attachment boundary', async () => {
+  const { nativeWorldPublishOrigin } = await import('../src/client/harness-native-selection.js')
+  const node = { key: 'input', kind: 'user', target: 'chat', visibility: 'visible', anchorSeq: 1, data: { time: 123, content: [{ type: 'text', text: '我的提问' }, { type: 'image' }] } }
+  const chat = { nodes: { get: () => node, source: () => ({ subscribe: () => () => {} }) } }
+  expect(nativeWorldPublishOrigin(chat, 's1', 'input')).toMatchObject({ textContent: '我的提问', hasAttachments: true })
+  node.kind = 'assistant-step'
+  expect(() => nativeWorldPublishOrigin(chat, 's1', 'input')).toThrow('只能公开自己发出的内容')
+  node.kind = 'user'; node.visibility = 'hidden'
+  expect(() => nativeWorldPublishOrigin(chat, 's1', 'input')).toThrow()
+})

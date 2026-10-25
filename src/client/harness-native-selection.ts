@@ -96,3 +96,12 @@ export function nativeSelectionSnapshot(chat: NativeChat, sessionId: string, key
   if (new Set(messages.map(message => message.anchorSeq)).size !== messages.length) throw new Error('所选消息顺序暂不可用，请重新选择')
   return { sessionId, messages }
 }
+
+/** Only the visible user input is eligible. Non-text blocks stay explicit in the confirmation. */
+export function nativeWorldPublishOrigin(chat: NativeChat, sessionId: string, key: string): import('../world-publish-source.js').WorldPublishOrigin {
+  const node = chat.nodes.get(key)
+  if (!isSelectableNativeNode(node) || node.kind !== 'user' || !('data' in node) || !object(node.data)) throw new Error('只能公开自己发出的内容')
+  const snapshot = nativeSelectionSnapshot(chat, sessionId, new Set([key]))
+  return { kind: 'local', sourceRef: `dsh:${sessionId}`, itemUid: key, sourceLabel: 'DeepSeek Harness', textContent: snapshot.messages[0]!.text,
+    sendAtMillis: snapshot.messages[0]!.createdAtMillis, hasAttachments: Array.isArray(node.data.content) && node.data.content.some(block => !object(block) || block.type !== 'text') }
+}
