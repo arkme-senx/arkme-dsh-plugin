@@ -187,6 +187,14 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findByProps({ 'aria-label': '2 位成员' })).toBeDefined()
   })
 
+  it.each(['owner', 'admin', 'member'] as const)('offers the add-members picker only to managers: %s', async role => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = role
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(renderer!.root.findAllByType('button').some(node => text(node) === '＋ 添加成员')).toBe(role !== 'member')
+  })
+
   it('does not offer the owner a leave action', async () => {
     const teamPage = page(teamRefA, '团队 A')
     teamPage.team.currentUserRole = 'owner'
@@ -383,12 +391,28 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
   })
 
+  it('opens internal group creation for this team only on demand', async () => {
+    const current = page(teamRefA, '团队 A')
+    current.team.currentUserRole = 'owner'
+    mocks.callArkme.mockImplementation(async operation => operation === 'team.app.members' ? current
+      : operation === 'team.app.teams' ? [current.team] : { state: 'backend_pending' })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'team.app.teams')).toBe(false)
+    await act(async () => { button(renderer!, '团队内部群›').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('创建团队内部群')
+    expect(renderer!.root.findByType('input').props.value).toBe('团队 A内部群')
+    await act(async () => { button(renderer!, '检查创建条件').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('尚未创建群聊')
+    expect(mocks.callArkme.mock.calls.find(([op]) => op === 'team.app.internal-group.prepare')?.[1])
+      .toMatchObject({ mode: 'create', teamRef: teamRefA, expectedAccountKey: 'account-a' })
+  })
+
   it('collects the channel actions under the feature to the right of Codex, loading only on demand', async () => {
     mockCodex()
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
     const members=renderer!.root.findByProps({className:'arkme-team-member-list'})
     const features=renderer!.root.findByProps({className:'arkme-team-feature-list'})
-    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›'])
+    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›','团队内部群›'])
     expect(text(renderer!.root)).not.toContain('查看团队对话')
     expect(text(renderer!.root)).not.toContain('接收外部消息')
     expect(mocks.callArkme.mock.calls.map(call=>call[0])).toEqual(['team.app.members'])

@@ -7,6 +7,8 @@ import type { TeamMemberAvatarPort } from './team-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
+import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -14,6 +16,7 @@ import { arkmePeerMemberType } from '../peer-membership.js'
 import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
 import type { SourceService } from './source-service.js'
+import type { TeamMemberCandidatePort, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
 
 const obj = objectValue
 const str = stringValue
@@ -59,7 +62,8 @@ export class TeamAppService {
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
-    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'>) {
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
+    private readonly memberCandidates?: TeamMemberCandidatePort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -418,6 +422,25 @@ export class TeamAppService {
         }
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
+      case 'team.app.public-card': {
+        const jotmoId = str(p.jotmoId).trim()
+        if (!jotmoId || jotmoId.length > 128) throw invalid()
+        const mine = list((await post('list-mine', {}, true)).teams).find(team => str(team.jotmo_id) === jotmoId)
+        if (mine) {
+          // Current channel lookup is a member-only API. Do not use it for strangers.
+          const channel = await this.channel(await post('message-channel/get', { team_id: recordOwnerId(mine.team_id) }, true), actor)
+          if (channel.jotmoId !== jotmoId) throw invalid()
+          return { name: channel.name, jotmoId, avatar: channel.avatar,
+            contact: !channel.enabled ? { state: 'disabled' }
+              : channel.publicRef ? { state: 'available', publicRef: channel.publicRef } : { state: 'backend_pending' },
+          } satisfies TeamPublicCard
+        }
+        const profile = await this.searchContactTeam(jotmoId, session, signal)
+        if (!profile || profile.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
+        // Public discovery currently has no channel locator or description. Do
+        // not guess a link or expose member APIs to external viewers.
+        return { name: profile.name, jotmoId, avatar: profile.avatar, contact: { state: 'backend_pending' } } satisfies TeamPublicCard
+      }
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
       case 'team.app.official.membership': {
@@ -427,6 +450,113 @@ export class TeamAppService {
           || mine.teams.some(raw => !recordOwnerId(obj(raw).team_id))) throw invalid()
         // Compare provider-owned IDs here, never names or rotating encrypted refs.
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
+      }
+      case 'team.app.group.context': case 'team.app.group.join': case 'team.app.group.directory': {
+        // Real team membership is sufficient to offer an identity candidate.
+        // Neither the candidate nor its pending write grants teammates group access.
+        if (operation !== 'team.app.group.directory') {
+          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
+          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
+          if (source.kind !== 'group_chat') throw invalid()
+        }
+        if (operation === 'team.app.group.join' && !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        const id = operation === 'team.app.group.context' ? undefined : await teamID()
+        const mine = list((await post('list-mine', {}, true)).teams)
+        if (id !== undefined && !mine.some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        if (operation === 'team.app.group.context') return {
+          state: 'backend_pending', membershipPolicy: 'unknown', teams: await Promise.all(mine.map(team => this.team(team, actor))),
+        } satisfies TeamGroupContext
+        return { state: 'backend_pending' } satisfies TeamGroupPending
+      }
+      case 'team.app.member-candidates': case 'team.app.members.add': {
+        const id = await teamID()
+        const mine = await post('list-mine', {}, true)
+        const currentTeam = list(mine.teams).find(team => String(team.team_id) === String(id))
+        if (!currentTeam || !['owner', 'admin'].includes(role(currentTeam.role))) {
+          throw new ArkmePluginError('team-member-add-forbidden', '仅团队所有者或管理员可添加成员', false, 403)
+        }
+        // Membership is authoritative. Do not label unknown users as non-members
+        // when an incomplete page or failed membership read prevents that check.
+        const members = new Set<string>(), cursors = new Set<string>()
+        let cursor = ''
+        for (let page = 0; ; page++) {
+          if (page >= 100) throw new ArkmePluginError('team-members-incomplete', '团队成员未读取完整，请稍后重试', true, 502)
+          const data = await post('members/list', { team_id: id, limit: 50, ...(cursor ? { page_cursor: cursor } : {}) }, true)
+          if (!Array.isArray(data.items) || typeof data.has_more !== 'boolean' || data.items.some(raw => !recordOwnerId(obj(raw).user_id))) throw invalid()
+          for (const member of list(data.items)) members.add(String(recordOwnerId(member.user_id)))
+          if (!data.has_more) break
+          const next = str(data.next_page_cursor)
+          if (!next || cursors.has(next)) throw invalid()
+          cursors.add(next); cursor = next
+        }
+        if (operation === 'team.app.members.add') {
+          if (!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid)) || !Array.isArray(p.candidateRefs)
+            || p.candidateRefs.length < 1 || p.candidateRefs.length > 50) throw invalid()
+          const selected = new Set<number>()
+          for (const ref of p.candidateRefs) {
+            const value = await this.open('member-candidate', ref, actor), userId = num(value.user_id)
+            if (String(value.team_id) !== String(id) || userId <= 0 || num(value.expires) < Date.now() || selected.has(userId)) throw invalid()
+            if (userId === actor || members.has(String(userId))) throw new ArkmePluginError('team-already-member', '所选用户已经加入团队，请刷新候选列表', false, 409)
+            selected.add(userId)
+          }
+          // No backend direct-add contract is connected yet. Never repurpose a
+          // group membership mutation or report a successful team addition.
+          return { state: 'backend_pending' } satisfies TeamMemberAddResult
+        }
+        if (!this.memberCandidates || !['contacts', 'conversations', 'group'].includes(str(p.source))) throw invalid()
+        const source = p.source as TeamMemberCandidateSource, sourceRef = str(p.sourceRef)
+        if (source === 'group' && !sourceRef) throw invalid()
+        const after = p.cursor ? await this.open('member-candidate-cursor', p.cursor, actor) : undefined
+        if (after && (String(after.team_id) !== String(id) || after.source !== source || after.source_ref !== sourceRef)) throw invalid()
+        const data = await this.memberCandidates.list(source, {
+          ...(sourceRef ? { sourceRef } : {}), ...(after ? { cursor: str(after.cursor) } : {}), ...(signal ? { signal } : {}), ...(p.refresh === true && !after ? { refresh: true } : {}),
+        })
+        if (data.hasMore && !data.nextCursor) throw invalid()
+        const unique = new Map(data.items.map(item => [item.userId, item]))
+        const items = await Promise.all([...unique.values()].map(async ({ userId, ...identity }) => {
+          if (!Number.isSafeInteger(userId) || userId <= 0) throw invalid()
+          return { ...identity, key: await this.key(`member-candidate:${id}:${userId}`, actor),
+            candidateRef: await this.ref('member-candidate', { team_id: id, user_id: userId, expires: Date.now() + 60 * 60_000 }, actor),
+            alreadyMember: members.has(String(userId)), isSelf: userId === actor }
+        }))
+        return { items, groups: data.groups ?? [], hasMore: data.hasMore,
+          ...(data.coverage ? { coverage: data.coverage } : {}),
+          ...(data.hasMore ? { nextCursor: await this.ref('member-candidate-cursor', { team_id: id, source, source_ref: sourceRef, cursor: data.nextCursor }, actor) } : {}),
+        } satisfies TeamMemberCandidatePage
+      }
+      case 'team.app.internal-group.prepare': {
+        // Preparation only. Never use personal create/add/remove to emulate a
+        // roster binding; backend must atomically preview and confirm its delta.
+        if (!['create', 'link'].includes(str(p.mode)) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        if (p.mode === 'create') {
+          if (!str(p.name).trim() || str(p.name).trim().length > 120) throw invalid()
+        } else {
+          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
+          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
+          if (source.kind !== 'group_chat') throw invalid()
+        }
+        const id = await teamID(), mine = list((await post('list-mine', {}, true)).teams)
+        if (!mine.some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        const currentTeam = mine.find(team => String(team.team_id) === String(id))!
+        if (!['owner', 'admin'].includes(role(currentTeam.role))) {
+          throw new ArkmePluginError('team-not_accessible', '仅团队所有者或管理员可创建或关联内部群', false, 403)
+        }
+        return { state: 'backend_pending' } satisfies TeamGroupPending
+      }
+      case 'team.app.outbound.open': {
+        // Frontend handoff boundary. Do not guess an upstream creation endpoint,
+        // create a personal Chat session, or manufacture a shared conversation.
+        if (!validTeamOutboundRecipient(p.recipient) || !str(p.requestUid).trim()) throw invalid()
+        const id = await teamID()
+        const mine = await post('list-mine', {}, true)
+        if (!list(mine.teams).some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        return { state: 'backend_pending' as const }
       }
       case 'team.app.open': {
         const data = await post('conversations/open', { public_ref: str(p.publicRef) })

@@ -2,6 +2,7 @@ import { currentHarnessSession } from './harness-session-state.js'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
+import { TeamOutboundMount } from './TeamOutboundDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -187,6 +188,7 @@ export function ArkmePersistentClientRuntime() {
   return <>
     <ArkmeOutgoingCallHost />
     {avatarScopeKey && <TeamMessagingMount key={avatarScopeKey} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
+    {avatarScopeKey && <TeamOutboundMount key={`outbound:${avatarScopeKey}`} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
     <ArkmeHomeTour auth={auth}
       blocked={ui.mode === 'login' || ui.webLoginDialogOpen === true}
       routeActive={homeTourRouteActive}

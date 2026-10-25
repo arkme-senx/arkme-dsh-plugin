@@ -1,5 +1,7 @@
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
+import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
+vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: () => <div data-team-public-card-test /> }))
 import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
 import { ArkmeMessageSnapshotDialog } from '../src/client/ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
@@ -75,6 +77,27 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('opens the shared team introduction from the external conversation badge without changing its draft', async () => {
+    await mount()
+    const badge = renderer!.root.findByProps({ 'aria-label': '查看团队资料与功能介绍' })
+    await act(async () => badge.props.onClick())
+    const card = renderer!.root.findByType(TeamPublicCardDialog)
+    expect(card.props.currentChannel).toEqual(conversation.channel)
+    expect(card.props.accountKey).toBe('test:11')
+    expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('问题')
+    expect(renderer!.root.findByType(TeamConversationTools).props.overlayOpen).toBe(true)
+    await act(async () => card.props.onClose())
+    expect(renderer!.root.findAllByType(TeamPublicCardDialog)).toHaveLength(0)
+    expect(mocks.call.mock.calls.some(([op]) => ['team.app.open', 'team.app.create', 'team.app.send.enqueue'].includes(op))).toBe(false)
+  })
+
+  it('does not attach an external team promotion badge to the visitor name on the team side', async () => {
+    const own = { ...conversation, side: 'team' as const, visitor: { nickname: '客户' } }
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: own, messages: [], hasMore: false, beforeSeq: 0 } : [])
+    await act(async () => { renderer = create(<TeamConversationPane conversation={own} accountKey="test:11" onChanged={() => {}} />) })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '查看团队资料与功能介绍' })).toHaveLength(0)
+  })
 
   it('persists a reply draft across remount, enqueues the original reference and clears only the accepted reply', async () => {
     const parent: TeamMessage = {ref:'parent-ref',key:'parent',seq:1,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'需要回复的问题',template_kind:1},media:[]}

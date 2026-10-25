@@ -9,7 +9,10 @@ export type TeamAppOperation = `team.app.${
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
-  | 'visitor.private.open' | 'person.private.open' | 'people.remarks'
+  | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
+  | 'group.context' | 'group.join' | 'group.directory'
+  | 'internal-group.prepare'
+  | 'public-card' | 'member-candidates' | 'members.add'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
