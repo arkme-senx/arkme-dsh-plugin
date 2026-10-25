@@ -64,6 +64,7 @@ import { useComposerPasteFocus } from './composer-paste-focus.js'
 import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
+import { TeamGroupIdentityPicker } from './TeamGroupControls.js'
 import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { useSelfCalendarNavigation } from './use-self-calendar-navigation.js'
@@ -109,6 +110,7 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { openTeamOutbound } from './team-outbound.js'
 import {
   IconCheckOutlineMedium, IconLoadingOutlineMedium, IconWarningOutlineMedium, IconPaperclipOutlineMedium, IconEditOutlineMedium, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -9428,6 +9430,13 @@ export function ArkmeSurface({
                   selfAvatarRef={selfProfile?.avatarRef}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
+              {authenticatedAccountKey !== undefined && source?.kind === 'group_chat'
+                && activeRecordReeditComposer === undefined && <TeamGroupIdentityPicker
+                  key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
+                  accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
+                  selfName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
+                  disabled={composerFilesDisabled || activeSelectMode !== undefined}
+                />}
               <ArkmeComposerSendButton
                 disabled={!canSend}
                 ariaLabel={activeRecordReeditComposer === undefined ? pendingArticle ? '发送长文' : tr("发送消息") : '保存重新编辑'}
@@ -9597,6 +9606,13 @@ export function ArkmeSurface({
           busy={privateChatBusy}
           onClose={closeMemberProfile}
           onSend={() => { openPrivateChatForMember(memberProfile) }}
+          onContactAsTeam={!conversationWindowRequested() && !memberProfile.isSelf && source && authenticatedAccountKey ? () => {
+            closeMemberProfile()
+            openTeamOutbound({ accountKey: authenticatedAccountKey, person: {
+              recipient: { kind: 'chat-member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef },
+              displayName: memberProfile.displayName, avatarRef: memberProfile.avatarRef,
+            } })
+          } : undefined}
         />}
         {activeConversation && source !== undefined && authenticatedAccountKey !== undefined && botProfile !== undefined && <ArkmeBotAvatarProfileCard
           key={`${authenticatedAccountKey}:${source.sourceRef}:${botProfile.identity.itemUid}`}

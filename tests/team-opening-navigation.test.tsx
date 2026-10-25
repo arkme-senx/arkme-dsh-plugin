@@ -154,6 +154,9 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   }
   await act(async () => { root.render(<Workspace />); openTeamMessages({kind:'team', teamRef:channel.teamRef}); await tick() })
   expect(host.querySelectorAll('.team-conversation-row')).toHaveLength(2)
+  expect(host.querySelector('[aria-label="团队会话分类"]')).toBeNull()
+  expect(host.querySelector('[aria-label="联系用户"]')).not.toBeNull()
+  expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.group.directory')).toBe(false)
   expect(host.textContent).not.toContain('其他团队来访者')
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.read')).toBe(false)
   await click('来访者甲')

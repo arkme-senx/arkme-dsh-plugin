@@ -355,6 +355,7 @@ export function ArkmeMemberProfileCard(props: {
   busy: boolean
   onClose: () => void
   onSend: () => void
+  onContactAsTeam?: (() => void) | undefined
 }) {
   useArkmeLocale()
   const backdrop = useArkmeAvatarImage(props.member.avatarRef, undefined, { store: props.imagePort, cacheKey: props.imageKey }) ?? ''
@@ -386,10 +387,11 @@ export function ArkmeMemberProfileCard(props: {
         <h3 style={styles.cardName}>{names.displayName}</h3>
         {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>{tr("主题内昵称：")}{names.topicNickname}</p>}
         {props.error && <p role="alert" style={{ color: arkmeTheme.danger, fontSize: 12, margin: '6px 0' }}>{props.error}</p>}
-        {!props.hideSend && <button data-arkme-feedback="neutral"
+        {!props.hideSend && <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 'auto' }}><button data-arkme-feedback="neutral"
           type="button"
           style={{
             ...styles.cardButton,
+            flex: 1, minWidth: 0,
             background: buttonBackground,
             borderColor: buttonState === 'idle' || props.busy ? arkmeTheme.border : arkmeTheme.accent,
             cursor: props.busy ? 'default' : 'pointer',
@@ -404,8 +406,10 @@ export function ArkmeMemberProfileCard(props: {
           onPointerUp={() => { if (!props.busy) setButtonState('hover') }}
           onClick={props.onSend}
         >
-          {props.busy ? tr("正在打开…") : tr("发送消息")}
-        </button>}
+          {props.busy ? tr("正在打开…") : tr(props.onContactAsTeam ? "发起私聊" : "发送消息")}
+        </button>{props.onContactAsTeam && <button type="button" data-arkme-feedback="neutral"
+          style={{ ...styles.cardButton, flex: 1, minWidth: 0 }} disabled={props.busy}
+          onClick={props.onContactAsTeam}>{tr('以团队联系')}</button>}</div>}
       </div>
     </section>
   </div>
