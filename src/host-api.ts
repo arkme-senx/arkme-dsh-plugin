@@ -2662,6 +2662,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'chat.official-author.profile': return await service.officialAuthorProfile()
     case 'chat.official-author.private.open': return await service.openOfficialAuthorPrivateChat()
+    case 'chat.member.world-target': return await service.memberWorldTarget(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), requestSignal)
     case 'chat.member.private.open': return await service.openPrivateChatFromMember(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),

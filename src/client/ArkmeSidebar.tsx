@@ -1461,6 +1461,7 @@ export function MessageAvatar(props: {
   label?: string
   member?: ArkmeConversationMemberItem
   profileEnabled: boolean
+  hoverEnabled?: boolean | undefined
   onOpen: (member: ArkmeConversationMemberItem) => void
   onContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement) => void) | undefined
@@ -1511,7 +1512,7 @@ export function MessageAvatar(props: {
       if (props.profileEnabled) props.onOpen(member)
     }}
     onPointerEnter={event => {
-      if (props.profileEnabled && event.pointerType === 'mouse' && event.buttons === 0) props.onHover?.(member, event.currentTarget)
+      if ((props.hoverEnabled ?? props.profileEnabled) && event.pointerType === 'mouse' && event.buttons === 0) props.onHover?.(member, event.currentTarget)
     }}
     onKeyDown={event => {
       if (event.key !== 'ArrowDown') return
@@ -2860,6 +2861,8 @@ export function ArkmeSurface({
   const loadedBotRecords = useMemo(() => botRecords === undefined || timelineStateKey !== conversationKey
     ? [] : arkmeLoadedBotRecords(items, botRecords.identity.directoryKey, botRecords.mode),
   [botRecords, conversationKey, items, timelineStateKey])
+  const memberWorldAbortRef = useRef<AbortController>()
+  useEffect(() => () => { memberWorldAbortRef.current?.abort(); memberWorldAbortRef.current = undefined }, [activeConversation, authenticatedAccountKey, conversationKey])
   const privateChatAbortRef = useRef<AbortController>()
   const [privateChatBusy, setPrivateChatBusy] = useState(false)
 
@@ -6053,7 +6056,7 @@ export function ArkmeSurface({
     })
   }, [])
   const openMemberHover = useCallback((member: ArkmeConversationMemberItem, anchor: HTMLElement, preferredSide?: 'left') => {
-    if (source?.kind !== 'group_chat' || !anchor.isConnected || document.querySelector('[aria-modal="true"]')) return
+    if ((source?.kind !== 'group_chat' && (source?.kind !== 'private_chat' || member.isSelf)) || !anchor.isConnected || document.querySelector('[aria-modal="true"]')) return
     const rect = anchor.getBoundingClientRect()
     const host = panelRef.current?.getBoundingClientRect()
     const side = preferredSide ?? (host && rect.left > host.left + host.width / 2 ? 'left' : 'right')
@@ -6340,9 +6343,25 @@ export function ArkmeSurface({
     }
     return sendToSelfSource
   }, [aggregateSource, authenticatedUserId])
+  const openWorldForMember = useCallback((member: ArkmeConversationMemberItem) => {
+    if (!source || member.isSelf || !authenticatedAccountKey) return
+    memberWorldAbortRef.current?.abort()
+    const controller = new AbortController()
+    memberWorldAbortRef.current = controller
+    setMemberMenu(undefined)
+    setError('')
+    void callArkme<{ userId: number }>('chat.member.world-target', { sourceRef: source.sourceRef, memberRef: member.memberRef }, controller.signal)
+      .then(result => {
+        if (controller.signal.aborted || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) return
+        arkmeUi.showUserWorld({ userId: result.userId, displayName: member.displayName, ...(member.avatarRef ? { avatarRef: member.avatarRef } : {}) })
+      })
+      .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught) || '暂时无法打开TA的世界') })
+      .finally(() => { if (memberWorldAbortRef.current === controller) memberWorldAbortRef.current = undefined })
+  }, [authenticatedAccountKey, source])
   const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
     if (source === undefined || privateChatBusy || privateChatAbortRef.current !== undefined) return
     setPrivateChatBusy(true)
+    setMemberMenu(undefined)
     setError('')
     if (arkmeMemberConversationAction(member) === 'send_to_self') {
       const controller = new AbortController()
@@ -8173,6 +8192,7 @@ export function ArkmeSurface({
                       ...(avatarRef === undefined ? {} : { avatarRef }),
                     } })}
                     profileEnabled={source?.kind === 'group_chat'}
+                    hoverEnabled={source.kind === 'group_chat' || (source.kind === 'private_chat' && messageMember?.isSelf === false)}
                     onOpen={(...args) => timelineActions.current.openMemberProfile(...args)}
                     onContextMenu={(...args) => timelineActions.current.openMemberMenu(...args)}
                     onHover={(...args) => timelineActions.current.openMemberHover(...args)}
@@ -9565,6 +9585,8 @@ export function ArkmeSurface({
           hoverAnchor={memberMenu.hoverAnchor}
           hoverSide={memberMenu.hoverSide}
           onMention={() => { insertMemberMention(memberMenu.member) }}
+          onPrivateChat={() => { openPrivateChatForMember(memberMenu.member) }}
+          onWorld={() => { openWorldForMember(memberMenu.member) }}
           onRecords={mode => { openMemberRecords(memberMenu.member, mode) }}
           canRemove={source.kind === 'group_chat' && groupSelfRole === 'owner' && !memberMenu.member.isSelf && !memberMenu.member.isOwner}
           onRemove={() => { setMemberRemovalTarget(memberMenu.member); closeMemberMenu() }}

@@ -3771,3 +3771,34 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
   raw.record.payload.owner_user_id = 7
   await expect(chat.messageSnapshotDetail('source', ref, { includeAttachments: true })).rejects.toMatchObject({ code: 'message-snapshot-detail-unavailable' })
 })
+
+describe('chat member world target', () => {
+  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7}]) {
+    const session={userId,accessToken:'fixture',refreshToken:'fixture'}
+    const read=vi.fn(async()=>({items:members}))
+    const runtime={stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
+    const source={openSourceRef:vi.fn(async()=>({kind,ownerRef:'chat'}))}
+    const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+    return {chat,read,session}
+  }
+  it.each(['group_chat','private_chat'])('resolves %s member by viewer/session-bound reference only after a fresh membership check', async kind=>{
+    const {chat,read,session}=fixture(kind), signal=new AbortController().signal
+    await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),signal)).resolves.toEqual({userId:7})
+    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/list',{chat_session_uid:'chat',active_only:true},session,signal)
+    expect(read).toHaveBeenCalledOnce()
+  })
+  it('rejects cross-account, cross-conversation, tampered, removed and unsupported members', async()=>{
+    const {chat,read}=fixture()
+    for (const ref of [chatMemberRef(43,'chat',7),chatMemberRef(42,'other',7),chatMemberRef(42,'chat',7)+'tampered']) {
+      await expect(chat.memberWorldTarget('source',ref)).rejects.toMatchObject({code:'chat-member-ref-invalid'})
+    }
+    expect(read).not.toHaveBeenCalled()
+    await expect(fixture('private_chat',42,[]).chat.memberWorldTarget('source',chatMemberRef(42,'chat',7))).rejects.toMatchObject({code:'chat-member-ref-stale'})
+    await expect(fixture('send_to_self').chat.memberWorldTarget('source',chatMemberRef(42,'chat',7))).rejects.toMatchObject({code:'chat-members-source-invalid'})
+  })
+  it('does not resolve after cancellation',async()=>{
+    const {chat,read}=fixture()
+    await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),AbortSignal.abort())).rejects.toThrow()
+    expect(read).not.toHaveBeenCalled()
+  })
+})

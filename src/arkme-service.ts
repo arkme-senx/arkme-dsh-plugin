@@ -2031,6 +2031,10 @@ arkoImagesV1:true,
 
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
 
+  async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal) {
+    return this.chat.memberWorldTarget(sourceRef, memberRef, signal)
+  }
+
   async openPrivateChatFromMember(
     sourceRef: string,
     memberRef: string,

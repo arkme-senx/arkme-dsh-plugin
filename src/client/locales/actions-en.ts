@@ -1,5 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  'TA的世界': 'Their World',
+  '私聊': 'Private chat',
   '世界动态详情': 'World post details',
   '关闭动态详情': 'Close post details',
   '调整动态详情宽度': 'Resize post details',

@@ -235,6 +235,8 @@ export function ArkmeMemberActionMenu(props: {
   hoverAnchor?: HTMLElement | undefined
   hoverSide?: 'left' | 'right' | undefined
   onMention: () => void
+  onPrivateChat?: (() => void) | undefined
+  onWorld?: (() => void) | undefined
   onRecords: (mode: ArkmeConversationMemberRecordMode) => void
   canRemove?: boolean
   onRemove?: () => void
@@ -249,6 +251,8 @@ export function ArkmeMemberActionMenu(props: {
     autoFocus={props.hoverAnchor === undefined}
     point={{ x: props.position.left, y: props.position.top }} onClose={props.onClose} actions={[
       !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: `@${props.member.displayName}`, onSelect: props.onMention },
+      !props.member.isSelf && props.sourceKind === 'group_chat' && props.onPrivateChat !== undefined && { id: 'private-chat', label: tr('私聊'), onSelect: props.onPrivateChat },
+      !props.member.isSelf && props.onWorld !== undefined && { id: 'world', label: tr('TA的世界'), onSelect: props.onWorld },
       props.sourceKind === 'group_chat' && { id: 'mentioned-records', label: countLabel(mentionedLabel, props.member.mentionCount), onSelect: () => props.onRecords('mentioned') },
       { id: 'owner-records', label: countLabel(ownerLabel, props.member.recordCount), onSelect: () => props.onRecords('owner') },
       props.canRemove === true && props.onRemove !== undefined && { id: 'remove', label: '移出群聊', danger: true, onSelect: props.onRemove },

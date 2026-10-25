@@ -2038,6 +2038,18 @@ export class ChatService {
     }
   }
 
+  async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<{ userId: number }> {
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '仅支持从聊天成员查看世界', false, 400)
+    const reference = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    const members = await this.rawChatMembers(source.ownerRef, true, session, signal)
+    signal?.throwIfAborted()
+    if (!members.some(member => Math.trunc(numberValue(member.user_id)) === reference.targetUserId)) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+    return { userId: reference.targetUserId }
+  }
+
   async openPrivateChatFromMember(
     sourceRef: string,
     memberRef: string,

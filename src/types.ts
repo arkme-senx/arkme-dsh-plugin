@@ -4454,6 +4454,7 @@ export type ArkmePluginOperation =
   | 'user.card'
   | 'chat.private.open'
   | 'chat.member.private.open'
+  | 'chat.member.world-target'
   | 'source.send-rich'
   | 'favorite-stickers.list'
   | 'reactions'

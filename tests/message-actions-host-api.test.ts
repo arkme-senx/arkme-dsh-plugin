@@ -226,3 +226,9 @@ it('requires a same-origin mutation request for selected text forwarding', async
     expect(response.status).toBe(403); expect(forwardSelectedText).not.toHaveBeenCalled()
   } finally { server.close(); await once(server, 'close') }
 })
+
+it('routes member world lookups with their original opaque references and cancellation signal',async()=>{
+ const memberWorldTarget=vi.fn(async()=>({userId:7})),signal=new AbortController().signal
+ await expect(dispatchArkmeHostOperation({memberWorldTarget} as unknown as ArkmeService,'chat.member.world-target',{sourceRef:'source',memberRef:'signed-member'},undefined,undefined,undefined,undefined,signal)).resolves.toEqual({userId:7})
+ expect(memberWorldTarget).toHaveBeenCalledWith('source','signed-member',signal)
+})
