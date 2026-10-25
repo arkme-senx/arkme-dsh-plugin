@@ -1788,6 +1788,7 @@ export async function dispatchArkmeHostOperation(
       const limit = numberParam(params, 'limit', 20)
       const cursor = stringParam(params, 'cursor')
       return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }),
+        ...(params?.articleScope === undefined ? {} : { articleScope: stringParam(params, 'articleScope') as import('./types.js').ArkmeLongArticleBrowseScope }),
         ...searchScopeParam(params),
         ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
         ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),

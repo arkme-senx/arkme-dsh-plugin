@@ -1191,6 +1191,7 @@ export interface ArkmeCachedQueryResult {
 }
 
 export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+export type ArkmeLongArticleBrowseScope = 'recent' | 'shared_by_me' | 'shared_with_me'
 
 export interface ArkmeSearchQueryGuard {
   state: string

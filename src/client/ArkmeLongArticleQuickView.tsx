@@ -1,7 +1,7 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
+import type { ArkmeLongArticleBrowseScope, ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -27,18 +27,23 @@ function articleDate(value: number): string {
 }
 
 /** Browse the same long-article scene as Flutter, without turning it into an unfiltered keyword search. */
-export function ArkmeLongArticleQuickView({ scrollRoot }: { scrollRoot?: RefObject<HTMLElement> }) {
+export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active = true, created }: {
+  scrollRoot?: RefObject<HTMLElement>; scope?: ArkmeLongArticleBrowseScope; active?: boolean; created?: ArkmeSearchRecordItem | undefined
+}) {
   useArkmeLocale()
   const [page, setPage] = useState<ArkmeRecordSearchResult>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openError, setOpenError] = useState('')
+  const [unavailable, setUnavailable] = useState(false)
   const [selected, setSelected] = useState<ArkmeSearchRecordItem>()
   const generation = useRef(0)
   const request = useRef<AbortController>()
   const inFlight = useRef(false)
   const sentinel = useRef<HTMLDivElement>(null)
   const opener = useRef<HTMLButtonElement>()
+  const current = useRef({ page, error }); current.current = { page, error }
+  const latestCreated = useRef(created); latestCreated.current = created
 
   const load = useCallback(async (cursor?: string) => {
     if (inFlight.current) return
@@ -46,11 +51,12 @@ export function ArkmeLongArticleQuickView({ scrollRoot }: { scrollRoot?: RefObje
     const id = ++generation.current
     const controller = new AbortController()
     request.current = controller
-    setLoading(true); setError('')
+    setLoading(true); setError(''); setUnavailable(false)
     const timeout = setTimeout(() => controller.abort(), 20_000)
     try {
       const result = await callArkme<ArkmeRecordSearchResult>('search.scene', {
         scene: 'long_article', limit: 30, ...(cursor === undefined ? {} : { cursor }),
+        ...(scope === 'recent' ? {} : { articleScope: scope }),
       }, controller.signal)
       if (id !== generation.current) return
       if (controller.signal.aborted) throw new Error('加载超时，请重试')
@@ -60,30 +66,40 @@ export function ArkmeLongArticleQuickView({ scrollRoot }: { scrollRoot?: RefObje
       const canContinue = result.hasMore && !!nextCursor && nextCursor !== cursor
       setPage(current => ({
         ...result, hasMore: canContinue,
-        items: [...new Map([...(cursor === undefined ? [] : current?.items ?? []), ...items].map(item => [identity(item), item])).values()],
+        items: [...new Map([...(cursor === undefined ? scope === 'recent' && latestCreated.current ? [latestCreated.current] : [] : current?.items ?? []), ...items].map(item => [identity(item), item])).values()],
       }))
       if (result.hasMore && !canContinue) setError('后续分页暂不可用，请返回后重试')
     } catch (caught) {
-      if (id === generation.current) setError(controller.signal.aborted ? '加载超时，请重试' : caught instanceof Error ? caught.message : '长文加载失败，请重试')
+      if (id === generation.current) {
+        setUnavailable((caught as { body?: { code?: string } } | null)?.body?.code === 'long-article-sharing-unavailable')
+        setError(controller.signal.aborted ? '加载超时，请重试' : caught instanceof Error ? caught.message : '长文加载失败，请重试')
+      }
     } finally {
       clearTimeout(timeout)
       if (id === generation.current) { inFlight.current = false; setLoading(false) }
     }
-  }, [])
+  }, [scope])
 
   useEffect(() => {
-    void load()
+    if (!active) { setLoading(false); return }
+    if (!current.current.page && !current.current.error) void load()
     return () => { generation.current += 1; request.current?.abort(); inFlight.current = false }
-  }, [load])
+  }, [active, load])
 
   useEffect(() => {
-    if (loading || error || !page?.hasMore || !page.nextCursor || !sentinel.current || typeof IntersectionObserver === 'undefined') return
+    if (!created || scope !== 'recent') return
+    setPage(previous => ({ ...previous, items: [created, ...(previous?.items ?? []).filter(item => identity(item) !== identity(created))],
+      sourceAggregates: previous?.sourceAggregates ?? [], hasMore: previous?.hasMore ?? false, queryGuard: previous?.queryGuard ?? { state: 'complete' } }))
+  }, [created, scope])
+
+  useEffect(() => {
+    if (!active || loading || error || !page?.hasMore || !page.nextCursor || !sentinel.current || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void load(page.nextCursor)
     }, { root: scrollRoot?.current ?? null, rootMargin: '240px 0px' })
     observer.observe(sentinel.current)
     return () => observer.disconnect()
-  }, [error, load, loading, page, scrollRoot])
+  }, [active, error, load, loading, page, scrollRoot])
 
   const closeArticle = useCallback(() => {
     setSelected(undefined)
@@ -110,14 +126,14 @@ export function ArkmeLongArticleQuickView({ scrollRoot }: { scrollRoot?: RefObje
     </div>
     {!loading && !error && page?.items.length === 0 && <p style={styles.state}>{page.hasMore ? '正在查找更多长文…' : '暂无长文'}</p>}
     <div ref={sentinel} style={styles.state}>
-      {loading ? <span role="status">{tr("正在加载长文…")}</span> : error ? <span role="alert">{error}<button type="button" style={styles.retry} onClick={() => { void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button></span>
+      {loading ? <span role="status">{tr("正在加载长文…")}</span> : error ? <span role={unavailable ? 'status' : 'alert'}>{tr(error)}{!unavailable && <button type="button" style={styles.retry} onClick={() => { void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button>}</span>
         : page?.hasMore && <button type="button" style={styles.retry} onClick={() => { void load(page.nextCursor) }}>{tr("加载更多长文")}</button>}
     </div>
     {selected?.targetSource !== undefined && typeof document !== 'undefined' && createPortal(
       <ArkmeLongArticleDialog
         sourceRef={selected.targetSource.sourceRef}
         item={{ itemUid: selected.recordUid, title: selected.title, textContent: selected.textContent, sendAtMillis: selected.sendAtMillis }}
-        overlayZIndex={10040}
+        overlayZIndex={10060}
         onClose={closeArticle}
         onUpdated={detail => {
           setPage(current => current === undefined ? current : { ...current, items: current.items.map(item => identity(item) !== identity(selected) ? item : { ...item, title: detail.title, textContent: detail.textContent, snippet: '', ...(detail.textFormat === undefined ? {} : { textFormat: detail.textFormat }) }) })

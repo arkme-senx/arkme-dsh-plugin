@@ -1413,6 +1413,15 @@ AI 润色设置|AI polish settings
 请输入正文内容|Enter content
 长文正文|Article content
 长文快速查找|Find articles
+长文库|Article library
+关闭长文库|Close article library
+新建长文|New article
+长文分类|Article categories
+最近|Recent
+我共享的|Shared by me
+共享给我的|Shared with me
+准备中…|Preparing…
+后端接口开发中，开发完成后此功能完整可用。|The backend API is under development. This feature will be fully available once it is ready.
 复制扩展链接|Copy extension link
 扩展详情|Extension details
 扩展统计|Extension statistics

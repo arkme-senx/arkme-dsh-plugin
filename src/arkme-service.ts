@@ -2914,6 +2914,7 @@ arkoImagesV1:true,
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('./types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'
