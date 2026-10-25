@@ -37,6 +37,34 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+describe('member initiated team conversation handoff boundary', () => {
+  const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }
+  const recipient = { kind: 'chat-member', sourceRef: 'source-ref', memberRef: 'member-ref' }
+  it('requires authenticated membership and returns a pending state without calling a nonexistent creation API', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {})
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const result = await f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })
+    expect(result).toEqual({ state: 'backend_pending' })
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects a removed member and never substitutes another team', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [memberTeam] : [{ ...memberTeam, team_id: 18 }] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.outbound.open', { teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+  })
+  it('rejects malformed targets and an account changed since the UI opened', async () => {
+    const f = fixture(() => ({ teams: [memberTeam] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    await expect(f.service.execute('team.app.outbound.open', { teamRef: teams[0]!.teamRef, recipient: { kind: 'chat-member', memberRef: 'member' }, requestUid: 'attempt-1' })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(1)
+  })
+})
+
 it.each([
   [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
   [undefined, 'unknown'], [null, 'unknown'], [99, 'unknown'],

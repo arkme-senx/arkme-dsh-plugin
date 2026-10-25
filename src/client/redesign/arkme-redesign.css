@@ -1649,6 +1649,7 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-contact-remark-dialog button:disabled, .arkme-contact-remark-input:disabled { opacity: .55; cursor: default; }
 .arkme-contact-remark-error { margin: 10px 0 0; color: var(--dsw-alias-state-error-primary, #b42318); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .arkme-contact-profile-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 26px 0 0; border-top: 1px solid var(--dsw-alias-border-l1, var(--arkme-line)); }
+.arkme-contact-profile-actions[data-team-outbound="available"] { grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); }
 .arkme-contact-profile-actions .arkme-contact-profile-action { min-width: 0; min-height: 78px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 8px; padding: 10px 2px; background: transparent; color: var(--dsw-alias-state-business-primary, #4f5fbf) !important; font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
 .arkme-contact-profile-actions .arkme-contact-profile-action:not([data-arkme-feedback]):hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
 .arkme-contact-profile-actions .arkme-contact-profile-action:disabled { opacity: .5; cursor: default; }

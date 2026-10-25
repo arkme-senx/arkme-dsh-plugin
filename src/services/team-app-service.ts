@@ -7,6 +7,7 @@ import type { TeamMemberAvatarPort } from './team-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -427,6 +428,17 @@ export class TeamAppService {
           || mine.teams.some(raw => !recordOwnerId(obj(raw).team_id))) throw invalid()
         // Compare provider-owned IDs here, never names or rotating encrypted refs.
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
+      }
+      case 'team.app.outbound.open': {
+        // Frontend handoff boundary. Do not guess an upstream creation endpoint,
+        // create a personal Chat session, or manufacture a shared conversation.
+        if (!validTeamOutboundRecipient(p.recipient) || !str(p.requestUid).trim()) throw invalid()
+        const id = await teamID()
+        const mine = await post('list-mine', {}, true)
+        if (!list(mine.teams).some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        return { state: 'backend_pending' as const }
       }
       case 'team.app.open': {
         const data = await post('conversations/open', { public_ref: str(p.publicRef) })

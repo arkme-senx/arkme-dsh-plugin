@@ -109,6 +109,7 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { openTeamOutbound } from './team-outbound.js'
 import {
   IconCheckOutlineMedium, IconLoadingOutlineMedium, IconWarningOutlineMedium, IconPaperclipOutlineMedium, IconEditOutlineMedium, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -9597,6 +9598,13 @@ export function ArkmeSurface({
           busy={privateChatBusy}
           onClose={closeMemberProfile}
           onSend={() => { openPrivateChatForMember(memberProfile) }}
+          onContactAsTeam={!conversationWindowRequested() && !memberProfile.isSelf && source && authenticatedAccountKey ? () => {
+            closeMemberProfile()
+            openTeamOutbound({ accountKey: authenticatedAccountKey, person: {
+              recipient: { kind: 'chat-member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef },
+              displayName: memberProfile.displayName, avatarRef: memberProfile.avatarRef,
+            } })
+          } : undefined}
         />}
         {activeConversation && source !== undefined && authenticatedAccountKey !== undefined && botProfile !== undefined && <ArkmeBotAvatarProfileCard
           key={`${authenticatedAccountKey}:${source.sourceRef}:${botProfile.identity.itemUid}`}
