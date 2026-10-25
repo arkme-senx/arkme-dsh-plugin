@@ -10,6 +10,7 @@ export type TeamAppOperation = `team.app.${
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
+  | 'group.context' | 'group.join' | 'group.directory'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'

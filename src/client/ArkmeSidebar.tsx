@@ -64,6 +64,7 @@ import { useComposerPasteFocus } from './composer-paste-focus.js'
 import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
+import { TeamGroupIdentityPicker } from './TeamGroupControls.js'
 import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { useSelfCalendarNavigation } from './use-self-calendar-navigation.js'
@@ -9427,6 +9428,12 @@ export function ArkmeSurface({
                   selectedRole={selectedSelfRole}
                   onSelect={setSelectedSelfRole}
                   selfAvatarRef={selfProfile?.avatarRef}
+                  disabled={composerFilesDisabled || activeSelectMode !== undefined}
+                />}
+              {authenticatedAccountKey !== undefined && source?.kind === 'group_chat'
+                && activeRecordReeditComposer === undefined && <TeamGroupIdentityPicker
+                  key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
+                  accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
               <ArkmeComposerSendButton

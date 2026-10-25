@@ -31,11 +31,48 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
   const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
-  const contacts = { privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()) }
+  const contacts = {
+    privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()),
+    openSourceRef: vi.fn(async (_ref: string, _user: number) => ({ kind: 'group_chat', ownerRef: 'group-id' }) as never),
+  }
   const service = new TeamAppService(runtime, avatars, privateChat as never, contacts)
   return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
+
+describe('team group frontend handoff boundary', () => {
+  const member = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 3 }
+  it('checks a viewer-scoped group source and returns real teams without granting delegated group access', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    const result = await f.service.execute('team.app.group.context', { sourceRef: 'sealed-group', expectedAccountKey: 'test:90' }) as { state: string; teams: Array<{ teamRef: string }> }
+    expect(result.state).toBe('backend_pending'); expect(result.teams).toHaveLength(1)
+    expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine'])
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'sealed-group', teamRef: result.teams[0]!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
+    await expect(f.service.execute('team.app.group.directory', { teamRef: result.teams[0]!.teamRef })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.requests.every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    f.contacts.openSourceRef.mockRejectedValueOnce(new Error('invalid source'))
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'forged' })).rejects.toThrow('invalid source')
+    f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'private' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group' })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'group', expectedAccountKey: 'test:90' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(0)
+  })
+  it('does not reuse removed team membership for either joins or the team group directory', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [member] : [] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.group.directory', { teamRef: teams[0]!.teamRef })).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group', teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+  })
+})
 
 describe('member initiated team conversation handoff boundary', () => {
   const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }

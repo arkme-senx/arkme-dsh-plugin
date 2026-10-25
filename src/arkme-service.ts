@@ -527,6 +527,7 @@ export class ArkmeService {
       openPrivateChatFromUser: (peer, options) => this.chat.openPrivateChatFromUser(peer, options),
     }, {
       privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
+      openSourceRef: (ref, userId) => this.source.openSourceRef(ref, userId),
     })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,

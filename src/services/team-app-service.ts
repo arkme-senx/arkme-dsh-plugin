@@ -8,6 +8,7 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
+import type { TeamGroupContext, TeamGroupPending } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -60,7 +61,7 @@ export class TeamAppService {
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'>,
-    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'>) {
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -428,6 +429,26 @@ export class TeamAppService {
           || mine.teams.some(raw => !recordOwnerId(obj(raw).team_id))) throw invalid()
         // Compare provider-owned IDs here, never names or rotating encrypted refs.
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
+      }
+      case 'team.app.group.context': case 'team.app.group.join': case 'team.app.group.directory': {
+        // Do not send a team id to the individual-members API, or grant group
+        // access based on list-mine. These endpoints expose an honest pending
+        // state until the backend has both group and team delegation authority.
+        if (operation !== 'team.app.group.directory') {
+          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
+          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
+          if (source.kind !== 'group_chat') throw invalid()
+        }
+        if (operation === 'team.app.group.join' && !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        const id = operation === 'team.app.group.context' ? undefined : await teamID()
+        const mine = list((await post('list-mine', {}, true)).teams)
+        if (id !== undefined && !mine.some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        if (operation === 'team.app.group.context') return {
+          state: 'backend_pending', teams: await Promise.all(mine.map(team => this.team(team, actor))),
+        } satisfies TeamGroupContext
+        return { state: 'backend_pending' } satisfies TeamGroupPending
       }
       case 'team.app.outbound.open': {
         // Frontend handoff boundary. Do not guess an upstream creation endpoint,
