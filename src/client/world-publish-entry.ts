@@ -14,13 +14,13 @@ export function takeWorldPublishTeam(accountKey: string) {
 }
 export function registerWorldPublish(next: Presenter) {
   presenter = next
-  const host = window as Host
+  const host = typeof window === 'undefined' ? undefined : window as Host
   const entry = { open(request: WorldPublishRequest, signal: AbortSignal | undefined, caller: Window) {
-    if (host[key] !== entry || !isNativeForwardCaller(host, caller)) throw new Error('对话已切换，请重新选择')
+    if (!host || host[key] !== entry || !isNativeForwardCaller(host, caller)) throw new Error('对话已切换，请重新选择')
     signal?.throwIfAborted(); next(request, signal)
   } }
-  host[key] = entry
-  return () => { if (presenter === next) presenter = undefined; if (host[key] === entry) delete host[key] }
+  if (host) host[key] = entry
+  return () => { if (presenter === next) presenter = undefined; if (host?.[key] === entry) delete host[key] }
 }
 export function openWorldPublish(request: WorldPublishRequest, signal?: AbortSignal) {
   signal?.throwIfAborted()

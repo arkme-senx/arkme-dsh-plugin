@@ -31,6 +31,11 @@ import type {
   ArkmeTimelineItem,
 } from '../src/types.js'
 
+// Shared shells expose consumer props and the computed host style separately.
+function renderedComposerStyle(node: import('react-test-renderer').ReactTestInstance) {
+  return node.findAll(child => child.type === 'div' && child.props['data-arkme-primary-composer'] === 'true')[0]!.props.style
+}
+
 function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], moments: import('../src/types.js').ArkmeInterwovenMention[] = [], hasMore = false, cursor?: { beforeSequence: number }) {
   const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: [
     ...items.map(item => ({ kind: 'message' as const, eventId: item.itemUid, source: 'messages' as const, occurredAtMillis: item.sendAtMillis,
@@ -1314,7 +1319,7 @@ describe('conversation send directory projection', () => {
     expect(targetPreview.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(1)
     expect(targetPreview.findAllByType('a')).toHaveLength(0)
     const composerSurface = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
-    expect(composerSurface.props.style).toMatchObject({ borderRadius: '0 0 15px 15px' })
+    expect(renderedComposerStyle(composerSurface)).toMatchObject({ borderRadius: '0 0 15px 15px' })
     expect(composerSurface.findByType(ArkmeRichComposerInput).props.value).toBe('本机重新编辑草稿')
     expect(composerSurface.findByProps({ 'aria-label': '保存重新编辑' })).toBeDefined()
     expect(arkmeComposerDraftStore.get(normalDraftKey).text).toBe('未发送的普通消息')
@@ -7100,7 +7105,7 @@ describe('conversation send directory projection', () => {
     expect(composerSurface.parent).toBe(previewComponent.parent)
     expect(previewComponent.parent!.children.indexOf(composerSurface))
       .toBe(previewComponent.parent!.children.indexOf(previewComponent) + 1)
-    expect(composerSurface.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerSurface)).toMatchObject({
       borderRadius: '0 0 15px 15px',
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',
     })
@@ -9354,7 +9359,7 @@ describe('conversation send directory projection', () => {
     let composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
     let sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
 
-    expect(composerShell.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerShell)).toMatchObject({
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',
       boxShadow: 'none',
     })
@@ -9368,7 +9373,7 @@ describe('conversation send directory projection', () => {
     expect(destinationHint().props['aria-hidden']).toBe(true)
     expect(composerShell.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
     expect(destinationHint().parent!.parent!.parent).toBe(composerShell.parent)
-    expect(composerShell.props.style.borderColor).toBe('transparent')
+    expect(renderedComposerStyle(composerShell).borderColor).toBe('transparent')
     expect(sendButton.props.disabled).toBe(true)
     expect(sendButton.props.style).toMatchObject({
       width: 36,
@@ -9380,20 +9385,20 @@ describe('conversation send directory projection', () => {
 
     act(() => { composer.props.onFocus() })
     composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
-    expect(composerShell.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerShell)).toMatchObject({
       background: 'var(--arkme-primary-composer-focused, #ffffff)',
       boxShadow: 'none',
     })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('true')
     expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 1 })
     expect(destinationHint().props['aria-hidden']).toBe(false)
-    expect(composerShell.props.style.borderColor).not.toBe('transparent')
+    expect(renderedComposerStyle(composerShell).borderColor).not.toBe('transparent')
 
     act(() => { composer.props.onBlur() })
     composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('false')
     expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 0 })
-    expect(composerShell.props.style.background).toBe('var(--arkme-primary-composer-idle, #f6f6f6)')
+    expect(renderedComposerStyle(composerShell).background).toBe('var(--arkme-primary-composer-idle, #f6f6f6)')
 
     await act(async () => {
       composer.props.onTextChange('继续输入')
