@@ -20,7 +20,8 @@ describe('isolated World reaction owner adapter', () => {
     const page = await owner.prepare('test:7', ['opaque-world'])
     expect(post.mock.calls[0]?.[0]).toBe(`${WORLD_REACTION_PREFIX}prepare`)
     expect(post.mock.calls[0]?.[1]).toEqual({ record_uids: ['record'] })
-    expect(JSON.stringify(page)).not.toMatch(/world-only|record_uid|v3/)
+    // Match plaintext fields/values, not incidental characters in randomized ciphertext.
+    expect(JSON.stringify(page)).not.toMatch(/"world-only"|"record_uid"|"v3"/)
     const target = page.items[0]!.target
     expect(await owner.resolve(target)).toEqual({ record_uid: 'record', world_context_uid: 'world-only', content_revision: 'v3' })
     setUser(8)
