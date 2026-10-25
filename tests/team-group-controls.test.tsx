@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { TeamGroupDirectoryPanel, TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
+import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
 import { TEAM_GROUP_PENDING_TEXT } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem } from '../src/types.js'
@@ -68,9 +68,15 @@ it('distinguishes no membership from a failed team read, with a retry', async ()
 it('loads group identities only on open and keeps the personal identity after selecting a pending team', async () => {
   await mount(<><textarea defaultValue="个人草稿" /><TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" /></>)
   expect(call).not.toHaveBeenCalled()
-  await click('我个人'); expect(call).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('[aria-label="群聊发言身份：我"]')?.textContent).toBe('我')
+  await click('我'); expect(call).toHaveBeenCalledTimes(1)
+  const teamChoice = document.querySelector<HTMLButtonElement>('[data-role-action="team:our_team"]')!
+  expect(teamChoice.textContent).toBe('我 · 即我团队代表团队发言')
+  expect(teamChoice.querySelector('[aria-label="我的头像"]')).not.toBeNull()
+  expect(teamChoice.querySelector('[aria-label="即我团队身份"]')).not.toBeNull()
+  expect(teamChoice.querySelector('.arkme-team-name-avatar')).toBeNull()
   await act(async () => document.querySelector<HTMLButtonElement>('[data-role-action="team:our_team"]')!.click())
-  expect(document.body.textContent).toContain('尚未切换身份，仍以我个人发送')
+  expect(document.body.textContent).toContain('尚未切换，仍以个人身份发送')
   expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('个人草稿')
   expect(document.querySelector('[data-role-action="personal"]')?.getAttribute('aria-pressed')).toBe('true')
   expect(document.querySelector('[data-role-action="team:our_team"]')?.getAttribute('aria-pressed')).toBe('false')
@@ -82,20 +88,11 @@ it('loads group identities only on open and keeps the personal identity after se
 it('ignores stale identity responses after a group or account switch', async () => {
   const old = deferred(); call.mockReturnValueOnce(old.promise)
   await mount(<TeamGroupIdentityPicker key="old" accountKey="prod:90" sourceRef="old-group" />)
-  await click('我个人'); const signal = call.mock.calls.at(-1)![2] as AbortSignal
+  await click('我'); const signal = call.mock.calls.at(-1)![2] as AbortSignal
   await mount(<TeamGroupIdentityPicker key="new" accountKey="prod:91" sourceRef="new-group" />)
   expect(signal.aborted).toBe(true)
   await act(async () => old.resolve({ state: 'backend_pending', teams }))
   expect(document.body.textContent).not.toContain('即我')
-})
-
-it('distinguishes an unavailable team group directory from an empty one and recovers from read errors', async () => {
-  call.mockRejectedValueOnce(new Error('已无权访问'))
-  await mount(<TeamGroupDirectoryPanel accountKey="prod:90" teamRef="sealed-team" />)
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('已无权访问')
-  expect(document.body.textContent).not.toContain('还没有团队群聊')
-  await click('重试'); expect(document.body.textContent).toContain(TEAM_GROUP_PENDING_TEXT)
-  expect(call.mock.calls.every(([op, params]) => op === 'team.app.group.directory' && params.expectedAccountKey === 'prod:90')).toBe(true)
 })
 
 it('integrates the team tab into add-members without submitting retained personal or Bot selections', async () => {

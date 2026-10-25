@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
+import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import type { ArkmeSourceItem } from '../types.js'
 import { TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending } from '../team-group-contract.js'
 import { callArkme } from './api.js'
@@ -95,7 +96,7 @@ export function TeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, 
   const close = useCallback(() => setOpen(false), [])
   useEffect(() => { if (disabled) close() }, [disabled, close])
   const actions: SelfRoleMenuAction[] = [
-    { id: 'personal', label: tr('我个人'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={22} />, onSelect: close },
+    { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close },
     { type: 'separator', id: 'separator' },
     ...(!context.value && !context.error ? [{ type: 'label' as const, id: 'loading', text: tr('正在加载团队…') }] : []),
     ...(context.error ? [
@@ -103,44 +104,26 @@ export function TeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, 
       { id: 'retry', label: tr('重试'), onSelect: context.retry },
     ] : []),
     ...(context.value?.teams.map(team => ({
-      id: `team:${team.jotmoId}`, label: `${team.name} · ${tr('团队')}`,
-      icon: <ArkmeTeamAvatar name={team.name} avatar={team.avatar} size={22} />,
+      id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'),
+      icon: <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: 28, height: 28 }}>
+        <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />
+        <span aria-label={tr('{v0}团队身份', { v0: team.name })} style={styles.teamBadge}><Users size={10} weight="fill" /></span>
+      </span>,
       onSelect: () => setRequested(team.jotmoId),
     })) ?? []),
     ...(context.value ? [{ type: 'label' as const, id: 'pending', text: tr(TEAM_GROUP_PENDING_TEXT) },
-      { type: 'label' as const, id: 'unchanged', text: tr(requested ? '尚未切换身份，仍以我个人发送；原草稿已保留。' : context.value.teams.length ? '团队发言需先完成团队入群与授权。' : '你尚未加入团队') }] : []),
+      { type: 'label' as const, id: 'unchanged', text: tr(requested ? '尚未切换，仍以个人身份发送；草稿已保留。' : context.value.teams.length ? '团队发言需先完成团队入群与授权。' : '你尚未加入团队') }] : []),
   ]
-  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={['personal']} actions={actions} anchor={
-    <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我个人')} aria-haspopup="dialog" aria-expanded={open}
+  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={['personal']} showSelectionIndicator actions={actions} anchor={
+    <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我')} title={tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
       style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { setRequested(''); setOpen(value => !value) }}>
-      <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} /><span>{tr('我个人')}</span><CaretDown size={10} />
+      <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} /><span>{tr('我')}</span><CaretDown size={10} />
     </button>
   } />
 }
 
-/** An unavailable directory is not an empty directory and grants no access to personal groups. */
-export function TeamGroupDirectoryPanel({ accountKey, teamRef }: { accountKey: string; teamRef: string }) {
-  useArkmeLocale()
-  const [state, setState] = useState<'loading' | 'pending' | 'error'>('loading'), [error, setError] = useState(''), [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    const controller = new AbortController()
-    setState('loading'); setError('')
-    void callArkme<TeamGroupPending>('team.app.group.directory', { expectedAccountKey: accountKey, teamRef }, controller.signal)
-      .then(result => {
-        if (controller.signal.aborted) return
-        if (result.state !== 'backend_pending') throw new Error(tr('团队群聊状态返回异常，请重试'))
-        setState('pending')
-      }).catch(e => { if (!controller.signal.aborted) { setError(errorText(e)); setState('error') } })
-    return () => controller.abort()
-  }, [accountKey, teamRef, attempt])
-  return <section role="tabpanel" aria-label={tr('团队群聊')} style={{ padding: 16 }}>
-    {state === 'loading' && <p role="status">{tr('正在读取团队群聊…')}</p>}
-    {state === 'pending' && <TeamGroupPendingNotice>{tr('团队加入群聊后，获授权的成员可在这里查看和参与。可从群成员的「添加成员 → 团队」入口发起。')}</TeamGroupPendingNotice>}
-    {state === 'error' && <p role="alert">{error}<button style={styles.link} onClick={() => setAttempt(v => v + 1)}>{tr('重试')}</button></p>}
-  </section>
-}
-
 const styles: Record<string, CSSProperties> = {
+  teamBadge: { position: 'absolute', right: -2, bottom: -2, display: 'grid', placeItems: 'center', width: 14, height: 14, borderRadius: '50%', border: `2px solid ${arkmeTheme.base}`, background: arkmeTheme.accentSoft, color: arkmeTheme.accent },
   hint: { fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary },
   notice: { borderRadius: 10, padding: 12, marginTop: 12, background: arkmeTheme.subtle, fontSize: 13, lineHeight: 1.7, overflowWrap: 'anywhere' },
   team: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 8px', border: 0, borderRadius: 8, color: arkmeTheme.text, cursor: 'pointer' },
