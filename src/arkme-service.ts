@@ -2676,6 +2676,22 @@ arkoImagesV1:true,
   async recordReeditSubmissions(sourceRef: string) { return await this.record.recordReeditSubmissions(sourceRef) }
   async resumeRecordReeditSubmissions(sourceRef: string, reconcile = false) { return await this.record.resumeRecordReeditSubmissions(sourceRef, reconcile) }
   async acknowledgeRecordReeditSubmission(sourceRef: string, submissionId: string, version: number) { return await this.record.acknowledgeRecordReeditSubmission(sourceRef, submissionId, version) }
+  async worldArkoPublishSource(sessionId: number, messageId: number, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0 || !Number.isSafeInteger(messageId) || messageId <= 0) throw new ArkmePluginError('world-source-invalid', '原消息标识无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const rows = await this.arko.actionMessages([{ sessionId, messageId }], session.userId, signal)
+    const item = rows.find(row => row.sessionId === sessionId && row.messageId === messageId)
+    if (!item || item.role !== 'user' || item.status !== 1) throw new ArkmePluginError('world-source-not-owned', '原消息已不可用，只能公开自己已发出的内容', false, 403)
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { textContent: item.text, sendAtMillis: item.createdAtMillis, attachments: (item.contentBlocks ?? []).map(block => ({
+      selection: { fileAssetUid: block.fileAssetUid ?? '' },
+      asset: { fileAssetUid: block.fileAssetUid ?? '', fileName: block.fileName, mimeType: block.mimeType, size: block.size, fileKind: 1 as const },
+      block, ...(!block.fileAssetUid || !block.mediaRef ? { unavailable: true } : {}),
+    })) }
+  }
+  async worldMessagePublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) { return this.messageActions.worldPublishSource(conversationRef, actionRef, signal) }
   async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal) { return await this.record.worldPublishSource(sourceRef, itemUid, signal) }
   async recordReeditEditor(sourceRef: string, itemUid: string): Promise<ArkmeRecordReeditEditorSnapshot> { return await this.record.recordReeditEditor(sourceRef, itemUid) }
   async commitRecordReedit(context: ArkmeRecordReeditPreparedContext): Promise<ArkmeRecordReeditCommitResult> {

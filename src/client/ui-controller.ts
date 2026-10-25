@@ -46,6 +46,7 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
 }
 
 export interface ArkmeUiState {
+  composerFocusRevision?: number
   authRevision: number
   chatRevision: number
   recordRevision: number
@@ -161,13 +162,13 @@ export class ArkmeUiController {
     this.settingsOpener?.(section)
   }
 
-  focusSendToSelf(): void {
+  focusSendToSelf(focusComposer = false): void {
     this.leaveContacts()
     this.lastSelfSource = undefined
     this.lastConversationDestination = { kind: 'send_to_self' }
     const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget,
       calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'source' })
+    this.publish({ ...rest, mode: 'source', ...(focusComposer ? { composerFocusRevision: (this.state.composerFocusRevision ?? 0) + 1 } : {}) })
   }
 
   resumeSendToSelf(): void {

@@ -80,7 +80,7 @@ describe('Record attachment re-edit', () => {
       expect((await x.service.recordReeditEditor('source', 'r1')).draft?.textContent).toBe('未保存的编辑')
     } finally { x.service.dispose() }
   })
-  it('rejects other owners, chat sources, account changes and cancelled World reads', async () => {
+  it('rejects other owners, mismatched chat sources, account changes and cancelled World reads', async () => {
     const x = await setup()
     try {
       x.core.owner_user_id = 99
@@ -90,9 +90,19 @@ describe('Record attachment re-edit', () => {
       await expect(x.service.worldPublishSource('source', 'r1', controller.signal)).rejects.toThrow()
       const source = vi.spyOn(x.sourceReader, 'openSourceRef')
       source.mockResolvedValueOnce({ kind: 'group_chat' } as never)
-      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'world-source-invalid' })
+      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'record-reedit-source-mismatch' })
       x.readMedia.mockImplementationOnce(async () => { x.switchAccount(); return { items: [] } })
       await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'world-source-account-changed' })
+      expect(x.writes).toEqual([])
+    } finally { x.service.dispose() }
+  })
+  it.each(['private_chat', 'group_chat'] as const)('reads owned %s content without altering the original', async kind => {
+    const x = await setup({ origin_kind: kind === 'private_chat' ? 3 : 4, origin_container_ref: 'chat' })
+    vi.spyOn(x.sourceReader, 'openSourceRef').mockResolvedValue({ version: 1, userId: 42, kind, ownerRef: 'chat', displayName: kind } as never)
+    try {
+      expect((await x.service.worldPublishSource('source', 'r1')).textContent).toBe('原文')
+      x.core.creator_user_id = 99
+      await expect(x.service.worldPublishSource('source', 'r1')).rejects.toMatchObject({ code: 'record-reedit-not-editable' })
       expect(x.writes).toEqual([])
     } finally { x.service.dispose() }
   })

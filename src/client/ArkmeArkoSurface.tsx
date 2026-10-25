@@ -550,12 +550,13 @@ export function ArkmeArkoSurface() {
     setDetailSelection({ scope: detailScope, id })
   }
   const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => visibleMessages.flatMap(message => (
-    message.role === 'divider' || message.messageActionRef === undefined || message.messageActionConversationRef === undefined
+    message.role === 'divider' || ((!message.messageActionRef || !message.messageActionConversationRef) && !(message.role === 'user' && message.status === 'done' && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0))
       ? []
       : [{
         id: message.id,
-        actionRef: message.messageActionRef,
-        conversationRef: message.messageActionConversationRef,
+        actionRef: message.messageActionRef ?? '',
+        conversationRef: message.messageActionConversationRef ?? `arko:${message.sessionId}`,
+        ...(message.role === 'user' && message.status === 'done' && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0 ? { worldOrigin: { kind: 'arko' as const, sourceRef: `arko:${message.sessionId}`, itemUid: message.id, sessionId: message.sessionId!, messageId: message.messageId! } } : {}),
         copyText: arkmeEmojiPlainText(message.text),
         copyLinkAvailable: message.copyLinkAvailable === true,
         forwardAvailable: message.forwardAvailable === true,

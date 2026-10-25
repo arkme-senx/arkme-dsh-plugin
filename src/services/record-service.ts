@@ -629,7 +629,7 @@ export class RecordService {
     const session = await this.runtime.requireSession()
     signal?.throwIfAborted()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
-    if (!['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('world-source-invalid', '仅支持将自己的个人快记发到世界', false, 403)
+    if (!['send_to_self', 'default_category', 'topic', 'private_chat', 'group_chat'].includes(source.kind)) throw new ArkmePluginError('world-source-invalid', '仅支持将自己发出的内容发到世界', false, 403)
     const owner = await this.recordReeditOwnerSnapshot(sourceRef, itemUid, session, source, signal)
     const blocks = await this.recordReeditMediaBlocks(owner, session)
     const attachments = await this.recordReeditAttachmentViews(owner, recordReeditMediaGroups(owner.contentPayload).map(group => ({ fileAssetUid: group.fileAssetUid })), blocks)
@@ -641,7 +641,7 @@ export class RecordService {
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()
     if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
-    return { sourceRef, itemUid: owner.itemUid, version: owner.version, title: owner.title, textContent: owner.textContent,
+    return { sourceRef, itemUid: owner.itemUid, sourceLabel: source.displayName, version: owner.version, title: owner.title, textContent: owner.textContent,
       textFormat: arkmeRecordTextFormat(owner.contentPayload), sendAtMillis: owner.sendAtMillis, attachments }
   }
 

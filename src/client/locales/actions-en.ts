@@ -1,5 +1,18 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "正在读取原内容…": "Loading original content…",
+  "暂不支持公开，请移除此附件后继续。": "Not supported for public posts. Remove this attachment to continue.",
+
+  "把你发过的内容分享给世界": "Share what you have sent to World",
+  "在发给自己、私聊、群聊、Arko 等对话中，找到自己发过的内容，右键或长按，选择「发到世界」。": "Find something you sent in Notes to Self, private chats, groups, Arko or other conversations. Right-click or long-press it, then choose Post to World.",
+  "想现在写一条？": "Want to write something now?",
+  "去记录": "Write a note",
+  "关闭发布引导": "Close publishing guide",
+  "原内容返回异常，请重试": "Invalid original content response. Please retry.",
+  "原内容暂时无法读取": "Original content is temporarily unavailable",
+  "来自{v0} · 发布副本": "From {v0} · Publication copy",
+  "原消息附件（暂不支持公开，请移除后仅发布正文）": "Original attachment (not supported for public posts; remove to publish text only)",
+
   "发到世界": "Post to World",
   "正在读取原快记…": "Loading the original note…",
   "原快记内容返回异常，请重试": "Invalid original note response. Please retry.",

@@ -3,12 +3,11 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { TEAM_WORLD_PENDING_TEXT, type TeamWorldTarget, type TeamWorldView } from '../team-world-contract.js'
 import { callArkme } from './api.js'
-import { PublishDialog } from './ArkmeWorldSurface.js'
+import { WorldPublishGuide } from './WorldPublishGuide.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
-import { arkmeUi } from './ui-controller.js'
 
 /** Dedicated team namespace: never query a personal user feed with a team ID. */
 export function TeamWorldSurface(props: {
@@ -16,7 +15,7 @@ export function TeamWorldSurface(props: {
 }) {
   return <ScopedTeamWorld key={`${props.accountKey}:${props.target.jotmoId}`} {...props} />
 }
-function ScopedTeamWorld({ accountKey, target, actorName, actorAvatarRef, onBack }: Parameters<typeof TeamWorldSurface>[0]) {
+function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamWorldSurface>[0]) {
   useArkmeLocale()
   const [state, setState] = useState<{ value?: TeamWorldView; loading: boolean; error?: string }>({ loading: true })
   const [revision, setRevision] = useState(0), [publishing, setPublishing] = useState(false), [cardOpen, setCardOpen] = useState(false)
@@ -52,8 +51,7 @@ function ScopedTeamWorld({ accountKey, target, actorName, actorAvatarRef, onBack
         </div>}
       </div>
     </section>
-    {publishing && state.value?.memberTeam && <PublishDialog initialTeam={state.value.memberTeam} actorName={actorName} actorAvatarRef={actorAvatarRef}
-      onClose={() => setPublishing(false)} onPublished={() => { setPublishing(false); arkmeUi.showWorld('mine') }} />}
+    {publishing && state.value?.memberTeam && <WorldPublishGuide initialTeam={state.value.memberTeam} onClose={() => setPublishing(false)} />}
     {cardOpen && <TeamPublicCardDialog accountKey={accountKey} jotmoId={team.jotmoId} onClose={() => setCardOpen(false)} />}
   </main>
 }

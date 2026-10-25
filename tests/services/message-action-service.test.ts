@@ -463,3 +463,16 @@ it('forwards Codex with distinct identities and visible provenance without imper
   expect(payload.items.map((item:any)=>item.send_at)).toEqual([1000,2000])
   expect(payload.source_record_uids).toEqual([])
 })
+
+describe('World message source ownership', () => {
+  it('reads a signed user message from its conversation and rejects assistant or cross-conversation input', async () => {
+    const owner = runtime(), service = messageActionService(owner)
+    const conversation = await service.agentConversationRef(42, 88)
+    const user = await service.agentHistoryItem(historyItem({ role: 'user', text: '本人正文' }), 42)
+    const assistant = await service.agentHistoryItem(historyItem(), 42)
+    expect(await service.worldPublishSource(conversation, user.messageActionRef!)).toMatchObject({ textContent: '本人正文' })
+    await expect(service.worldPublishSource(conversation, assistant.messageActionRef!)).rejects.toMatchObject({ code: 'world-source-not-owned' })
+    await expect(service.worldPublishSource(await service.agentConversationRef(42, 99), user.messageActionRef!)).rejects.toThrow()
+    expect(owner.authenticatedPost).not.toHaveBeenCalled(); expect(owner.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+})

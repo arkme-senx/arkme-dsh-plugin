@@ -1,3 +1,5 @@
+import { useWorldPublishHost } from './WorldPublishHost.js'
+import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
@@ -197,7 +199,7 @@ import { ArkmeDirectRecordingStatus, useDirectRecordingOwner } from './recording
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRetainedCallPage } from './ArkmeRetainedCallPage.js'
-import { ArkmeWorldSurface, PublishDialog } from './ArkmeWorldSurface.js'
+import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeComposerCard } from './ArkmeComposerCard.js'
 import { canPublishSelfNote } from '../world-publish-source.js'
 import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
@@ -2801,8 +2803,14 @@ export function ArkmeSurface({
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
   const [messageWithdrawalItem, setMessageWithdrawalItem] = useState<ArkmeTimelineItem>()
-  const [worldPublication, setWorldPublication] = useState<{ accountKey: string; conversationKey: string; sourceRef: string; itemUid: string }>()
-  useEffect(() => setWorldPublication(undefined), [authenticatedAccountKey, conversationKey])
+  const worldPublishLayer = useWorldPublishHost({ accountKey: authenticatedAccountKey, navigationKey: `${ui.mode}:${conversationKey}:${ui.selectedBot?.botRef ?? ''}:${JSON.stringify(ui.codexTarget)}`,
+    actorName: selfProfile?.displayName || selfProfile?.nickname || '我', actorAvatarRef: selfProfile?.avatarRef,
+    onPublished: message => showMessageActionStatus(message) })
+  useEffect(() => {
+    if (!ui.composerFocusRevision || ui.mode !== 'source' || !source || !isArkmeSelfWorkspaceSource(source)) return
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [ui.composerFocusRevision, ui.mode, source?.sourceRef])
 
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -9518,10 +9526,7 @@ export function ArkmeSurface({
         </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
         {forwardDialog}
-        {activeConversation && worldPublication && worldPublication.accountKey === authenticatedAccountKey && worldPublication.conversationKey === conversationKey && <PublishDialog
-          origin={{ sourceRef: worldPublication.sourceRef, itemUid: worldPublication.itemUid }}
-          actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
-          onClose={() => setWorldPublication(undefined)} onPublished={result => { setWorldPublication(undefined); showMessageActionStatus(result.visibility === 'pending_review' ? '已提交审核' : '已发布到世界') }} />}
+        {worldPublishLayer}
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeMessageContextMenu
           selectedText={messageMenu.selectedText} copyIcon={<ArkmeMessageActionIcon kind="copy" />}
           onCopySelection={text => { void copyMessageTextValue(text) }} onCopyMessage={() => { void copyMessageText(messageMenuItem) }}
@@ -9540,7 +9545,7 @@ export function ArkmeSurface({
             { id: 'forward', label: ARKME_MESSAGE_ACTION_MENU_LABELS[4], icon: <ArkmeMessageActionIcon kind="forward" />, disabled: arkmeTimelineMessageActionRef(messageMenuItem) === '', onSelect: () => openForwardTargetPicker([messageMenuItem]) },
             canPublishSelfNote(source, messageMenuItem) && authenticatedAccountKey !== undefined && { id: 'world', label: '发到世界', icon: <Globe size={16} />, onSelect: () => {
               if (!source) return
-              setWorldPublication({ accountKey: authenticatedAccountKey, conversationKey, sourceRef: source.sourceRef, itemUid: messageMenuItem.itemUid }); closeMessageMenu()
+              openWorldPublish({ accountKey: authenticatedAccountKey, origin: { sourceRef: source.sourceRef, itemUid: messageMenuItem.itemUid } }); closeMessageMenu()
             } },
             { id: 'ask-dsh', label: askDsh.busy ? '准备中' : '问 DSH', icon: <AskDshIcon size={20} />,
               disabled: source === undefined || arkmeTimelineMessageActionRef(messageMenuItem) === '' || messageMenuItem.quickNoteDetailsSupported === false || messageActionBusy !== undefined,

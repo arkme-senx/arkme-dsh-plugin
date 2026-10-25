@@ -1,3 +1,5 @@
+import { worldPublishSourceLabel } from '../world-publish-source.js'
+import { WorldPublishGuide } from './WorldPublishGuide.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -30,7 +32,7 @@ import { TEAM_WORLD_PENDING_TEXT, type TeamWorldPrepareResult } from '../team-wo
 import { TeamWorldPublisherPicker, useTeamWorldPublisher } from './TeamWorldPublisher.js'
 import { ArkmePublishComposer } from './ArkmePublishComposer.js'
 import { WorldPublishAttachments, worldPublishAttachmentBlocked, type WorldPublishAttachment } from './WorldPublishAttachments.js'
-import type { WorldPublishSource, WorldPublishSourceDraft } from '../world-publish-source.js'
+import type { WorldPublishOrigin, WorldPublishSourceDraft } from '../world-publish-source.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../extensions/types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -1472,8 +1474,8 @@ export function removeWorldPublishFile(current: readonly File[], index: number):
 
 interface PublishDialogProps {
   onClose(): void; onPublished(result: ArkmeWorldPublishResult): void
-  initialTeam?: ArkmeTeam; actorName?: string | undefined; actorAvatarRef?: string | undefined
-  origin?: WorldPublishSource
+  initialTeam?: ArkmeTeam | undefined; actorName?: string | undefined; actorAvatarRef?: string | undefined
+  origin?: WorldPublishOrigin
 }
 export function PublishDialog(props: PublishDialogProps) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -1499,13 +1501,19 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     if (!origin) return
     const controller = new AbortController()
     setSourceState({ loading: true })
-    void callArkme<WorldPublishSourceDraft>('world.source-draft', { ...origin }, controller.signal).then(snapshot => {
+    const blockedAttachment: import('../record-reedit-contract.js').ArkmeRecordReeditAttachmentView = { selection: { fileAssetUid: 'unsupported-source-attachment' }, asset: { fileAssetUid: 'unsupported-source-attachment', fileName: tr('原消息附件（暂不支持公开，请移除后仅发布正文）'), mimeType: 'application/octet-stream', fileKind: 4 as const, size: 0 }, unavailable: true }
+    const local = origin.kind === 'local'
+    const read: Promise<WorldPublishSourceDraft> = local ? Promise.resolve({ ...origin, version: 1, title: '', attachments: origin.hasAttachments ? [blockedAttachment] : [] })
+      : origin.kind === 'arko' ? callArkme<Omit<WorldPublishSourceDraft, 'sourceRef' | 'itemUid' | 'version' | 'title'>>('world.arko-source-draft', { sessionId: origin.sessionId, messageId: origin.messageId }, controller.signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: 'Arko' }))
+      : origin.kind === 'action' ? callArkme<{ textContent: string; sendAtMillis: number }>('world.message-source-draft', { conversationRef: origin.sourceRef, actionRef: origin.actionRef }, controller.signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: tr('Bot 对话'), attachments: origin.hasAttachments ? [blockedAttachment] : [] }))
+      : callArkme<WorldPublishSourceDraft>('world.source-draft', { ...origin }, controller.signal)
+    void read.then(snapshot => {
       if (controller.signal.aborted) return
-      if (snapshot.itemUid !== origin.itemUid || snapshot.sourceRef !== origin.sourceRef || !Number.isSafeInteger(snapshot.version) || snapshot.version <= 0 || !Array.isArray(snapshot.attachments)) throw new Error(tr('原快记内容返回异常，请重试'))
+      if (snapshot.itemUid !== origin.itemUid || snapshot.sourceRef !== origin.sourceRef || !Number.isSafeInteger(snapshot.version) || snapshot.version <= 0 || !Array.isArray(snapshot.attachments)) throw new Error(tr('原内容返回异常，请重试'))
       setText([snapshot.title.trim(), snapshot.textContent].filter(Boolean).join('\n\n'))
       setAttachments(snapshot.attachments.map((item, index) => ({ id: `source:${index}`, ...(item.asset ? { asset: item.asset } : {}), ...(item.block ? { block: item.block } : {}), ...(!item.asset || item.unavailable ? { unavailable: true } : {}) })))
       setSourceState({ loading: false, snapshot })
-    }).catch(error => { if (!controller.signal.aborted) setSourceState({ loading: false, error: messageOf(error, '原快记暂时无法读取') }) })
+    }).catch(error => { if (!controller.signal.aborted) setSourceState({ loading: false, error: messageOf(error, '原内容暂时无法读取') }) })
     return () => controller.abort()
   }, [origin?.sourceRef, origin?.itemUid, sourceRevision])
   const resetMutationId = () => {
@@ -1555,7 +1563,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         setSending(true); setMessage(tr('正在核验团队身份…'))
         const result = await callArkme<TeamWorldPrepareResult>('team.app.world.prepare', {
           expectedAccountKey: accountKey, teamRef: publisher.team!.teamRef, requestUid: mutationIdRef.current,
-          ...(sourceState.snapshot ? { origin: { sourceRef: sourceState.snapshot.sourceRef, itemUid: sourceState.snapshot.itemUid, version: sourceState.snapshot.version } } : {}),
+          ...(sourceState.snapshot && (!origin?.kind || origin.kind === 'record') ? { origin: { sourceRef: sourceState.snapshot.sourceRef, itemUid: sourceState.snapshot.itemUid, version: sourceState.snapshot.version } } : {}),
         }, controller.signal)
         controller.signal.throwIfAborted()
         if (result.state !== 'backend_pending') throw new Error(tr('团队发布协议需要更新插件后使用'))
@@ -1624,8 +1632,8 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         <h2 style={{ margin: 0, fontSize: 16 }}>{tr('发世界')}</h2>
         <button type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose}><X size={18} /></button>
       </header>
-      {origin && <p style={{ margin: '0 0 8px', fontSize: 11, color: arkmeTheme.secondary }}>{tr('来自发给自己 · 发布副本')}</p>}
-      {sourceState.loading && <p role="status">{tr('正在读取原快记…')}</p>}
+      {origin && <p style={{ margin: '0 0 8px', fontSize: 11, color: arkmeTheme.secondary }}>{tr('来自{v0} · 发布副本', { v0: sourceState.snapshot?.sourceLabel ?? worldPublishSourceLabel(origin) })}</p>}
+      {sourceState.loading && <p role="status">{tr('正在读取原内容…')}</p>}
       {sourceState.error && <p role="alert">{sourceState.error} <button type="button" onClick={() => setSourceRevision(value => value + 1)}>{tr('重试')}</button></p>}
       <input ref={fileInputRef} hidden type="file" accept="image/*" multiple disabled={disabled} aria-label={tr('选择世界图片')}
         onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
@@ -1781,7 +1789,7 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, actorName, actorAvatarRef, onBackToWorld, onSourceActivated }: {
+export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, onBackToWorld, onSourceActivated }: {
   notificationRef?: string
   target?: ArkmeWorldViewTarget
   initialScope?: WorldScope
@@ -2166,11 +2174,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
       onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
       onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
-    {composerOpen && <PublishDialog actorName={actorName} actorAvatarRef={actorAvatarRef} onClose={() => { setComposerOpen(false) }} onPublished={result => {
-      setLoaded(current => ({ ...current, all: false, mine: false }))
-      setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')
-      setScope('mine')
-    }} />}
+    {composerOpen && <WorldPublishGuide onClose={() => { setComposerOpen(false) }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
     {authorCardItem !== undefined && <ArkmeMemberProfileCard
       member={worldAuthorCardMember(authorCardItem)} busy={authorCardBusy}

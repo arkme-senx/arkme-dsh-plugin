@@ -129,10 +129,11 @@ export function ArkmeBotConversationSurface({
         actionRef: message.messageActionRef,
         conversationRef: bot.botRef,
         copyText: message.content,
+        ...(message.role === 'user' ? { worldOrigin: { kind: 'action' as const, sourceRef: bot.botRef, itemUid: message.messageId, actionRef: message.messageActionRef, hasAttachments: message.attachments.length > 0 } } : {}),
         copyLinkAvailable: message.messageActionCapabilities?.copyLink === true,
         forwardAvailable: message.messageActionCapabilities?.forward === true,
       }]
-  )), [messages])
+  )), [messages, bot.botRef])
   const messageActions = useArkmeMessageActions({ scopeKey: bot.botRef, items: messageActionItems })
 
   useEffect(() => {

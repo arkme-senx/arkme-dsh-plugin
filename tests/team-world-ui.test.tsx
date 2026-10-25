@@ -98,14 +98,15 @@ it('cancels a pending team check and clears private drafts on account change', a
   expect(published).not.toHaveBeenCalled(); expect(mock.upload).not.toHaveBeenCalled()
 })
 
-it('uses a separate team page and preselects the verified member team when publishing from it', async () => {
+it('uses a separate team page and guides members to their existing content when publishing from it', async () => {
   mock.call.mockImplementation(async operation => operation === 'team.app.world.view' ? { state: 'backend_pending', team, memberTeam: team } : [team])
   await mount(<TeamWorldSurface accountKey="test:42" target={team} actorName="小林" onBack={close} />)
   expect(document.body.textContent).toContain('即我的世界')
   expect(document.body.textContent).toContain('接口接通后，这里统一展示该团队发布的公开内容。')
   expect(mock.call.mock.calls.some(([op]) => ['world.user', 'world.mine', 'world.feed'].includes(op))).toBe(false)
   await act(async () => button('发布').click())
-  expect(document.querySelector('[aria-label="发布身份：即我"]')).not.toBeNull()
+  expect(document.getElementById('world-publish-guide-title')?.textContent).toBe('把你发过的内容分享给世界')
+  expect(editor()).toBeNull()
 })
 
 it('offers the same team World navigation from public cards including the current team conversation', async () => {
@@ -136,7 +137,8 @@ it('only offers World publication for actionable owned personal records', () => 
   const note = { isMe: true, itemUid: 'note', messageActionRef: 'action' } as ArkmeTimelineItem
   const self = { kind: 'send_to_self' } as ArkmeSourceItem
   expect(canPublishSelfNote(self, note)).toBe(true)
-  expect(canPublishSelfNote({ kind: 'private_chat' } as never, note)).toBe(false)
+  expect(canPublishSelfNote({ kind: 'private_chat' } as never, note)).toBe(true)
+  expect(canPublishSelfNote({ kind: 'group_chat' } as never, note)).toBe(true)
   expect(canPublishSelfNote(self, { ...note, messageActionRef: '', itemUid: 'home-operation:event' })).toBe(false)
   expect(canPublishSelfNote(self, { ...note, isMe: false })).toBe(false)
 })
@@ -169,4 +171,21 @@ it('retains successful uploads and the publication mutation identity across retr
   await act(async () => button('发布').click())
   expect(mock.upload).toHaveBeenCalledTimes(1)
   expect(mock.files.mock.calls[0]![0].clientMutationId).toBe(mock.files.mock.calls[1]![0].clientMutationId)
+})
+
+it('loads the canonical Arko user message and its image through the separate owner read', async () => {
+  mock.call.mockImplementation(async op => op === 'team.app.teams' ? [team] : { textContent: '我的提问', sendAtMillis: 1,
+    attachments: [{ selection: { fileAssetUid: 'image' }, asset: { fileAssetUid: 'image', fileName: 'image.png', mimeType: 'image/png', size: 10, fileKind: 1 } }] })
+  await mount(<PublishDialog origin={{ kind: 'arko', sourceRef: 'arko:88', itemUid: 'history:101', sessionId: 88, messageId: 101 }} onClose={close} onPublished={published}/>)
+  expect(mock.call).toHaveBeenCalledWith('world.arko-source-draft', { sessionId: 88, messageId: 101 }, expect.any(AbortSignal))
+  expect(editor().textContent).toBe('我的提问')
+  await act(async () => button('发布').click())
+  expect(mock.files).toHaveBeenCalledWith(expect.objectContaining({ textContent: '我的提问', fileAssets: [expect.objectContaining({ fileAssetUid: 'image' })] }), expect.any(AbortSignal))
+})
+it('keeps native attachments explicit instead of silently publishing only text', async () => {
+  await mount(<PublishDialog origin={{ kind: 'local', sourceRef: 'dsh:s1', itemUid: 'input', sourceLabel: 'DSH', textContent: '我的提问', sendAtMillis: 1, hasAttachments: true }} onClose={close} onPublished={published}/>)
+  expect(editor().textContent).toBe('我的提问')
+  expect(document.body.textContent).toContain('原消息附件')
+  await act(async () => button('发布').click())
+  expect(mock.text).not.toHaveBeenCalled(); expect(mock.files).not.toHaveBeenCalled()
 })

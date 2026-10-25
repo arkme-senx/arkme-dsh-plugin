@@ -32,5 +32,7 @@ export function WorldPublishAttachments({ items, disabled, onRemove, onMove, onR
         <button type="button" aria-label={tr('关闭预览')} style={{ alignSelf: 'flex-end', padding: 12 }} onClick={closeAttachmentPreview}>×</button>
         <img src={item.previewUrl} alt={item.file?.name ?? '图片'} style={{ minHeight: 0, flex: 1, width: '100%', objectFit: 'contain' }} />
       </div>)
-    }} onRemove={item => onRemove(item.clientId!)} /></div>
+    }} onRemove={item => onRemove(item.clientId!)} />
+    {items.filter(worldPublishAttachmentBlocked).map(item => <p key={item.id} role="note" style={{ margin: '4px 0', fontSize: 12, lineHeight: 1.6, color: arkmeTheme.secondary, overflowWrap: 'anywhere' }}>{item.file?.name ?? item.asset?.fileName ?? tr('附件')} · {tr('暂不支持公开，请移除此附件后继续。')}</p>)}
+  </div>
 }
