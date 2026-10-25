@@ -56,6 +56,7 @@ import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
 import { arkmeGroupBotAvatarIdentity, arkmeInvalidateBotAvatarResolution, type ArkmeBotAvatarIdentity } from './ArkmeBotAvatarActions.js'
 import { useGroupBots, arkmeGroupBotsChanged } from './use-group-bots.js'
 import { TeamGroupJoinPanel } from './TeamGroupControls.js'
+import { TeamInternalGroupDialog } from './TeamInternalGroupDialog.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -1212,6 +1213,7 @@ function GroupSettingsMenu(props: {
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
   onRestrictionsOpen: () => void
+  onInternalGroupOpen?: () => void
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
@@ -1397,6 +1399,7 @@ function GroupSettingsMenu(props: {
     { type: 'separator', id: 'management-separator' },
     { id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename },
     { id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage },
+    ...(props.onInternalGroupOpen ? [{ id: 'internal-group', label: '关联为团队内部群', icon: <ClientIcon src={icons.members} size={16} />, disabled: !canManage }] : []),
   ]
   entries.push(
     { type: 'separator', id: 'export-separator' },
@@ -1442,6 +1445,10 @@ function GroupSettingsMenu(props: {
       }
       if (id === 'restrictions') {
         if (canManage) { close(); props.onRestrictionsOpen() }
+        return
+      }
+      if (id === 'internal-group') {
+        if (canManage) { close(); props.onInternalGroupOpen?.() }
         return
       }
       if (id === 'leave') { close(); void leaveOrDissolve() }
@@ -1719,6 +1726,7 @@ export function ArkmeGroupChatControls(props: {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
+  const [internalGroupOpen, setInternalGroupOpen] = useState(false)
   const [selfNicknameOpen, setSelfNicknameOpen] = useState(false)
   const [renameSource, setRenameSource] = useState<ArkmeGroupActionTarget>()
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
@@ -1730,6 +1738,7 @@ export function ArkmeGroupChatControls(props: {
   useEffect(() => {
     setRestrictionsOpen(false)
     setSelfNicknameOpen(false)
+    setInternalGroupOpen(false)
   }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
     if (mountedRef.current) props.onError(message)
@@ -1787,6 +1796,7 @@ export function ArkmeGroupChatControls(props: {
         onSelfNickname={() => { setSelfNicknameOpen(true) }}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
+        {...(props.accountScope ? { onInternalGroupOpen: () => setInternalGroupOpen(true) } : {})}
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onMembershipChanged={props.onMembershipChanged}
         onMessageDndUpdated={props.onMessageDndUpdated}
@@ -1796,6 +1806,8 @@ export function ArkmeGroupChatControls(props: {
         exportProcessed={props.exportProcessed ?? 0}
       />
     </div>
+    {internalGroupOpen && props.accountScope && <TeamInternalGroupDialog accountKey={props.accountScope} target={{ mode: 'link', source: props.source }}
+      onClose={() => { setInternalGroupOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }} />}
     {overlayHost !== null && createPortal(<>
       <GroupAiPolishPanel
         source={props.source}

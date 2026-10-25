@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import type { ArkmeSourceItem } from '../types.js'
-import { TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending } from '../team-group-contract.js'
+import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending, type TeamGroupSpeakingEligibility } from '../team-group-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -87,23 +87,32 @@ export function TeamGroupJoinPanel({ accountKey, source }: { accountKey: string;
 }
 
 /** Shares the self-role menu's layout, but deliberately never binds a self-role to group messages. */
-export function TeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled = false }: {
+type IdentityPickerProps = {
   accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; disabled?: boolean
-}) {
+  eligibility?: TeamGroupSpeakingEligibility
+}
+export function TeamGroupIdentityPicker(props: IdentityPickerProps) {
+  // Pending list-mine data cannot authorize a selector. Normal and roster-bound
+  // groups render no trigger and perform no extra context request.
+  if (!canChooseTeamGroupIdentity(props.eligibility)) return null
+  return <EligibleTeamGroupIdentityPicker {...props} eligibility={props.eligibility!} />
+}
+
+function EligibleTeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled = false, eligibility }: IdentityPickerProps & { eligibility: TeamGroupSpeakingEligibility }) {
   useArkmeLocale()
   const [open, setOpen] = useState(false), [requested, setRequested] = useState('')
   const context = useTeamGroupContext(accountKey, sourceRef, open)
   const close = useCallback(() => setOpen(false), [])
   useEffect(() => { if (disabled) close() }, [disabled, close])
   const actions: SelfRoleMenuAction[] = [
-    { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close },
+    ...(eligibility.personalCanSend ? [{ id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close }] : []),
     { type: 'separator', id: 'separator' },
     ...(!context.value && !context.error ? [{ type: 'label' as const, id: 'loading', text: tr('正在加载团队…') }] : []),
     ...(context.error ? [
       { type: 'label' as const, id: 'error', text: context.error },
       { id: 'retry', label: tr('重试'), onSelect: context.retry },
     ] : []),
-    ...(context.value?.teams.map(team => ({
+    ...(context.value?.teams.filter(team => eligibility.teams.some(candidate => candidate.jotmoId === team.jotmoId && candidate.membershipState === 'active' && candidate.canSend)).map(team => ({
       id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'),
       icon: <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: 28, height: 28 }}>
         <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />
@@ -112,9 +121,9 @@ export function TeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, 
       onSelect: () => setRequested(team.jotmoId),
     })) ?? []),
     ...(context.value ? [{ type: 'label' as const, id: 'pending', text: tr(TEAM_GROUP_PENDING_TEXT) },
-      { type: 'label' as const, id: 'unchanged', text: tr(requested ? '尚未切换，仍以个人身份发送；草稿已保留。' : context.value.teams.length ? '团队发言需先完成团队入群与授权。' : '你尚未加入团队') }] : []),
+      { type: 'label' as const, id: 'unchanged', text: tr(requested ? eligibility.personalCanSend ? '尚未切换，仍以个人身份发送；草稿已保留。' : '尚未切换发言身份；草稿已保留。' : context.value.teams.length ? '团队发言需先完成团队入群与授权。' : '你尚未加入团队') }] : []),
   ]
-  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={['personal']} showSelectionIndicator actions={actions} anchor={
+  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={eligibility.personalCanSend ? ['personal'] : []} showSelectionIndicator actions={actions} anchor={
     <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我')} title={tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
       style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { setRequested(''); setOpen(value => !value) }}>
       <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} /><span>{tr('我')}</span><CaretDown size={10} />

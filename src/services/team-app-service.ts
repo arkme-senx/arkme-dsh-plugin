@@ -450,6 +450,27 @@ export class TeamAppService {
         } satisfies TeamGroupContext
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
+      case 'team.app.internal-group.prepare': {
+        // Preparation only. Never use personal create/add/remove to emulate a
+        // roster binding; backend must atomically preview and confirm its delta.
+        if (!['create', 'link'].includes(str(p.mode)) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        if (p.mode === 'create') {
+          if (!str(p.name).trim() || str(p.name).trim().length > 120) throw invalid()
+        } else {
+          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
+          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
+          if (source.kind !== 'group_chat') throw invalid()
+        }
+        const id = await teamID(), mine = list((await post('list-mine', {}, true)).teams)
+        if (!mine.some(team => String(team.team_id) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        const currentTeam = mine.find(team => String(team.team_id) === String(id))!
+        if (!['owner', 'admin'].includes(role(currentTeam.role))) {
+          throw new ArkmePluginError('team-not_accessible', '仅团队所有者或管理员可创建或关联内部群', false, 403)
+        }
+        return { state: 'backend_pending' } satisfies TeamGroupPending
+      }
       case 'team.app.outbound.open': {
         // Frontend handoff boundary. Do not guess an upstream creation endpoint,
         // create a personal Chat session, or manufacture a shared conversation.

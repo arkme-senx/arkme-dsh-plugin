@@ -11,6 +11,7 @@ export type TeamAppOperation = `team.app.${
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory'
+  | 'internal-group.prepare'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'

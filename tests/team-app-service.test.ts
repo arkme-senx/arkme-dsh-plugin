@@ -74,6 +74,44 @@ describe('team group frontend handoff boundary', () => {
   })
 })
 
+describe('internal group preparation boundary', () => {
+  const owner = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 1 }
+  it('validates creation and linking without writing any group membership', async () => {
+    const f = fixture(() => ({ teams: [owner] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, expectedAccountKey: 'test:90', requestUid: 'attempt-1' }
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'create', name: '团队内部群' })).resolves.toEqual({ state: 'backend_pending' })
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'sealed-group' })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
+    expect(f.requests.every(value => value.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects missing names, malformed requests and non-group sources before preparing', async () => {
+    const f = fixture(() => ({ teams: [owner] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' }
+    for (const invalid of [{ mode: 'create', name: ' ' }, { mode: 'create', name: 'a'.repeat(121) }, { mode: 'create', name: '群', requestUid: '' }, { mode: 'link' }, { mode: 'other' }]) {
+      await expect(f.service.execute('team.app.internal-group.prepare', { ...params, ...invalid })).rejects.toThrow()
+    }
+    f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'private' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(1)
+  })
+  it('rechecks removed membership, admin role and account, without trusting the opened form', async () => {
+    let members = [owner]
+    const f = fixture(() => ({ teams: members }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, expectedAccountKey: 'test:90', requestUid: 'attempt-1', mode: 'create', name: '内部群' }
+    members = [{ ...owner, role: 3 }]
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('仅团队所有者或管理员')
+    members = []
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('无权访问')
+    f.changeAccount()
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow()
+    expect(f.requests).toHaveLength(3)
+  })
+})
+
 describe('member initiated team conversation handoff boundary', () => {
   const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }
   const recipient = { kind: 'chat-member', sourceRef: 'source-ref', memberRef: 'member-ref' }

@@ -4,12 +4,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
-import { TEAM_GROUP_PENDING_TEXT } from '../src/team-group-contract.js'
+import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupSpeakingEligibility } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 
 const { call } = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
 const teams = [{ teamRef: 'sealed-team', jotmoId: 'our_team', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 }]
+const eligible: TeamGroupSpeakingEligibility = { state: 'ready', membershipPolicy: 'independent', personalCanSend: true, teams: [{ jotmoId: 'our_team', membershipState: 'active', canSend: true }] }
 const source: ArkmeSourceItem = { kind: 'group_chat', sourceRef: 'group-ref', sourceKey: 'chat:group-id', displayName: '产品反馈群', activeAtMillis: 1, unreadCount: 0 }
 let host: HTMLDivElement, root: Root
 const mount = async (element: React.ReactNode) => act(async () => root.render(element))
@@ -66,7 +67,7 @@ it('distinguishes no membership from a failed team read, with a retry', async ()
 })
 
 it('loads group identities only on open and keeps the personal identity after selecting a pending team', async () => {
-  await mount(<><textarea defaultValue="个人草稿" /><TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" /></>)
+  await mount(<><textarea defaultValue="个人草稿" /><TeamGroupIdentityPicker eligibility={eligible} accountKey="prod:90" sourceRef="group-ref" /></>)
   expect(call).not.toHaveBeenCalled()
   expect(document.querySelector('[aria-label="群聊发言身份：我"]')?.textContent).toBe('我')
   await click('我'); expect(call).toHaveBeenCalledTimes(1)
@@ -87,9 +88,9 @@ it('loads group identities only on open and keeps the personal identity after se
 
 it('ignores stale identity responses after a group or account switch', async () => {
   const old = deferred(); call.mockReturnValueOnce(old.promise)
-  await mount(<TeamGroupIdentityPicker key="old" accountKey="prod:90" sourceRef="old-group" />)
+  await mount(<TeamGroupIdentityPicker eligibility={eligible} key="old" accountKey="prod:90" sourceRef="old-group" />)
   await click('我'); const signal = call.mock.calls.at(-1)![2] as AbortSignal
-  await mount(<TeamGroupIdentityPicker key="new" accountKey="prod:91" sourceRef="new-group" />)
+  await mount(<TeamGroupIdentityPicker eligibility={eligible} key="new" accountKey="prod:91" sourceRef="new-group" />)
   expect(signal.aborted).toBe(true)
   await act(async () => old.resolve({ state: 'backend_pending', teams }))
   expect(document.body.textContent).not.toContain('即我')
@@ -109,4 +110,30 @@ it('integrates the team tab into add-members without submitting retained persona
   expect(onAdded).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled()
   expect(call.mock.calls.some(([op]) => ['group.members.add', 'group.bot.add'].includes(op))).toBe(false)
   await click('联系人'); expect(button('确认添加（1）').disabled).toBe(false)
+})
+
+
+it.each([
+  ['unknown', undefined],
+  ['pending', { ...eligible, state: 'backend_pending' }],
+  ['internal roster', { ...eligible, membershipPolicy: 'team_roster' }],
+  ['personal only', { ...eligible, teams: [] }],
+  ['team only', { ...eligible, personalCanSend: false }],
+  ['pending membership', { ...eligible, teams: [{ ...eligible.teams[0]!, membershipState: 'pending' }] }],
+  ['removed membership', { ...eligible, teams: [{ ...eligible.teams[0]!, membershipState: 'removed' }] }],
+  ['no delegation', { ...eligible, teams: [{ ...eligible.teams[0]!, canSend: false }] }],
+] as Array<[string, TeamGroupSpeakingEligibility | undefined]>)('shows no identity selector or extra requests for %s', async (_name, eligibility) => {
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" {...(eligibility ? { eligibility } : {})} />)
+  expect(host.textContent).toBe('')
+  expect(call).not.toHaveBeenCalled()
+})
+
+it('counts only distinct authorized teams and hides an open selector when permission is revoked', async () => {
+  expect(canChooseTeamGroupIdentity({ ...eligible, personalCanSend: false, teams: [...eligible.teams, ...eligible.teams] })).toBe(false)
+  expect(canChooseTeamGroupIdentity({ ...eligible, personalCanSend: false, teams: [...eligible.teams, { ...eligible.teams[0]!, jotmoId: 'second' }] })).toBe(true)
+  await mount(<TeamGroupIdentityPicker eligibility={eligible} accountKey="prod:90" sourceRef="group-ref" />)
+  await click('我')
+  await mount(<TeamGroupIdentityPicker eligibility={{ ...eligible, teams: [] }} accountKey="prod:90" sourceRef="group-ref" />)
+  expect(document.querySelector('[aria-label="选择发言角色"]')).toBeNull()
+  expect(host.textContent).toBe('')
 })
