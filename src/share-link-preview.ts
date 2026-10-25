@@ -39,6 +39,11 @@ const productionHosts = new Set(['jiwo.cc', 'www.jiwo.cc', 'app.jiwo.cc', 'app.j
 const testHosts = new Set(['jotmo-app.senguo.me', 'app-test.arkme.ai'])
 const reserved = new Set(['login', 'signup', 'account', 'settings', 'billing', 'payment', 'api', 'app', 'share', 'events', 'download', 'artifacts', 'recording', 'webhook', 'auth', 'oauth', 'voiceprint', 'auto-sticker', 'shijie'])
 
+/** Legacy/imported Record identities can contain namespace separators such as ':'. */
+export function isPublicRecordUid(value: string): boolean {
+  return /^[A-Za-z0-9_.:-]{1,128}$/.test(value) && value !== '.' && value !== '..'
+}
+
 /** A URL is an identifier, never a server-side fetch destination. */
 export function parseShareLink(raw: string): ShareLinkTarget | undefined {
   if (raw.length > 4096 || /[\\\u0000-\u0020]/u.test(raw)) return undefined
@@ -68,9 +73,13 @@ export function parseShareLink(raw: string): ShareLinkTarget | undefined {
   // Binding credential in the fragment deliberately never enters preview requests.
   if (path === '/v' || path === '/voiceprint/invite') return target('voiceprint', (url.searchParams.get('p') ?? '').slice(0, 2048))
   if (path === '/auto-sticker/invite') return target('auto-sticker', '')
-  match = /^\/(?:shijie\/)?([A-Za-z][A-Za-z0-9_-]{4,31})(?:\/record\/([A-Za-z0-9_-]{1,128}))?$/u.exec(path)
+  match = /^\/(?:shijie\/)?([A-Za-z][A-Za-z0-9_-]{4,31})(?:\/record\/([^/]{1,384}))?$/u.exec(path)
   if (match && !reserved.has(match[1]!.toLowerCase()) && !url.search && !url.hash) {
-    return target(match[2] ? 'public-record' : 'world', match[2] ?? match[1]!)
+    if (!match[2]) return target('world', match[1]!)
+    try {
+      const recordUid = decodeURIComponent(match[2])
+      if (isPublicRecordUid(recordUid)) return target('public-record', recordUid)
+    } catch { /* Invalid path encoding is not a public Record identity. */ }
   }
   return undefined
 }

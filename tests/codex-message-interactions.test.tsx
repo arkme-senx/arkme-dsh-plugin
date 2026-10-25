@@ -1,3 +1,4 @@
+import { openLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -9,6 +10,7 @@ import { callArkme } from '../src/client/api.js'
 import { copyText } from '../src/client/clipboard-text.js'
 import type { TeamCodexEvent,TeamCodexTask } from '../src/team-codex-contract.js'
 vi.mock('../src/client/api.js',()=>({callArkme:vi.fn(async(op)=>op.endsWith('capabilities')?{supported:true,maxLength:2000,storage:'local'}:[])}))
+vi.mock('../src/client/local-snapshot-forward.js',()=>({openLocalSnapshotForward:vi.fn(async()=>({sent:0}))}))
 vi.mock('../src/client/clipboard-text.js',()=>({copyText:vi.fn(async()=>{})}))
 vi.mock('../src/client/ArkmeDshMenu.js',()=>({ArkmeActionMenu:({actions}:any)=><div role="menu">{actions.map((a:any)=><button key={a.id} onClick={a.onSelect}>{a.label}</button>)}</div>}))
 const task={id:'task',title:'任务标题',member:{displayName:'同事'}} as TeamCodexTask
@@ -34,14 +36,14 @@ it('opens a menu immediately and keeps selection/count/actions at the bottom acr
 it('shows all five partial-selection actions and captures rendered Markdown quote without adding replacement',async()=>{
  await render();await select()
  const menu=document.querySelector('[data-arkme-text-selection-toolbar]')!
- expect([...menu.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','发给自己'])
- await click('发给自己')
- // The quote's WebCrypto digest may finish after the click's React act scope.
- await vi.waitFor(async()=>{await act(async()=>{});expect(document.querySelector('[role="dialog"]')).not.toBeNull()})
- const dialog=document.querySelector('[role="dialog"]')!
- expect(dialog?.textContent).toContain('引用 · Codex · 任务标题');expect(dialog?.querySelector('blockquote')?.textContent).toBe('重要内容')
+ expect([...menu.querySelectorAll('button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','转发'])
+ await click('转发')
+ await vi.waitFor(async()=>{await act(async()=>{});expect(openLocalSnapshotForward).toHaveBeenCalledOnce()})
+ const request=vi.mocked(openLocalSnapshotForward).mock.calls[0]![0]
+ expect(request.preview.title).toContain('Codex · 任务标题');expect(request.preview.quote?.text).toBe('重要内容')
+ expect(request.preview.quote?.sourceLabel).toBe('Codex · 任务标题')
  expect(vi.mocked(callArkme).mock.calls.some(c=>c[0]==='source.send-text')).toBe(false)
- await click('取消');expect(document.querySelector('[role="dialog"]')).toBeNull()
+
 })
 it('selects all visible message prose and opens shared find without matching metadata',async()=>{
  await render();await select();await click('全选');expect(document.getSelection()?.toString()).toBe('前缀重要内容后缀')

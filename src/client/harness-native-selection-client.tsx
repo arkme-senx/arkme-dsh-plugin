@@ -1,3 +1,7 @@
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import { callArkme } from './api.js'
+import type { ArkmeAuthSnapshot } from '../types.js'
+import { openWorldPublish } from './world-publish-entry.js'
 import { HarnessTextSelection } from './HarnessTextSelection.js'
 import type { NativeTextInputActions } from './harness-text-selection.js'
 import { NativeCopyLinkAction } from './NativeCopyLinkAction.js'
@@ -11,7 +15,7 @@ import { Component, useEffect, useLayoutEffect, useReducer, useRef, useState, ty
 import { createPortal } from 'react-dom'
 import { ArkmeMessageSelectionControl, ArkmeSelectActionIcon, messageSelectionStyles } from './message-selection-presentation.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { EMPTY_NATIVE_SELECTION, nativeSelectionCopyText, nativeSelectionReducer, observeSelectedNativeNodes, readNativeChat, type NativeChat } from './harness-native-selection.js'
+import { EMPTY_NATIVE_SELECTION, nativeWorldPublishOrigin, nativeSelectionCopyText, nativeSelectionReducer, observeSelectedNativeNodes, readNativeChat, type NativeChat } from './harness-native-selection.js'
 import { watchNativeSelectionGeometry, nativeSelectionActionOverlayCss, observeNativeChatPresence, nativeSelectionMessageRow, nativeSelectionPointerRow, nativeSelectionHighlightSelector, type NativeSelectionLayout } from './harness-native-selection-geometry.js'
 import type {} from './harness-slots-contract.js'
 
@@ -93,6 +97,23 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
   const layer = useRef<HTMLDivElement>(null)
   const entry = useRef<HTMLElement | null>(null)
   const [menu, setMenu] = useState<{ key: string; row: HTMLElement; x: number; y: number; autoFocus: boolean } | null>(null)
+  const [worldError, setWorldError] = useState('')
+  const worldRequest = useRef<AbortController>()
+  useEffect(() => () => worldRequest.current?.abort(), [sessionId])
+  const publish = async (key: string) => {
+    worldRequest.current?.abort()
+    const controller = new AbortController(); worldRequest.current = controller
+    try {
+      const origin = nativeWorldPublishOrigin(chatRef.current!, sessionId, key)
+      const auth = await callArkme<ArkmeAuthSnapshot>('auth.status', {}, controller.signal)
+      controller.signal.throwIfAborted()
+      if (auth.status !== 'authenticated' || !auth.userId) throw new Error('请先登录')
+      if (JSON.stringify(nativeWorldPublishOrigin(chatRef.current!, sessionId, key)) !== JSON.stringify(origin)) throw new Error('原内容已变化，请重新选择')
+      openWorldPublish({ accountKey: `${auth.environment}:${auth.userId}`, origin }, controller.signal)
+      setMenu(null); setWorldError('')
+    } catch (error) { if (!controller.signal.aborted) setWorldError(error instanceof Error ? error.message : '暂时无法打开发世界') }
+  }
+
   const restoreFocus = useRef(false)
   const watcher = useRef<ReturnType<typeof watchNativeSelectionGeometry> | undefined>(undefined)
   const fail = () => { setMenu(null); dispatch({ type: 'exit' }); setLayout(EMPTY_LAYOUT); setFailed(true) }
@@ -215,7 +236,9 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
             if (target?.key === menu.key) dispatch({ type: 'enter', key: menu.key })
           } catch { fail() }
         } },
+        ...(menu && (chat.nodes.get(menu.key) as { kind?: string } | undefined)?.kind === 'user' ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => { void publish(menu.key) } }] : []),
       ]} />, doc.body)}
+    {worldError && createPortal(<div role="status" style={{ position: 'fixed', bottom: 120, left: 20, zIndex: 1800, padding: 10, borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text }}>{worldError}<button type="button" onClick={() => setWorldError('')}>{tr('关闭')}</button></div>, doc.body)}
     {state.active && <NativeForwardAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} onComplete={exit}>{forwardButton => actionTarget && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label={tr("多选操作")} onKeyDown={escape}
       style={{ ...messageSelectionStyles.selectBar, flexWrap: 'wrap', alignContent: 'center', rowGap: 8,
         ...(fallbackBounds ? { position: 'fixed', left: fallbackBounds.left, width: fallbackBounds.width,

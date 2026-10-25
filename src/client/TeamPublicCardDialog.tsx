@@ -76,7 +76,10 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
         <div style={styles.identity}><ArkmeTeamAvatar name={card.name} avatar={card.avatar} size={56} /><div style={{ minWidth: 0 }}>
           <strong style={{ display: 'block', fontSize: 18, overflowWrap: 'anywhere' }}>{card.name}</strong><span style={styles.hint}>@{card.jotmoId}</span>
         </div></div>
-        {!inCurrentConversation && <div style={styles.contact}><button type="button" disabled={card.contact.state === 'disabled'} style={styles.link} onClick={contact}>{tr('联系团队')}</button></div>}
+        <div style={{ ...styles.contact, gap: 12 }}>
+          <button type="button" style={styles.link} onClick={() => { onClose(); arkmeUi.showTeamWorld({ name: card.name, jotmoId: card.jotmoId, avatar: card.avatar }) }}>{tr('团队的世界')}</button>
+          {!inCurrentConversation && <button type="button" disabled={card.contact.state === 'disabled'} style={styles.link} onClick={contact}>{tr('联系团队')}</button>}
+        </div>
         {card.contact.state === 'disabled' && <p role="status" style={styles.hint}>{tr('该团队暂未开放消息通道。')}</p>}
         {!inCurrentConversation && card.contact.state === 'backend_pending' && <div role="status" style={styles.notice}>
           <strong>{tr(TEAM_GROUP_PENDING_TEXT)}</strong>

@@ -2,7 +2,7 @@ import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
-  Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties,
+  Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type {
@@ -16,6 +16,7 @@ import type {
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { mergeRecordItems, readMemberRecordWindow } from './member-records-loader.js'
+import { memberRecordsCache, type MemberRecordsSnapshot } from './member-records-cache.js'
 import { memberRecordsViewport, restoreMemberRecordsViewport } from './member-records-viewport.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
@@ -235,6 +236,8 @@ export function ArkmeMemberActionMenu(props: {
   hoverAnchor?: HTMLElement | undefined
   hoverSide?: 'left' | 'right' | undefined
   onMention: () => void
+  onPrivateChat?: (() => void) | undefined
+  onWorld?: (() => void) | undefined
   onRecords: (mode: ArkmeConversationMemberRecordMode) => void
   canRemove?: boolean
   onRemove?: () => void
@@ -249,6 +252,8 @@ export function ArkmeMemberActionMenu(props: {
     autoFocus={props.hoverAnchor === undefined}
     point={{ x: props.position.left, y: props.position.top }} onClose={props.onClose} actions={[
       !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: `@${props.member.displayName}`, onSelect: props.onMention },
+      !props.member.isSelf && props.sourceKind === 'group_chat' && props.onPrivateChat !== undefined && { id: 'private-chat', label: tr('私聊'), onSelect: props.onPrivateChat },
+      !props.member.isSelf && props.onWorld !== undefined && { id: 'world', label: tr('TA的世界'), onSelect: props.onWorld },
       props.sourceKind === 'group_chat' && { id: 'mentioned-records', label: countLabel(mentionedLabel, props.member.mentionCount), onSelect: () => props.onRecords('mentioned') },
       { id: 'owner-records', label: countLabel(ownerLabel, props.member.recordCount), onSelect: () => props.onRecords('owner') },
       props.canRemove === true && props.onRemove !== undefined && { id: 'remove', label: '移出群聊', danger: true, onSelect: props.onRemove },
@@ -468,13 +473,29 @@ export function arkmeMemberRecordTimeline(
   return entries
 }
 
-export function ArkmeMemberRecordsPanel(props: {
+interface MemberRecordsPanelProps {
   sourceRef: string
-  sourceIdentityKey?: string
+  sourceIdentityKey?: string | undefined
+  sourceName?: string | undefined
+  accountKey?: string | undefined
   member: ArkmeConversationMemberItem
   mode: ArkmeConversationMemberRecordMode
   onClose: () => void
-}) {
+  onOpenOrigin?: ((item: ArkmeTimelineItem) => void) | undefined
+}
+export function ArkmeMemberRecordsPanel(props: MemberRecordsPanelProps) {
+  useArkmeLocale()
+  const unified = !!props.accountKey && props.mode === 'owner' && !props.member.isSelf
+  const person = `${props.accountKey}:${props.member.memberRef}`
+  const [choice, setChoice] = useState({ person, current: false })
+  const onlyCurrent = !unified || (choice.person === person && choice.current)
+  const control = unified ? <div data-arkme-member-record-scope style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 20px', borderBottom: `1px solid ${arkmeTheme.border}`, color: arkmeTheme.secondary, fontSize: 12 }}>
+    <span>{tr(onlyCurrent ? '此对话中TA发的内容' : '共同对话中TA发的内容')}</span>
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', cursor: 'pointer' }}><span>{tr('仅看此对话')}</span><button type="button" role="switch" aria-label={tr('仅看此对话')} aria-checked={onlyCurrent} onClick={() => setChoice({ person, current: !onlyCurrent })} style={{width:32,height:19,padding:2,border:0,borderRadius:999,background:onlyCurrent?arkmeTheme.accent:arkmeTheme.border,cursor:'pointer',flex:'none'}}><span aria-hidden style={{display:'block',width:15,height:15,borderRadius:'50%',background:arkmeTheme.base,transform:onlyCurrent?'translateX(13px)':'translateX(0)',transition:'transform 120ms ease'}}/></button></label>
+  </div> : undefined
+  return <MemberRecordsWindow {...props} onlyCurrent={onlyCurrent} scopeControl={control} onUseCurrent={() => setChoice({ person, current: true })} unified={unified} />
+}
+function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boolean; scopeControl?: ReactNode; onUseCurrent: () => void; unified: boolean }) {
   useArkmeLocale()
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [cursor, setCursor] = useState<number>()
@@ -482,7 +503,15 @@ export function ArkmeMemberRecordsPanel(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const requestRef = useRef<AbortController>()
-  const queryRef = useRef<{ sourceKey: string; memberRef: string; mode: ArkmeConversationMemberRecordMode }>()
+  const queryRef = useRef<{ key: string }>()
+  const queryKey = JSON.stringify([props.accountKey ?? '', props.sourceIdentityKey ?? props.sourceRef, props.member.memberRef, props.mode, props.onlyCurrent ? 'conversation' : 'shared'])
+  const [sharedStatus, setSharedStatus] = useState<'loading' | 'pending' | 'upgrade'>('loading')
+  const restoredViewport = useRef<MemberRecordsSnapshot['viewport']>()
+  const lastViewport = useRef<{ key: string; value: NonNullable<MemberRecordsSnapshot['viewport']> }>()
+  const revoked = useRef(false)
+  const latest = useRef({ key: '', items, cursor, hasMore })
+  latest.current = { key: queryRef.current?.key ?? '', items, cursor, hasMore }
+  const visibleItems = queryRef.current?.key === queryKey && props.onlyCurrent ? items : []
   const lastLoadRef = useRef<{ beforeSequence: number | undefined; refresh: boolean }>({ beforeSequence: undefined, refresh: false })
   const loadingRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -496,7 +525,7 @@ export function ArkmeMemberRecordsPanel(props: {
   const [resizeHovered, setResizeHovered] = useState(false)
   const [resizing, setResizing] = useState(false)
 
-  const load = (beforeSequence?: number, refresh = false) => {
+  const load = (beforeSequence?: number, refresh = false, rangeCursor = cursor) => {
     const isLoadingOlder = beforeSequence !== undefined
     if (isLoadingOlder && loadingRef.current) return
     pendingScrollAnchorRef.current = !initialScrollRef.current || bodyRef.current === null ? undefined : memberRecordsViewport(bodyRef.current)
@@ -511,16 +540,25 @@ export function ArkmeMemberRecordsPanel(props: {
       sourceRef: props.sourceRef,
       memberRef: props.member.memberRef,
       mode: props.mode,
-      limit: 30,
+      limit: props.accountKey && before === undefined && !refresh ? 12 : 30,
+      basicPresentation: props.mode === 'owner',
       ...(before === undefined ? {} : { beforeSequence: before }),
     }, controller.signal)
-    void readMemberRecordWindow(readPage, {
-      ...(beforeSequence === undefined ? {} : { beforeSequence }),
-      refresh,
-      ...(cursor === undefined ? {} : { loadedCursor: cursor }),
-      signal: controller.signal,
-    }).then(page => {
+    const operation = props.onlyCurrent ? readMemberRecordWindow(readPage, {
+      ...(beforeSequence === undefined ? {} : { beforeSequence }), refresh,
+      ...(rangeCursor === undefined ? {} : { loadedCursor: rangeCursor }), signal: controller.signal,
+      ...(props.accountKey ? { onPage: (page: ArkmeConversationMemberRecordPage) => {
+        if (controller.signal.aborted || requestRef.current !== controller) return
+        pendingScrollAnchorRef.current = !initialScrollRef.current || !bodyRef.current ? undefined : memberRecordsViewport(bodyRef.current)
+        setItems(current => mergeRecordItems(current, page.items))
+      } } : {}),
+    }) : callArkme<{ version: number; shared: boolean }>('source.person-records.capabilities', { sourceRef: props.sourceRef, memberRef: props.member.memberRef }, controller.signal).then(capability => {
+      if (!controller.signal.aborted && requestRef.current === controller) setSharedStatus(capability.shared ? 'upgrade' : 'pending')
+      return undefined
+    })
+    void operation.then(page => {
       if (controller.signal.aborted || requestRef.current !== controller) return
+      if (!page) { setLoading(false); return }
       // Capture at commit time so user scrolling while the request was pending wins.
       pendingScrollAnchorRef.current = !initialScrollRef.current || bodyRef.current === null ? undefined : memberRecordsViewport(bodyRef.current)
       setItems(current => beforeSequence === undefined ? page.items : mergeRecordItems(current, page.items))
@@ -534,7 +572,9 @@ export function ArkmeMemberRecordsPanel(props: {
         if (requestRef.current !== controller || controller.signal.aborted) return
         pendingScrollAnchorRef.current = !initialScrollRef.current || bodyRef.current === null ? undefined : memberRecordsViewport(bodyRef.current)
         // An invalid member query is no longer viewable; transient refresh failures retain the loaded range.
-        if (caught instanceof ArkmeClientError && caught.body.code === 'chat-member-ref-stale') {
+        if (caught instanceof ArkmeClientError && !caught.body.retryable) {
+          revoked.current = true
+          if (props.accountKey) memberRecordsCache.remove(props.accountKey, queryKey)
           setItems([])
           setCursor(undefined)
           setHasMore(false)
@@ -548,24 +588,37 @@ export function ArkmeMemberRecordsPanel(props: {
       })
   }
 
-  useEffect(() => {
-    const query = { sourceKey: props.sourceIdentityKey ?? props.sourceRef, memberRef: props.member.memberRef, mode: props.mode }
-    const previous = queryRef.current
-    const sameQuery = previous?.sourceKey === query.sourceKey && previous.memberRef === query.memberRef && previous.mode === query.mode
-    queryRef.current = query
+  useLayoutEffect(() => {
+    const sameQuery = queryRef.current?.key === queryKey
+    const previous = latest.current
+    queryRef.current = { key: queryKey }
+    revoked.current = false
+    setSharedStatus('loading')
+    let cached: MemberRecordsSnapshot | undefined
     if (!sameQuery) {
       initialScrollRef.current = false
-      setItems([])
-      setCursor(undefined)
-      setHasMore(false)
+      pendingScrollAnchorRef.current = undefined
+      cached = props.accountKey && props.onlyCurrent ? memberRecordsCache.get(props.accountKey, queryKey) : undefined
+      restoredViewport.current = cached?.viewport
+      setItems(cached?.items ?? [])
+      setCursor(cached?.cursor)
+      setHasMore(cached?.hasMore ?? false)
     }
-    load(undefined, sameQuery && items.length > 0)
+    const refresh = props.onlyCurrent && (sameQuery ? previous.items.length > 0 : (cached?.items.length ?? 0) > 0)
+    load(undefined, refresh, sameQuery ? previous.cursor : cached?.cursor)
     return () => {
       requestRef.current?.abort()
       loadingRef.current = false
       pendingScrollAnchorRef.current = undefined
+      const value = latest.current
+      if (props.accountKey && props.onlyCurrent && value.key === queryKey && value.items.length && !revoked.current) {
+        memberRecordsCache.put(props.accountKey, queryKey, { items: value.items, hasMore: value.hasMore,
+          ...(value.cursor === undefined ? {} : { cursor: value.cursor }),
+          ...(lastViewport.current?.key === queryKey ? { viewport: lastViewport.current.value } : {}),
+        })
+      }
     }
-  }, [props.sourceIdentityKey, props.sourceRef, props.member.memberRef, props.mode])
+  }, [queryKey, props.sourceRef])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
@@ -589,20 +642,19 @@ export function ArkmeMemberRecordsPanel(props: {
 
   useLayoutEffect(() => {
     const body = bodyRef.current
-    if (items.length === 0 || body === null) return
+    if (visibleItems.length === 0 || !body) return
     const anchor = pendingScrollAnchorRef.current
-    if (anchor !== undefined) {
-      pendingScrollAnchorRef.current = undefined
-      restoreMemberRecordsViewport(body, anchor)
-      return
+    if (anchor) { pendingScrollAnchorRef.current = undefined; restoreMemberRecordsViewport(body, anchor) }
+    else if (!initialScrollRef.current) {
+      initialScrollRef.current = true
+      if (restoredViewport.current) { restoreMemberRecordsViewport(body, restoredViewport.current); restoredViewport.current = undefined }
+      else body.scrollTop = body.scrollHeight
     }
-    if (initialScrollRef.current) return
-    initialScrollRef.current = true
-    body.scrollTop = body.scrollHeight
-  }, [items, loading, error])
+    if (props.accountKey) lastViewport.current = { key: queryKey, value: memberRecordsViewport(body) }
+  }, [visibleItems, loading, error])
 
   useEffect(() => {
-    if (loading || error !== '') return
+    if (!props.onlyCurrent || loading || error !== '') return
     const frame = window.requestAnimationFrame(() => {
       const body = bodyRef.current
       if (body !== null && shouldLoadOlderArkmeMemberRecords(body.scrollTop, hasMore, cursor, loadingRef.current)) {
@@ -612,11 +664,11 @@ export function ArkmeMemberRecordsPanel(props: {
     return () => { window.cancelAnimationFrame(frame) }
   }, [cursor, error, hasMore, items.length, loading])
 
-  const title = props.mode === 'mentioned'
+  const title = props.unified ? tr('{v0}的内容', { v0: props.member.displayName }) : props.mode === 'mentioned'
     ? (props.member.isSelf ? '@我的快记' : tr("@{v0}的快记", { v0: props.member.displayName }))
     : (props.member.isSelf ? '我的快记' : tr("{v0}的快记", { v0: props.member.displayName }))
-  const total = props.member.statsKnown === false ? undefined : arkmeMemberRecordTotal(props.member, props.mode)
-  const timeline = useMemo(() => arkmeMemberRecordTimeline(items), [items])
+  const total = !props.onlyCurrent || props.member.statsKnown === false ? undefined : arkmeMemberRecordTotal(props.member, props.mode)
+  const timeline = useMemo(() => arkmeMemberRecordTimeline(visibleItems.map(item => props.mode === 'owner' && item.memberRef === props.member.memberRef ? { ...item, senderName: props.member.displayName, ...(props.member.avatarRef ? { avatarRef: props.member.avatarRef } : {}) } : item)), [visibleItems, props.mode, props.member])
   const effectiveWidth = availableWidth === undefined
     ? preferredWidth
     : clampArkmeMemberRecordsWidth(preferredWidth, availableWidth)
@@ -689,10 +741,12 @@ export function ArkmeMemberRecordsPanel(props: {
     <aside style={{ ...styles.drawer, width: effectiveWidth }} role="dialog" aria-modal="true" aria-label={title}
       data-arkme-member-records-panel="true" data-mode={props.mode} data-total={total}
       data-width={Math.round(effectiveWidth)} data-resizing={resizing ? 'true' : 'false'}>
-    <ArkmeRightPanelHeader title={title} subtitle={total === undefined ? undefined : String(total) + '条'}
+    <ArkmeRightPanelHeader title={title} heading={props.unified ? <div style={{display:'flex',alignItems:'center',gap:10}}><ArkmeUserAvatar {...(props.member.avatarRef ? {avatarRef:props.member.avatarRef} : {})} size={32} label={props.member.displayName}/><strong style={{fontSize:16}}>{title}</strong></div> : undefined} subtitle={total === undefined ? undefined : String(total) + '条'}
       onClose={props.onClose} closeLabel={tr("关闭成员快记")} />
+    {props.scopeControl}
     <div ref={bodyRef} style={styles.drawerBody} onScroll={event => {
-      if (shouldLoadOlderArkmeMemberRecords(
+      if (props.accountKey && props.onlyCurrent && bodyRef.current) lastViewport.current = { key: queryKey, value: memberRecordsViewport(bodyRef.current) }
+      if (props.onlyCurrent && shouldLoadOlderArkmeMemberRecords(
         event.currentTarget.scrollTop,
         hasMore,
         cursor,
@@ -701,13 +755,17 @@ export function ArkmeMemberRecordsPanel(props: {
         load(cursor)
       }
     }}>
-      {loading && items.length === 0 && <div style={styles.state}>{tr("正在加载快记…")}</div>}
-      {error !== '' && items.length === 0 && <div style={styles.state} role="alert">
+      {!props.onlyCurrent && !loading && error === '' && <div style={styles.state} role="status">
+        <div>{tr(sharedStatus === 'upgrade' ? '共同对话汇总协议需要更新插件后使用' : '共同对话汇总接口开发中，开发完成后此功能完整可用。')}</div>
+        <button type="button" style={{...styles.retry,marginTop:14}} onClick={props.onUseCurrent}>{tr('先看此对话')}</button>
+      </div>}
+      {loading && visibleItems.length === 0 && <div role="status" aria-label={tr('正在加载快记')} style={styles.state}>{tr(props.onlyCurrent ? '正在加载快记…' : '正在检查共同对话汇总能力…')}{props.onlyCurrent && props.accountKey && <div aria-hidden style={{display:'grid',gap:12,marginTop:18}}>{[0,1,2].map(n=><div key={n} style={{height:54,borderRadius:10,background:arkmeTheme.hover,opacity:1-n*.2}}/>)}</div>}</div>}
+      {error !== '' && visibleItems.length === 0 && <div style={styles.state} role="alert">
         <div>{error}</div><button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { load() }}>{tr("重试")}</button>
       </div>}
-      {!loading && error === '' && items.length === 0 && <div style={styles.state}>{tr("暂无快记")}</div>}
-      {loading && items.length > 0 && <div style={styles.loadMoreState} role="status" aria-live="polite">{tr("正在加载快记…")}</div>}
-      {error !== '' && items.length > 0 && <div style={styles.loadMoreState} role="alert" title={error}>
+      {props.onlyCurrent && !loading && error === '' && visibleItems.length === 0 && <div style={styles.state}>{tr("暂无快记")}</div>}
+      {loading && visibleItems.length > 0 && <div style={styles.loadMoreState} role="status" aria-live="polite">{tr("正在加载快记…")}</div>}
+      {error !== '' && visibleItems.length > 0 && <div style={styles.loadMoreState} role="alert" title={error}>
         <span>{tr("加载快记失败")}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.loadMoreRetry} onClick={() => { load(lastLoadRef.current.beforeSequence, lastLoadRef.current.refresh) }}>{tr("重试")}</button>
       </div>}
@@ -725,6 +783,7 @@ export function ArkmeMemberRecordsPanel(props: {
               label={tr("{v0} 的头像", { v0: entry.item.senderName })}
             />}
             <div style={{ ...styles.recordMain, alignItems: entry.item.isMe ? 'flex-end' : 'flex-start' }}>
+              {props.unified && props.sourceName && <button type="button" data-arkme-member-record-origin style={{fontSize:11,color:arkmeTheme.tertiary,padding:0,border:0,background:'transparent',textAlign:'left',cursor:props.onOpenOrigin?'pointer':'default'}} onClick={() => props.onOpenOrigin?.(entry.item)} aria-label={tr('回到原对话并定位')}>{props.sourceName} · {formatArkmeMemberRecordTime(entry.item.sendAtMillis)}</button>}
               <div style={styles.recordName}>{entry.item.senderName}</div>
               <div style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
                 <ArkmeMessageContent item={entry.item} sourceRef={props.sourceRef}

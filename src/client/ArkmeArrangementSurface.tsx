@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArkmeArrangementBoard } from './ArkmeArrangementBoard.js'
+import { ArkmeArrangementWorkspace } from './ArkmeArrangementWorkspace.js'
 import { ArkmeArrangementCreate, ArkmeArrangementCreationStatus, useCreatedArrangements } from './ArkmeArrangementCreate.js'
 import { useArkmeLocale } from './locale.js'
 
@@ -13,7 +13,7 @@ function ArrangementSurface({ accountScope }: { accountScope: string }) {
   const created = useCreatedArrangements()
 
   return <div className="arkme-arrangement-surface">
-    <ArkmeArrangementBoard accountScope={accountScope} createdItems={created.items}
+    <ArkmeArrangementWorkspace accountScope={accountScope} createdItems={created.items}
       onAddArrangement={() => setCreateOpen(true)} />
     <ArkmeArrangementCreationStatus created={created} />
     <ArkmeArrangementCreate accountScope={accountScope} open={createOpen}

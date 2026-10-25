@@ -4,6 +4,7 @@ import interactionFeedbackCss from './interaction-feedback.css?inline'
 import membershipCss from '../arkme-membership.css?inline'
 import recordingBreathCss from '../recordings/recording-breath.css?inline'
 import arrangementBoardCss from '../arrangement-board.css?inline'
+import arrangementWorkspaceCss from '../arrangement-workspace.css?inline'
 import dayTimelineCss from '../day-timeline.css?inline'
 import calendarDayReviewCss from '../calendar-day-review.css?inline'
 import accountUsageCss from '../account-usage.css?inline'
@@ -17,7 +18,7 @@ import messageTextCursorCss from '../message-text-cursor.css?inline'
 import { ARKME_NAVIGATION_WIDTH } from '../arkme-layout.js'
 
 // DSH loads the client factory, not a bundler-emitted standalone CSS asset.
-const layoutCss = `:root { --arkme-navigation-width: ${ARKME_NAVIGATION_WIDTH}px; }\n${redesignBaseCss}\n${buttonHoverCss}\n${interactionFeedbackCss}\n${membershipCss}\n${recordingBreathCss}\n${dayTimelineCss}\n${calendarDayReviewCss}\n${arrangementBoardCss}\n${accountUsageCss}\n${accountProfileCss}\n${reactionPreviewCss}\n${teamMessagingCss}\n${exploreCss}\n${statisticsCss}\n${messageTimestampCss}\n${messageTextCursorCss}`
+const layoutCss = `:root { --arkme-navigation-width: ${ARKME_NAVIGATION_WIDTH}px; }\n${redesignBaseCss}\n${buttonHoverCss}\n${interactionFeedbackCss}\n${membershipCss}\n${recordingBreathCss}\n${dayTimelineCss}\n${calendarDayReviewCss}\n${arrangementBoardCss}\n${arrangementWorkspaceCss}\n${accountUsageCss}\n${accountProfileCss}\n${reactionPreviewCss}\n${teamMessagingCss}\n${exploreCss}\n${statisticsCss}\n${messageTimestampCss}\n${messageTextCursorCss}`
 
 const REDESIGN_STYLE_ID = '@senguoyun/dsh-arkme/redesign'
 

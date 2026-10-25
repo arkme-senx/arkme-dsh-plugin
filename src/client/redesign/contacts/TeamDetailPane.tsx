@@ -2,6 +2,7 @@ import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
 import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
 import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import { TeamInternalGroupDialog } from '../../TeamInternalGroupDialog.js'
 import { TeamAddMembersDialog } from '../../TeamAddMembersDialog.js'
@@ -325,6 +326,10 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-feature-icon" aria-hidden="true"><UsersThree size={22} /></span>
             <span>{tr('团队内部群')}</span>
             <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" className="arkme-team-feature" onClick={() => arkmeUi.showTeamWorld({ name: page.team.name, jotmoId: page.team.jotmoId, avatar: page.team.avatar, returnTeamRef: teamRef })}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><Globe size={22} /></span>
+            <span>{tr('团队的世界')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
         </div>
       </div>

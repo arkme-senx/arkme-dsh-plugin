@@ -13,6 +13,7 @@ export type TeamAppOperation = `team.app.${
   | 'group.context' | 'group.join' | 'group.directory'
   | 'internal-group.prepare'
   | 'public-card' | 'member-candidates' | 'members.add'
+  | 'world.view' | 'world.prepare'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'

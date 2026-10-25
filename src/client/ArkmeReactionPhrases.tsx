@@ -6,24 +6,24 @@ import { usePhraseLayoutMotion } from './use-phrase-layout-motion.js'
 import { useReactionPhraseDrag } from './use-reaction-phrase-drag.js'
 import { useEffect, useState, useRef, type CSSProperties } from 'react'
 import { readReactionCollection, writeReactionCollection, moveReactionPhrase } from './reaction-phrases.js'
-import { reactionLibrary } from './reaction-library.js'
+import { reactionLibrary as defaultReactionLibrary, type ReactionLibraryStore } from './reaction-library.js'
 import { ReactionLabel, reactionLabelText, reactionPhraseStyle } from './ReactionLabel.js'
 import { arkmeTheme as c } from './arkme-theme.js'
 const button: CSSProperties = { font: 'inherit', cursor: 'pointer', border: `1px solid ${c.border}`, borderRadius: 7, padding: '5px 8px', background: c.base, color: c.text }
 const phraseButton: CSSProperties = { ...button, height: 28, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { scope: string; selected: readonly ReactionExpression[]; onUse: (label: string, expression: ReactionExpression) => Promise<boolean>; onNotice?: (text: string) => void }) {
-  const [phrases, setPhrases] = useState<ReactionExpression[]>(() => readReactionCollection(scope))
+export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice, library = defaultReactionLibrary }: { scope: string; selected: readonly ReactionExpression[]; onUse: (label: string, expression: ReactionExpression) => Promise<boolean>; onNotice?: (text: string) => void; library?: ReactionLibraryStore }) {
+  const [phrases, setPhrases] = useState<ReactionExpression[]>(() => readReactionCollection(scope, library))
   const [busy, setBusy] = useState(true)
   useEffect(() => {
     let active = true
-    const update = () => { if (active) setPhrases(readReactionCollection(scope)) }
-    void reactionLibrary.load(scope).then(update).catch(error => { if (active) setError(error.message) }).finally(() => { if (active) setBusy(false) })
+    const update = () => { if (active) setPhrases(readReactionCollection(scope, library)) }
+    void library.load(scope).then(update).catch(error => { if (active) setError(error.message) }).finally(() => { if (active) setBusy(false) })
     return () => { active = false }
-  }, [scope])
+  }, [scope, library])
   const [view, setView] = useState<'closed' | 'create'>('closed')
   const [deleting, setDeleting] = useState<string>()
   const deletion = useRef<{ scope: string; animation?: Animation; color: string | undefined }>()
-  useEffect(() => () => { deletion.current?.animation?.cancel(); deletion.current = undefined }, [scope])
+  useEffect(() => () => { deletion.current?.animation?.cancel(); deletion.current = undefined }, [scope, library])
   const [confirmDelete, setConfirmDelete] = useState<string>()
   useEffect(() => {
     if (!confirmDelete || deleting || typeof document === 'undefined') return
@@ -48,7 +48,7 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { sco
     const next = moveReactionPhrase(all, from, to).map(id => byId.get(id)!)
     if (busy) return
     setPhrases(next); setBusy(true)
-    void writeReactionCollection(scope, next).then(() => { setPhrases(next); setError('') }).catch(error => { setPhrases(readReactionCollection(scope)); setError(error.message) }).finally(() => setBusy(false))
+    void writeReactionCollection(scope, next, library).then(() => { setPhrases(next); setError('') }).catch(error => { setPhrases(readReactionCollection(scope, library)); setError(error.message) }).finally(() => setBusy(false))
   })
   const visiblePhrases = drag.drag?.over ? moveReactionPhrase(all, drag.drag.label, drag.drag.over) : all
   const grid = usePhraseLayoutMotion(JSON.stringify(visiblePhrases))
@@ -62,7 +62,7 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { sco
     setBusy(true); setDeleting(label); setError('')
     // Start persistence and visual feedback together. Only the local view is
     // staged; the library retains its authoritative snapshot and retry receipt.
-    const saved = writeReactionCollection(scope, next).then(
+    const saved = writeReactionCollection(scope, next, library).then(
       () => ({ ok: true as const }),
       error => ({ ok: false as const, error }),
     )
@@ -77,7 +77,7 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { sco
       const result = await saved
       if (deletion.current !== operation) return
       if (!result.ok) {
-        setPhrases(readReactionCollection(scope))
+        setPhrases(readReactionCollection(scope, library))
         setError(result.error instanceof Error ? result.error.message : '删除失败，请重试。')
       }
     } finally {
@@ -106,8 +106,8 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { sco
     }
     const next = [...phrases, expression]
     setBusy(true)
-    try { await writeReactionCollection(scope, next); setPhrases(next); setError('') }
-    catch (error) { setPhrases(readReactionCollection(scope)); setError(error instanceof Error ? error.message : '保存失败，请重试。'); return }
+    try { await writeReactionCollection(scope, next, library); setPhrases(next); setError('') }
+    catch (error) { setPhrases(readReactionCollection(scope, library)); setError(error instanceof Error ? error.message : '保存失败，请重试。'); return }
     finally { setBusy(false) }
     if (react && !selectedIds.has(id)) { if (await onUse(label, expression)) close(); else setError('短语已保存，表态未成功，请重试。') } else close()
   }
@@ -126,7 +126,7 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice }: { sco
     {view === 'create' && <ReactionPhraseDialog emoji={emoji} onEmojiChange={setEmoji} colorId={colorId} onColorChange={setColorId} text={text} error={error} notice={notice} disabled={(!text.trim() && !emoji) || busy} onChange={setText} onSave={create} onClose={close} />}
     {drag.drag && <div aria-hidden style={{ ...phraseButton, ...reactionPhraseStyle(expressionLabel(byId.get(drag.drag.label)!), false, byId.get(drag.drag.label)?.color), position: 'fixed', zIndex: 150, pointerEvents: 'none', boxSizing: 'border-box', left: drag.drag.left, top: drag.drag.top, width: drag.drag.width, height: drag.drag.height, boxShadow: c.shadow, transform: 'scale(1.04)', textAlign: 'center' }}><ReactionLabel label={expressionLabel(byId.get(drag.drag.label)!)} size={18} /></div>}
     {error && view !== 'create' && <div role="alert" style={{ color: c.secondary, marginTop: 10 }}>{error} <button type="button" disabled={busy} style={button} onClick={() => {
-      setBusy(true); void reactionLibrary.retry(scope).then(() => { setPhrases(readReactionCollection(scope)); setError('') }).catch(error => setError(error.message)).finally(() => setBusy(false))
+      setBusy(true); void library.retry(scope).then(() => { setPhrases(readReactionCollection(scope, library)); setError('') }).catch(error => setError(error.message)).finally(() => setBusy(false))
     }}>重试保存</button></div>}
   </div>
 }

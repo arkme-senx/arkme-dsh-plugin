@@ -13,6 +13,7 @@ export interface SelectedTextNotePresentation {
   header: string
   noteText: string
   storage: 'local'
+  kind?: 'forward'
 }
 export function readSelectedTextNoteQuote(value: unknown): SelectedTextNoteQuote | undefined {
   if (!value || typeof value !== 'object') return undefined
@@ -34,9 +35,22 @@ export function selectedTextNoteWireText(note: string, quote: SelectedTextNoteQu
   return `${selectedTextNotePrefix(quote)}${note.trim()}`
 }
 
+export function selectedTextForwardPrefix(quote: SelectedTextNoteQuote, header = selectedTextNoteHeader(quote)): string {
+  return `${header}\n${quote.text}\n\n附言\n`
+}
+export function selectedTextForwardWireText(comment: string, quote: SelectedTextNoteQuote): string {
+  return comment.trim() ? `${selectedTextForwardPrefix(quote)}${comment.trim()}` : `${selectedTextNoteHeader(quote)}\n${quote.text}`.trimEnd()
+}
+
 /** Recheck the current text after edits or presentation refreshes; never render a stale snapshot. */
 export function selectedTextNotePresentation(text: string, saved: SelectedTextNotePresentation | undefined): SelectedTextNotePresentation | undefined {
   if (!saved) return undefined
+  if (saved.kind === 'forward') {
+    const bare = `${saved.header}\n${saved.quote.text}`
+    if (text === bare.trimEnd()) return { ...saved, quote: { ...saved.quote, text: saved.quote.text.trimEnd() }, noteText: '' }
+    const prefix = selectedTextForwardPrefix(saved.quote, saved.header)
+    return text.startsWith(prefix) && text.slice(prefix.length).trim() ? { ...saved, noteText: text.slice(prefix.length) } : undefined
+  }
   const prefix = selectedTextNotePrefix(saved.quote, saved.header)
   const noteText = text.startsWith(prefix) ? text.slice(prefix.length) : ''
   return noteText.trim() ? { ...saved, noteText } : undefined

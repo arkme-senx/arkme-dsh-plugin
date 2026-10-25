@@ -9,6 +9,7 @@ import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
 import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team-group-contract.js'
+import type { TeamWorldView, TeamWorldPrepareResult } from '../team-world-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -420,6 +421,31 @@ export class TeamAppService {
             throw applyError
           }
         }
+      }
+      case 'team.app.world.prepare': {
+        const id = await teamID()
+        if (!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        const mine = await post('list-mine', {}, true)
+        if (!Array.isArray(mine.teams)) throw invalid()
+        if (!list(mine.teams).some(team => String(recordOwnerId(team.team_id)) === String(id))) {
+          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        }
+        // Membership only: no record, upload, publication or cloud publishing grant.
+        return { state: 'backend_pending' } satisfies TeamWorldPrepareResult
+      }
+      case 'team.app.world.view': {
+        const jotmoId = str(p.jotmoId).trim()
+        if (!jotmoId || jotmoId.length > 128) throw invalid()
+        const mine = await post('list-mine', {}, true)
+        if (!Array.isArray(mine.teams)) throw invalid()
+        const raw = list(mine.teams).find(team => str(team.jotmo_id) === jotmoId)
+        if (raw) {
+          const team = await this.team(raw, actor)
+          return { state: 'backend_pending', team: { name: team.name, jotmoId, avatar: team.avatar }, memberTeam: team } satisfies TeamWorldView
+        }
+        const team = await this.searchContactTeam(jotmoId, session, signal)
+        if (!team || team.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
+        return { state: 'backend_pending', team: { name: team.name, jotmoId, avatar: team.avatar } } satisfies TeamWorldView
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.public-card': {

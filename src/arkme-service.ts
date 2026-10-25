@@ -23,6 +23,7 @@ import {readProfileImage} from './services/profile-image.js'
 import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from './team-profile-contract.js'
 import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
+import { sendSelectedTextForward } from './services/selected-text-forward.js'
 import { sendSelectedTextSelfNote } from './services/selected-text-self-note.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -44,6 +45,9 @@ import { TeamAppService } from './services/team-app-service.js'
 import type { TeamAppOperation } from './team-app-contract.js'
 import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
+import { WorldReactionService, worldReactionFailure } from './services/world-reaction-service.js'
+import { WorldLocalReactionService } from './services/world-local-reaction-service.js'
+import { WORLD_REACTION_CONTRACT, WORLD_REACTION_PREFIX } from './world-reaction-contract.js'
 import { DayRecapService } from './services/day-recap-service.js'
 import { ConversationActivityService } from './services/conversation-activity-service.js'
 import { ConversationWordFrequencyService } from './services/conversation-word-frequency-service.js'
@@ -1854,11 +1858,14 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordsCapabilities(sourceRef: string, memberRef: string, signal?: AbortSignal) {
+    return this.chat.personRecordsCapabilities(sourceRef, memberRef, signal)
+  }
   async sourceMemberRecords(
     sourceRef: string,
     memberRef: string,
     mode: ArkmeConversationMemberRecordMode,
-    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+    options: { limit?: number; beforeSequence?: number; basicPresentation?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeConversationMemberRecordPage> {
     return await this.chat.sourceMemberRecords(sourceRef, memberRef, mode, options)
   }
@@ -2017,8 +2024,19 @@ arkoImagesV1:true,
   }
 
   async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
+  async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal) { return this.world.shareWorldRecord(recordRef, expectedUserId, signal) }
+  async forwardWorldRecord(recordRef: string, expectedUserId: number, options: { targetSourceRef: string; recordUid: string; commentText: string; signal?: AbortSignal }) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.recordUid)) throw new ArkmePluginError('record-uid-invalid', '转发标识无效，请重新选择', false)
+    const share = await this.world.shareWorldRecord(recordRef, expectedUserId, options.signal)
+    const text = [options.commentText.trim(), share.url].filter(Boolean).join('\n\n')
+    return this.chat.sendSourceText(options.targetSourceRef, text, { recordUid: options.recordUid, expectedUserId, ...(options.signal ? { signal: options.signal } : {}) })
+  }
 
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
+
+  async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal) {
+    return this.chat.memberWorldTarget(sourceRef, memberRef, signal)
+  }
 
   async openPrivateChatFromMember(
     sourceRef: string,
@@ -2326,6 +2344,15 @@ arkoImagesV1:true,
   changeNativeLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).change(sourceRef, ref, change, signal) }
   async forwardMessageActions(conversationRef: string, actionRefs: readonly string[], options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> { return await this.messageActions.forward(conversationRef, actionRefs, options) }
 
+  async forwardSelectedText(input: Parameters<typeof sendSelectedTextForward>[1] & { targetSourceRef: string }, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    if (`${this.config.environment}:${session.userId}` !== input.expectedAccountKey) throw new ArkmePluginError('selected-text-account-changed', '账号已变化，请重新选择', false, 409)
+    const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
+    return sendSelectedTextForward(this.runtime, input, target, (text, userId) => this.chat.sendSourceText(input.targetSourceRef, text, {
+      recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId: userId, ...(signal ? { signal } : {}),
+    }), signal)
+  }
+
   async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal) {
     return sendSelectedTextSelfNote(this.runtime, input, async (text, userId) => {
       const target = await this.source.selfTarget(signal)
@@ -2425,9 +2452,20 @@ arkoImagesV1:true,
   }
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
-  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+  async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal) {
+    return await new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).prepare(accountKey, recordRefs, signal)
+  }
+  async localWorldReactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal) {
+    return await new WorldLocalReactionService(this.runtime).request(input, signal)
+  }
+  async worldReactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+    if (!['query', 'set', 'actors', 'groups'].includes(input?.action)) throw new ArkmePluginError('world-reactions-operation-invalid', '不支持的世界表态操作', false)
+    try { return await this.reactions(input, signal, new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref))) }
+    catch (error) { return worldReactionFailure(error) }
+  }
+  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService): Promise<unknown> {
     return await withReactionTrace(input, async () => {
-    const result = await new ReactionService(this.runtime, target => target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
+    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
       const [sources, profiles] = await Promise.all([
         this.source.chatSourcesBySessionUids([...new Set(items.map(item => item.sessionUID).filter(Boolean))], signal),
@@ -2455,7 +2493,7 @@ arkoImagesV1:true,
           ...(source ? { avatar: { ...(source.avatarRef ? { avatarRef: source.avatarRef } : {}), ...(source.avatarRefs ? { avatarRefs: source.avatarRefs } : {}), ...(source.groupAvatar ? { groupAvatar: source.groupAvatar } : {}) } } : {}),
         }
       })
-    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal)).request(input, signal)
+    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal), worldOwner ? { prefix: WORLD_REACTION_PREFIX, contract: WORLD_REACTION_CONTRACT } : undefined).request(input, signal)
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     const actorLabels = async (sourceRef: string | undefined, ids: number[]) => {
       if (!sourceRef || !ids.length) return new Map<number, { remark: string; groupNickname: string }>()
@@ -2638,6 +2676,23 @@ arkoImagesV1:true,
   async recordReeditSubmissions(sourceRef: string) { return await this.record.recordReeditSubmissions(sourceRef) }
   async resumeRecordReeditSubmissions(sourceRef: string, reconcile = false) { return await this.record.resumeRecordReeditSubmissions(sourceRef, reconcile) }
   async acknowledgeRecordReeditSubmission(sourceRef: string, submissionId: string, version: number) { return await this.record.acknowledgeRecordReeditSubmission(sourceRef, submissionId, version) }
+  async worldArkoPublishSource(sessionId: number, messageId: number, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0 || !Number.isSafeInteger(messageId) || messageId <= 0) throw new ArkmePluginError('world-source-invalid', '原消息标识无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const rows = await this.arko.actionMessages([{ sessionId, messageId }], session.userId, signal)
+    const item = rows.find(row => row.sessionId === sessionId && row.messageId === messageId)
+    if (!item || item.role !== 'user' || item.status !== 1) throw new ArkmePluginError('world-source-not-owned', '原消息已不可用，只能公开自己已发出的内容', false, 403)
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { textContent: item.text, sendAtMillis: item.createdAtMillis, attachments: (item.contentBlocks ?? []).map(block => ({
+      selection: { fileAssetUid: block.fileAssetUid ?? '' },
+      asset: { fileAssetUid: block.fileAssetUid ?? '', fileName: block.fileName, mimeType: block.mimeType, size: block.size, fileKind: 1 as const },
+      block, ...(!block.fileAssetUid || !block.mediaRef ? { unavailable: true } : {}),
+    })) }
+  }
+  async worldMessagePublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) { return this.messageActions.worldPublishSource(conversationRef, actionRef, signal) }
+  async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal) { return await this.record.worldPublishSource(sourceRef, itemUid, signal) }
   async recordReeditEditor(sourceRef: string, itemUid: string): Promise<ArkmeRecordReeditEditorSnapshot> { return await this.record.recordReeditEditor(sourceRef, itemUid) }
   async commitRecordReedit(context: ArkmeRecordReeditPreparedContext): Promise<ArkmeRecordReeditCommitResult> {
     return await this.record.commitRecordReedit(context)
@@ -2967,6 +3022,13 @@ arkoImagesV1:true,
     options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; dueStartAtMillis?: number; dueEndAtMillis?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.arrangement.listArrangements(options)
+  }
+
+  async deletedArrangements(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}) {
+    return this.arrangement.deletedArrangements(options)
+  }
+  async deletedArrangementDetail(arrangementRef: string, signal?: AbortSignal) {
+    return this.arrangement.deletedArrangementDetail(arrangementRef, signal)
   }
 
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */

@@ -191,6 +191,15 @@ export class MessageActionService {
     return await this.deliver(references, session, options)
   }
 
+  async worldPublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) {
+    const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
+    const reference = references[0]!
+    if (reference.role !== 'user' || reference.senderUserId !== session.userId) throw new ArkmePluginError('world-source-not-owned', '只能公开自己发出的内容', false, 403)
+    signal?.throwIfAborted()
+    if ((await this.gateway.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { textContent: reference.textContent, sendAtMillis: reference.createdAtMillis }
+  }
+
   async forwardNative(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
     const session = await this.gateway.requireSession()
     if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) {

@@ -75,6 +75,35 @@ describe('team group frontend handoff boundary', () => {
   })
 })
 
+describe('team World frontend boundary', () => {
+  const member = { team_id: '9223372036854775800', jotmo_id: 'our_team', name: '团队', role: 3 }
+  it('reads a separate team namespace and returns no fake personal feed or publishing grant', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    const page = await f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:90' }) as import('../src/team-world-contract.js').TeamWorldView
+    expect(page).toMatchObject({ state: 'backend_pending', team: { jotmoId: 'our_team' }, memberTeam: { jotmoId: 'our_team' } })
+    expect(page).not.toHaveProperty('items'); expect(page).not.toHaveProperty('canPublish')
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: page.memberTeam!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
+  })
+  it('uses only public discovery for a non-member and never returns private membership or uses member-only profile reads', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { jotmo_id: 'public_team', name: '公开团队', requires_approval: false, state: 'not_member' } })
+    const page = await f.service.execute('team.app.world.view', { jotmoId: 'public_team' }) as import('../src/team-world-contract.js').TeamWorldView
+    expect(page.team).toMatchObject({ name: '公开团队', jotmoId: 'public_team' }); expect(page.memberTeam).toBeUndefined()
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
+  })
+  it('rechecks removed membership, account binding and malformed requests without writes', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [member] : [] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef })).rejects.toThrow()
+    await expect(f.service.execute('team.app.world.view', { jotmoId: '' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:91' })).rejects.toThrow('账号已在其他页面切换')
+    expect(f.requests.every(v => v.path.endsWith('/list-mine'))).toBe(true)
+  })
+})
+
 describe('team public card projection', () => {
   it('reads a real member channel but exposes only public presentation and never opens a conversation', async () => {
     const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id, role: 3 }] } : channel)
