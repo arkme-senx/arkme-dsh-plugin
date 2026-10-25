@@ -1,24 +1,24 @@
 import type { ArkmeTeam } from './types.js'
 
-/** App-only handoff boundary. Membership in a team is NOT permission to represent it in a group. */
+/** Team membership supplies identity candidates. It does not grant teammates group access. */
 export interface TeamGroupContext {
   state: 'backend_pending'
   teams: ArkmeTeam[]
+  /** Unknown on current backend; a future roster binding suppresses identity choice. */
+  membershipPolicy?: 'independent' | 'team_roster' | 'unknown'
 }
 export interface TeamGroupPending { state: 'backend_pending' }
 export const TEAM_GROUP_PENDING_TEXT = '后端接口开发中，开发完成后此功能完整可用。'
 
-/** Proposed capability projection, not returned by the pending Host yet.
- * A team roster and a delegated team identity are separate relationships. */
-export interface TeamGroupSpeakingEligibility {
-  state: 'ready' | 'backend_pending'
-  membershipPolicy: 'independent' | 'team_roster'
-  personalCanSend: boolean
-  teams: Array<{ jotmoId: string; membershipState: 'active' | 'pending' | 'removed'; canSend: boolean }>
+export function canChooseTeamGroupIdentity(value?: TeamGroupContext): boolean {
+  return value !== undefined && value.membershipPolicy !== 'team_roster'
+    && value.teams.some(team => !!team.jotmoId && !!team.teamRef)
 }
 
-export function canChooseTeamGroupIdentity(value?: TeamGroupSpeakingEligibility): boolean {
-  if (value?.state !== 'ready' || value.membershipPolicy !== 'independent') return false
-  const teams = new Set(value.teams.filter(team => team.membershipState === 'active' && team.canSend && team.jotmoId).map(team => team.jotmoId))
-  return Number(value.personalCanSend) + teams.size > 1
+/** Only public presentation. Never includes a team's private member list or settings. */
+export interface TeamPublicCard {
+  name: string
+  jotmoId: string
+  avatar?: ArkmeTeam['avatar']
+  contact: { state: 'available'; publicRef: string } | { state: 'disabled' } | { state: 'backend_pending' }
 }

@@ -8,7 +8,7 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
-import type { TeamGroupContext, TeamGroupPending } from '../team-group-contract.js'
+import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -420,6 +420,25 @@ export class TeamAppService {
         }
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
+      case 'team.app.public-card': {
+        const jotmoId = str(p.jotmoId).trim()
+        if (!jotmoId || jotmoId.length > 128) throw invalid()
+        const mine = list((await post('list-mine', {}, true)).teams).find(team => str(team.jotmo_id) === jotmoId)
+        if (mine) {
+          // Current channel lookup is a member-only API. Do not use it for strangers.
+          const channel = await this.channel(await post('message-channel/get', { team_id: recordOwnerId(mine.team_id) }, true), actor)
+          if (channel.jotmoId !== jotmoId) throw invalid()
+          return { name: channel.name, jotmoId, avatar: channel.avatar,
+            contact: !channel.enabled ? { state: 'disabled' }
+              : channel.publicRef ? { state: 'available', publicRef: channel.publicRef } : { state: 'backend_pending' },
+          } satisfies TeamPublicCard
+        }
+        const profile = await this.searchContactTeam(jotmoId, session, signal)
+        if (!profile || profile.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
+        // Public discovery currently has no channel locator or description. Do
+        // not guess a link or expose member APIs to external viewers.
+        return { name: profile.name, jotmoId, avatar: profile.avatar, contact: { state: 'backend_pending' } } satisfies TeamPublicCard
+      }
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
       case 'team.app.official.membership': {
@@ -431,9 +450,8 @@ export class TeamAppService {
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
       }
       case 'team.app.group.context': case 'team.app.group.join': case 'team.app.group.directory': {
-        // Do not send a team id to the individual-members API, or grant group
-        // access based on list-mine. These endpoints expose an honest pending
-        // state until the backend has both group and team delegation authority.
+        // Real team membership is sufficient to offer an identity candidate.
+        // Neither the candidate nor its pending write grants teammates group access.
         if (operation !== 'team.app.group.directory') {
           if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
           const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
@@ -446,7 +464,7 @@ export class TeamAppService {
           throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         }
         if (operation === 'team.app.group.context') return {
-          state: 'backend_pending', teams: await Promise.all(mine.map(team => this.team(team, actor))),
+          state: 'backend_pending', membershipPolicy: 'unknown', teams: await Promise.all(mine.map(team => this.team(team, actor))),
         } satisfies TeamGroupContext
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }

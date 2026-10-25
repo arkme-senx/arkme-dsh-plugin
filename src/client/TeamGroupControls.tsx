@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
-import type { ArkmeSourceItem } from '../types.js'
-import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending, type TeamGroupSpeakingEligibility } from '../team-group-contract.js'
+import type { ArkmeSourceItem, ArkmeTeam } from '../types.js'
+import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending } from '../team-group-contract.js'
+import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
+import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
 import { callArkme } from './api.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -11,7 +13,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : tr('加载失败，请重试')
-type ContextState = { scope: string; value?: TeamGroupContext; error?: string }
+type ContextState = { scope: string; value?: TeamGroupContext; error?: string; refreshing?: boolean }
 
 function useTeamGroupContext(accountKey: string, sourceRef: string, active = true) {
   const scope = JSON.stringify([accountKey, sourceRef])
@@ -20,7 +22,7 @@ function useTeamGroupContext(accountKey: string, sourceRef: string, active = tru
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    setState({ scope })
+    setState(current => ({ scope, ...(current.scope === scope && current.value ? { value: current.value } : {}), refreshing: true }))
     void callArkme<TeamGroupContext>('team.app.group.context', { expectedAccountKey: accountKey, sourceRef }, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return
@@ -29,7 +31,8 @@ function useTeamGroupContext(accountKey: string, sourceRef: string, active = tru
       }).catch(error => { if (!controller.signal.aborted) setState({ scope, error: errorText(error) }) })
     return () => controller.abort()
   }, [accountKey, sourceRef, active, revision, scope])
-  return { ...(state.scope === scope && active ? state : { scope }), retry: () => setRevision(value => value + 1) }
+  const retry = useCallback(() => setRevision(value => value + 1), [])
+  return { ...(state.scope === scope && active ? state : { scope }), retry }
 }
 
 export function TeamGroupPendingNotice({ children }: { children?: React.ReactNode }) {
@@ -86,49 +89,75 @@ export function TeamGroupJoinPanel({ accountKey, source }: { accountKey: string;
   </section>
 }
 
-/** Shares the self-role menu's layout, but deliberately never binds a self-role to group messages. */
+/** A real team member may represent that team without adding the team to the group.
+ * Writes remain pending until messages carry server-verified team attribution. */
 type IdentityPickerProps = {
-  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; disabled?: boolean
-  eligibility?: TeamGroupSpeakingEligibility
+  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean
 }
 export function TeamGroupIdentityPicker(props: IdentityPickerProps) {
-  // Pending list-mine data cannot authorize a selector. Normal and roster-bound
-  // groups render no trigger and perform no extra context request.
-  if (!canChooseTeamGroupIdentity(props.eligibility)) return null
-  return <EligibleTeamGroupIdentityPicker {...props} eligibility={props.eligibility!} />
+  return <ScopedIdentityPicker key={JSON.stringify([props.accountKey, props.sourceRef])} {...props} />
 }
 
-function EligibleTeamGroupIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled = false, eligibility }: IdentityPickerProps & { eligibility: TeamGroupSpeakingEligibility }) {
+function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, selfName = '我', disabled = false }: IdentityPickerProps) {
   useArkmeLocale()
-  const [open, setOpen] = useState(false), [requested, setRequested] = useState('')
-  const context = useTeamGroupContext(accountKey, sourceRef, open)
+  const [open, setOpen] = useState(false), [requested, setRequested] = useState<ArkmeTeam>()
+  const [viewTeam, setViewTeam] = useState<string>()
+  const context = useTeamGroupContext(accountKey, sourceRef)
   const close = useCallback(() => setOpen(false), [])
-  useEffect(() => { if (disabled) close() }, [disabled, close])
+  // No timer: entering the conversation, opening the menu and returning to the
+  // window recheck membership. Keep an existing trigger stable during refresh.
+  useEffect(() => {
+    const refresh = () => context.retry()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [context.retry])
+  useEffect(() => { if (disabled) { close(); setRequested(undefined); setViewTeam(undefined) } }, [disabled, close])
+  useEffect(() => {
+    if (!context.refreshing && (!canChooseTeamGroupIdentity(context.value) || context.error)) {
+      close(); setRequested(undefined); setViewTeam(undefined)
+    } else if (!context.refreshing && context.value) {
+      const ids = new Set(context.value.teams.map(team => team.jotmoId))
+      setRequested(current => current && ids.has(current.jotmoId) ? current : undefined)
+      setViewTeam(current => current && ids.has(current) ? current : undefined)
+    }
+  }, [context.value, context.refreshing, context.error, close])
+  if (context.error) return <span role="status" style={styles.hint}>{tr('团队身份暂不可用')}
+    <button type="button" style={styles.link} title={context.error} onClick={context.retry}>{tr('重试')}</button></span>
+  if (!canChooseTeamGroupIdentity(context.value)) return null
   const actions: SelfRoleMenuAction[] = [
-    ...(eligibility.personalCanSend ? [{ id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close }] : []),
+    { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close },
     { type: 'separator', id: 'separator' },
-    ...(!context.value && !context.error ? [{ type: 'label' as const, id: 'loading', text: tr('正在加载团队…') }] : []),
-    ...(context.error ? [
-      { type: 'label' as const, id: 'error', text: context.error },
-      { id: 'retry', label: tr('重试'), onSelect: context.retry },
-    ] : []),
-    ...(context.value?.teams.filter(team => eligibility.teams.some(candidate => candidate.jotmoId === team.jotmoId && candidate.membershipState === 'active' && candidate.canSend)).map(team => ({
-      id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'),
+    ...[...new Map(context.value!.teams.map(team => [team.jotmoId, team])).values()].map(team => ({
+      id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'), disabled: context.refreshing === true,
       icon: <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: 28, height: 28 }}>
         <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />
         <span aria-label={tr('{v0}团队身份', { v0: team.name })} style={styles.teamBadge}><Users size={10} weight="fill" /></span>
       </span>,
-      onSelect: () => setRequested(team.jotmoId),
-    })) ?? []),
-    ...(context.value ? [{ type: 'label' as const, id: 'pending', text: tr(TEAM_GROUP_PENDING_TEXT) },
-      { type: 'label' as const, id: 'unchanged', text: tr(requested ? eligibility.personalCanSend ? '尚未切换，仍以个人身份发送；草稿已保留。' : '尚未切换发言身份；草稿已保留。' : context.value.teams.length ? '团队发言需先完成团队入群与授权。' : '你尚未加入团队') }] : []),
+      onSelect: () => { if (!context.refreshing) { setRequested(team); close() } },
+    })),
+    ...(context.refreshing ? [{ type: 'label' as const, id: 'refreshing', text: tr('正在核验团队身份…') }] : []),
   ]
-  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={eligibility.personalCanSend ? ['personal'] : []} showSelectionIndicator actions={actions} anchor={
-    <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我')} title={tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
-      style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { setRequested(''); setOpen(value => !value) }}>
-      <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} /><span>{tr('我')}</span><CaretDown size={10} />
-    </button>
-  } />
+  return <>
+    <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={['personal']} showSelectionIndicator actions={actions} anchor={
+      <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我')} title={tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
+        style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { if (!open) context.retry(); setOpen(value => !value) }}>
+        <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} /><span>{tr('我')}</span><CaretDown size={10} />
+      </button>
+    } />
+    {requested && <TeamFeatureDialog title={tr('代表团队发言')} teamName={requested.name} onClose={() => setRequested(undefined)}>
+      <div style={{ padding: 20 }}>
+        <p style={styles.hint}>{tr('消息身份预览')}</p>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <ArkmeUserAvatar avatarRef={selfAvatarRef} size={32} label={tr('我的头像')} /><strong>{selfName}</strong>
+          <button type="button" style={{ ...styles.link, background: arkmeTheme.accentSoft, borderRadius: 6 }}
+            onClick={() => { setViewTeam(requested.jotmoId); setRequested(undefined) }}>{requested.name} ↗</button>
+        </div>
+        <p style={styles.hint}>{tr('群成员可通过团队标识查看资料、联系团队。代表团队发言不会自动让其他同事看到这个群的内容。')}</p>
+        <TeamGroupPendingNotice>{tr('尚未切换，仍以个人身份发送；草稿已保留。')}</TeamGroupPendingNotice>
+      </div>
+    </TeamFeatureDialog>}
+    {viewTeam && <TeamPublicCardDialog accountKey={accountKey} jotmoId={viewTeam} onClose={() => setViewTeam(undefined)} />}
+  </>
 }
 
 const styles: Record<string, CSSProperties> = {

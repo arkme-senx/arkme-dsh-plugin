@@ -74,6 +74,30 @@ describe('team group frontend handoff boundary', () => {
   })
 })
 
+describe('team public card projection', () => {
+  it('reads a real member channel but exposes only public presentation and never opens a conversation', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id, role: 3 }] } : channel)
+    const value = await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })
+    expect(value).toMatchObject({ name: channel.name, jotmoId: channel.jotmo_id, contact: { state: 'available', publicRef: channel.public_ref } })
+    expect(Object.keys(value as object).sort()).toEqual(['avatar', 'contact', 'jotmoId', 'name'])
+    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/message-channel/get'])
+  })
+  it('uses public discovery for external viewers without calling member-only channel APIs or inventing a contact link', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { name: '公开团队', jotmo_id: 'public_team', requires_approval: true, state: 'not_member', avatar: { mode: 'default' } } })
+    expect(await f.service.execute('team.app.public-card', { jotmoId: 'public_team' })).toMatchObject({ name: '公开团队', contact: { state: 'backend_pending' } })
+    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
+  })
+  it('preserves disabled channel state and rejects wrong identity or account', async () => {
+    let value = { ...channel, enabled: false }
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id }] } : value)
+    expect(await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).toMatchObject({ contact: { state: 'disabled' } })
+    value = { ...value, jotmo_id: 'wrong' }
+    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  })
+})
+
 describe('internal group preparation boundary', () => {
   const owner = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 1 }
   it('validates creation and linking without writing any group membership', async () => {
