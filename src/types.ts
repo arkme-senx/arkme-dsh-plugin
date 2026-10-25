@@ -4188,6 +4188,7 @@ export type ArkmePluginOperation =
   | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
+  | 'dictation.transcribe'
   | 'auth.status'
   | 'auth.config'
   | 'auth.begin'

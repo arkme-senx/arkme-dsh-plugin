@@ -113,6 +113,7 @@ export async function lookupArkmeRecordingImport(importPath: string, taskId: str
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
+  | 'dictation.transcribe'
   | 'emoji.recent.list'
   | 'conversation.viewport.read'
   | 'conversation.viewport.write'

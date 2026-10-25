@@ -1,3 +1,4 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
@@ -2157,6 +2158,7 @@ export function ArkmeSurface({
 
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
+  const [dictationBusy, setDictationBusy] = useState(false)
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
@@ -2684,7 +2686,7 @@ export function ArkmeSurface({
   // message waits for the server, otherwise fast keyboard input is dropped.
   const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
   useSyncExternalStore(conversationSending.subscribe, conversationSending.getRevision, conversationSending.getRevision)
-  const canSend = (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
+  const canSend = !dictationBusy && (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
     ? !archiveReadOnly && !directAdmission.blocked && (pendingArticle ? !pendingArticle.sending : arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles))
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
@@ -9432,7 +9434,7 @@ export function ArkmeSurface({
                 }
               }} />
             </div>
-            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
+            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeDictationButton key={`dictation:${composerDraftKey}:${activeRecordReeditComposer?.item.itemUid ?? ''}`} scopeKey={composerDraftKey} active={activeConversation && activeSelectMode === undefined} disabled={composerFilesDisabled || directAdmission.blocked} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} /><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
               key={`emoji-picker:${authenticatedAccountKey}:${conversationOverlayKey}`}
               accountKey={authenticatedAccountKey}
               disabled={activeSelectMode !== undefined || directAdmission.blocked || activeRecordReeditComposer !== undefined}

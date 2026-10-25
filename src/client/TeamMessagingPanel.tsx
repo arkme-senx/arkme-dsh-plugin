@@ -1,3 +1,4 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
@@ -312,6 +313,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const fileInput = useRef<HTMLInputElement>(null)
+  const [dictationBusy, setDictationBusy] = useState(false)
   const editor = useRef<ArkmeRichComposerHandle>(null), composer = useRef<HTMLDivElement>(null)
   const addTrigger = useRef<HTMLButtonElement>(null), [addOpen, setAddOpen] = useState(false)
   const [selectionRequest, setSelectionRequest] = useState<ArkmeComposerSelectionRequest>()
@@ -460,6 +462,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     }
   }, [delivery.tasks, conversation.key, refresh, onChanged])
   const send = async () => {
+    if (dictationBusy) return
     const timeline = latest.current, draft = draftRef.current
     if (!timeline || sendBusy.current || arkmeAttachmentsPending(draft.attachments ?? []) || busy) return
     if (!draft.attempt && ((!draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || !timeline.conversation.channel.enabled || timeline.conversation.blocked)) return
@@ -555,6 +558,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
   }
   const mutateMessage = async () => {
+    if (dictationBusy) return
     if (busy || editing?.needsReload || (editing && (!latest.current?.conversation.channel.enabled || latest.current.conversation.blocked || (!editing.text.trim() && !editing.message.media.length)))) return
     setBusy(true)
     try {
@@ -856,7 +860,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
             next.splice(from,1); next.splice(to,0,file); return next
           })} />}
         <div data-arkme-composer-footer="tools" style={composerLayout.tools}>
-          <div style={{display:'flex',alignItems:'center',gap:2}}>
+          <div style={{display:'flex',alignItems:'center',gap:2}}><ArkmeDictationButton scopeKey={`${storageKey}:${editing?.message.key ?? ''}`} disabled={busy || !!draft.attempt || !current.channel.enabled || current.blocked} getTarget={() => editor.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
           {!editing && <><ArkmeComposerToolButton ref={addTrigger} title={tr('添加内容')} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addOpen} disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onClick={() => setAddOpen(value => !value)}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton>
           <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onChange={e => { selectFiles(e.target.files); e.target.value = '' }} /></>}
           <ArkmeEmojiPicker mode="text" accountKey={accountKey} scopeKey={storageKey} disabled={busy || !!editing || !current.channel.enabled || current.blocked}
@@ -878,7 +882,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           </div>
           {editing && !editing.needsReload && <span />}
           {editing?.needsReload && <ArkmeComposerToolButton disabled={busy} onClick={() => { void reloadEdit() }}>{tr('读取最新版本')}</ArkmeComposerToolButton>}
-          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton shortcutHint={attachmentPreparationHint(draftAttachments) ?? tr('Enter发送 / Shift+Enter换行')} ariaLabel={draft.attempt ? tr('重试') : tr('发送')} disabled={busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
+          {editing ? <ArkmeComposerSendButton ariaLabel={tr(editing.latestText !== undefined ? '确认覆盖最新版本' : '保存修改')} disabled={dictationBusy || busy || !!editing.needsReload || !current.channel.enabled || current.blocked || (!editing.text.trim() && !editing.message.media.length)} onClick={() => { void mutateMessage() }} /> : <ArkmeComposerSendButton shortcutHint={attachmentPreparationHint(draftAttachments) ?? tr('Enter发送 / Shift+Enter换行')} ariaLabel={draft.attempt ? tr('重试') : tr('发送')} disabled={dictationBusy || busy || uploading || !timeline || (!draft.attempt && !draft.text.trim() && !draft.assets.length && !draft.localFiles?.length) || (!draft.attempt && (!current.channel.enabled || current.blocked))} onClick={() => { void send() }} />}
 
         </div>
       </div>

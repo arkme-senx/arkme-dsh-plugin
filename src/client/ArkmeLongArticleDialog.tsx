@@ -1,3 +1,5 @@
+import { ArkmeDictationButton, textareaDictationTarget } from './ArkmeDictationButton.js'
+import type { DictationTarget } from './dictation-target.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeFileActionToast, useArkmeFileActionNotice } from './ArkmeFileViewer.js'
@@ -127,6 +129,9 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   messageActionRef.current = item?.messageActionRef
   const itemUid = item?.itemUid
   const creating = item === undefined
+  const dictationTargetRef = useRef<(() => DictationTarget | undefined) | undefined>()
+  const plainBodyRef = useRef<HTMLTextAreaElement>(null)
+  const [dictationBusy, setDictationBusy] = useState(false)
   const [detail, setDetail] = useState<ArkmeLongArticleDetail>()
   const detailRequest = useRef<AbortController>()
   useEffect(() => () => detailRequest.current?.abort(), [])
@@ -408,6 +413,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   }
 
   const publish = async () => {
+    if (dictationBusy) return
     if (loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article)) return
     if (!creating && baseVersionRef.current !== detail?.version) { setError('此草稿基于旧版本，正文已有新修改；草稿已保留，请核对后重新编辑。'); return }
     const normalizedTitle = title.trim()
@@ -525,7 +531,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const savedAt = savedAtMillis === undefined ? undefined : new Date(savedAtMillis)
   const savedTime = savedAt && [savedAt.getHours(), savedAt.getMinutes(), savedAt.getSeconds()].map(value => String(value).padStart(2, '0')).join(':')
 
-  const publishAction = <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, ...(windowMode ? { background: theme.primaryAction, color: theme.onPrimaryAction, padding: '8px 18px', fontSize: 14 } : {}), opacity: submitting ? .55 : 1 }} disabled={loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || closingDraft || closePrompt || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish() }}>{windowMode ? (creating ? (submitting ? tr('发送中…') : tr('发送')) : (submitting ? tr('正在保存…') : tr('确认修改'))) : creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : tr("发布"))}</button>
+  const publishAction = <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, ...(windowMode ? { background: theme.primaryAction, color: theme.onPrimaryAction, padding: '8px 18px', fontSize: 14 } : {}), opacity: submitting ? .55 : 1 }} disabled={dictationBusy || loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || closingDraft || closePrompt || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish() }}>{windowMode ? (creating ? (submitting ? tr('发送中…') : tr('发送')) : (submitting ? tr('正在保存…') : tr('确认修改'))) : creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : tr("发布"))}</button>
 
   return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}), ...(workspace ? { position: 'relative', inset: 'auto', display: 'flex', height: '100%', minHeight: 0, width: '100%', padding: 0, zIndex: 'auto', background: 'transparent' } : {}) }} role={workspace ? 'region' : 'dialog'} aria-modal={windowMode || workspace ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
     <article style={{ ...styles.dialog, ...(windowMode || workspace ? { width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base } : {}) }} data-arkme-long-article-dialog={creating ? 'create' : editing ? 'edit' : 'detail'}>
@@ -553,7 +559,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
           {editing && draftFormat === 'markdown' && !markdownEnabled
             ? <div role="status">{tr("Markdown 长文暂不可编辑，草稿已保留。")}<button type="button" onClick={() => { setCapabilityEpoch(value => value + 1) }}>{tr("重试")}</button></div>
             : editing && markdownEnabled && !accountChanged
-            ? <ArkmeLongArticleEditor key={editorEpoch} initialSource={textContent} initialDocument={initialDocument} failedReferences={failedReferences} disabled={submitting || closingDraft || closePrompt} expectedUserId={authAtOpen.current?.userId}
+            ? <ArkmeLongArticleEditor dictationTargetRef={dictationTargetRef} key={editorEpoch} initialSource={textContent} initialDocument={initialDocument} failedReferences={failedReferences} disabled={submitting || closingDraft || closePrompt} expectedUserId={authAtOpen.current?.userId}
                 resolveImage={ref => { const block = detail?.contentBlocks?.find(value => value.kind === 'image' && `arkme-asset:${value.fileAssetUid}` === ref); return block ? articleImageUrl(block) : undefined }}
                 onError={message => { showImageNotice({ kind: 'error', message }) }} onPreparingChange={setPreparingImages} onChange={value => {
                   const previous = articleRef.current
@@ -567,10 +573,12 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
                   if (previous && JSON.stringify(previous.document) !== JSON.stringify(value.document)) { changeRevision.current++; setDraftState('unsaved'); setDocumentDirty(true); documentDirtyRef.current = true }
                 }} />
             : editing
-            ? <textarea autoFocus={creating} style={styles.bodyInput} value={textContent} maxLength={MAX_CONTENT_LENGTH} placeholder={tr("请输入正文内容")} aria-label={tr("长文正文")} disabled={submitting || closingDraft || closePrompt} readOnly={accountChanged} onChange={event => { changeRevision.current++; setDraftState('unsaved'); setTextContent(event.target.value) }} />
+            ? <textarea ref={plainBodyRef} autoFocus={creating} style={styles.bodyInput} value={textContent} maxLength={MAX_CONTENT_LENGTH} placeholder={tr("请输入正文内容")} aria-label={tr("长文正文")} disabled={submitting || closingDraft || closePrompt} readOnly={accountChanged} onChange={event => { changeRevision.current++; setDraftState('unsaved'); setTextContent(event.target.value) }} />
             : readFormat === 'markdown' ? <ArkmeLongArticleBody text={textValue} blocks={readBlocks} textStyle={{ fontSize: styles.bodyRead?.fontSize, lineHeight: styles.bodyRead?.lineHeight }} /> : <p style={styles.bodyRead}><ArkmeRichText text={textValue} linkLabelMode="raw" /></p>}
         </div>}
-      {windowMode && <footer style={{ flex: 'none', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 20px', padding: '12px 32px', borderTop: `1px solid ${theme.border}`, color: theme.secondary, fontSize: 12 }}>
+      {(windowMode || editing) && <footer style={{ flex: 'none', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 20px', padding: '12px 32px', borderTop: `1px solid ${theme.border}`, color: theme.secondary, fontSize: 12 }}>
+        {editing && <ArkmeDictationButton scopeKey={`article:${editorEpoch}:${authAtOpen.current?.userId}`} disabled={submitting || closingDraft || closePrompt || accountChanged || loading}
+          getTarget={() => markdownEnabled ? dictationTargetRef.current?.() : textareaDictationTarget(plainBodyRef.current, text => { changeRevision.current++; setDraftState('unsaved'); setTextContent(text) })} onBusyChange={setDictationBusy} />}
         {statsInFooter && articleStats}
         <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: draftState === 'failed' ? theme.danger : undefined }}>
           {accountChanged ? tr('账号已切换') : !editing ? tr('只读') : tr(draftState === 'saved' ? '草稿已保存' : draftState === 'saving' ? '正在保存草稿…' : draftState === 'failed' ? '草稿保存失败，请重试' : '未保存')}

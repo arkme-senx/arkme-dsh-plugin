@@ -1,5 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+停止听写|Stop dictation
+正在识别语音|Recognizing speech
+正在开启麦克风…|Starting microphone…
+正在听写，停顿后文字会陆续出现|Listening. Text appears after a pause.
+正在识别剩余语音…|Recognizing remaining speech…
+听写已停止|Dictation stopped
+重试识别|Retry recognition
+复制识别结果|Copy recognized text
+关闭听写提示|Close dictation notice
+请先将光标放到可编辑的正文中|Place the cursor in editable text first.
+
 同步失败，已有内容仍可阅读|Sync failed. Existing content is still available.
 尚未开启分析|Analysis is off
 暂时无法确认分析设置|Analysis settings are temporarily unavailable
