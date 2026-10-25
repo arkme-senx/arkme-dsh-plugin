@@ -33,6 +33,7 @@ import { ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS } from './conversation-memory-
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
+import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
 import { useTeamVisitorActions } from './TeamVisitorActions.js'
 import { TeamVisitorRecords } from './TeamVisitorRecords.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
@@ -255,6 +256,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
   const [snapshotKey, setSnapshotKey] = useState<string>()
+  const [teamCardOpen, setTeamCardOpen] = useState(false)
+  useEffect(() => { setTeamCardOpen(false) }, [accountKey, conversation.key])
   const closeSnapshot = useCallback(() => setSnapshotKey(undefined), [])
   const [showsInputTime, setShowsInputTime] = useArkmeComposerInputTimePreference()
   const [visitorRecords, setVisitorRecords] = useState(false), [recordPerson, setRecordPerson] = useState<TeamIdentity>(), [locatedKey, setLocatedKey] = useState<string>()
@@ -701,11 +704,16 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       }} />}
     <header style={messageLayout.header}>
       <div style={messageLayout.titleGroup}><div style={messageLayout.titleBlock}>
-        <div style={messageLayout.titleLine}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><TeamVisitorMembership conversation={current} /></div>
+        <div style={messageLayout.titleLine}><strong style={messageLayout.title}>{current.side === 'team' ? current.visitor?.nickname : current.channel.name}</strong><TeamVisitorMembership conversation={current} />
+          {current.side === 'external' && <button type="button" aria-label={tr('查看团队资料与功能介绍')} aria-haspopup="dialog" aria-expanded={teamCardOpen}
+            style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', flexShrink: 0 }} onClick={() => {
+              setDetailKey(undefined); setSnapshotKey(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined); setTeamCardOpen(true)
+            }}><ArkmeTopicTagBadge label={tr('团队')} /></button>}
+        </div>
         <small style={messageLayout.headerSubtitle}>{current.side === 'team' ? `${current.channel.name} · ${tr('外部用户')}` : tr('团队对话')}</small>
       </div></div>
       <TeamConversationTools key={`${accountKey}:${conversation.key}`} conversation={current} accountKey={accountKey} host={paneHost}
-        overlayOpen={!!(detailKey || snapshotKey || visitorRecords || receiptMessage)} resolveIdentity={personName} onOpenPanel={() => { setDetailKey(undefined); setSnapshotKey(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) }}
+        overlayOpen={!!(teamCardOpen || detailKey || snapshotKey || visitorRecords || receiptMessage)} resolveIdentity={personName} onOpenPanel={() => { setTeamCardOpen(false); setDetailKey(undefined); setSnapshotKey(undefined); setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) }}
         getReadingDate={() => {
           const node = scroller.current
           if (!node) return undefined
@@ -729,6 +737,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
         }}/>
     </header>
+    {teamCardOpen && current.side === 'external' && <TeamPublicCardDialog key={`${accountKey}:${conversation.key}`} accountKey={accountKey}
+      jotmoId={current.channel.jotmoId} currentChannel={current.channel} onClose={() => setTeamCardOpen(false)} />}
     {historyWindowOpen && <div style={{ textAlign: 'center', padding: 6 }}><button type="button" onClick={() => {
       historyWindow.current = 0; setHistoryWindowOpen(false); latest.current = undefined; viewport.current = undefined
       void refresh(0, true)
