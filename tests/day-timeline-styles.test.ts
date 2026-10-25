@@ -49,10 +49,16 @@ describe('day timeline production style loading', () => {
 vi.mock('../src/client/arrangement-board.css?inline', async () => ({
   default: (await import('node:fs')).readFileSync(`${process.cwd()}/src/client/arrangement-board.css`, 'utf8'),
 }))
+vi.mock('../src/client/arrangement-workspace.css?inline', async () => ({
+  default: (await import('node:fs')).readFileSync(`${process.cwd()}/src/client/arrangement-workspace.css`, 'utf8'),
+}))
 it('installs arrangement board layout through the production style lifecycle', () => {
   installArkmeRedesignStyles()
   const css = document.querySelector(selector)?.textContent ?? ''
   expect(css).toContain('.arkme-arrangement-board')
   expect(css).toContain('.arkme-arrangement-columns')
   expect(css).toContain('.arkme-personal-day-body[hidden]')
+  expect(css).toContain('.arkme-arrangement-workspace')
+  expect(css).toContain('.arkme-arrangement-navigation')
+  expect(css).toContain('@container arrangement-workspace')
 })

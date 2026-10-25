@@ -6,7 +6,7 @@ import { tr } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeArrangementRecordingSource } from './ArkmeArrangementRecordingSource.js'
 
-export function ArkmeArrangementContent({ item, expanded, onSourceNavigate }: { item: ArkmeArrangementItem; expanded: boolean; onSourceNavigate?(): void }) {
+export function ArkmeArrangementContent({ item, expanded, onSourceNavigate, readDetail = true }: { item: ArkmeArrangementItem; expanded: boolean; readDetail?: boolean; onSourceNavigate?(): void }) {
   const { arrangementRef } = item
   const [detail, setDetail] = useState<ArkmeArrangementDetail>()
   const [loading, setLoading] = useState(false)
@@ -14,7 +14,7 @@ export function ArkmeArrangementContent({ item, expanded, onSourceNavigate }: { 
   const [attempt, setAttempt] = useState(0)
   const regionId = useId()
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || !readDetail) return
     const controller = new AbortController()
     setError(false)
     setLoading(true)
@@ -27,7 +27,7 @@ export function ArkmeArrangementContent({ item, expanded, onSourceNavigate }: { 
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [arrangementRef, expanded, attempt])
+  }, [arrangementRef, expanded, attempt, readDetail])
   const currentDetail = detail?.arrangementRef === arrangementRef ? detail : undefined
   const source = currentDetail?.creationSource ?? item.creationSource
   const provenance = currentDetail?.provenance ?? item.provenance

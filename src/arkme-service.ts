@@ -2969,6 +2969,13 @@ arkoImagesV1:true,
     return await this.arrangement.listArrangements(options)
   }
 
+  async deletedArrangements(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}) {
+    return this.arrangement.deletedArrangements(options)
+  }
+  async deletedArrangementDetail(arrangementRef: string, signal?: AbortSignal) {
+    return this.arrangement.deletedArrangementDetail(arrangementRef, signal)
+  }
+
   /** Resolve one Provider-issued Arrangement reference and return the current owner fact. */
   async recordingDayArrangements(options: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
     return this.arrangement.recordingDayArrangements(options, signal)
