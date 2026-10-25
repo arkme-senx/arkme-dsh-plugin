@@ -61,9 +61,14 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
       arkmeContactsTab.select(selection)
       onClose(); arkmeUi.showContacts()
     }} />
-  return <TeamFeatureDialog title={tr('团队资料')} teamName={card?.name ?? `@${jotmoId}`} className="arkme-team-public-card" onClose={onClose}
-    footer={<button type="button" data-arkme-feedback="primary" style={styles.create} onClick={() => setCreating(true)}>{tr('我也要创建团队')}</button>}>
-    <style>{`.arkme-contact-remark-dialog.arkme-team-public-card { width:min(440px,100%); }`}</style>
+  return <TeamFeatureDialog title={tr('团队资料')} teamName={card?.name ?? `@${jotmoId}`} className="arkme-team-public-card" onClose={onClose}>
+    <style>{`
+      .arkme-contact-remark-dialog.arkme-team-public-card { width:min(440px,100%); }
+      .arkme-team-public-card .arkme-team-create-link { border:0; border-radius:4px; background:transparent; color:${arkmeTheme.secondary}; padding:6px; font:inherit; font-size:12px; cursor:pointer; }
+      .arkme-team-public-card .arkme-team-create-link::after { content:' ↗'; }
+      .arkme-team-public-card .arkme-team-create-link:is(:hover,:focus-visible) { color:${arkmeTheme.text}; }
+      .arkme-team-public-card .arkme-team-create-link:focus-visible { outline:2px solid ${arkmeTheme.accent}; outline-offset:2px; }
+    `}</style>
     <div style={styles.body}>
       {!card && !error && <p role="status">{tr('正在加载团队资料…')}</p>}
       {error && <p role="alert">{error} <button type="button" style={styles.link} onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></p>}
@@ -86,6 +91,9 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
           <li>{tr('同事共同查看、接续回复')}</li>
           <li>{tr('消息与已读状态同步')}</li>
         </ul>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+          <button type="button" className="arkme-team-create-link" data-arkme-hover="none" onClick={() => setCreating(true)}>{tr('我也要创建团队')}</button>
+        </div>
       </section>
     </div>
   </TeamFeatureDialog>
@@ -99,6 +107,5 @@ const styles: Record<string, CSSProperties> = {
   contact: { display: 'flex', justifyContent: 'flex-end', paddingTop: 8 },
   features: { borderTop: `1px solid ${arkmeTheme.borderSoft}`, marginTop: 16, paddingTop: 20 },
   featureList: { margin: 0, paddingLeft: 18, color: arkmeTheme.secondary, lineHeight: 2, fontSize: 13 },
-  create: { border: 0, borderRadius: 8, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, padding: '10px 16px', font: 'inherit', cursor: 'pointer', width: '100%' },
   notice: { padding: 12, borderRadius: 10, background: arkmeTheme.subtle, lineHeight: 1.7 },
 }
