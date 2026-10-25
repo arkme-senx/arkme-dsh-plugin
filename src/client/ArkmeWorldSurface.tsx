@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
@@ -24,7 +24,10 @@ import type {
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldVoiceprintSocialContext,
+  ArkmeTeam,
 } from '../types.js'
+import { TEAM_WORLD_PENDING_TEXT, type TeamWorldPrepareResult } from '../team-world-contract.js'
+import { TeamWorldPublisherPicker, useTeamWorldPublisher } from './TeamWorldPublisher.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../extensions/types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -1505,8 +1508,18 @@ function WorldPublishImagePreview({ file, index }: { file: File; index: number }
     : <img src={url} alt={tr("待发布图片 {v0}", { v0: String(index + 1) })} style={styles.publishImagePreview} />
 }
 
-export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(result: ArkmeWorldPublishResult): void }) {
+interface PublishDialogProps {
+  onClose(): void; onPublished(result: ArkmeWorldPublishResult): void
+  initialTeam?: ArkmeTeam; actorName?: string | undefined; actorAvatarRef?: string | undefined
+}
+export function PublishDialog(props: PublishDialogProps) {
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
+  return <ScopedPublishDialog key={`${accountKey}:${props.initialTeam?.jotmoId ?? ''}`} {...props} accountKey={accountKey} />
+}
+function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, actorAvatarRef, accountKey }: PublishDialogProps & { accountKey: string }) {
   useArkmeLocale()
+  const publisher = useTeamWorldPublisher(accountKey, initialTeam)
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
@@ -1539,6 +1552,9 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
     if (textContent === '') { setMessage(files.length > 0 ? '图片动态也需要写一点文字' : '请输入要发到世界的内容'); return }
     if (files.some(file => !file.type.startsWith('image/'))) { setMessage('只能上传图片'); return }
     if (files.some(file => file.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) { setMessage('单张图片不能超过 20MB'); return }
+    if (publisher.selected && (publisher.loading || !publisher.team || !accountKey)) {
+      setMessage(tr(publisher.loading ? '正在核验团队身份…' : '当前团队身份不可用，请重新选择；草稿已保留。')); return
+    }
     const controller = new AbortController()
     requestRef.current = controller
     const owner = arkmeAuthStore.getSnapshot().auth
@@ -1548,6 +1564,16 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
     })
     sendingRef.current = true
     try {
+      if (publisher.selected) {
+        setSending(true); setMessage(tr('正在核验团队身份…'))
+        const result = await callArkme<TeamWorldPrepareResult>('team.app.world.prepare', {
+          expectedAccountKey: accountKey, teamRef: publisher.team!.teamRef, requestUid: mutationIdRef.current,
+        }, controller.signal)
+        controller.signal.throwIfAborted()
+        if (result.state !== 'backend_pending') throw new Error(tr('团队发布协议需要更新插件后使用'))
+        setMessage(`${tr(TEAM_WORLD_PENDING_TEXT)} ${tr('草稿已保留，尚未发布。')}`)
+        return
+      }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
       setSending(true)
       setMessage(files.length > 0 ? '正在上传图片…' : '正在发布…')
@@ -1604,6 +1630,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
         </div>
         <button data-arkme-feedback="neutral" type="button" style={styles.publishClose} disabled={sending} aria-label={tr("关闭发布窗口")} onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
       </header>
+      <TeamWorldPublisherPicker state={publisher} actorName={actorName} actorAvatarRef={actorAvatarRef} disabled={sending}
+        onSelect={id => { publisher.select(id); resetMutationId(); setMessage('') }} />
       <div style={styles.publishEditor} data-world-publish-editor="true">
         <textarea style={styles.publishTextarea} value={text} disabled={sending} maxLength={2000} autoFocus aria-label={tr("世界内容")} placeholder={tr("分享此刻的想法…")} onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
         <div style={styles.publishEditorMeta}><span>{tr("发布后会作为公开动态展示")}</span><span>{text.length} / 2000</span></div>
@@ -1629,7 +1657,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
             </div>}
       </section>
       <div style={styles.publishFooter}>
-        <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') ? styles.modalError : {}) }}>{message}</span>
+        <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') && !message.includes(tr(TEAM_WORLD_PENDING_TEXT)) ? styles.modalError : {}) }}>{message}</span>
         <span style={styles.publishActions}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : tr("发布")}</button></span>
       </div>
     </section>
@@ -1774,11 +1802,13 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, onBackToWorld, onSourceActivated }: {
+export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, actorName, actorAvatarRef, onBackToWorld, onSourceActivated }: {
   notificationRef?: string
   target?: ArkmeWorldViewTarget
   initialScope?: WorldScope
   currentUserId?: number
+  actorName?: string | undefined
+  actorAvatarRef?: string | undefined
   onBackToWorld?(): void
   onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void
 } = {}) {
@@ -2157,7 +2187,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
       onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
       onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
-    {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={result => {
+    {composerOpen && <PublishDialog actorName={actorName} actorAvatarRef={actorAvatarRef} onClose={() => { setComposerOpen(false) }} onPublished={result => {
       setLoaded(current => ({ ...current, all: false, mine: false }))
       setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')
       setScope('mine')

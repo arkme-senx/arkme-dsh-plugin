@@ -5,6 +5,15 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 import type { TeamCodexService } from '../src/team-codex-service.js'
 
+it('never silently publishes a team intent through a personal World route', async () => {
+  const service = { publishWorldText: vi.fn(), publishWorldFileAssets: vi.fn() } as unknown as ArkmeService
+  for (const operation of ['world.publish-text', 'world.publish-file-assets'] as const) {
+    await expect(dispatchArkmeHostOperation(service, operation, { teamRef: 'team', clientMutationId: 'request', textContent: '内容' })).rejects.toThrow('不能改为个人发布')
+    await expect(dispatchArkmeHostOperation(service, operation, { publisher: { kind: 'team' } })).rejects.toThrow('不能改为个人发布')
+  }
+  expect(service.publishWorldText).not.toHaveBeenCalled(); expect(service.publishWorldFileAssets).not.toHaveBeenCalled()
+})
+
 it('revalidates Codex task access before forwarding and never delivers after revocation', async () => {
   const forwardCodexChat = vi.fn(async () => ({ itemUid: 'sent' }))
   const service = { forwardCodexChat } as unknown as ArkmeService

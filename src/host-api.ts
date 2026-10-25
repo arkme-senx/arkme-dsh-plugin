@@ -2107,15 +2107,21 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
-    case 'world.publish-text': return await service.publishWorldText({
+    case 'world.publish-text': {
+      if (params.publisher !== undefined || params.teamRef !== undefined) throw new ArkmePluginError('world-publisher-unsupported', '团队发布接口开发中，不能改为个人发布', false, 409)
+      return await service.publishWorldText({
       clientMutationId: stringParam(params, 'clientMutationId'),
       textContent: stringParam(params, 'textContent'),
-    })
-    case 'world.publish-file-assets': return await service.publishWorldFileAssets({
+      })
+    }
+    case 'world.publish-file-assets': {
+      if (params.publisher !== undefined || params.teamRef !== undefined) throw new ArkmePluginError('world-publisher-unsupported', '团队发布接口开发中，不能改为个人发布', false, 409)
+      return await service.publishWorldFileAssets({
       clientMutationId: stringParam(params, 'clientMutationId'),
       textContent: stringParam(params, 'textContent'),
       fileAssets: worldPublishFileAssetsParam(params),
-    })
+      })
+    }
     case 'dsh-beta-community.entry-state': return await service.dshBetaCommunityEntryState()
     case 'dsh-beta-community.join': return await service.joinDSHBetaCommunity()
     case 'topic.create': return await service.createTopic(
