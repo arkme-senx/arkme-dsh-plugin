@@ -1802,6 +1802,22 @@ export class ChatService {
     return undefined
   }
 
+  /** Read-only human candidates for team management, not group invitations. */
+  async teamMemberCandidates(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<import('../team-member-add-contract.js').TeamMemberCandidateSourcePage> {
+    const session = await this.runtime.requireSession()
+    const source = await this.requireReadReceiptChatSource(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('team-candidate-source-invalid', '请选择群聊', false, 400)
+    const page = await this.pageSourceMembers(sourceRef, { ...options, limit: 50 })
+    const presentation = page.items.length ? await this.sourceMembersPresentation(sourceRef, page.items.map(item => item.memberRef), options) : undefined
+    const resolved = await Promise.all((presentation?.items ?? []).map(async item => ({
+      item, userId: (await this.openChatMemberRef(item.memberRef, session.userId, source.ownerRef)).targetUserId,
+    })))
+    const remarks = await this.source.privateRemarksByUserIds(resolved.map(item => item.userId), options)
+    return { items: resolved.map(({ item, userId }) => ({ userId, displayName: remarks.get(userId) || item.displayName,
+      nickname: item.memberName || item.displayName, ...(item.avatarRef ? { avatarRef: item.avatarRef } : {}),
+    })), hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }
+  }
+
   async pageSourceMembers(sourceRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeConversationMemberPage> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()

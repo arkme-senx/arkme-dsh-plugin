@@ -528,6 +528,21 @@ export class ArkmeService {
     }, {
       privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
       openSourceRef: (ref, userId) => this.source.openSourceRef(ref, userId),
+    }, {
+      list: async (kind, options) => {
+        if (kind === 'contacts') return await this.contactDirectory.teamMemberCandidates(options)
+        if (kind === 'group') return await this.chat.teamMemberCandidates(options.sourceRef!, options)
+        const page = await this.source.listSources('root', { ...options, limit: 50 })
+        return {
+          items: page.items.flatMap(item => item.kind === 'private_chat' && item.peerUserId ? [{
+            userId: item.peerUserId, displayName: item.displayName,
+            ...(item.privateNickname ? { nickname: item.privateNickname } : {}),
+            ...(item.avatarRef ? { avatarRef: item.avatarRef } : {}),
+          }] : []),
+          groups: page.items.filter(item => item.kind === 'group_chat'), hasMore: page.hasMore,
+          ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+        }
+      },
     })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,

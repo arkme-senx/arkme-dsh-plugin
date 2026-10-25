@@ -300,6 +300,19 @@ export class ContactDirectoryService {
     }
   }
 
+  /** Internal picker adapter. Contact identities remain inside the Host. */
+  async teamMemberCandidates(options: { cursor?: string; refresh?: boolean; signal?: AbortSignal } = {}): Promise<import('../team-member-add-contract.js').TeamMemberCandidateSourcePage> {
+    const page = await this.list('contacts', { ...options, limit: 50 })
+    if (page.cursorStale) throw new ArkmePluginError('team-candidates-stale', '联系人列表已更新，请重新加载', true, 409)
+    const items = await Promise.all(page.items.flatMap(item => item.kind === 'contact' ? [this.resolveContactRef(item.contactRef).then(({ entry }) => ({
+      userId: entry.targetUserId, displayName: entry.displayName, nickname: entry.nickname,
+      ...(entry.accountName ? { accountName: entry.accountName } : {}),
+      ...(entry.avatarRef ? { avatarRef: entry.avatarRef } : {}),
+      ...(entry.avatarFallback ? { avatarFallback: entry.avatarFallback } : {}),
+    }))] : []))
+    return { items, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), ...(page.coverage ? { coverage: page.coverage } : {}) }
+  }
+
   private async listContacts(
     options: { limit?: number; cursor?: string; refresh?: boolean; signal?: AbortSignal },
   ): Promise<ArkmeDirectoryPage> {

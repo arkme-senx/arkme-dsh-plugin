@@ -187,6 +187,14 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findByProps({ 'aria-label': '2 位成员' })).toBeDefined()
   })
 
+  it.each(['owner', 'admin', 'member'] as const)('offers the add-members picker only to managers: %s', async role => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = role
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(renderer!.root.findAllByType('button').some(node => text(node) === '＋ 添加成员')).toBe(role !== 'member')
+  })
+
   it('does not offer the owner a leave action', async () => {
     const teamPage = page(teamRefA, '团队 A')
     teamPage.team.currentUserRole = 'owner'
