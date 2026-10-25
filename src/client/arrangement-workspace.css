@@ -23,11 +23,13 @@
 .arkme-arrangement-task { display: flex; align-items: flex-start; min-width: 0; border-radius: 9px; padding: 14px 10px; gap: 12px; margin-bottom: 2px; transition: background 120ms ease, opacity 160ms ease; }
 .arkme-arrangement-task:hover { background: var(--aw-hover); }
 .arkme-arrangement-task[data-selected=true] { background: var(--aw-selected); }
-.arkme-arrangement-workspace .arkme-arrangement-checkbox { width: 18px; height: 18px; flex: 0 0 18px; display: grid; place-items: center; border: 1.5px solid color-mix(in srgb, var(--aw-ink) 32%, transparent); border-radius: 4px; padding: 0; margin-top: 2px; background: var(--aw-surface); }
-.arkme-arrangement-workspace .arkme-arrangement-checkbox[aria-checked=true] { background: #477dec; border-color: #477dec; color: white; }
+.arkme-arrangement-workspace button.arkme-arrangement-checkbox { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border: 0; border-radius: 5px; padding: 0; margin: -3px -5px 0; background: transparent; }
+/* The icon remains visible even when the workspace's shared button reset removes borders. */
+.arkme-arrangement-checkbox-icon { display: block; flex: none; color: color-mix(in srgb, var(--aw-ink) 58%, var(--aw-surface)); }
+.arkme-arrangement-checkbox:hover .arkme-arrangement-checkbox-icon, .arkme-arrangement-checkbox:focus-visible .arkme-arrangement-checkbox-icon,
+.arkme-arrangement-checkbox[aria-checked=true] .arkme-arrangement-checkbox-icon { color: #477dec; }
 .arkme-arrangement-workspace .arkme-arrangement-checkbox[aria-busy=true] { opacity: .7; }
 .arkme-arrangement-task[data-completed=true] strong { text-decoration: line-through; color: var(--aw-secondary); }
-.arkme-arrangement-task[data-saved=true] { opacity: .6; }
 .arkme-arrangement-task-body { flex: 1; min-width: 0; padding: 0; display: flex; gap: 12px; align-items: flex-start; text-align: left; }
 .arkme-arrangement-task-copy { flex: 1; min-width: 0; }
 .arkme-arrangement-task-title { display: flex; align-items: center; gap: 5px; }

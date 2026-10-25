@@ -32,6 +32,7 @@ it('requests due-filtered unfinished branches and shows the simple list before d
     {status:'following',limit:50,offset:0,dueStartAtMillis:new Date(2026,9,25).getTime(),dueEndAtMillis:new Date(2026,9,26).getTime()-1},
   ])
   expect(task('one').findByType('strong').children).toEqual(['one'])
+  expect(checkbox().findByType('svg').props).toMatchObject({width:20,height:20,'aria-hidden':true})
   expect(text(task('one'))).toContain('说明文字')
   expect(mocks.call.mock.calls.filter(c => c[0] === 'arrangements.detail')).toHaveLength(0)
   await act(async () => { task('one').findByProps({className:'arkme-arrangement-task-body'}).props.onClick(); await tick() })
@@ -52,14 +53,31 @@ it('gives immediate check feedback, plays only after confirmed completion, then 
   expect(mocks.play).not.toHaveBeenCalled()
   await act(async () => { resolve({item:item('one',{status:'completed',updatedAtMillis:now}),outcome:'confirmed'}); await tick() })
   expect(mocks.play).toHaveBeenCalledTimes(1)
-  expect(button('撤销').props.disabled).toBe(true)
-  await act(async () => { vi.advanceTimersByTime(421); await tick() })
+  expect(button('撤销').props.disabled).toBe(false)
   expect(root!.root.findAllByProps({'data-arrangement-task':'one'})).toHaveLength(0)
   mocks.call.mockImplementation(async op => op === 'arrangements.mutate' ? {item:item('one',{updatedAtMillis:now+1}),outcome:'confirmed'} : {})
   await act(async () => { button('撤销').props.onClick(); await tick() })
   expect(task('one')).toBeTruthy()
   expect(mocks.call).toHaveBeenCalledWith('arrangements.mutate', {arrangementRef:'one',intent:'cancel-complete'}, expect.any(AbortSignal))
   expect(mocks.play).toHaveBeenCalledTimes(1)
+})
+it('immediately removes the completed row and clears detail and all list selection',async()=>{
+  let finish!: (value:unknown)=>void
+  mocks.call.mockImplementation((op,params)=>{
+    if(op==='arrangements.mutate')return new Promise(resolve=>{finish=resolve})
+    if(op==='arrangements.detail')return item(params.arrangementRef)
+    return {items:params.status==='following'?[item(),item('two')]:[],total:params.status==='following'?2:0,hasMore:false}
+  })
+  await mount()
+  await act(async()=>{task('one').findByProps({className:'arkme-arrangement-task-body'}).props.onClick();await tick()})
+  expect(root!.root.findAllByProps({'aria-label':'安排详情'})).toHaveLength(1)
+  await act(async()=>{task('one').findByProps({role:'checkbox'}).props.onClick();await tick()})
+  expect(task('one')).toBeTruthy() // A pending save is not represented as confirmed completion.
+  await act(async()=>{finish({item:item('one',{status:'completed',updatedAtMillis:now}),outcome:'confirmed'});await tick()})
+  expect(root!.root.findAllByProps({'data-arrangement-task':'one'})).toHaveLength(0)
+  expect(root!.root.findAllByProps({'aria-label':'安排详情'})).toHaveLength(0)
+  expect(task('two').props['data-selected']).toBe(false)
+  expect(root!.root.findAll(node=>node.type==='button'&&node.props.className==='arkme-arrangement-task-body'&&node.props['aria-pressed']===true)).toHaveLength(0)
 })
 it('restores an unchecked box on failure and never plays a success sound', async () => {
   const original = mocks.call.getMockImplementation()!

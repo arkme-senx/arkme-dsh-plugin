@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check } from '@phosphor-icons/react/dist/icons/Check'
+import { Square } from '@phosphor-icons/react/dist/icons/Square'
+import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
@@ -38,17 +39,16 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
   const [now, setNow] = useState(Date.now)
   const data = useArrangementWorkspace(accountScope, view, now)
   const [selected, setSelected] = useState<ArrangementWorkspaceItem>()
-  type Pending = 'completing' | 'restoring' | 'deleting' | 'reminder' | 'saved'
+  type Pending = 'completing' | 'restoring' | 'deleting' | 'reminder'
   const [pending, setPending] = useState(new Map<string, Pending>())
   const writes = useRef(new Set<string>())
   const [notice, setNotice] = useState<{ text: string; undo?: ArkmeArrangementItem; error?: boolean }>()
   const [sound, setSound] = useState(() => readSound(accountScope))
   const [deleting, setDeleting] = useState<ArkmeArrangementItem>()
   const lifetime = useRef<AbortController>()
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
   const sounds = useRef(new Set<{ play(): void; cancel(): void }>())
   const latestData = useRef(data); latestData.current = data
-  useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => { controller.abort(); for (const timer of timers.current) clearTimeout(timer); for (const sound of sounds.current) sound.cancel() } }, [])
+  useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => { controller.abort(); for (const sound of sounds.current) sound.cancel() } }, [])
   useEffect(() => {
     const refreshClock = () => setNow(Date.now())
     const timer = setTimeout(refreshClock, nextArrangementMidnight(now))
@@ -78,13 +78,13 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
     try {
       const result = await moveArrangement(item, completing ? 'completed' : 'following', signal)
       if (signal.aborted) return
-      setSelected(previous => previous?.arrangementRef === item.arrangementRef ? result : previous)
+      latestData.current.updateItem(result)
+      setSelected(undefined)
+      writes.current.delete(item.arrangementRef); markPending(item.arrangementRef)
       setNotice({ text: tr(completing ? '已完成' : '已恢复为未完成'), ...(completing ? { undo: result } : {}) })
       if (completing) {
-        feedback?.play(); if (feedback) sounds.current.delete(feedback); markPending(item.arrangementRef, 'saved')
-        const timer = setTimeout(() => { timers.current.delete(timer); if (!signal.aborted) { apply(result); writes.current.delete(item.arrangementRef); markPending(item.arrangementRef) } }, 420)
-        timers.current.add(timer)
-      } else { apply(result); writes.current.delete(item.arrangementRef); markPending(item.arrangementRef) }
+        feedback?.play(); if (feedback) sounds.current.delete(feedback)
+      }
     } catch {
       feedback?.cancel(); if (feedback) sounds.current.delete(feedback)
       if (!signal.aborted) {
@@ -138,9 +138,6 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
         <div className="arkme-arrangement-directory-tools"><button type="button" aria-label={tr('刷新安排')} title={tr('刷新')} disabled={data.loading || !!pending.size} onClick={() => { void data.refresh() }}><ArrowsClockwise size={18} /></button>
           <button type="button" aria-label={tr('添加安排')} title={tr('添加安排')} onClick={onAddArrangement}><Plus size={20} /></button></div>
       </header>
-      {notice && <div className="arkme-arrangement-feedback" role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span>
-        {notice.undo && <button type="button" disabled={pending.has(notice.undo.arrangementRef)} onClick={() => { void toggleComplete(notice.undo!) }}>{tr('撤销')}</button>}
-        <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       <div className="arkme-arrangement-directory-scroll" onScroll={event => { const el = event.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 160 && data.hasMore && !data.loading && !data.error && !pending.size) void data.loadMore() }}>
         {!accountScope ? <p className="arkme-arrangement-workspace-empty">{tr('请先登录')}</p> : <>
           {data.loading && !data.rows.length && <div className="arkme-arrangement-workspace-skeletons" role="status" aria-label={tr('正在加载安排')}>
@@ -148,10 +145,12 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
           </div>}
           {data.rows.map(item => {
             const operation = pending.get(item.arrangementRef)
-            const checked = operation === 'restoring' ? false : item.status === 'completed' || operation === 'completing' || operation === 'saved'
-            return <div key={item.arrangementRef} className="arkme-arrangement-task" data-arrangement-task={item.arrangementRef} data-selected={selected?.arrangementRef === item.arrangementRef} data-completed={checked} data-saved={operation === 'saved'}>
+            const checked = operation === 'restoring' ? false : item.status === 'completed' || operation === 'completing'
+            return <div key={item.arrangementRef} className="arkme-arrangement-task" data-arrangement-task={item.arrangementRef} data-selected={selected?.arrangementRef === item.arrangementRef} data-completed={checked}>
               {item.status !== 'deleted' && <button type="button" role="checkbox" aria-checked={checked} aria-label={tr(item.status === 'completed' ? '取消完成：{title}' : '完成：{title}', { title: item.title })}
-                className="arkme-arrangement-checkbox" disabled={!!operation || item.status === 'unknown'} aria-busy={!!operation && operation !== 'saved'} onClick={() => { void toggleComplete(item) }}>{checked && <Check size={14} weight="bold" />}</button>}
+                className="arkme-arrangement-checkbox" disabled={!!operation || item.status === 'unknown'} aria-busy={!!operation} onClick={() => { void toggleComplete(item) }}>
+                  {checked ? <CheckSquare size={20} weight="fill" className="arkme-arrangement-checkbox-icon" aria-hidden /> : <Square size={20} className="arkme-arrangement-checkbox-icon" aria-hidden />}
+              </button>}
               <button type="button" className="arkme-arrangement-task-body" aria-pressed={selected?.arrangementRef === item.arrangementRef} onClick={() => { setSelected(item); setDeleting(undefined) }}>
                 <div className="arkme-arrangement-task-copy"><div className="arkme-arrangement-task-title">{item.recognitionState === 'recognizing' && <ArkmeArrangementRecognition />}<strong title={item.title}>{item.title || tr('未命名安排')}</strong></div>
                   {item.description.trim() && <p>{item.description}</p>}</div>
@@ -165,6 +164,9 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
           {data.hasMore && !data.loading && !data.error && <button type="button" className="arkme-arrangement-load-more" disabled={!!pending.size} onClick={() => { void data.loadMore() }}>{tr('加载更多')}</button>}
         </>}
       </div>
+      {notice && <div className="arkme-arrangement-feedback" role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span>
+        {notice.undo && <button type="button" disabled={pending.has(notice.undo.arrangementRef)} onClick={() => { void toggleComplete(notice.undo!) }}>{tr('撤销')}</button>}
+        <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>
     {selected ? <ArrangementDetailPane key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
