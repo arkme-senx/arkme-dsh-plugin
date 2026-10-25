@@ -1940,6 +1940,7 @@ describe('conversation send directory projection', () => {
       cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
       if (operation === 'sources.self-target') return sendToSelf
+      if (operation === 'team.app.group.context') return { state: 'backend_pending', membershipPolicy: 'unknown', teams: [] }
       if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
       if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
@@ -9262,7 +9263,9 @@ describe('conversation send directory projection', () => {
     const sendArea = send.parent!
     expect(tools.findAllByProps({ 'data-arkme-composer-footer': 'hint' })).toHaveLength(0)
     expect(sendArea.children.at(-1)).toBe(send)
-    expect(sendArea.children).toHaveLength(selected.kind === 'private_chat' || selected.kind === 'group_chat' ? 1 : 2)
+    // A team identity provider may mount but render nothing for a user without a team.
+    // Count visible controls rather than composite React instances that occupy no space.
+    expect(sendArea.findAll(node => node.type === 'button')).toHaveLength(selected.kind === 'private_chat' || selected.kind === 'group_chat' ? 1 : 2)
     expect(sendArea.findByProps({ role: 'tooltip' }).children.join('')).toBe('Enter发送 / Shift+Enter换行')
     expect(sendArea.findAllByProps({ 'aria-label': '发送消息' }).length).toBeGreaterThan(0)
 
