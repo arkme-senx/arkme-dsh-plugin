@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
@@ -37,6 +37,7 @@ import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeWorldReactions } from './ArkmeWorldReactions.js'
 import { ArkmeWorldShareActions } from './ArkmeWorldShareActions.js'
+import { ArkmeWorldRecordDetail } from './ArkmeWorldRecordDetail.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -114,7 +115,7 @@ function appendWorldFeedItems(
 }
 
 const styles: Record<string, CSSProperties> = {
-  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text },
+  root: { position: 'relative', flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text },
   header: { width: '100%', minHeight: 90, margin: 0, padding: '28px 20px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
   heading: { margin: 0, fontSize: 26, lineHeight: '34px', fontWeight: 650, letterSpacing: '-.035em' },
   subtitle: { margin: '2px 0 0', color: arkmeTheme.secondary, fontSize: 11 },
@@ -748,8 +749,8 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
   </div>
 }
 
-function interactionRegionId(recordRef: string): string {
-  return `world-comments-${encodeURIComponent(recordRef)}`
+function interactionRegionId(recordRef: string, detail = false): string {
+  return `world-comments-${detail ? 'detail-' : ''}${encodeURIComponent(recordRef)}`
 }
 
 function worldTextRegionId(recordRef: string): string {
@@ -1083,7 +1084,13 @@ function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
   </section>
 }
 
-export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor }: {
+function WorldAuthorAvatar({ item }: { item: ArkmeWorldFeedItem }) {
+  return <span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
+    ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
+    : <WorldImage imageRef={item.avatarRef} alt={tr('{v0}的头像', { v0: item.authorName })} avatar />}</span>
+}
+
+export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenDetail, selected = false, detail = false }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
@@ -1094,6 +1101,9 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onOpenAuthor?(item: ArkmeWorldFeedItem): void
+  onOpenDetail?(item: ArkmeWorldFeedItem): void
+  selected?: boolean
+  detail?: boolean
 }) {
   useArkmeLocale()
   const [previewIndex, setPreviewIndex] = useState<number>()
@@ -1105,8 +1115,8 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     if (interactionsOpen) commentInputRef.current?.focus()
     else onOpenInteractions(item)
   }
-  const interactionsId = interactionRegionId(item.recordRef)
-  const visibleImageRefs = item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
+  const interactionsId = interactionRegionId(item.recordRef, detail)
+  const visibleImageRefs = detail ? item.imageRefs : item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
   const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
   const textContent = item.extensionPublication === undefined
     ? item.textContent
@@ -1123,15 +1133,23 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     return () => { window.removeEventListener('keydown', closeOnEscape) }
   }, [previewIndex])
   if (reactionUnavailable) return <article style={styles.card} data-world-record-ref={item.recordRef}><p role="status" style={styles.subtitle}>{tr('这条内容已更新或不再公开，请刷新世界')}</p></article>
-  return <article style={styles.card} data-world-record-ref={item.recordRef}>
-    <header style={styles.cardHeader}>
+  return <article style={{ ...styles.card, ...(detail ? { padding: 0, border: 0, borderRadius: 0, background: 'transparent' } : {}), ...(selected ? { borderColor: arkmeTheme.accent } : {}) }} data-world-record-ref={item.recordRef}
+    data-world-detail-open={selected || undefined} data-world-detail-content={detail || undefined}
+    {...(onOpenDetail === undefined ? {} : { tabIndex: 0, 'aria-label': tr('{v0}的世界动态', { v0: item.authorName }),
+      onClick: (event: ReactMouseEvent<HTMLElement>) => {
+        if (event.defaultPrevented || event.button !== 0 || event.detail > 1 || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
+        if (event.target.closest('button,a,input,select,textarea,audio,video,[contenteditable],[role="button"],[role="dialog"],[role="menu"]') || window.getSelection()?.toString()) return
+        event.currentTarget.focus({ preventScroll: true }); onOpenDetail(item)
+      },
+      onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+        if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return
+        event.preventDefault(); onOpenDetail(item)
+      },
+    })}>
+    {!detail && <header style={styles.cardHeader}>
       {item.authorRef === undefined
-        ? <span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
-        ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
-        : <WorldImage imageRef={item.avatarRef} alt={tr("{v0}的头像", { v0: item.authorName })} avatar />}</span>
-        : <button type="button" style={styles.avatarButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
-          ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
-          : <WorldImage imageRef={item.avatarRef} alt={tr("{v0}的头像", { v0: item.authorName })} avatar />}</span></button>}
+        ? <WorldAuthorAvatar item={item} />
+        : <button type="button" style={styles.avatarButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><WorldAuthorAvatar item={item} /></button>}
       <span style={styles.authorMeta}>
         <span style={styles.authorRow}>
           {item.authorRef === undefined
@@ -1149,15 +1167,15 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
         </span>
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
-    </header>
+    </header>}
     {item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
-    {textContent.trim() !== '' && <WorldCollapsibleText
+    {textContent.trim() !== '' && (detail ? <div style={{ ...styles.text, marginTop: 0 }}><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></div> : <WorldCollapsibleText
       recordRef={item.recordRef}
       authorName={item.authorName}
       textContent={textContent}
       hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
       {...(extensionShareLink === undefined ? {} : { extensionShareLink })}
-    />}
+    />)}
     {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
       const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
       return <button
@@ -1180,7 +1198,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       </ArkmeWorldReactions>
     </footer>
     {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
-    {interactionsOpen && <InteractionPanel item={item} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
+    {interactionsOpen && <InteractionPanel item={item} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} detail={detail} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
@@ -1292,6 +1310,14 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   onLoadMore?(): void
 }) {
   useArkmeLocale()
+  const detailContext = `${scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
+  const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
+  const detailItem = detailSelection?.context === detailContext ? detailSelection.item : undefined
+  const closeDetail = useCallback(() => setDetailSelection(undefined), [])
+  const openCardDetail = useCallback((item: ArkmeWorldFeedItem) => {
+    setDetailSelection(current => current?.context === detailContext && current.item.recordRef === item.recordRef ? undefined : { context: detailContext, item })
+  }, [detailContext])
+  useEffect(() => { setDetailSelection(undefined) }, [detailContext])
   const interactionItem = interactionRecordRef === undefined
     ? undefined
     : state.items.find(item => item.recordRef === interactionRecordRef)
@@ -1333,7 +1359,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     onSelectScope(nextScope)
   }
   return <>
-    <style>{`.arkme-world-columns { width:100%; max-width:1020px; padding:0 clamp(12px,2vw,24px); margin:0 auto; box-sizing:border-box; flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,min(640px,100%)) minmax(0,1fr); column-gap:clamp(0px,calc(100% - 688px),32px); }
+    <style>{`.arkme-world-columns { position:relative; width:100%; max-width:1020px; padding:0 clamp(12px,2vw,24px); margin:0 auto; box-sizing:border-box; flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,min(640px,100%)) minmax(0,1fr); column-gap:clamp(0px,calc(100% - 688px),32px); }
       .arkme-world-primary { min-width:0; min-height:0; display:flex; flex-direction:column; }`}</style>
     <div className="arkme-world-columns" data-world-columns>
     <div className="arkme-world-primary" data-world-primary-column>
@@ -1391,6 +1417,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
             onInteractionCreated={recordCardInteraction}
             onToggleVoiceprint={toggleCardVoiceprint}
             onInviteVoiceprint={inviteCardVoiceprint}
+            onOpenDetail={openCardDetail}
+            selected={detailItem?.recordRef === item.recordRef}
             {...(onOpenAuthor === undefined ? {} : { onOpenAuthor: openCardAuthor })}
           />)}
           {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
@@ -1407,6 +1435,15 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     </div>
     <aside className="arkme-world-reserved" aria-hidden="true" data-world-reserved-column />
     </div>
+    {detailItem && <ArkmeWorldRecordDetail key={detailItem.recordRef} item={detailItem} onClose={closeDetail}
+      renderAvatar={item => <WorldAuthorAvatar item={item} />}
+      {...(onOpenAuthor ? { onOpenAuthor: openCardAuthor } : {})}
+      renderContent={item => <WorldCard item={item} detail
+        playable={voiceprintPlayableRefs.has(detailItem.recordRef)} voiceprintActive={voiceprintRecordRef === detailItem.recordRef}
+        voiceprintLoading={voiceprintLoadingRecordRef === detailItem.recordRef} interactionsOpen
+        onOpenInteractions={() => {}} onInteractionCreated={() => recordCardInteraction(detailItem.recordRef)}
+        onToggleVoiceprint={toggleCardVoiceprint} onInviteVoiceprint={inviteCardVoiceprint}
+        {...(onOpenAuthor ? { onOpenAuthor: openCardAuthor } : {})} />} />}
   </>
 }
 
@@ -1563,7 +1600,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
   </div>
 }
 
-function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated }: { item: ArkmeWorldFeedItem; textareaRef: RefObject<HTMLTextAreaElement>; onClose(): void; onInteractionCreated(recordRef: string): void }) {
+function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, detail = false }: { item: ArkmeWorldFeedItem; textareaRef: RefObject<HTMLTextAreaElement>; onClose(): void; onInteractionCreated(recordRef: string): void; detail?: boolean }) {
   useArkmeLocale()
   const focusRef = useContext(WorldNotificationFocus)
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
@@ -1628,14 +1665,15 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated }: 
   }, [focusRef, hydrateViewerAuthorLabels, item.recordRef])
   useEffect(() => {
     load()
-    if (!focusRef) textareaRef.current?.focus()
+    if (!focusRef && !detail) textareaRef.current?.focus()
     return () => { loadController.current?.abort() }
   }, [load])
   useEffect(() => {
+    if (detail) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
     window.addEventListener('keydown', closeOnEscape)
     return () => { window.removeEventListener('keydown', closeOnEscape) }
-  }, [onClose])
+  }, [onClose, detail])
   const loadMore = async () => {
     if (state.loadingMore || state.nextOffset === undefined) return
     setState(current => {
@@ -1666,11 +1704,11 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated }: 
     } catch (error) { if (!isSocialBindingRequired(error)) setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
-  return <section id={interactionRegionId(item.recordRef)} aria-label={tr("{v0}的评论区", { v0: item.authorName })} style={styles.interactionPanel} data-world-comment-panel="inline">
+  return <section id={interactionRegionId(item.recordRef, detail)} aria-label={tr("{v0}的评论区", { v0: item.authorName })} style={styles.interactionPanel} data-world-comment-panel={detail ? 'detail' : 'inline'}>
     <div style={styles.interactionPanelSticky} data-world-comment-toolbar="sticky">
       <header style={styles.interactionPanelHeader}>
         <strong style={styles.interactionPanelTitle}>{worldInteractionCountLabel(state.items.length, state.hasMore)}</strong>
-        <button data-arkme-feedback="neutral" type="button" style={styles.interactionPanelClose} aria-label={tr("收起评论")} onClick={onClose}>{tr("收起")}</button>
+        {!detail && <button data-arkme-feedback="neutral" type="button" style={styles.interactionPanelClose} aria-label={tr("收起评论")} onClick={onClose}>{tr("收起")}</button>}
       </header>
       <div style={styles.interactionComposer}>
         {replyTarget !== undefined && <div style={styles.replyTarget}><span>{tr("回复")} {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>{tr("取消回复")}</button></div>}

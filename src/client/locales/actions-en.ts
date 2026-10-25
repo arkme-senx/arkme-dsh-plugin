@@ -1,5 +1,13 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '世界动态详情': 'World post details',
+  '关闭动态详情': 'Close post details',
+  '调整动态详情宽度': 'Resize post details',
+  '来源：世界': 'Source: World',
+  '正在读取最新内容…': 'Loading latest content…',
+  '暂时无法读取这条公开内容': 'This public post is temporarily unavailable',
+  '读取超时，请重试': 'Reading timed out. Please try again.',
+  '{v0}的世界动态': '{v0}’s World post',
   '请先登录后分享': 'Sign in to share',
   '分享动态': 'Share post',
   '分享超时，请重试': 'Sharing timed out. Please try again.',
