@@ -1065,6 +1065,10 @@ export interface ArkmeArrangementPage {
 
 export type ArkmeArrangementDetail = ArkmeArrangementItem
 
+/** Read-only deleted owner projection; deliberately excluded from live mutations. */
+export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }
+export type ArkmeDeletedArrangementPage = Omit<ArkmeArrangementPage, 'items'> & { items: ArkmeDeletedArrangementItem[] }
+
 /** Reminder-event identity is intentionally separate from Arrangement identity. */
 export interface ArkmeArrangementReminderEvent {
   eventRef: string
@@ -4343,6 +4347,8 @@ export type ArkmePluginOperation =
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'
   | 'arrangements.list'
+  | 'arrangements.deleted.list'
+  | 'arrangements.deleted.detail'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.source.open'
