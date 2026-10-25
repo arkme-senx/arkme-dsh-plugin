@@ -106,6 +106,39 @@ it('does not pan to raw GPS coordinates if Baidu conversion fails', async () => 
   } finally { await view.close() }
 })
 afterEach(() => { resetLocationMapSessions(); vi.unstubAllGlobals() })
+it.each(['wheel','pointerdown'])('never auto-fits a late batch after %s, even when the map SDK stops bubbling',async eventType=>{
+  const mock=createBaiduMapMock();mocks.load.mockResolvedValue(mock.sdk)
+  const element=document.createElement('div');document.body.append(element)
+  const root=createRoot(element)
+  const props={...locationProps,initialViewport:{bounds:{swLat:-85,swLon:-180,neLat:85,neLon:180},zoom:3},fitWhileLoading:true}
+  try {
+    await act(async()=>root.render(<ArkmeLocationSearchMap {...props} markers={[]} />))
+    const centers=mock.map.centerAndZoom.mock.calls.length
+    const sdkCanvas=element.querySelector('.arkme-location-canvas')!.firstElementChild!
+    sdkCanvas.addEventListener(eventType,event=>event.stopPropagation())
+    await act(async()=>sdkCanvas.dispatchEvent(new Event(eventType,{bubbles:true})))
+    await act(async()=>root.render(<ArkmeLocationSearchMap {...props} />))
+    expect(element.querySelectorAll('.arkme-location-pin')).toHaveLength(1)
+    expect(mock.map.centerAndZoom).toHaveBeenCalledTimes(centers)
+    expect(mock.map.setViewport).not.toHaveBeenCalled()
+    expect(mock.sdk.Map).toHaveBeenCalledTimes(1)
+  } finally {await act(async()=>root.unmount());element.remove()}
+})
+it('clears the initial theme timeout when map tiles finish loading asynchronously',async()=>{
+  vi.useFakeTimers()
+  const mock=createBaiduMapMock();mocks.load.mockResolvedValue(mock.sdk)
+  mock.map.centerAndZoom.mockImplementation(()=>{})
+  const element=document.createElement('div');document.body.append(element)
+  const root=createRoot(element)
+  try {
+    await act(async()=>root.render(<ArkmeLocationSearchMap {...locationProps} />))
+    expect(element.textContent).toContain('正在加载百度地图…')
+    await act(async()=>mock.events.get('tilesloaded')?.())
+    await act(async()=>vi.advanceTimersByTime(20_001))
+    expect(element.textContent).not.toContain('百度地图加载失败')
+    expect(element.querySelector('.arkme-location-canvas')?.getAttribute('data-map-ready')).toBe('true')
+  } finally {await act(async()=>root.unmount());element.remove();resetLocationMapSessions();vi.useRealTimers()}
+})
 it('reuses the Baidu map and converted points on reopening, and destroys them on account switch', async () => {
   const mock = createBaiduMapMock(); mocks.load.mockResolvedValue(mock.sdk)
   const convert = vi.spyOn(mock.sdk.Convertor.prototype, 'translate')

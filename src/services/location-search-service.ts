@@ -1,5 +1,5 @@
 import type { LocationQuery, LocationSource, LocationMarkers, LocationRecords } from '../location-search.js'
-import { locationSources, validLocation } from '../location-search.js'
+import { locationSources, locationViewportParts, validLocation } from '../location-search.js'
 import type { ArkmeSearchRecordItem } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
@@ -19,7 +19,7 @@ export class LocationSearchService {
     if (!input || !['list', 'viewport', 'cluster'].includes(input.mode)) this.invalid()
     const bounds = input.bounds
     if (bounds && (!validLocation(bounds.swLat, bounds.swLon) || !validLocation(bounds.neLat, bounds.neLon)
-      || bounds.swLat >= bounds.neLat || bounds.swLon >= bounds.neLon)) this.invalid()
+      || bounds.swLat >= bounds.neLat || bounds.swLon === bounds.neLon || (input.mode !== 'viewport' && bounds.swLon > bounds.neLon))) this.invalid()
     if (input.mode !== 'list' && (!bounds || typeof input.zoom !== 'number' || !Number.isFinite(input.zoom) || input.zoom < 1 || input.zoom > 22)) this.invalid()
     if (input.mode === 'cluster' && (!Array.isArray(input.clusterKeys) || input.clusterKeys.length === 0 || input.clusterKeys.length > 80
       || input.clusterKeys.some(key => typeof key !== 'string' || !key.trim() || key.length > 256))) this.invalid()
@@ -34,19 +34,39 @@ export class LocationSearchService {
         : input.mode === 'viewport' ? { zoom: input.zoom, limit_hint: 80 }
           : { zoom: input.zoom, cluster_keys: input.clusterKeys, limit: input.limit ?? 20, offset: input.offset ?? 0 }),
     }
-    const suffix = input.mode === 'viewport' ? 'viewport-clusters/query' : input.mode === 'cluster' ? 'clusters/records/query' : 'query'
-    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/location/${suffix}`, body, session, signal, { lane: 'interactive-read' })
     if (input.mode === 'viewport') {
-      if (!Array.isArray(data.markers)) throw new ArkmePluginError('location-response-invalid', '位置数据格式不完整，请重试', true)
-      return { markers: list(data.markers).flatMap(raw => {
-        const item = objectValue(raw)
-        const key = text(item.cluster_key)
-        if (!key || !validLocation(item.center_lat, item.center_lon) || num(item.count) < 1 || arkmePrivacyLockedRecord(item)
-          || [item.record_uid, ...list(item.sample_record_uids)].some(uid => locked.has(text(uid)))) return []
-        return [{ key, latitude: num(item.center_lat), longitude: num(item.center_lon), count: num(item.count), source: sourceType(item.source_type),
-          label: text(item.poi_name, item.location_poi), preview: text(item.preview_text, item.plain_text, item.text_content).slice(0, 180) }]
-      }), truncated: data.truncated === true }
+      const parts = locationViewportParts({ bounds: bounds!, zoom: input.zoom! })
+      const results = new Array<LocationMarkers>(parts.length)
+      let index = 0
+      await Promise.all(Array.from({ length: Math.min(2, parts.length) }, async () => {
+        while (index < parts.length) {
+          signal?.throwIfAborted()
+          const current = index++, part = parts[current]!
+          const data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/location/viewport-clusters/query',
+            { ...body, bounds: { sw_lat: part.bounds.swLat, sw_lon: part.bounds.swLon, ne_lat: part.bounds.neLat, ne_lon: part.bounds.neLon } }, session, signal, { lane: 'interactive-read' })
+          if (!Array.isArray(data.markers)) throw new ArkmePluginError('location-response-invalid', '位置数据格式不完整，请重试', true)
+          results[current] = { markers: list(data.markers).flatMap(raw => {
+            const item = objectValue(raw)
+            const key = text(item.cluster_key)
+            if (!key || !validLocation(item.center_lat, item.center_lon) || num(item.count) < 1 || arkmePrivacyLockedRecord(item)
+              || num(item.center_lon) < part.bounds.swLon || num(item.center_lon) > part.bounds.neLon
+              || num(item.center_lat) < part.bounds.swLat || num(item.center_lat) > part.bounds.neLat
+              || [item.record_uid, ...list(item.sample_record_uids)].some(uid => locked.has(text(uid)))) return []
+            return [{ key: parts.length > 1 ? `${part.bounds.swLon}:${part.bounds.neLon}:${key}` : key,
+              ...(parts.length > 1 ? { clusterQuery: { ...part, key } } : {}),
+              latitude: num(item.center_lat), longitude: num(item.center_lon), count: num(item.count), source: sourceType(item.source_type),
+              label: text(item.poi_name, item.location_poi), preview: text(item.preview_text, item.plain_text, item.text_content).slice(0, 180) }]
+          }), truncated: data.truncated === true }
+        }
+      }))
+      signal?.throwIfAborted()
+      if ((await this.runtime.requireSession()).userId !== session.userId) {
+        throw new ArkmePluginError('location-account-changed', '账号已变化，请重新打开位置', false, 409)
+      }
+      return { markers: results.flatMap(result => result.markers), truncated: results.some(result => result.truncated) }
     }
+    const suffix = input.mode === 'cluster' ? 'clusters/records/query' : 'query'
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/location/${suffix}`, body, session, signal, { lane: 'interactive-read' })
     const rawItems = input.mode === 'cluster' ? data.records : data.items
     if (!Array.isArray(rawItems)) throw new ArkmePluginError('location-response-invalid', '位置记录格式不完整，请重试', true)
     const visible = rawItems.map(objectValue).filter(item => validLocation(item.lat, item.lon)

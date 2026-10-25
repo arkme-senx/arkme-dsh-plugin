@@ -11,7 +11,7 @@ function setup(data: unknown, locked: string[] = []) {
   return { post, service: new SearchService(runtime, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set(locked) } as never) }
 }
 describe('location search mobile API contract', () => {
-  it('requests only one readable anchor when initializing an empty global map', async () => {
+  it('supports a bounded list read without hydrating more records than requested', async () => {
     const { post, service } = setup({ items: [projection('anchor')], has_more: false })
     const result = await service.searchLocations({ mode: 'list', limit: 1 }) as LocationRecords
     expect(post.mock.calls[0]).toContainEqual({ limit: 1 })
@@ -53,9 +53,35 @@ describe('location search mobile API contract', () => {
     const marker = {cluster_key:'key',center_lat:39,center_lon:116,count:4,source_type:'received_group'}
     const { post, service } = setup({ markers:[marker,{...marker,cluster_key:'locked',sample_record_uids:['secret']},{...marker,cluster_key:'bad',center_lat:Infinity}],truncated:true }, ['secret'])
     const result = await service.searchLocations({mode:'viewport',...worldLocationViewport}) as LocationMarkers
-    expect(result.markers).toEqual([expect.objectContaining({key:'key',source:'received_group',count:4})])
+    expect(result.markers).toEqual([expect.objectContaining({source:'received_group',count:4,clusterQuery:{bounds:{swLat:-85,swLon:0,neLat:85,neLon:180},zoom:3,key:'key'}})])
     expect(result.truncated).toBe(true)
-    expect(post.mock.calls[0]).toContainEqual({bounds:{sw_lat:-85,sw_lon:-180,ne_lat:85,ne_lon:180},zoom:3,limit_hint:80})
+    expect(post.mock.calls).toHaveLength(2)
+    expect(post.mock.calls[0]).toContainEqual({bounds:{sw_lat:-85,sw_lon:-180,ne_lat:85,ne_lon:-Number.MIN_VALUE},zoom:3,limit_hint:80})
+    expect(post.mock.calls[1]).toContainEqual({bounds:{sw_lat:-85,sw_lon:0,ne_lat:85,ne_lon:180},zoom:3,limit_hint:80})
+  })
+  it('combines wide-view regions, preserves independent cluster identities and makes no record reads', async()=>{
+    const {post,service}=setup({})
+    post.mockImplementation(async (_path:string,body:any)=>({markers:[{
+      cluster_key:'same-key',center_lat:20,center_lon:body.bounds.sw_lon<0?-100:135,count:body.bounds.sw_lon<0?7:42,source_type:'quick_note',
+    }],truncated:false}))
+    const result=await service.searchLocations({mode:'viewport',...worldLocationViewport}) as LocationMarkers
+    expect(result.markers.map(marker=>marker.count)).toEqual([7,42])
+    expect(new Set(result.markers.map(marker=>marker.key)).size).toBe(2)
+    expect(result.markers.every(marker=>marker.clusterQuery?.key==='same-key')).toBe(true)
+    expect(post.mock.calls.every(call=>call[0].endsWith('viewport-clusters/query'))).toBe(true)
+  })
+  it('bounds partition concurrency and rejects partial failures instead of claiming empty or complete data', async()=>{
+    const {post,service}=setup({})
+    let active=0,maximum=0
+    post.mockImplementation(async()=>{
+      active++;maximum=Math.max(active,maximum)
+      await new Promise(resolve=>setTimeout(resolve,0));active--
+      return {markers:[],truncated:false}
+    })
+    await service.searchLocations({mode:'viewport',bounds:{swLat:-20,neLat:30,swLon:10,neLon:5},zoom:4})
+    expect(post).toHaveBeenCalledTimes(3);expect(maximum).toBe(2)
+    post.mockRejectedValueOnce(new Error('暂时离线'))
+    await expect(service.searchLocations({mode:'viewport',...worldLocationViewport})).rejects.toThrow('暂时离线')
   })
   it('keeps cluster identity and the original viewport across paginated detail reads', async () => {
     const { post, service } = setup({records:[projection('chat',{chat_session_uid:'chat-uid'})],has_more:true,next_offset:100})

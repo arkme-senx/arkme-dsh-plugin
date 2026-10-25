@@ -89,7 +89,9 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
       map.enableScrollWheelZoom()
       const bounds = initial.current.bounds
       const isWorld = bounds.swLon === -180 && bounds.neLon === 180
-      const position = isWorld ? { lng: 105, lat: 35 } : { lng: (bounds.swLon+bounds.neLon)/2, lat: (bounds.swLat+bounds.neLat)/2 }
+      let longitude = (bounds.swLon + bounds.neLon + (bounds.swLon > bounds.neLon ? 360 : 0)) / 2
+      if (longitude > 180) longitude -= 360
+      const position = isWorld ? { lng: 105, lat: 35 } : { lng: longitude, lat: (bounds.swLat+bounds.neLat)/2 }
       if (!retained.initialized || recenter) {
         const [center] = await convertBaiduPoints(sdk, [position], retained.points, controller.signal)
         if (disposed || retained.disposed) return
@@ -98,7 +100,7 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
       }
       map.addEventListener('moving', update); map.addEventListener('zooming', update)
       map.addEventListener('moveend', viewport); map.addEventListener('zoomend', viewport)
-      if (retained.ready) loaded(); else timer = setTimeout(failed, 20_000)
+      if (retained.ready) loaded(); else { clearTimeout(timer); timer = setTimeout(failed, 20_000) }
       resize = new ResizeObserver(() => { map?.checkResize(); update() }); resize.observe(canvas.current)
       map.checkResize()
       setRuntime({ sdk, map })
@@ -163,7 +165,7 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
   }
   const currentPixel = runtime && currentLocation?.map === runtime.map ? runtime.map.pointToPixel(currentLocation.point) : undefined
   return <div className="arkme-location-map" role="region" aria-label={tr('历史位置地图')}
-    onPointerDown={() => { if (session.current) session.current.interacted = true }} onWheel={() => { if (session.current) session.current.interacted = true }}>
+    onPointerDownCapture={() => { if (session.current) session.current.interacted = true }} onWheelCapture={() => { if (session.current) session.current.interacted = true }}>
     <div className="arkme-location-canvas" data-map-ready={ready} ref={canvas} />
     {currentPixel && Number.isFinite(currentPixel.x) && Number.isFinite(currentPixel.y) && <div
       className="arkme-location-current-position" role="img" aria-label={tr('当前位置')}
