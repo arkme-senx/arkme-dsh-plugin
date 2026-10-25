@@ -2,7 +2,7 @@ import { callReaction, traceReactionApplied } from './reaction-transport.js'
 import type { ArkmeSourceKind } from '../types.js'
 import type { ReactionHistoryContext, ReactionRequest, ReactionSnapshot, ReactionSetResult, ReactionExpression, ReactionActorPage, ReactionGroupPage, ReactionTargetRef, ReactionActor } from '../reaction-contract.js'
 import { expressionLabel, labelExpression, expressionIdentity } from './reaction-expression.js'
-import { reactionLibrary } from './reaction-library.js'
+import { reactionLibrary, type ReactionLibraryStore } from './reaction-library.js'
 import { ArkmeClientError } from './api.js'
 
 export type ReactionPreviewTarget = ReactionTargetRef & { source: string; sourceKind?: ArkmeSourceKind; text: string; sourceKey?: string | undefined; itemUid?: string; resolveActor?: (actor: ReactionActor) => ReactionActor | undefined }
@@ -28,15 +28,15 @@ export class ReactionPreviewStore {
   private retryMillis = 2000
   private pending: Extract<ReactionRequest, { action: 'set' }> | undefined
   private writing = false
-  constructor(private readonly transport: Transport = callReaction) {}
+  constructor(private readonly transport: Transport = callReaction, private readonly library: ReactionLibraryStore = reactionLibrary, private readonly pollMillis = 2000) { this.retryMillis = pollMillis }
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   readonly getSnapshot = () => this.revision
   isScope(scope: string) { return this.scope === scope }
   setScope(scope?: string) {
     if (this.scope === scope) return
     this.controller.abort(); this.controller = new AbortController(); this.scope = scope
-    this.stop(); this.targets.clear(); this.states.clear(); this.inactive.clear(); this.actorRefreshAt.clear(); this.knownTargets.clear(); this.failures.clear(); this.pending = undefined; this.writing = false; this.refreshing = undefined; this.refreshAgain = false; this.retryMillis = 2000
-    reactionLibrary.setScope(scope); this.publish()
+    this.stop(); this.targets.clear(); this.states.clear(); this.inactive.clear(); this.actorRefreshAt.clear(); this.knownTargets.clear(); this.failures.clear(); this.pending = undefined; this.writing = false; this.refreshing = undefined; this.refreshAgain = false; this.retryMillis = this.pollMillis
+    this.library.setScope(scope); this.publish()
   }
   watch(scope: string, target: ReactionPreviewTarget): () => void {
     if (scope !== this.scope) return () => {}
@@ -203,7 +203,7 @@ export class ReactionPreviewStore {
           } catch { /* Keep confirmed reactions; the existing poll can retry missing names. */ }
         }
       }
-      if (!signal.aborted) this.retryMillis = failed ? Math.min(120000, this.retryMillis * 2) : 2000
+      if (!signal.aborted) this.retryMillis = failed ? Math.min(120000, this.retryMillis * 2) : this.pollMillis
     })()
     this.refreshing = operation
     try { await operation } finally {

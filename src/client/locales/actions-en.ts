@@ -1,5 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '仅本机保存 · 未云同步': 'Saved on this device · Not synced',
+  '请刷新世界后使用本机表态': 'Refresh World to use reactions on this device',
   '请先登录后表态': 'Sign in to react',
   '正在读取世界表态…': 'Loading World reactions…',
   '世界表态 · 已取消公开，仅你可查看': 'World reactions · No longer public; visible only to you',

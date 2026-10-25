@@ -805,6 +805,8 @@ export interface ArkmeWorldExtensionPublication {
 }
 
 export interface ArkmeWorldFeedItem {
+  /** Account-bound private annotation target; never a public reaction/share capability. */
+  localReactionTarget?: import('./reaction-contract.js').ReactionTargetRef
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
   authorRef?: string
@@ -4328,6 +4330,7 @@ export type ArkmePluginOperation =
   | 'world.voiceprint.availability'
   | 'world.reactions.prepare'
   | 'world.reactions'
+  | 'world.reactions.local'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'

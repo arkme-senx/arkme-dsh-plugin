@@ -2,6 +2,7 @@ import { reactionNotifications } from './reaction-notifications.js'
 import { useVisibleReactionNotification } from './ArkmeReactionNotification.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeReactionActorCard } from './ArkmeReactionActorCard.js'
+import { reactionLibrary as defaultReactionLibrary, type ReactionLibraryStore } from './reaction-library.js'
 import { ArkmeReactionPhrases } from './ArkmeReactionPhrases.js'
 import { arkmeDefaultEmojis } from './arkme-emoji.js'
 import { ReactionLabel, reactionLabelText, reactionPhraseStyle } from './ReactionLabel.js'
@@ -49,7 +50,7 @@ export function ReactionAddIcon() {
   </svg>
 }
 
-export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, triggerText, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; triggerText?: string; readOnly?: boolean }) {
+export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, library = defaultReactionLibrary, triggerText, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; library?: ReactionLibraryStore; triggerText?: string; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
   const latestTarget = useRef(target)
@@ -139,7 +140,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
         </button>)}
       </div>
       <div role="group" aria-label="短语" style={{ minHeight: 0, flexShrink: 1, maxHeight: '55%', overflowY: 'auto', marginTop: 8, paddingTop: 8, borderTop: `1px solid ${c.border}` }}>
-      <ArkmeReactionPhrases key={scope} scope={scope} selected={reactionPreview.isScope(scope) ? reactionPreview.snapshot(target.id)?.mine.selections.map(item => item.expression) ?? [] : []} onUse={toggle} onNotice={text => setNotice(current => ({ text, sequence: (current?.sequence ?? 0) + 1 }))} />
+      <ArkmeReactionPhrases key={scope} scope={scope} library={library} selected={reactionPreview.isScope(scope) ? reactionPreview.snapshot(target.id)?.mine.selections.map(item => item.expression) ?? [] : []} onUse={toggle} onNotice={text => setNotice(current => ({ text, sequence: (current?.sequence ?? 0) + 1 }))} />
       </div>
       {(status || reactionPreview.error(target.id)) && <div role="status" style={{ marginTop: 6, color: c.secondary }}>{status || reactionPreview.error(target.id)}</div>}
     </section>

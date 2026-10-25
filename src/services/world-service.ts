@@ -1,4 +1,5 @@
 import { TimelineTokenCodec } from './timeline-token.js'
+import { localWorldReactionTarget } from './world-local-reaction-service.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -1319,6 +1320,10 @@ export class WorldService {
       })
     return {
       recordRef,
+      localReactionTarget: await localWorldReactionTarget(this.runtime, viewerUserId, recordUid, createHash('sha256').update(JSON.stringify({ headline, textContent, templateKind: item.template_kind,
+        images: rawImages.map(worldImageAssetIdentity), videos: listValue(item.videos).map(value => typeof value === 'string' ? worldImageAssetIdentity(value) : value), voices: listValue(item.voices).map(value => typeof value === 'string' ? worldImageAssetIdentity(value) : value),
+        files: listValue(item.file_assets).map(value => { const asset = objectValue(value); return [asset.file_asset_uid, asset.storage_key, asset.sort_order] }),
+      })).digest('hex')),
       ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: recordRef } : {}),
       authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),

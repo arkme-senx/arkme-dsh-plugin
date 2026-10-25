@@ -2,6 +2,7 @@ import type { ReactionRequest, ReactionSnapshot } from '../reaction-contract.js'
 import type { WorldReactionContext, WorldReactionContextPage } from '../world-reaction-contract.js'
 import { WORLD_REACTION_PENDING } from '../world-reaction-contract.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { ReactionLibraryStore } from './reaction-library.js'
 import { ReactionPreviewStore } from './reaction-preview-store.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
@@ -93,7 +94,7 @@ export class WorldReactionContexts {
 }
 
 export const worldReactionContexts = new WorldReactionContexts()
-export const worldReactionPreview = new ReactionPreviewStore(async (input: ReactionRequest, signal?: AbortSignal) => {
+export const worldCloudReactionPreview = new ReactionPreviewStore(async (input: ReactionRequest, signal?: AbortSignal) => {
   try {
     const result = await callArkme<unknown>('world.reactions', input, signal)
     if (input.action === 'query') {
@@ -110,3 +111,7 @@ export const worldReactionPreview = new ReactionPreviewStore(async (input: React
     throw error
   }
 })
+
+// Private local reactions never auto-promote or enqueue cloud writes.
+export const worldLocalReactionLibrary = new ReactionLibraryStore((input, signal) => callArkme('world.reactions.local', input, signal))
+export const worldReactionPreview = new ReactionPreviewStore((input, signal) => callArkme('world.reactions.local', input, signal), worldLocalReactionLibrary, 30_000)
