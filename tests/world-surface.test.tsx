@@ -337,7 +337,8 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('2 条评论')
+    expect(success).toContain('aria-label="评论"')
+    expect(success).not.toContain('2 条评论')
     expect(success).toContain('aria-label="播放陈一涵的声纹"')
     expect(success).not.toContain('用发布者的声音朗读')
     expect(success).not.toContain('查看 2 条互动')
@@ -347,7 +348,8 @@ describe('Arkme native World surface', () => {
     expect(unavailable).toContain('data-world-voiceprint-invite-icon="microphone"')
 
     const withoutComments = render({ status: 'success', items: [{ ...item, extendCount: 0 }] })
-    expect(withoutComments).toContain('0 条评论')
+    expect(withoutComments).toContain('aria-label="评论"')
+    expect(withoutComments).not.toContain('0 条评论')
 
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')

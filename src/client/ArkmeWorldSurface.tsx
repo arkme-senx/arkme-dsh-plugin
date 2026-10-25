@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
@@ -1004,7 +1004,7 @@ export function WorldInteractionPreviewContent({ item, items, onOpen }: { item: 
   </section>
 }
 
-function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: ArkmeWorldFeedItem; onOpen(): void; onCountResolved(count: number, hasMore: boolean): void }) {
+function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(): void }) {
   useArkmeLocale()
   const [items, setItems] = useState<ArkmeWorldInteractionItem[]>([])
   useEffect(() => {
@@ -1017,11 +1017,10 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
       .then(page => {
         if (controller.signal.aborted) return
         setItems(page.items)
-        onCountResolved(page.items.length, page.hasMore)
       })
       .catch(() => { if (!controller.signal.aborted) setItems([]) })
     return () => { controller.abort() }
-  }, [item.extendCount, item.recordRef, onCountResolved])
+  }, [item.extendCount, item.recordRef])
   if (items.length === 0) return null
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
@@ -1100,14 +1099,12 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
   const [reactionUnavailable, setReactionUnavailable] = useState(false)
   const onReactionUnavailable = useCallback(() => { setReactionUnavailable(true); setPreviewIndex(undefined) }, [])
   useEffect(() => { setReactionUnavailable(false) }, [item.recordRef, item.publishedAtMillis])
-  const [interactionCount, setInteractionCount] = useState<{ count: number; hasMore: boolean }>()
-  const resolveInteractionCount = useCallback((count: number, hasMore: boolean) => {
-    setInteractionCount({ count, hasMore })
-  }, [])
+  const commentInputRef = useRef<HTMLTextAreaElement>(null)
+  const composeComment = () => {
+    if (interactionsOpen) commentInputRef.current?.focus()
+    else onOpenInteractions(item)
+  }
   const interactionsId = interactionRegionId(item.recordRef)
-  const interactionLabel = interactionCount === undefined
-    ? tr("{v0} 条评论", { v0: String(Math.max(0, item.extendCount)) })
-    : tr("{v0}{v1} 条评论", { v0: String(interactionCount.count), v1: interactionCount.hasMore ? '+' : '' })
   const visibleImageRefs = item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
   const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
   const textContent = item.extensionPublication === undefined
@@ -1175,13 +1172,13 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     })}</div>}
     <footer style={styles.cardFooter}>
       <ArkmeWorldReactions item={item} onUnavailable={onReactionUnavailable}>
-      <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
-        <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
+      <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-label={tr("评论")} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={composeComment}>
+        <ChatCircleDots size={16} weight="light" aria-hidden />{tr("评论")}
       </button>
       </ArkmeWorldReactions>
     </footer>
-    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} onCountResolved={resolveInteractionCount} />}
-    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} onCountResolved={resolveInteractionCount} />}
+    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
+    {interactionsOpen && <InteractionPanel item={item} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
@@ -1557,7 +1554,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
   </div>
 }
 
-function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void; onCountResolved(count: number, hasMore: boolean): void }) {
+function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated }: { item: ArkmeWorldFeedItem; textareaRef: RefObject<HTMLTextAreaElement>; onClose(): void; onInteractionCreated(recordRef: string): void }) {
   useArkmeLocale()
   const focusRef = useContext(WorldNotificationFocus)
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
@@ -1566,7 +1563,6 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
   const sendingRef = useRef(false)
   const [replyTarget, setReplyTarget] = useState<ArkmeWorldInteractionItem>()
   const loadController = useRef<AbortController>()
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const sendDisabled = sending || draft.trim() === ''
   const applyViewerAuthorLabels = useCallback((labels: readonly ArkmeWorldAuthorLabel[]) => {
     const labelsByRef = new Map(labels.map(label => [label.authorRef, label.authorName]))
@@ -1617,11 +1613,10 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
       .then(page => {
         if (controller.signal.aborted) return
         setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(focusRef && !page.items.some(value => value.interactionRef === focusRef) ? { message: tr('未找到这条回复，可能已删除或不可查看') } : {}), ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
-        onCountResolved(page.items.length, page.hasMore)
         hydrateViewerAuthorLabels(page.items, controller.signal)
       })
       .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
-  }, [focusRef, hydrateViewerAuthorLabels, item.recordRef, onCountResolved])
+  }, [focusRef, hydrateViewerAuthorLabels, item.recordRef])
   useEffect(() => {
     load()
     if (!focusRef) textareaRef.current?.focus()
@@ -1641,7 +1636,6 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
     try {
       const page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: state.nextOffset })
       setState(current => ({ ...current, status: 'ready', items: [...current.items, ...page.items], hasMore: page.hasMore, loadingMore: false, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }))
-      onCountResolved(state.items.length + page.items.length, page.hasMore)
       hydrateViewerAuthorLabels(page.items)
     } catch (error) { setState(current => ({ ...current, loadingMore: false, message: messageOf(error, '更多互动加载失败，请重试') })) }
   }
@@ -1659,7 +1653,6 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
       setDraft('')
       if (textareaRef.current !== null) textareaRef.current.style.height = '40px'
       setReplyTarget(undefined)
-      onCountResolved(state.items.length + 1, state.hasMore)
       onInteractionCreated(item.recordRef)
     } catch (error) { if (!isSocialBindingRequired(error)) setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
@@ -1673,7 +1666,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved
       <div style={styles.interactionComposer}>
         {replyTarget !== undefined && <div style={styles.replyTarget}><span>{tr("回复")} {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>{tr("取消回复")}</button></div>}
         <div style={styles.interactionComposerRow}>
-          <textarea ref={textareaRef} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : tr("回复 {v0}…", { v0: replyTarget.authorName })} onChange={event => {
+          <textarea ref={textareaRef} aria-label={tr("评论内容")} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : tr("回复 {v0}…", { v0: replyTarget.authorName })} onChange={event => {
             setDraft(event.currentTarget.value)
             event.currentTarget.style.height = '40px'
             event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
