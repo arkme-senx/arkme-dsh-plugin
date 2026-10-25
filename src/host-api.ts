@@ -1987,6 +1987,11 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'arrangements.deleted.list': return await service.deletedArrangements({
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), ...(requestSignal ? { signal: requestSignal } : {}),
+    })
+    case 'arrangements.deleted.detail': return await service.deletedArrangementDetail(stringParam(params, 'arrangementRef'), requestSignal)
     case 'arrangements.recording-day': return await service.recordingDayArrangements({
       dateStamp: numberParam(params, 'dateStamp', 0), tzOffsetMillis: numberParam(params, 'tzOffsetMillis', Number.NaN),
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
