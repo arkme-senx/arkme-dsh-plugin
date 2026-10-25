@@ -805,6 +805,7 @@ export interface ArkmeWorldExtensionPublication {
 }
 
 export interface ArkmeWorldFeedItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
   /** Account-bound private annotation target; never a public reaction/share capability. */
   localReactionTarget?: import('./reaction-contract.js').ReactionTargetRef
   recordRef: string
@@ -846,6 +847,7 @@ export interface ArkmeWorldFeedPage {
 export interface ArkmeWorldAuthorLabel {
   authorRef: string
   authorName: string
+  memberType?: ArkmeSourceItem['peerMemberType']
 }
 
 export interface ArkmeWorldVoiceprintAvailabilityItem {
@@ -897,6 +899,7 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
   isSelf?: boolean
   interactionRef: string
   parentRef: string

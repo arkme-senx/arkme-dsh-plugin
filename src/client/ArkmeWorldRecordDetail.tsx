@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import type { ArkmeWorldFeedItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
+import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme as c } from './arkme-theme.js'
@@ -44,7 +45,7 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
   }, [seed.recordRef, account, attempt])
   if (account !== owner.current) return null
   const view = state.ref === seed.recordRef ? state : { item: seed, loading: true, error: undefined }
-  const item = view.item
+  const item = { ...view.item, authorName: seed.authorName, memberType: seed.memberType ?? view.item.memberType }
   const authorAction = item.authorRef && onOpenAuthor ? () => onOpenAuthor(item) : undefined
   const authorButton = { padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left' as const, cursor: 'pointer' }
   const avatar = renderAvatar(item)
@@ -52,7 +53,7 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
     style={{ top: 0 }} widthPreferenceKey="arkme:world-detail-width:v1" onClose={onClose}
     headerContent={<ArkmeMessageDetailAuthor
       avatar={authorAction ? <button type="button" style={authorButton} aria-label={tr('查看{v0}的用户卡片', { v0: item.authorName })} onClick={authorAction}>{avatar}</button> : avatar}
-      name={authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}
+      name={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>{authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}<ArkmeMembershipBadge memberType={item.memberType} /></span>}
       at={item.publishedAtMillis || item.createdAtMillis} />}
     onPointerDownOutside={event => {
       if (!(event.target instanceof Element)) return

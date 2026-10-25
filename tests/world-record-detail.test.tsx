@@ -130,4 +130,15 @@ describe('World public detail interactions', () => {
     expect(avatar.alt).toBe('我的备注的头像')
     expect(read.mock.calls.filter(([operation]) => operation === 'world.image.read')).toHaveLength(1)
   })
+
+  it('updates the detail badge when background author data arrives and removes it for a free account', async () => {
+    await render([first]); await click(card(first.recordRef))
+    await act(async () => pending.get(first.recordRef)!.resolve(first))
+    expect(detail()!.querySelector('[data-arkme-membership]')).toBeNull()
+    await render([{ ...first, memberType: 'svip' }])
+    expect(card(first.recordRef).querySelector('[aria-label="SVIP 会员"]')).not.toBeNull()
+    expect(detail()!.querySelector('[data-arkme-detail-author] [aria-label="SVIP 会员"]')).not.toBeNull()
+    await render([{ ...first, memberType: 'free' }])
+    expect(detail()!.querySelector('[data-arkme-membership]')).toBeNull()
+  })
 })

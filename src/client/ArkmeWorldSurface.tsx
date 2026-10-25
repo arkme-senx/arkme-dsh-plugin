@@ -38,6 +38,7 @@ import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeWorldReactions } from './ArkmeWorldReactions.js'
 import { ArkmeWorldShareActions } from './ArkmeWorldShareActions.js'
 import { ArkmeWorldRecordDetail } from './ArkmeWorldRecordDetail.js'
+import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -94,15 +95,41 @@ export function updateWorldViewItem(
 export function applyWorldAuthorLabels(
   view: ArkmeWorldViewState,
   labelsByRef: ReadonlyMap<string, string>,
+  memberships?: ReadonlyMap<string, ArkmeWorldFeedItem['memberType']>,
 ): ArkmeWorldViewState {
   let changed = false
   const items = view.items.map(item => {
-    const authorName = item.authorRef === undefined ? undefined : labelsByRef.get(item.authorRef)
-    if (authorName === undefined || authorName === item.authorName) return item
+    const ref = item.authorRef ?? item.recordRef
+    const authorName = labelsByRef.get(ref) ?? item.authorName
+    const memberType = memberships?.get(ref) ?? item.memberType
+    if (authorName === item.authorName && memberType === item.memberType) return item
     changed = true
-    return { ...item, authorName }
+    return { ...item, authorName, ...(memberType === undefined ? {} : { memberType }) }
   })
   return changed ? { ...view, items } : view
+}
+
+export function applyWorldInteractionAuthorLabels(items: readonly ArkmeWorldInteractionItem[], labels: readonly ArkmeWorldAuthorLabel[]): ArkmeWorldInteractionItem[] {
+  const byRef = new Map(labels.map(label => [label.authorRef, label]))
+  return items.map(item => {
+    const label = byRef.get(item.authorRef ?? item.interactionRef)
+    return label ? { ...item, authorName: label.authorName, ...(label.memberType === undefined ? {} : { memberType: label.memberType }) } : item
+  })
+}
+
+async function hydrateWorldAuthorLabels(refs: readonly string[], signal: AbortSignal | undefined, apply: (labels: ArkmeWorldAuthorLabel[]) => void) {
+  const unique = [...new Set(refs)]
+  for (let offset = 0; offset < unique.length; offset += 20) {
+    const labels = await callArkme<ArkmeWorldAuthorLabel[]>('world.author-labels', { authorRefs: unique.slice(offset, offset + 20) }, signal)
+    if (signal?.aborted) return
+    apply(labels)
+  }
+}
+
+function WorldMembershipBadge({ memberType }: { memberType: ArkmeWorldFeedItem['memberType'] }) {
+  if (memberType !== 'vip' && memberType !== 'svip') return null
+  // Keep hover/focus available above the compact comment preview's click target.
+  return <span style={{ display: 'inline-flex', position: 'relative', zIndex: 1, verticalAlign: 'middle' }}><ArkmeMembershipBadge memberType={memberType} /></span>
 }
 
 function appendWorldFeedItems(
@@ -863,6 +890,7 @@ export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMe
 export interface WorldInteractionReplyPresentation {
   item: ArkmeWorldInteractionItem
   replyToName: string
+  replyToMemberType?: ArkmeWorldInteractionItem['memberType']
 }
 
 export interface WorldInteractionThread {
@@ -900,6 +928,7 @@ export function worldInteractionThreads(rootRef: string, items: readonly ArkmeWo
       thread.replies.push({
         item,
         replyToName: byRef.get(item.parentRef)?.authorName ?? root.authorName,
+        ...(byRef.get(item.parentRef)?.memberType === undefined ? {} : { replyToMemberType: byRef.get(item.parentRef)!.memberType }),
       })
     }
   }
@@ -926,9 +955,10 @@ function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteracti
 
 const WorldNotificationFocus = createContext<string | undefined>(undefined)
 
-function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }: {
+function InteractionRow({ item, replyToName, replyToMemberType, compact, replyTargetRef, onReply }: {
   item: ArkmeWorldInteractionItem
   replyToName?: string
+  replyToMemberType?: ArkmeWorldInteractionItem['memberType']
   compact: boolean
   replyTargetRef?: string
   onReply?(item: ArkmeWorldInteractionItem): void
@@ -940,8 +970,8 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
   const active = replyTargetRef === item.interactionRef
   if (compact) {
     return <span data-world-comment-level={reply ? 'reply' : 'root'} style={{ ...styles.compactCommentRow, ...(reply ? styles.compactCommentReply : {}) }}>
-      <strong style={styles.compactCommentAuthor}>{item.authorName}</strong>
-      {replyToName !== undefined && <><span> {tr("回复")} </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong></>}
+      <strong style={styles.compactCommentAuthor}>{item.authorName}</strong><WorldMembershipBadge memberType={item.memberType} />
+      {replyToName !== undefined && <><span> {tr("回复")} </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong><WorldMembershipBadge memberType={replyToMemberType} /></>}
       <span>：<WorldLinkText text={item.textContent} /></span>
     </span>
   }
@@ -954,7 +984,8 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
       <header style={styles.interactionMeta}>
         <span style={styles.interactionAuthorLine}>
           <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}) }}>{item.authorName}</strong>
-          {replyToName !== undefined && <span style={styles.interactionReplyTarget}>{tr("回复 {v0}", { v0: replyToName })}</span>}
+          <WorldMembershipBadge memberType={item.memberType} />
+          {replyToName !== undefined && <span style={styles.interactionReplyTarget}>{tr("回复 {v0}", { v0: replyToName })}<WorldMembershipBadge memberType={replyToMemberType} /></span>}
         </span>
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
       </header>
@@ -987,7 +1018,7 @@ export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, co
     {visible.map(thread => <section key={thread.root.interactionRef} style={{ ...styles.interactionThread, ...(compact ? { padding: 0, borderBottom: 0 } : {}) }}>
       <InteractionRow item={thread.root} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />
       {thread.replies.length > 0 && <div style={{ ...styles.interactionReplyList, ...(compact ? { margin: 0, paddingLeft: 0, borderLeft: 0 } : {}) }}>
-        {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />)}
+        {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} {...(reply.replyToMemberType === undefined ? {} : { replyToMemberType: reply.replyToMemberType })} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply ===undefined ? {} : { onReply })} />)}
       </div>}
     </section>)}
   </div>
@@ -1019,6 +1050,9 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
       .then(page => {
         if (controller.signal.aborted) return
         setItems(page.items)
+        const visible = worldInteractionThreads(item.recordRef, page.items).flatMap(thread => [thread.root, ...thread.replies.map(reply => reply.item)]).slice(0, 3)
+        void hydrateWorldAuthorLabels(visible.map(comment => comment.authorRef ?? comment.interactionRef), controller.signal,
+          labels => setItems(current => applyWorldInteractionAuthorLabels(current, labels))).catch(() => {})
       })
       .catch(() => { if (!controller.signal.aborted) setItems([]) })
     return () => { controller.abort() }
@@ -1138,7 +1172,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     {...(onOpenDetail === undefined ? {} : { tabIndex: 0, 'aria-label': tr('{v0}的世界动态', { v0: item.authorName }),
       onClick: (event: ReactMouseEvent<HTMLElement>) => {
         if (event.defaultPrevented || event.button !== 0 || event.detail > 1 || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
-        if (event.target.closest('button,a,input,select,textarea,audio,video,[contenteditable],[role="button"],[role="dialog"],[role="menu"]') || window.getSelection()?.toString()) return
+        if (event.target.closest('button,a,input,select,textarea,audio,video,[contenteditable],[role="button"],[role="dialog"],[role="menu"],[data-arkme-membership-anchor]') || window.getSelection()?.toString()) return
         event.currentTarget.focus({ preventScroll: true }); onOpenDetail(item)
       },
       onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -1155,6 +1189,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
           {item.authorRef === undefined
             ? <strong style={styles.author}>{item.authorName}</strong>
             : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
+          <WorldMembershipBadge memberType={item.memberType} />
           {playable
             ? <button data-arkme-feedback="neutral" data-arkme-feedback-selected={voiceprintActive} type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? tr("正在生成{v0}的声纹，点击停止", { v0: item.authorName }) : voiceprintActive ? tr("停止播放{v0}的声纹", { v0: item.authorName }) : tr("播放{v0}的声纹", { v0: item.authorName })} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
@@ -1312,7 +1347,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   useArkmeLocale()
   const detailContext = `${scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
   const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
-  const detailItem = detailSelection?.context === detailContext ? detailSelection.item : undefined
+  const selectedDetail = detailSelection?.context === detailContext ? detailSelection.item : undefined
+  const detailItem = selectedDetail ? state.items.find(item => item.recordRef === selectedDetail.recordRef) ?? selectedDetail : undefined
   const closeDetail = useCallback(() => setDetailSelection(undefined), [])
   const openCardDetail = useCallback((item: ArkmeWorldFeedItem) => {
     setDetailSelection(current => current?.context === detailContext && current.item.recordRef === item.recordRef ? undefined : { context: detailContext, item })
@@ -1615,10 +1651,7 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
     if (labelsByRef.size === 0) return
     setState(current => ({
       ...current,
-      items: current.items.map(interaction => {
-        const authorName = interaction.authorRef === undefined ? undefined : labelsByRef.get(interaction.authorRef)
-        return authorName === undefined || authorName === interaction.authorName ? interaction : { ...interaction, authorName }
-      }),
+      items: applyWorldInteractionAuthorLabels(current.items, labels),
     }))
     setReplyTarget(current => {
       if (current?.authorRef === undefined) return current
@@ -1627,17 +1660,7 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
     })
   }, [])
   const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldInteractionItem[], signal?: AbortSignal) => {
-    const authorRefs = [...new Set(items.map(interaction => interaction.authorRef).filter((value): value is string => value !== undefined))]
-    if (authorRefs.length === 0) return
-    void (async () => {
-      for (let offset = 0; offset < authorRefs.length; offset += 20) {
-        const labels = await callArkme<ArkmeWorldAuthorLabel[]>(
-          'world.author-labels', { authorRefs: authorRefs.slice(offset, offset + 20) }, signal,
-        )
-        if (signal?.aborted === true) return
-        applyViewerAuthorLabels(labels)
-      }
-    })().catch(() => {})
+    void hydrateWorldAuthorLabels(items.map(interaction => interaction.authorRef ?? interaction.interactionRef), signal, applyViewerAuthorLabels).catch(() => {})
   }, [applyViewerAuthorLabels])
   const load = useCallback(() => {
     loadController.current?.abort()
@@ -1792,7 +1815,8 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   const applyViewerAuthorLabels = useCallback((labels: readonly ArkmeWorldAuthorLabel[]) => {
     const labelsByRef = new Map(labels.map(label => [label.authorRef, label.authorName]))
     if (labelsByRef.size === 0) return
-    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => applyWorldAuthorLabels(view, labelsByRef)
+    const memberships = new Map(labels.map(label => [label.authorRef, label.memberType]))
+    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => applyWorldAuthorLabels(view, labelsByRef, memberships)
     setViews(current => {
       const all = update(current.all)
       const mine = update(current.mine)
@@ -1807,17 +1831,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   }, [])
 
   const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldFeedItem[], signal: AbortSignal) => {
-    const authorRefs = [...new Set(items.map(item => item.authorRef).filter((value): value is string => value !== undefined))]
-    if (authorRefs.length === 0) return
-    void (async () => {
-      for (let offset = 0; offset < authorRefs.length; offset += 20) {
-        const labels = await callArkme<ArkmeWorldAuthorLabel[]>(
-          'world.author-labels', { authorRefs: authorRefs.slice(offset, offset + 20) }, signal,
-        )
-        if (signal.aborted) return
-        applyViewerAuthorLabels(labels)
-      }
-    })().catch(() => {})
+    void hydrateWorldAuthorLabels(items.map(item => item.authorRef ?? item.recordRef), signal, applyViewerAuthorLabels).catch(() => {})
   }, [applyViewerAuthorLabels])
 
   const stopVoiceprintMedia = () => {
