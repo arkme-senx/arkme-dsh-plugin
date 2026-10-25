@@ -134,6 +134,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const creating = item === undefined
   const dismissActions = useRef<(() => boolean)>()
   const [actionBusy, setActionBusy] = useState(false)
+  const dismissFormatting = useRef<(() => boolean)>()
   const dictationTargetRef = useRef<(() => DictationTarget | undefined) | undefined>()
   const plainBodyRef = useRef<HTMLTextAreaElement>(null)
   const [dictationBusy, setDictationBusy] = useState(false)
@@ -353,7 +354,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   useEffect(() => workspace?.registerClose(requestClose), [workspace?.registerClose, requestClose])
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); if (dismissActions.current?.()) { event.preventDefault(); event.stopImmediatePropagation(); return }; if (recoveryDraft) { if (draftPreview) setDraftPreview(false); else setRecoveryDraft(undefined) } else if (windowMode && closePrompt && !closingDraft) { setClosePrompt(false); windowMode.cancelClose() } else if (!workspace?.closeTransient()) requestClose() } }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); if (dismissFormatting.current?.() || dismissActions.current?.()) { event.preventDefault(); event.stopImmediatePropagation(); return }; if (recoveryDraft) { if (draftPreview) setDraftPreview(false); else setRecoveryDraft(undefined) } else if (windowMode && closePrompt && !closingDraft) { setClosePrompt(false); windowMode.cancelClose() } else if (!workspace?.closeTransient()) requestClose() } }
     window.addEventListener('keydown', onKeyDown, true)
     return () => { window.removeEventListener('keydown', onKeyDown, true) }
   }, [requestClose, windowMode, closePrompt, closingDraft, recoveryDraft, draftPreview, workspace?.closeTransient])
@@ -567,7 +568,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
           {editing && draftFormat === 'markdown' && !markdownEnabled
             ? <div role="status">{tr("Markdown 长文暂不可编辑，草稿已保留。")}<button type="button" onClick={() => { setCapabilityEpoch(value => value + 1) }}>{tr("重试")}</button></div>
             : editing && markdownEnabled && !accountChanged
-            ? <ArkmeLongArticleEditor dictationTargetRef={dictationTargetRef} key={editorEpoch} initialSource={textContent} initialDocument={initialDocument} failedReferences={failedReferences} disabled={submitting || closingDraft || closePrompt} expectedUserId={authAtOpen.current?.userId}
+            ? <ArkmeLongArticleEditor dismissFormattingRef={dismissFormatting} dictationTargetRef={dictationTargetRef} key={editorEpoch} initialSource={textContent} initialDocument={initialDocument} failedReferences={failedReferences} disabled={submitting || closingDraft || closePrompt} expectedUserId={authAtOpen.current?.userId}
                 resolveImage={ref => { const block = detail?.contentBlocks?.find(value => value.kind === 'image' && `arkme-asset:${value.fileAssetUid}` === ref); return block ? articleImageUrl(block) : undefined }}
                 onError={message => { showImageNotice({ kind: 'error', message }) }} onPreparingChange={setPreparingImages} onChange={value => {
                   const previous = articleRef.current

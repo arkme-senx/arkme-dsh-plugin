@@ -1,3 +1,4 @@
+import { ArkmeArticleFormattingToolbar } from './ArkmeArticleFormattingToolbar.js'
 import { dictationAnchorExtension, documentDictationTarget, type DictationTarget } from './dictation-target.js'
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -16,6 +17,7 @@ export interface ArkmeArticleEditorValue extends ArkmeMarkdownDraft {
   retainedFileRefs: string[]
 }
 interface Props {
+  dismissFormattingRef?: MutableRefObject<(() => boolean) | undefined> | undefined
   dictationTargetRef?: MutableRefObject<(() => DictationTarget | undefined) | undefined> | undefined
   initialSource: string
   initialDocument?: JSONContent | undefined
@@ -255,5 +257,6 @@ export function ArkmeLongArticleEditor(props: Props) {
   return <div className="arkme-markdown" style={{ fontSize: 17, lineHeight: '29px' }}>
     <style>{arkmeMarkdownStyles}</style>
     <EditorContent editor={editor} />
+    {editor && <ArkmeArticleFormattingToolbar editor={editor} disabled={props.disabled} dismissRef={props.dismissFormattingRef} onError={props.onError} />}
   </div>
 }
