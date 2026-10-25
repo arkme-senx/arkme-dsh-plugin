@@ -491,11 +491,13 @@ describe('Arkme native World surface', () => {
   it('keeps the compact feed language without introducing light-only colors or demo-only actions', () => {
     const markup = render({ status: 'success', items: [item] })
 
-    expect(markup).toContain('width:min(980px, 100%);min-height:90px;margin:0 auto;padding:34px 48px 0')
+    expect(markup).toContain('width:100%;min-height:90px;margin:0;padding:28px 20px 0')
     expect(markup).toContain('font-size:26px;line-height:34px;font-weight:650')
-    expect(markup).toContain('width:min(980px, 100%);min-height:38px;margin:0 auto 4px;padding:0 48px')
+    expect(markup).toContain('width:100%;min-height:38px;margin:0 0 4px;padding:0 20px')
+    expect(markup).toContain('minmax(0,min(640px,100%))')
+    expect(markup).toContain('data-world-reserved-column="true"')
     expect(markup.indexOf('aria-label="发世界"')).toBeLessThan(markup.indexOf('aria-label="世界范围"'))
-    expect(markup).toContain('width:min(884px, calc(100% - 96px))')
+    expect(styleForDataAttribute(markup, 'data-world-content-stack', 'true')).toContain('width:100%')
     expect(markup).toContain('padding:22px 20px 18px')
     expect(markup).toContain('border:1px dashed var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
     expect(markup).toContain('overflow-x:hidden')
@@ -503,7 +505,8 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('border-radius:14px')
     expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
     expect(markup).not.toContain('>共鸣<')
-    expect(markup).not.toContain('aria-label="分享"')
+    expect(markup).toContain('aria-label="分享"')
+    expect(markup).not.toContain('>评论</button>')
     expect(markup).not.toContain('正在发生')
     expect(markup).not.toContain('发布前由你确认')
 

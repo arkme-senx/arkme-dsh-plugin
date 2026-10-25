@@ -37,7 +37,7 @@ it('focuses the composer before comments arrive and preserves its draft when Com
       textContent: '已有评论', createdAtMillis: 2000, publishedAtMillis: 2000, imageCount: 0, videoCount: 0, voiceCount: 0 }], hasMore: false }) })
     expect(JSON.stringify(ui!.toJSON())).toContain('已有评论')
     expect(ui!.root.findByType('textarea').props.value).toBe('尚未发送的评论')
-    expect(button().props.children.at(-1)).toBe('评论')
+    expect(button().findAllByType('svg')).toHaveLength(1)
     await act(async () => { ui!.root.findByProps({ 'aria-label': '收起评论' }).props.onClick() })
     expect(ui!.root.findAllByType('textarea')).toHaveLength(0)
   } finally { await act(async () => { ui?.unmount() }); request.mockRestore() }

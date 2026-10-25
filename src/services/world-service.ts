@@ -1,5 +1,7 @@
 import { TimelineTokenCodec } from './timeline-token.js'
 import { localWorldReactionTarget } from './world-local-reaction-service.js'
+import { isPublicRecordUid, parseShareLink } from '../share-link-preview.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeWorldShareResult } from '../types.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -395,6 +397,42 @@ export class WorldService {
     if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     if (!item) throw new ArkmePluginError('world-record-unavailable', '这条公开快记已不可用', false, 404)
     return item
+  }
+
+  /** Share the existing public URL, never a private Record or a copied media snapshot. */
+  async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldShareResult> {
+    const epoch = this.epoch, session = await this.runtime.requireSession()
+    if (expectedUserId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开分享', false, 409)
+    const recordUid = this.openWorldRecordRef(recordRef, session.userId).recordUid
+    const raw = await this.runtime.post<Record<string, unknown>>(
+      this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/detail', { record_uid: recordUid }, undefined, [200], signal,
+    )
+    if (raw.is_public !== true || stringValue(raw.record_uid) !== recordUid || ![0, 2, 3].includes(numberValue(raw.check_status))
+      || stringValue(raw.parent_record_uid).trim() || !isPublicRecordUid(recordUid)) {
+      throw new ArkmePluginError('world-share-unavailable', '这条内容已不可公开分享，请刷新世界', false, 404)
+    }
+    const ownerUserId = numberValue(raw.user_id)
+    if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new ArkmePluginError('world-share-author-invalid', '无法确认公开内容的作者，请重试', true, 502)
+    const profiles = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/get-public-users-by-ids', { user_ids: [ownerUserId] }, session, signal,
+    )
+    const author = listValue(profiles.items).map(objectValue).find(value => numberValue(value.user_id) === ownerUserId)
+    const arkmeId = [author?.jotmo_id, author?.name_slug, author?.arkme_id].map(stringValue).map(value => value.trim())
+      .find(value => /^[A-Za-z][A-Za-z0-9_-]{4,31}$/.test(value))
+    if (!arkmeId) throw new ArkmePluginError('world-share-author-invalid', '暂时无法生成这条内容的公开链接，请重试', true, 502)
+    let url: string
+    try { url = new URL(`/shijie/${encodeURIComponent(arkmeId)}/record/${encodeURIComponent(recordUid)}`, this.runtime.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE).href }
+    catch { throw new ArkmePluginError('world-share-url-invalid', '分享地址配置暂不可用', false, 503) }
+    const target = parseShareLink(url)
+    if (target?.kind !== 'public-record' || target.environment !== this.runtime.config.environment || target.id !== recordUid) {
+      throw new ArkmePluginError('world-share-url-invalid', '分享地址配置暂不可用', false, 503)
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (epoch !== this.epoch || current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开分享', false, 409)
+    }
+    return { url, title: stringValue(raw.headline).trim() || `${stringValue(raw.nick_name).trim() || 'Arkme用户'}的世界`, previewText: stringValue(raw.text_content).trim().slice(0, 240) }
   }
 
   async listWorldRecords(

@@ -36,6 +36,7 @@ import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeWorldReactions } from './ArkmeWorldReactions.js'
+import { ArkmeWorldShareActions } from './ArkmeWorldShareActions.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -114,7 +115,7 @@ function appendWorldFeedItems(
 
 const styles: Record<string, CSSProperties> = {
   root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text },
-  header: { width: 'min(980px, 100%)', minHeight: 90, margin: '0 auto', padding: '34px 48px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
+  header: { width: '100%', minHeight: 90, margin: 0, padding: '28px 20px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
   heading: { margin: 0, fontSize: 26, lineHeight: '34px', fontWeight: 650, letterSpacing: '-.035em' },
   subtitle: { margin: '2px 0 0', color: arkmeTheme.secondary, fontSize: 11 },
   headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
@@ -124,17 +125,17 @@ const styles: Record<string, CSSProperties> = {
   button: { minHeight: 36, padding: '0 13px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   iconButton: { width: 32, height: 32, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   primaryButton: { minHeight: 34, padding: '0 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, borderColor: arkmeTheme.primaryAction, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction },
-  worldToolbar: { width: 'min(980px, 100%)', minHeight: 38, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch' },
+  worldToolbar: { width: '100%', minHeight: 38, margin: '0 0 4px', padding: '0 20px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch' },
   tabs: { minWidth: 0, height: 38, padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
   tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 12 },
   tabActive: { borderBottom: `2px solid ${arkmeTheme.accent}`, color: arkmeTheme.text, fontWeight: 600 },
   worldLayout: { flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', position: 'relative', background: arkmeTheme.base },
   body: { flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', overscrollBehavior: 'contain', background: arkmeTheme.base },
-  notice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0', padding: '13px 15px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 12 },
-  emptyNotice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0' },
+  notice: { width: '100%', margin: '22px 0 0', padding: '13px 15px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 12 },
+  emptyNotice: { width: '100%', margin: '22px 0 0' },
   error: { borderColor: arkmeTheme.danger, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger },
   errorRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
-  feed: { width: 'min(884px, calc(100% - 96px))', maxWidth: '100%', minWidth: 0, margin: '10px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 16 },
+  feed: { width: '100%', maxWidth: '100%', minWidth: 0, margin: '10px 0 48px', boxSizing: 'border-box', display: 'grid', gap: 16 },
   card: { minWidth: 0, maxWidth: '100%', padding: '22px 20px 18px', boxSizing: 'border-box', border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
   cardHeader: { minWidth: 0, maxWidth: '100%', display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) auto', alignItems: 'center', gap: 10 },
   avatar: { width: 36, height: 36, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: arkmeTheme.accentSoft, color: arkmeTheme.accent, fontSize: 13, fontWeight: 600 },
@@ -171,7 +172,7 @@ const styles: Record<string, CSSProperties> = {
   extensionShelfFooter: { display: 'flex', justifyContent: 'flex-end' },
   extensionShelfViewAll: { minHeight: 30, padding: '0 9px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  commentButton: { padding: '4px 8px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButton: { width: 32, height: 32, padding: 0, borderRadius: 6, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   commentButtonActive: { color: arkmeTheme.accent, fontWeight: 600 },
   commentPreview: { position: 'relative', marginTop: 6, padding: '8px 12px', overflow: 'hidden', borderRadius: 10, background: arkmeTheme.subtle },
   commentPreviewHitTarget: { position: 'absolute', inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
@@ -1172,9 +1173,10 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     })}</div>}
     <footer style={styles.cardFooter}>
       <ArkmeWorldReactions item={item} onUnavailable={onReactionUnavailable}>
-      <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-label={tr("评论")} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={composeComment}>
-        <ChatCircleDots size={16} weight="light" aria-hidden />{tr("评论")}
+      <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} title={tr("评论")} aria-label={tr("评论")} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={composeComment}>
+        <ChatCircleDots size={18} weight="light" aria-hidden />
       </button>
+      <ArkmeWorldShareActions item={item} />
       </ArkmeWorldReactions>
     </footer>
     {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
@@ -1331,6 +1333,10 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     onSelectScope(nextScope)
   }
   return <>
+    <style>{`.arkme-world-columns { width:100%; max-width:1020px; padding:0 clamp(12px,2vw,24px); margin:0 auto; box-sizing:border-box; flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,min(640px,100%)) minmax(0,1fr); column-gap:clamp(0px,calc(100% - 688px),32px); }
+      .arkme-world-primary { min-width:0; min-height:0; display:flex; flex-direction:column; }`}</style>
+    <div className="arkme-world-columns" data-world-columns>
+    <div className="arkme-world-primary" data-world-primary-column>
     <header style={styles.header}>
       {target === undefined
         ? <div><h1 style={styles.heading}>{tr("世界")}</h1><p style={styles.subtitle}>{tr("看看大家此刻正在记录什么")}</p></div>
@@ -1397,6 +1403,9 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
         </>}
         </div>
       </div>
+    </div>
+    </div>
+    <aside className="arkme-world-reserved" aria-hidden="true" data-world-reserved-column />
     </div>
   </>
 }

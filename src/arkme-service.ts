@@ -2020,6 +2020,13 @@ arkoImagesV1:true,
   }
 
   async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
+  async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal) { return this.world.shareWorldRecord(recordRef, expectedUserId, signal) }
+  async forwardWorldRecord(recordRef: string, expectedUserId: number, options: { targetSourceRef: string; recordUid: string; commentText: string; signal?: AbortSignal }) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.recordUid)) throw new ArkmePluginError('record-uid-invalid', '转发标识无效，请重新选择', false)
+    const share = await this.world.shareWorldRecord(recordRef, expectedUserId, options.signal)
+    const text = [options.commentText.trim(), share.url].filter(Boolean).join('\n\n')
+    return this.chat.sendSourceText(options.targetSourceRef, text, { recordUid: options.recordUid, expectedUserId, ...(options.signal ? { signal: options.signal } : {}) })
+  }
 
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
 

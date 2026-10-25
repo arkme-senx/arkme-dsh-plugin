@@ -1,5 +1,8 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '请先登录后分享': 'Sign in to share',
+  '分享动态': 'Share post',
+  '分享超时，请重试': 'Sharing timed out. Please try again.',
   '评论内容': 'Comment text',
   '仅本机保存 · 未云同步': 'Saved on this device · Not synced',
   '请刷新世界后使用本机表态': 'Refresh World to use reactions on this device',

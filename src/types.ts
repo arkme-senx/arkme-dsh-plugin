@@ -829,6 +829,12 @@ export interface ArkmeWorldFeedItem {
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
+export interface ArkmeWorldShareResult {
+  url: string
+  title: string
+  previewText: string
+}
+
 export interface ArkmeWorldFeedPage {
   items: ArkmeWorldFeedItem[]
   total: number
@@ -4320,6 +4326,8 @@ export type ArkmePluginOperation =
   | 'image.read'
   | 'images.list'
   | 'world.record.read'
+  | 'world.share'
+  | 'world.forward'
   | 'world.feed'
   | 'world.mine'
   | 'world.user'

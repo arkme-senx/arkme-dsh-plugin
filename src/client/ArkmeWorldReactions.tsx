@@ -15,11 +15,11 @@ export function ArkmeWorldReactions({ item, children }: { item: ArkmeWorldFeedIt
   useEffect(() => { setNoticeOpen(false); setOpenRequested(false) }, [scope, item.recordRef])
   const target = item.localReactionTarget ? { ...item.localReactionTarget, source: '世界', text: item.textContent } : undefined
   return <div data-world-reactions data-storage="local" style={{ minWidth: 0, width: '100%' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 18, minHeight: 30 }}>
-      {scope && target ? <ArkmeReactionPreview scope={scope} target={target} store={worldReactionPreview} library={worldLocalReactionLibrary} standalone triggerText={tr('表态')} panelNote={tr('仅本机保存 · 未云同步')}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 32 }}>
+      {scope && target ? <ArkmeReactionPreview scope={scope} target={target} store={worldReactionPreview} library={worldLocalReactionLibrary} standalone panelNote={tr('仅本机保存 · 未云同步')}
         openRequested={openRequested} onOpenHandled={() => setOpenRequested(false)} />
-        : <button type="button" aria-label={tr('表态')} aria-expanded={noticeOpen} data-arkme-feedback="neutral" onClick={() => setNoticeOpen(value => !value)}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: 3, background: 'transparent', border: 0, color: c.secondary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}><ReactionAddIcon />{tr('表态')}</button>}
+        : <button type="button" aria-label={tr('表态')} title={tr('表态')} aria-expanded={noticeOpen} data-arkme-feedback="neutral" onClick={() => setNoticeOpen(value => !value)}
+          style={{ display: 'grid', placeItems: 'center', width: 32, height: 32, padding: 0, background: 'transparent', border: 0, color: c.secondary, cursor: 'pointer' }}><ReactionAddIcon /></button>}
       {children}
     </div>
     {scope && target && <ArkmeReactionSelections scope={scope} target={target} store={worldReactionPreview} onAdd={() => setOpenRequested(true)} />}
