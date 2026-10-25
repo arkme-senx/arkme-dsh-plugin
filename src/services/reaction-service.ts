@@ -25,8 +25,12 @@ function state(raw: unknown) {
 function library(raw: unknown) { const value = objectValue(raw); return { revision: integer(value.revision), items: array(value.items, 58).map(expression) } }
 function boolean(raw: unknown): boolean { return typeof raw === 'boolean' ? raw : invalid() }
 
-export interface ReactionWireTarget { chat_session_uid?: string; rel_uid?: string; record_uid?: string; owned?: boolean }
-function targetKey(target: ReactionWireTarget): string { return JSON.stringify([target.chat_session_uid ?? '', target.rel_uid ?? '', target.record_uid ?? '', target.owned === true]) }
+export interface ReactionWireTarget { chat_session_uid?: string; rel_uid?: string; record_uid?: string; owned?: boolean; world_context_uid?: string; content_revision?: string }
+function targetKey(target: ReactionWireTarget): string {
+  const parts: (string | boolean)[] = [target.chat_session_uid ?? '', target.rel_uid ?? '', target.record_uid ?? '', target.owned === true]
+  if (target.world_context_uid !== undefined || target.content_revision !== undefined) parts.push(target.world_context_uid ?? '', target.content_revision ?? '')
+  return JSON.stringify(parts)
+}
 /** One Host owner for Browser, SDK and granted Tools; identities are resolved from signed message references. */
 export class ReactionService {
   constructor(private readonly runtime: Pick<ServiceRuntime, 'requireSession' | 'authenticatedPost' | 'config'>,
@@ -34,7 +38,8 @@ export class ReactionService {
     private readonly worldReference?: (recordUID: string) => Promise<string>,
  private readonly chatSourceKey?: (viewer: number, sessionUID: string) => Promise<string>,
  private readonly historyContext?: (items: { sessionUID: string; senderID: number; sourceKind: string; message?: { recordUID: string; ownerUserID: number; sendAtMillis: number } }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionHistoryContext[]>,
- private readonly notificationContext?: (items: { sessionUID: string; actorUserId: number }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionNotificationContext[]>) {}
+ private readonly notificationContext?: (items: { sessionUID: string; actorUserId: number }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionNotificationContext[]>,
+ private readonly endpoint?: { prefix: string; contract: string }) {}
   async request(input: ReactionRequest, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession()
     const accountKey = `${this.runtime.config.environment}:${session.userId}`
@@ -82,8 +87,9 @@ export class ReactionService {
     }
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`/api/v1/reactions/${path}`, body, session, signal,
+    const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`${this.endpoint?.prefix ?? '/api/v1/reactions/'}${path}`, body, session, signal,
       input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
+    if (this.endpoint && result.contract !== this.endpoint.contract) throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态接口尚未完成对接，请稍后重试', false, 502)
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     if (input.action === 'query') {

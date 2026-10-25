@@ -9,7 +9,7 @@ import { useState, useCallback, useSyncExternalStore, useRef, useLayoutEffect, u
 import { expressionIdentity, expressionLabel } from './reaction-expression.js'
 import type { ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionExpression } from '../reaction-contract.js'
 import { createPortal } from 'react-dom'
-import { reactionPreview, type ReactionPreviewTarget } from './reaction-preview-store.js'
+import { reactionPreview as defaultReactionPreview, type ReactionPreviewStore, type ReactionPreviewTarget } from './reaction-preview-store.js'
 import { arkmeTheme as c } from './arkme-theme.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { watchVisibleReactionTarget } from './reaction-visible-target.js'
@@ -49,7 +49,7 @@ export function ReactionAddIcon() {
   </svg>
 }
 
-export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean }) {
+export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, triggerText, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; triggerText?: string; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
   const latestTarget = useRef(target)
@@ -129,7 +129,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     if (accepted) { setOpen(false) }
     return accepted
   }
-  const readOnly = reactionPreview.snapshot(target.id)?.private === true
+  const readOnly = forcedReadOnly || reactionPreview.snapshot(target.id)?.private === true
   const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); anchor.current?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div role="group" aria-label="全部表情" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, height: 206, minHeight: 38, flexShrink: 1, alignContent: 'start', scrollSnapType: 'y mandatory', overflowY: 'auto' }}>
         {arkmeDefaultEmojis.map(emoji => <button type="button" key={emoji.id} aria-label={emoji.label} title={emoji.label}
@@ -146,7 +146,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
   return <div ref={message} data-arkme-reaction-preview data-arkme-reaction-ready={reactionPreview.snapshot(target.id) !== undefined || reactionPreview.error(target.id) !== undefined ? 'true' : 'false'} data-open={open} onMouseEnter={positionToolbar} onFocus={positionToolbar} style={{ position: 'relative', maxWidth: '100%', fontSize: 12 }}>
     {children}
     {enabled && <div className={standalone ? undefined : 'arkme-reaction-hover-toolbar'} style={standalone ? {} : { position: 'absolute', ...toolbar, zIndex: 5 }}>
-      <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, padding: 3, borderRadius: 6, color: c.secondary }}><ReactionAddIcon /></button>
+      <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: triggerText ? undefined : 26, height: triggerText ? 28 : 26, padding: 3, gap: 5, borderRadius: 6, color: c.secondary }}><ReactionAddIcon />{triggerText && <span>{triggerText}</span>}</button>
     </div>}
     {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutlineMedium />} onDone={() => setNotice(undefined)} />)}
     {overlay && (typeof document === 'undefined' ? overlay : createPortal(overlay, document.body))}
@@ -157,7 +157,7 @@ function warmActorAvatar(actor: ReactionActor) {
   if (actor.avatarRef) void arkmeAvatarImages.load(actor.avatarRef).catch(() => undefined)
 }
 
-export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我', actorGroupNickname, actorAvatarRef }: { scope: string; target: ReactionPreviewTarget; onAdd?: () => void; actorName?: string; actorGroupNickname?: string | undefined; actorAvatarRef?: string | undefined }) {
+export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我', actorGroupNickname, actorAvatarRef, store: reactionPreview = defaultReactionPreview, readOnly = false }: { scope: string; target: ReactionPreviewTarget; onAdd?: () => void; actorName?: string; actorGroupNickname?: string | undefined; actorAvatarRef?: string | undefined; store?: ReactionPreviewStore; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   const highlight = reactionNotifications.highlights(scope, target.sourceKey, target.itemUid)
@@ -220,7 +220,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
   if (!groups.length) return null
   return <div ref={selectionsRef} data-arkme-message-reactions style={{ ...row, width: 'max-content', maxWidth: '100%', gap: 4, marginTop: 8, fontSize: 12 }}>
     {groups.map(group => { const label = expressionLabel(group.expression), mine = snapshot?.mine.selections.some(item => item.key === group.key); const newActors = new Set(highlight?.rows.filter(notice => notice.selections.some(selection => selection.key === group.key)).map(notice => notice.actorUserId)); const newGroup = highlight?.expressionIdentity === expressionIdentity(group.expression) || newActors.size > 0 && newActors.size >= group.count; return <span key={`${group.key}:${highlight?.revision ?? 0}`} data-arkme-new-reaction={newGroup ? 'group' : undefined} className={newGroup ? 'arkme-new-reaction' : undefined} style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 5px', borderRadius: 6, minHeight: 28, boxSizing: 'border-box', maxWidth: '100%', flexShrink: 0, background: `color-mix(in srgb, ${c.secondary} 10%, transparent)` }}>
-      <button type="button" data-arkme-hover="none" disabled={snapshot?.private || reactionPreview.busy(target.id)} aria-busy={reactionPreview.busy(target.id)} aria-pressed={mine} aria-label={`${mine ? '取消我的' : '添加'}${reactionLabelText(label)}`}
+      <button type="button" data-arkme-hover="none" disabled={readOnly || snapshot?.private || reactionPreview.busy(target.id)} aria-busy={reactionPreview.busy(target.id)} aria-pressed={mine} aria-label={`${mine ? '取消我的' : '添加'}${reactionLabelText(label)}`}
         onClick={event => { event.stopPropagation(); void reactionPreview.toggle(scope, target, label, group.expression) }}
         style={{ ...button, border: 0, background: 'transparent', ...reactionPhraseStyle(label, false, group.expression.color), borderRadius: 3, padding: '1px 4px', overflowWrap: 'anywhere' }}>
         <ReactionLabel label={label} />
@@ -256,7 +256,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
     </div>}
     {profileActor && snapshot?.actors_visible && <ArkmeReactionActorCard key={`${scope}:${profileActor.userId}`} scope={scope} actor={profileActor} onClose={() => setProfileActor(undefined)} />}
     {reactionPreview.error(target.id) && <div role="alert">{reactionPreview.error(target.id)}</div>}
-    {onAdd && !snapshot?.private && <button type="button" data-arkme-reaction-toggle aria-label="继续表态" onClick={event => { event.stopPropagation(); onAdd() }}
+    {onAdd && !readOnly && !snapshot?.private && <button type="button" data-arkme-reaction-toggle aria-label="继续表态" onClick={event => { event.stopPropagation(); onAdd() }}
       style={{ ...button, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, padding: 3, border: 0, borderRadius: 6, color: c.secondary, background: `color-mix(in srgb, ${c.secondary} 10%, transparent)` }}><ReactionAddIcon /></button>}
   </div>
 }

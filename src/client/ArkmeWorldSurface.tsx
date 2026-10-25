@@ -35,6 +35,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
+import { ArkmeWorldReactions } from './ArkmeWorldReactions.js'
 import { ArkmeMemberProfileCard, type ArkmeMemberProfileIdentity } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
@@ -1096,6 +1097,9 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
 }) {
   useArkmeLocale()
   const [previewIndex, setPreviewIndex] = useState<number>()
+  const [reactionUnavailable, setReactionUnavailable] = useState(false)
+  const onReactionUnavailable = useCallback(() => { setReactionUnavailable(true); setPreviewIndex(undefined) }, [])
+  useEffect(() => { setReactionUnavailable(false) }, [item.recordRef, item.publishedAtMillis])
   const [interactionCount, setInteractionCount] = useState<{ count: number; hasMore: boolean }>()
   const resolveInteractionCount = useCallback((count: number, hasMore: boolean) => {
     setInteractionCount({ count, hasMore })
@@ -1120,6 +1124,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     window.addEventListener('keydown', closeOnEscape)
     return () => { window.removeEventListener('keydown', closeOnEscape) }
   }, [previewIndex])
+  if (reactionUnavailable) return <article style={styles.card} data-world-record-ref={item.recordRef}><p role="status" style={styles.subtitle}>{tr('这条内容已更新或不再公开，请刷新世界')}</p></article>
   return <article style={styles.card} data-world-record-ref={item.recordRef}>
     <header style={styles.cardHeader}>
       {item.authorRef === undefined
@@ -1169,9 +1174,11 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       </button>
     })}</div>}
     <footer style={styles.cardFooter}>
+      <ArkmeWorldReactions item={item} onUnavailable={onReactionUnavailable}>
       <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
         <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
       </button>
+      </ArkmeWorldReactions>
     </footer>
     {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} onCountResolved={resolveInteractionCount} />}
     {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} onCountResolved={resolveInteractionCount} />}

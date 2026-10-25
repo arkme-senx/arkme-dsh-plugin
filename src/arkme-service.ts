@@ -44,6 +44,8 @@ import { TeamAppService } from './services/team-app-service.js'
 import type { TeamAppOperation } from './team-app-contract.js'
 import { objectValue, stringValue } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
+import { WorldReactionService, worldReactionFailure } from './services/world-reaction-service.js'
+import { WORLD_REACTION_CONTRACT, WORLD_REACTION_PREFIX } from './world-reaction-contract.js'
 import { DayRecapService } from './services/day-recap-service.js'
 import { ConversationActivityService } from './services/conversation-activity-service.js'
 import { ConversationWordFrequencyService } from './services/conversation-word-frequency-service.js'
@@ -2425,9 +2427,17 @@ arkoImagesV1:true,
   }
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
-  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+  async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal) {
+    return await new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).prepare(accountKey, recordRefs, signal)
+  }
+  async worldReactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
+    if (!['query', 'set', 'actors', 'groups'].includes(input?.action)) throw new ArkmePluginError('world-reactions-operation-invalid', '不支持的世界表态操作', false)
+    try { return await this.reactions(input, signal, new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref))) }
+    catch (error) { return worldReactionFailure(error) }
+  }
+  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService): Promise<unknown> {
     return await withReactionTrace(input, async () => {
-    const result = await new ReactionService(this.runtime, target => target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
+    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
       const [sources, profiles] = await Promise.all([
         this.source.chatSourcesBySessionUids([...new Set(items.map(item => item.sessionUID).filter(Boolean))], signal),
@@ -2455,7 +2465,7 @@ arkoImagesV1:true,
           ...(source ? { avatar: { ...(source.avatarRef ? { avatarRef: source.avatarRef } : {}), ...(source.avatarRefs ? { avatarRefs: source.avatarRefs } : {}), ...(source.groupAvatar ? { groupAvatar: source.groupAvatar } : {}) } } : {}),
         }
       })
-    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal)).request(input, signal)
+    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal), worldOwner ? { prefix: WORLD_REACTION_PREFIX, contract: WORLD_REACTION_CONTRACT } : undefined).request(input, signal)
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     const actorLabels = async (sourceRef: string | undefined, ids: number[]) => {
       if (!sourceRef || !ids.length) return new Map<number, { remark: string; groupNickname: string }>()

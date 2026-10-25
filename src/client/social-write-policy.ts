@@ -14,7 +14,7 @@ export function socialWriteAction(operation: string, params?: Record<string, unk
     case 'team.app.send': case 'team.app.send.enqueue': case 'team.app.send.retry-task': case 'team.app.edit': return '发送消息'
     case 'calls.outgoing.prepare': case 'calls.invite.create': return '发起通话'
     case 'voiceprint.invite': case 'voiceprint.person.invite': case 'world.voiceprint.invite': return '发送声纹邀请'
-    case 'reactions':
+    case 'reactions': case 'world.reactions':
       if (params?.action === 'set' && params.active === true && typeof (params.target as { worldRecordRef?: unknown } | undefined)?.worldRecordRef === 'string') return '参与互动'
       return undefined
     default: return undefined

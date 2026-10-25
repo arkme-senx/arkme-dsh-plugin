@@ -4326,6 +4326,8 @@ export type ArkmePluginOperation =
   | 'chat.official-author.profile'
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
+  | 'world.reactions.prepare'
+  | 'world.reactions'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'

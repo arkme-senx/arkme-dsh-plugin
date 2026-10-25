@@ -1,5 +1,9 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '请先登录后表态': 'Sign in to react',
+  '正在读取世界表态…': 'Loading World reactions…',
+  '世界表态 · 已取消公开，仅你可查看': 'World reactions · No longer public; visible only to you',
+  '这条内容已更新或不再公开，请刷新世界': 'This post changed or is no longer public. Refresh World.',
   '＋ 添加成员': '+ Add members',
   '搜索成员': 'Search members',
   '搜索姓名、备注或即我号': 'Search name, remark or Arkme ID',
