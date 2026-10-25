@@ -30,12 +30,16 @@ async function mount() { await act(async () => { ui = create(<ArkmeWorldReaction
 const click = async () => { await act(async () => { ui!.root.findByProps({ 'aria-label': '表态' }).props.onClick() }) }
 describe('World private local reaction controls', () => {
   it('opens the shared panel immediately before any initial query finishes', async () => {
-    await mount(); await click()
+    await mount()
+    expect(JSON.stringify(ui!.toJSON())).not.toContain('仅本机保存 · 未云同步')
+    await click()
     expect(ui!.root.findByProps({ 'aria-label': '表态面板' })).toBeDefined()
     expect(ui!.root.findByType(ArkmeReactionPreview).props.store).toBe(worldReactionPreview)
     expect(ui!.root.findByType(ArkmeReactionPreview).props.library).toBe(worldLocalReactionLibrary)
-    expect(JSON.stringify(ui!.toJSON())).toContain('仅本机保存 · 未云同步')
+    expect(ui!.root.findByProps({ 'aria-label': '表态面板' }).findAllByType('p').some(node => node.children.includes('仅本机保存 · 未云同步'))).toBe(true)
     expect(ui!.root.findAllByType('button').some(node => node.children.includes('评论 3'))).toBe(true)
+    await click()
+    expect(JSON.stringify(ui!.toJSON())).not.toContain('仅本机保存 · 未云同步')
   })
   it('adds and cancels expressions only through local transport and restores them on remount', async () => {
     await mount(); await click()

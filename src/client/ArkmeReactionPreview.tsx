@@ -50,7 +50,7 @@ export function ReactionAddIcon() {
   </svg>
 }
 
-export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, library = defaultReactionLibrary, triggerText, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; library?: ReactionLibraryStore; triggerText?: string; readOnly?: boolean }) {
+export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, library = defaultReactionLibrary, triggerText, panelNote, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; library?: ReactionLibraryStore; triggerText?: string; panelNote?: string; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
   const latestTarget = useRef(target)
@@ -143,6 +143,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
       <ArkmeReactionPhrases key={scope} scope={scope} library={library} selected={reactionPreview.isScope(scope) ? reactionPreview.snapshot(target.id)?.mine.selections.map(item => item.expression) ?? [] : []} onUse={toggle} onNotice={text => setNotice(current => ({ text, sequence: (current?.sequence ?? 0) + 1 }))} />
       </div>
       {(status || reactionPreview.error(target.id)) && <div role="status" style={{ marginTop: 6, color: c.secondary }}>{status || reactionPreview.error(target.id)}</div>}
+      {panelNote && <p style={{ margin: '8px 0 0', color: c.tertiary, fontSize: 11, flexShrink: 0 }}>{panelNote}</p>}
     </section>
   return <div ref={message} data-arkme-reaction-preview data-arkme-reaction-ready={reactionPreview.snapshot(target.id) !== undefined || reactionPreview.error(target.id) !== undefined ? 'true' : 'false'} data-open={open} onMouseEnter={positionToolbar} onFocus={positionToolbar} style={{ position: 'relative', maxWidth: '100%', fontSize: 12 }}>
     {children}
