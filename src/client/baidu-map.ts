@@ -1,6 +1,8 @@
 /** The small JSAPI 4.0 surface used by the daily-location map. */
 export interface BaiduPoint { lng: number; lat: number }
+export interface BaiduMapStyle { styleJson: Array<{ featureType: string; elementType: string; stylers: { color: string } }> }
 export interface BaiduMap {
+  setMapStyle(style: BaiduMapStyle): void
   centerAndZoom(point: BaiduPoint, zoom: number): void
   setViewport(points: BaiduPoint[], options: { margins: number[]; enableAnimation: boolean }): void
   pointToPixel(point: BaiduPoint): { x: number; y: number }

@@ -117,6 +117,7 @@ it('reuses the Baidu map and converted points on reopening, and destroys them on
     await act(async () => root.render(<ArkmeLocationSearchMap {...props} />))
     const canvas = mount.querySelector('.arkme-location-canvas')!.firstElementChild
     const calls = convert.mock.calls.length
+    const themeCalls = mock.map.setMapStyle.mock.calls.length
     expect(mount.querySelectorAll('.arkme-location-pin')).toHaveLength(1)
     await act(async () => root.unmount())
     expect(mock.map.destroy).not.toHaveBeenCalled()
@@ -125,9 +126,45 @@ it('reuses the Baidu map and converted points on reopening, and destroys them on
     expect(mount.querySelector('.arkme-location-canvas')!.firstElementChild).toBe(canvas)
     expect(mock.sdk.Map).toHaveBeenCalledTimes(1)
     expect(convert).toHaveBeenCalledTimes(calls)
+    expect(mock.map.setMapStyle).toHaveBeenCalledTimes(themeCalls)
     expect(mock.map.centerAndZoom).toHaveBeenCalledTimes(1)
     await act(async () => root.unmount())
     resetLocationMapSessions('test:two')
     expect(mock.map.destroy).toHaveBeenCalledTimes(1)
   } finally { mount.remove() }
+})
+it('updates the live map theme in place, stops observing when closed and refreshes a retained canvas on reopen', async () => {
+  document.body.setAttribute('data-ds-dark-theme', '')
+  const view = await mountLocationMap()
+  let closed = false
+  try {
+    expect(view.map.setMapStyle.mock.calls[0]?.[0].styleJson.length).toBeGreaterThan(0)
+    expect(view.map.setMapStyle.mock.invocationCallOrder[0]).toBeLessThan(view.map.centerAndZoom.mock.invocationCallOrder[0]!)
+    const centered = view.map.centerAndZoom.mock.calls.length
+    const fitted = view.map.setViewport.mock.calls.length
+    await act(async () => { document.body.removeAttribute('data-ds-dark-theme') })
+    expect(view.map.setMapStyle).toHaveBeenLastCalledWith({ styleJson: [] })
+    expect(view.element.querySelector('.arkme-location-canvas')?.getAttribute('data-map-ready')).toBe('false')
+    await act(async () => view.events.get('tilesloaded')?.())
+    expect(view.element.querySelector('.arkme-location-canvas')?.getAttribute('data-map-ready')).toBe('true')
+    expect(view.map.centerAndZoom).toHaveBeenCalledTimes(centered)
+    expect(view.map.setViewport).toHaveBeenCalledTimes(fitted)
+    expect(view.sdk.Map).toHaveBeenCalledTimes(1)
+    await view.close(); closed = true
+    const themed = view.map.setMapStyle.mock.calls.length
+    await act(async () => { document.body.setAttribute('data-ds-dark-theme', '') })
+    expect(view.map.setMapStyle).toHaveBeenCalledTimes(themed)
+    mocks.load.mockResolvedValue(view.sdk)
+    const mount = document.createElement('div'); document.body.append(mount)
+    const root = createRoot(mount)
+    try {
+      await act(async () => root.render(<ArkmeLocationSearchMap {...locationProps} />))
+      expect(view.map.setMapStyle.mock.calls.at(-1)?.[0].styleJson.length).toBeGreaterThan(0)
+      expect(view.sdk.Map).toHaveBeenCalledTimes(1)
+      expect(view.map.centerAndZoom).toHaveBeenCalledTimes(centered)
+    } finally { await act(async () => root.unmount()); mount.remove() }
+  } finally {
+    if (!closed) await view.close()
+    document.body.removeAttribute('data-ds-dark-theme')
+  }
 })
