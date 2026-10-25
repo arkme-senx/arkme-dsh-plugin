@@ -43,7 +43,7 @@ describe('contact detail actions', () => {
     expect(text(renderer.root)).toContain('xiaoman')
     expect(text(renderer.root)).not.toContain('添加时间')
     expect(text(renderer.root)).not.toContain('1970')
-    expect(renderer.root.findAllByType('button').map(text)).toEqual(['编辑', '发消息', '语音聊天', '视频聊天'])
+    expect(renderer.root.findAllByType('button').map(text)).toEqual(['编辑', '发消息', '语音聊天', '视频聊天', '以团队联系'])
   })
 
   it.each(['audio', 'video'] as const)('opens the selected private target before requesting a %s call, without changing contact selection', async mediaType => {
