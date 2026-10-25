@@ -1858,6 +1858,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
+    return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
+  }
   async personRecordsCapabilities(sourceRef: string, memberRef: string, signal?: AbortSignal) {
     return this.chat.personRecordsCapabilities(sourceRef, memberRef, signal)
   }

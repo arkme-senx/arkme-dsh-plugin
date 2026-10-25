@@ -1,3 +1,5 @@
+import { commonGroupChanges } from './common-group-service.js'
+import { sealPersonSourcesCursor, openPersonSourcesCursor, type PersonRecordSourcesPage, type PersonSourcesCursor } from '../person-records.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
 import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
@@ -1984,8 +1986,60 @@ export class ChatService {
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '仅支持聊天成员内容', false, 400)
     await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
-    // Local Host capability, not a claim that an aggregate cloud endpoint exists.
-    return { version: 1 as const, shared: false, reason: 'backend-pending' as const }
+    // Existing cloud reads are composed locally; no aggregate cloud endpoint is claimed.
+    return { version: 1 as const, shared: true, strategy: 'existing-conversations' as const }
+  }
+
+  /** Discover bounded batches; reading this view never creates a chat or marks it read. */
+  async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal): Promise<PersonRecordSourcesPage> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '仅支持聊天成员内容', false, 400)
+    const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    // Signed references identify a person; fresh membership is still required.
+    const membership = await this.rawChatMembers(source.ownerRef, false, session, signal)
+    if (!membership.some(raw => numberValue(raw.user_id) === target.targetUserId)) {
+      throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+    }
+    const context = { scope: JSON.stringify([this.runtime.config.environment, this.runtime.config.chatBaseUrl, session.userId]), target: target.targetUserId, entry: source.ownerRef }
+    const secret = await this.runtime.stateStore.uniqueCode()
+    const page: PersonSourcesCursor = cursor ? openPersonSourcesCursor(cursor, secret, context) : { ...context, phase: 'groups', at: Date.now() }
+    const items: PersonRecordSourcesPage['items'] = []
+    let next: PersonSourcesCursor | undefined
+    if (page.phase === 'groups') {
+      const after = page.after ?? ''
+      const raw = await this.runtime.authenticatedChatPost('/api/v1/chats/common-group/query', { target_user_id: target.targetUserId, after }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      const groups = commonGroupChanges(raw, [], after)
+      for (const group of groups.items) {
+        if (group.uid === source.ownerRef) continue
+        items.push({ source: await this.source.sourceItem({ version: 1, userId: session.userId, kind: 'group_chat', ownerRef: group.uid, displayName: group.title || '群聊' }), memberRef: await this.sealChatMemberRef(session.userId, group.uid, target.targetUserId) })
+      }
+      if (groups.hasMore) next = { ...page, after: groups.next }
+      else if (source.kind !== 'private_chat') next = { ...context, phase: 'private', at: page.at }
+    } else {
+      const raw = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/list', { limit: 50, ...(page.directory ? { page_cursor: page.directory } : {}) }, session, signal, { lane: 'interactive-read' })
+      if (!Array.isArray(raw.items) || typeof raw.has_more !== 'boolean') throw new ArkmePluginError('person-sources-response-invalid', '共同对话列表响应不完整，请重试', true, 502)
+      let found = false
+      for (const value of raw.items) {
+        const bundle = objectValue(value)
+        const chat = objectValue(bundle.session)
+        if (![1, 3].includes(numberValue(chat.session_kind)) || numberValue(objectValue(bundle.private_counterpart).user_id) !== target.targetUserId) continue
+        const uid = stringValue(chat.chat_session_uid)
+        if (!uid) throw new ArkmePluginError('person-sources-response-invalid', '共同对话列表响应不完整，请重试', true, 502)
+        const displayName = stringValue(objectValue(bundle.private_supplement).remark).trim() || stringValue(objectValue(bundle.private_supplement).counterpart_name_snapshot).trim() || stringValue(objectValue(bundle.private_counterpart).display_name_snapshot).trim() || '与TA的私聊'
+        items.push({ source: { ...await this.source.sourceItem({ version: 1, userId: session.userId, kind: 'private_chat', ownerRef: uid, displayName }), peerUserId: target.targetUserId }, memberRef: await this.sealChatMemberRef(session.userId, uid, target.targetUserId) })
+        found = true
+      }
+      if (!found && raw.has_more) {
+        const directory = objectValue(raw.next_page_cursor)
+        if (!Object.keys(directory).length || JSON.stringify(directory) === JSON.stringify(page.directory)) throw new ArkmePluginError('person-sources-response-invalid', '共同对话分页未推进，请重试', true, 502)
+        next = { ...page, directory }
+      }
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('person-sources-account-changed', '账号已切换，请重新打开', false, 409)
+    return { items, hasMore: !!next, ...(next ? { nextCursor: sealPersonSourcesCursor(next, secret) } : {}) }
   }
 
   async sourceMemberRecords(

@@ -9685,7 +9685,8 @@ export function ArkmeSurface({
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
           accountKey={authenticatedAccountKey}
           sourceName={source.kind === 'private_chat' ? tr('与TA的私聊') : source.displayName}
-          onOpenOrigin={item => { setMemberRecords(undefined); arkmeUi.showConversationTarget(source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
+          source={source}
+          onOpenOrigin={(item, origin) => { setMemberRecords(undefined); arkmeUi.showConversationTarget(origin ?? source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
           sourceRef={source.sourceRef}
           sourceIdentityKey={conversationKey}
           member={memberRecords.member}
