@@ -1,5 +1,17 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '与TA的私聊': 'Private conversation',
+  '仅看此对话': 'Only this conversation',
+  '此对话中TA发的内容': 'Their messages in this conversation',
+  '共同对话中TA发的内容': 'Their messages in shared conversations',
+  '共同对话汇总接口开发中，开发完成后此功能完整可用。': 'Shared conversation history is being developed. This feature will be fully available when the backend is ready.',
+  '共同对话汇总协议需要更新插件后使用': 'Update the plugin to use shared conversation history',
+  '先看此对话': 'View this conversation',
+  '正在检查共同对话汇总能力…': 'Checking shared history availability…',
+  '{v0}的内容': '{v0}’s messages',
+  '回到原对话并定位': 'Show in original conversation',
+  '正在加载快记': 'Loading messages',
+
   'TA的世界': 'Their World',
   '私聊': 'Private chat',
   '世界动态详情': 'World post details',

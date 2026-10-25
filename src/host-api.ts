@@ -2242,6 +2242,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.person-records.capabilities': return await service.personRecordsCapabilities(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
@@ -2249,6 +2250,8 @@ export async function dispatchArkmeHostOperation(
       {
         limit: numberParam(params, 'limit', 30),
         beforeSequence: numberParam(params, 'beforeSequence', 0),
+        ...(booleanParam(params, 'basicPresentation') ? { basicPresentation: true } : {}),
+        ...(requestSignal ? { signal: requestSignal } : {}),
       },
     )
     case 'source.interwoven-moments': return await service.interwovenMoments(

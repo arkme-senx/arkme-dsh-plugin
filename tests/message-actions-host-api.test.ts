@@ -232,3 +232,9 @@ it('routes member world lookups with their original opaque references and cancel
  await expect(dispatchArkmeHostOperation({memberWorldTarget} as unknown as ArkmeService,'chat.member.world-target',{sourceRef:'source',memberRef:'signed-member'},undefined,undefined,undefined,undefined,signal)).resolves.toEqual({userId:7})
  expect(memberWorldTarget).toHaveBeenCalledWith('source','signed-member',signal)
 })
+
+it('passes cancellation and the opt-in lightweight projection to member-record reads',async()=>{
+ const sourceMemberRecords=vi.fn(async()=>({items:[],hasMore:false})),signal=new AbortController().signal
+ await dispatchArkmeHostOperation({sourceMemberRecords} as unknown as ArkmeService,'source.member-records',{sourceRef:'source',memberRef:'member',mode:'owner',limit:12,basicPresentation:true},undefined,undefined,undefined,undefined,signal)
+ expect(sourceMemberRecords).toHaveBeenCalledWith('source','member','owner',{limit:12,beforeSequence:0,basicPresentation:true,signal})
+})

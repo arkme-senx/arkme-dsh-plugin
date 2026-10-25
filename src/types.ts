@@ -4397,6 +4397,7 @@ export type ArkmePluginOperation =
   | 'source.member-event.profile'
   | 'source.member-event.private.open'
   | 'source.member-records'
+  | 'source.person-records.capabilities'
   | 'source.mark-read'
   | 'source.message-preparing.report'
   | 'source.message-preparing.cancel'

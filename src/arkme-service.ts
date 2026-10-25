@@ -1858,11 +1858,14 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordsCapabilities(sourceRef: string, memberRef: string, signal?: AbortSignal) {
+    return this.chat.personRecordsCapabilities(sourceRef, memberRef, signal)
+  }
   async sourceMemberRecords(
     sourceRef: string,
     memberRef: string,
     mode: ArkmeConversationMemberRecordMode,
-    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+    options: { limit?: number; beforeSequence?: number; basicPresentation?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeConversationMemberRecordPage> {
     return await this.chat.sourceMemberRecords(sourceRef, memberRef, mode, options)
   }
