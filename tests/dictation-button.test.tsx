@@ -13,6 +13,8 @@ let host: HTMLDivElement, root: Root, options: MicrophoneCaptureOptions
 const target = { insert: vi.fn(() => true), close: vi.fn() }, busy = vi.fn()
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.clearAllMocks()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { queueMicrotask(() => callback(0)); return 1 })
+  vi.stubGlobal('cancelAnimationFrame', () => {})
   mocks.stop.mockResolvedValue(undefined)
   mocks.capture.mockImplementation(async value => { options = value; await options.onReady(16000); return { stop: mocks.stop } })
   mocks.call.mockResolvedValue({ text: '识别文字' })
@@ -25,10 +27,18 @@ it('shows listening immediately, prevents double starts, and releases the microp
   await act(async () => { mic.click(); mic.click() })
   expect(mocks.capture).toHaveBeenCalledTimes(1)
   expect(host.querySelector('button[aria-label="停止听写"]')).not.toBeNull()
+  const visual = host.querySelector<HTMLElement>('[data-arkme-dictation-visual="waveform"]')!
+  expect(visual.style.width).toBe('34px'); expect(visual.style.height).toBe('34px')
+  expect(visual.style.color).toBe('rgb(255, 255, 255)')
+  expect(visual.style.background).toContain('--dsw-alias-state-business-primary')
+  expect(visual.querySelectorAll('line')).toHaveLength(16)
+  await act(async () => options.onChunk(new ArrayBuffer(3200), .25))
+  expect([...visual.querySelectorAll('line')].some(line => Number(line.getAttribute('y2')) - Number(line.getAttribute('y1')) > 10)).toBe(true)
   expect(busy).toHaveBeenCalledWith(true)
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="停止听写"]')!.click())
   expect(mocks.stop).toHaveBeenCalled(); expect(mocks.release).toHaveBeenCalled(); expect(busy).toHaveBeenLastCalledWith(false)
   expect(host.querySelector('button[aria-label="语音输入"]')).not.toBeNull()
+  expect(host.querySelector('[data-arkme-dictation-waveform]')).toBeNull()
 })
 it('updates only its original editor, cancels on scope change, and ignores the late result', async () => {
   await mount(); await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="语音输入"]')!.click())

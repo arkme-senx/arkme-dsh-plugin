@@ -31,6 +31,8 @@ export class DictationSession {
   private running = false
   private stopped = false
   private closed = false
+  private levelListener: ((level: number) => void) | undefined
+  setLevelListener(listener: (level: number) => void) { this.levelListener = listener }
   private deps: DictationDependencies
   constructor(private target: DictationTarget, userId: number, private onState: (state: DictationState) => void, dependencies?: Partial<DictationDependencies>) {
     this.deps = {
@@ -62,7 +64,8 @@ export class DictationSession {
     if (level >= 0.006) { this.voiced = true; this.silentFrames = 0 } else this.silentFrames += pcm.byteLength / 2
     this.parts.push(pcm); this.frames += pcm.byteLength / 2
     if (!this.voiced && this.frames > 4800) { const removed = this.parts.shift(); this.frames -= (removed?.byteLength ?? 0) / 2 }
-    // Audio arrives at 10 Hz; rendering only follows phrases and state changes.
+    // Audio arrives at 10 Hz. Only the tiny waveform paints; editor React state stays unchanged.
+    this.levelListener?.(level)
     if (this.voiced && (this.frames >= 8 * 16000 || this.silentFrames >= 0.8 * 16000)) this.flush()
   }
   private flush() {
@@ -113,6 +116,7 @@ export class DictationSession {
   cancel() {
     if (this.closed) return
     this.closed = true; this.controller.abort()
+    this.levelListener = undefined
     const release = this.release; this.release = undefined
     if (this.microphone) void this.microphone.stop().catch(() => undefined).finally(() => release?.())
     else release?.()

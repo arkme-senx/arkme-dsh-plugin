@@ -295,7 +295,7 @@ export function install(ctx: ClientContext, doc: Document = document): () => voi
   const stopInput = ctx.slots.inject('conversation.input.left', () => {
     const spec = ctx.slots.spec('conversation.input.left')
     if (spec?.kind !== 'list' || spec.scope !== 'session') return () => {}
-    return ctx.slots.register({ name: 'conversation.input.left', id: 'arkme-dictation', order: -20 }, HarnessDictationInput)
+    return ctx.slots.register({ name: 'conversation.input.left', id: 'arkme-dictation', order: 100 }, HarnessDictationInput)
   })
   return () => { stopHeader(); stopInput() }
 }

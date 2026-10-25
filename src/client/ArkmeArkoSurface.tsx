@@ -1419,7 +1419,7 @@ export function ArkmeArkoSurface() {
           }
         }}
       />
-      <div style={styles.tools}><ArkmeDictationButton scopeKey={composerDraftKey} active={!messageActions.selecting} disabled={inputDisabled} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
+      <div style={styles.tools}>
         <ArkmeComposerToolButton ref={addButtonRef} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addMenuOpen}
           disabled={inputDisabled || messageActions.selecting} onPointerDown={event => event.stopPropagation()} onClick={() => setAddMenuOpen(value => !value)}>
           <ArkmeComposerPlusIcon />
@@ -1435,6 +1435,7 @@ export function ArkmeArkoSurface() {
           onBeforeToggle={() => { textareaRef.current?.captureSelection() }}
           onSelect={insertEmoji}
         />
+        <ArkmeDictationButton scopeKey={composerDraftKey} active={!messageActions.selecting} disabled={inputDisabled} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
         <span style={styles.hint} title={hint}>{hint}</span>
         <button data-arkme-feedback="neutral"
           type="button"

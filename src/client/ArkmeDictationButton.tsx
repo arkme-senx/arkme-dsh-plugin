@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
-import { Stop } from '@phosphor-icons/react/dist/icons/Stop'
+import { DictationWaveform, type DictationWaveformHandle } from './DictationWaveform.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { DictationSession, type DictationState } from './dictation-session.js'
 import { plainDictationTarget, type DictationTarget } from './dictation-target.js'
@@ -31,6 +31,7 @@ export function ArkmeDictationButton(props: {
   const account = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
   const [state, setState] = useState(initial)
   const session = useRef<DictationSession>()
+  const waveform = useRef<DictationWaveformHandle>(null)
   const latest = useRef(props); latest.current = props
   const mounted = useRef(false)
   const busy = state.phase === 'starting' || state.phase === 'listening' || state.phase === 'finishing'
@@ -51,6 +52,7 @@ export function ArkmeDictationButton(props: {
       setState(value)
       latest.current.onBusyChange?.(['starting', 'listening', 'finishing'].includes(value.phase) || value.phase === 'failed' && value.pending > 0)
     })
+    next.setLevelListener(level => waveform.current?.sample(level))
     session.current = next; void next.start()
   }
   const listening = state.phase === 'listening' || state.phase === 'starting'
@@ -60,7 +62,10 @@ export function ArkmeDictationButton(props: {
       disabled={props.disabled || props.active === false || !account || state.phase === 'finishing' || state.phase === 'failed' && state.pending > 0}
       onMouseDown={event => event.preventDefault()}
       onClick={() => { if (listening) void session.current?.stop(); else start() }}>
-      {listening ? <Stop size={20} weight="fill" color={arkmeTheme.primaryAction} /> : <Microphone size={20} />}
+      <span data-arkme-dictation-visual={state.phase === 'listening' ? 'waveform' : 'microphone'} style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', borderRadius: 9,
+        background: state.phase === 'listening' ? arkmeTheme.accent : 'transparent', color: state.phase === 'listening' ? '#fff' : 'inherit' }}>
+        {state.phase === 'listening' ? <DictationWaveform ref={waveform} /> : <Microphone size={20} />}
+      </span>
     </ArkmeComposerToolButton>
     {(busy || state.error || state.phase === 'failed') && <span role="status" style={{ position: 'absolute', bottom: 42, left: 0, minWidth: 180, maxWidth: 'min(340px,70vw)', padding: '8px 12px', borderRadius: 10,
       border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '0 4px 18px #0002', fontSize: 12, lineHeight: '20px', zIndex: 15 }}>

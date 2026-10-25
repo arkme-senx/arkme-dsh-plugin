@@ -38,6 +38,14 @@ beforeEach(async () => {
   await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
+it('keeps existing composer tools before dictation, with the microphone directly after screenshot',()=>{
+  const tools=[...host.querySelectorAll<HTMLButtonElement>('[data-arkme-composer-footer="tools"] button')].map(button=>button.getAttribute('aria-label'))
+  const screenshot=tools.indexOf('截屏'), microphone=tools.indexOf('语音输入')
+  expect(screenshot).toBeGreaterThanOrEqual(0)
+  expect(microphone).toBe(screenshot+1)
+  expect(tools.indexOf('添加内容')).toBeLessThan(screenshot)
+  expect(tools.indexOf('选择表情')).toBeLessThan(screenshot)
+})
 it.each([false,true])('pasted image restores focus then plain Enter sends once (itemsOnly=%s)',async itemsOnly=>{
   await paste(itemsOnly)
   expect(editor().getAttribute('contenteditable')).toBe('true')

@@ -860,7 +860,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
             next.splice(from,1); next.splice(to,0,file); return next
           })} />}
         <div data-arkme-composer-footer="tools" style={composerLayout.tools}>
-          <div style={{display:'flex',alignItems:'center',gap:2}}><ArkmeDictationButton scopeKey={`${storageKey}:${editing?.message.key ?? ''}`} disabled={busy || !!draft.attempt || !current.channel.enabled || current.blocked} getTarget={() => editor.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
+          <div style={{display:'flex',alignItems:'center',gap:2}}>
           {!editing && <><ArkmeComposerToolButton ref={addTrigger} title={tr('添加内容')} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addOpen} disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onClick={() => setAddOpen(value => !value)}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton>
           <input ref={fileInput} aria-label={tr('选择附件')} hidden type="file" multiple disabled={!!draft.attempt || busy || !current.channel.enabled || current.blocked} onChange={e => { selectFiles(e.target.files); e.target.value = '' }} /></>}
           <ArkmeEmojiPicker mode="text" accountKey={accountKey} scopeKey={storageKey} disabled={busy || !!editing || !current.channel.enabled || current.blocked}
@@ -879,6 +879,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
             isCurrent={() => !ctrl.current.signal.aborted && currentScope.current === composerScope}
             onBegin={options => { editor.current?.focus({preventScroll:true}); return beginPasteFocus({nativeDialog:true,...options}) }}
             onFile={file => upload([file])} onError={setError} />}
+          <ArkmeDictationButton scopeKey={`${storageKey}:${editing?.message.key ?? ''}`} disabled={busy || !!draft.attempt || !current.channel.enabled || current.blocked} getTarget={() => editor.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
           </div>
           {editing && !editing.needsReload && <span />}
           {editing?.needsReload && <ArkmeComposerToolButton disabled={busy} onClick={() => { void reloadEdit() }}>{tr('读取最新版本')}</ArkmeComposerToolButton>}
