@@ -1,4 +1,5 @@
 import type { ArkmeMessageQuote } from './message-quote.js'
+import type { TeamNotificationPolicy } from './team-notification-contract.js'
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
@@ -9,6 +10,7 @@ export type TeamAppOperation = `team.app.${
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
+  | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
@@ -39,6 +41,7 @@ export interface TeamChannel {
 export interface TeamConversation {
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
+  notificationPolicy?: TeamNotificationPolicy; attentionUnread?: number
   blocked: boolean; revision: number; updatedAt: number
   preview?: { text: string; status: string; hasMedia: boolean; templateKind?: number }
 }
@@ -95,4 +98,4 @@ export interface TeamReplyPreview {
   text: string; sender: TeamIdentity; quote?: ArkmeMessageQuote
 }
 export type TeamConversationReadState = {key: string; accessible: false}
-  | {key: string; accessible: true; lastSeq: number; myReadSeq: number; unread: number}
+  | {key: string; accessible: true; notificationPolicy?: TeamNotificationPolicy; lastSeq: number; myReadSeq: number; unread: number}

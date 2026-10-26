@@ -6,6 +6,9 @@ import {prepareTeamAskDshNotes,canAskDshTeamMessage} from './team-ask-dsh.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { BellSlash } from '@phosphor-icons/react/dist/icons/BellSlash'
+import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
+import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
@@ -147,6 +150,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
       {c.side === 'team'
         ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
         : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
+      {c.notificationPolicy?.muted && <BellSlash size={14} aria-label={tr('消息免打扰')}/>}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
@@ -171,12 +175,14 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
     const stopMembership = startOfficialTeamMembership(accountKey)
     const stop = startTeamAttention(accountKey, value => {
       if (document.visibilityState === 'visible' && document.hasFocus()) return
-      const close = showBrowserNotification(tr('团队消息'), value.external || value.team ? tr('你有新的团队消息，点击查看') : tr('有待处理的团队加入申请'), `arkme-team-${accountKey}`, () => {
-        if (live) openTeamMessages({ kind: 'inbox', side: value.external ? 'external' : 'team' })
+      const close = showBrowserNotification(tr('团队消息'), tr('有待处理的团队加入申请'), `arkme-team-${accountKey}`, () => {
+        if (live) openTeamMessages({ kind: 'inbox', side: 'team' })
       })
       if (close) { for (const previous of notices) previous(); notices.clear(); notices.add(close) }
     })
-    return () => { live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close() }
+    return () => {
+      live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close()
+    }
   }, [accountKey, active])
   return null
 }
@@ -358,7 +364,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     // A receipt read started before a new message cannot clear its unread count.
     if (!old || state.lastSeq < old.conversation.lastSeq || state.myReadSeq < Math.max(read.current,old.conversation.myReadSeq)) return
     read.current = state.myReadSeq
-    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread}}
+    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread,notificationPolicy:mergeTeamNotificationPolicy(old.conversation.notificationPolicy,state.notificationPolicy)}}
     latest.current=next;setTimeline(next)
   }),[receiptStore])
   const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
@@ -383,7 +389,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         for (const message of data.messages) messages.set(message.key, message)
       }
       if (ctrl.current.signal.aborted || token !== generation.current) return
-      data = { ...data, conversation: head, messages: confirmed.current.merge(conversation.key, [...messages.values()].sort((a,b) => a.seq-b.seq)) }
+      data = { ...data, conversation: {...head,notificationPolicy:mergeTeamNotificationPolicy(latest.current?.conversation.notificationPolicy,head.notificationPolicy)}, messages: confirmed.current.merge(conversation.key, [...messages.values()].sort((a,b) => a.seq-b.seq)) }
       if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
       setTimeline(data)
