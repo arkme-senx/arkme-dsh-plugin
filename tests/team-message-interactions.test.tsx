@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamConversationMessage } from '../src/client/TeamConversationMessage.js'
@@ -18,8 +18,8 @@ let root: Root, host: HTMLDivElement
 const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
-function Fixture({ msg = message, includeToolbar = true, selecting = false }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean }) {
-  return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onUnderline={mark} markStorage="local" />}
+function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false, onReply }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean; onReply?: (target: any, quote: any) => void }) {
+  return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onReply={onReply} onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
       selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
@@ -66,10 +66,10 @@ it.each([
   expect(bubble.lastElementChild).toBe(time)
   expect(bubble.querySelector('[data-arkme-text-selection]')?.contains(time)).toBe(false)
   expect(bubble.style.background).toContain(own ? '--arkme-chat-self-bubble' : '--arkme-chat-other-bubble')
-  const body = bubble.parentElement!.parentElement!
+  const body = bubble.closest('article')!
   expect(body.querySelector('strong')?.textContent).toBe(own ? undefined : nickname)
   // Own messages have no empty sender/time header consuming another row.
-  if (own) expect(body.firstElementChild).toBe(bubble.parentElement)
+  if (own) expect(body.querySelector('strong')).toBeNull()
   await render({ ...message, side, own, sender: { nickname }, createdAt: at, version: 2, content: { text_content: '编辑后的内容', template_kind: 1 } })
   expect(host.querySelector<HTMLTimeElement>('.arkme-message-timestamp')?.dateTime).toBe(time.dateTime)
 })
@@ -126,11 +126,11 @@ it('dismisses on Escape and does not register deleted or pending messages for ma
   expect(host.querySelector('[data-arkme-text-selection]')).toBeNull()
 })
 
-it('enters multiselect from the shared menu and keeps unsupported Team operations disabled', async () => {
+it('enters multiselect and gates commands that need an injected owner', async () => {
   await render(); await mouse(host.querySelector('p')!, 'contextmenu', 2)
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
-  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '查看阅读状态'])
-  expect(buttons.find(button => button.textContent === '转发')?.querySelector('span')?.title).toBe('团队消息转发尚未接通，需要确认目标对话和附件访问权限')
+  expect(buttons.filter(button => !button.disabled).map(button => button.textContent)).toEqual(['复制', '多选', '举报', '查看阅读状态'])
+  expect(buttons.find(button => button.textContent === '转发')?.disabled).toBe(true)
   await act(async () => buttons.find(button => button.textContent === '多选')!.click())
   expect(selectMessage).toHaveBeenCalledOnce()
   expect(document.querySelector('[role="menu"]')).toBeNull()
@@ -152,6 +152,22 @@ it('clicks into details but never opens details when selecting prose', async () 
   expect(detail).not.toHaveBeenCalled()
 })
 
+it('offers mark audience only inside the established selection toolbar and preserves the selection while switching', async () => {
+  function ScopedFixture() {
+    const [shared,setShared] = useState(false)
+    return <Fixture msg={message} cloud={shared} scopeControl={<div role="group" aria-label="标记范围"><button type="button" aria-pressed={shared} onClick={()=>setShared(true)}>团队内部</button></div>} />
+  }
+  await act(async()=>root.render(<ScopedFixture/>))
+  expect(document.querySelector('[aria-label="标记范围"]')).toBeNull()
+  await select()
+  const audience=toolbar()!.querySelector<HTMLButtonElement>('[aria-label="标记范围"] button')!
+  await mouse(audience,'mousedown');await act(async()=>audience.click())
+  expect(document.getSelection()!.toString()).toBe('选中的文字')
+  expect(toolbar()!.querySelector('[aria-label="标记范围"] button')?.getAttribute('aria-pressed')).toBe('true')
+  const markButton=[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='标记')!
+  await act(async()=>markButton.click())
+  await waitForMark(()=>expect(mark).toHaveBeenCalledWith(expect.objectContaining({cloudMarkRef:message.ref}),expect.objectContaining({text:'选中的文字'})))
+})
 it('routes own right-click details to the snapshot while body click stays in reading details', async () => {
   await render({ ...message, own: true })
   await mouse(host.querySelector('p')!, 'click')
@@ -165,7 +181,7 @@ it('enables actual extension and DSH callbacks, closes the menu and keeps backen
   const extend = vi.fn(), ask = vi.fn()
   await act(async () => root.render(<TeamConversationMessage message={message} avatar={null} writable showReceipts={false}
     receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error}
-    onExtend={extend} onAskDsh={ask} />))
+    onReply={extend} onAsk={ask} />))
   for (const label of ['延展', '问 DSH']) {
     await mouse(host.querySelector('p')!, 'contextmenu', 2)
     const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')]
@@ -175,4 +191,14 @@ it('enables actual extension and DSH callbacks, closes the menu and keeps backen
     expect(document.querySelector('[role="menu"]')).toBeNull()
   }
   expect(extend).toHaveBeenCalledOnce(); expect(ask).toHaveBeenCalledOnce()
+})
+
+it('keeps selected-text reply available for Team without borrowing an ordinary Chat action reference',async()=>{
+ const reply=vi.fn()
+ await act(async()=>root.render(<Fixture onReply={reply}/>))
+ await select()
+ expect(labels(toolbar())).toContain('回复')
+ await act(async()=>[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='回复')!.click())
+ await waitForMark(()=>expect(reply).toHaveBeenCalledWith(expect.objectContaining({sourceRef:'team-conversation',cloudMarkRef:message.ref}),expect.objectContaining({text:'选中的文字',start:2,end:7,recordVersion:1})))
+ expect(reply.mock.calls[0]![0].item.messageActionRef).toBeUndefined()
 })

@@ -1095,6 +1095,8 @@ export async function dispatchArkmeHostOperation(
   if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
+  if (operation === 'statistics.keywords') return service.personalKeywordsRead(params, requestSignal)
+  if (operation === 'statistics.keyword-records') return service.personalKeywordRecords(params, requestSignal)
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
@@ -1232,6 +1234,23 @@ export async function dispatchArkmeHostOperation(
       return { ok: true }
     }
     case 'team.external': return await service.externalChats(stringParam(params, 'operation') as import('./team-external-chat-contract.js').ExternalChatOperation, (params.params ?? {}) as Record<string,unknown>, requestSignal)
+    case 'team.messages.forward':return await service.forwardTeamMessages(params.input as import('./team-message-contract.js').TeamForwardInput,requestSignal)
+    case 'team.messages.copy-link':return await service.createTeamMessageCopyLink(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
+    case 'team.messages.report':return await service.reportTeamMessage(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),numberParam(params,'version',0),params.reason as import('./team-message-contract.js').TeamReportReason,optionalTeamStringParam(params,'description'),requestSignal)
+    case 'team.messages.preflight':return await service.preflightTeamMessages(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
+    case 'team.messages.marks-read':return await service.readTeamMarks(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,params.markRefs as string[],requestSignal)
+    case 'team.messages.marks-change':return await service.changeTeamMark(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,stringParam(params,'markRef'),params.change as import('./message-annotations.js').MessageUnderlineChange,requestSignal)
+    case 'team.messages.conversations':return await service.listTeamConversations(params.side as import('./team-app-contract.js').TeamSide,params.options as {cursor?:string;limit?:number},requestSignal)
+    case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
+    case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
+    case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
+    case 'team.messages.task-update':return await service.updateTeamSend(stringParam(params,'conversationRef'),stringParam(params,'taskRef'),params.action as 'retry'|'cancel',requestSignal)
+    case 'team.notifications.list':return await service.listTeamNotificationConversations(stringParam(params,'side') as 'team'|'external',stringParam(params,'cursor'),requestSignal)
+    case 'team.notifications.get':return await service.getTeamNotificationPolicy(stringParam(params,'conversationRef'),requestSignal)
+    case 'team.notifications.set': {
+      if(typeof params?.muted!=='boolean') throw new TypeError('muted must be a boolean')
+      return await service.setTeamNotificationPolicy(stringParam(params,'conversationRef'),params.muted,requestSignal)
+    }
     case 'team.profile.get':return await service.getTeamProfile(stringParam(params,'jotmoId'),requestSignal)
     case 'team.profile.update':return await service.updateTeamProfile(stringParam(params,'profileRef'),params.command as ArkmeTeamProfileUpdate,requestSignal)
     case 'team.profile.avatar.upload':return await service.uploadTeamAvatar(stringParam(params,'profileRef'),stringParam(params,'contentBase64'),stringParam(params,'uploadUid'),requestSignal)
@@ -1847,6 +1866,9 @@ export async function dispatchArkmeHostOperation(
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()
     case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.lifecycle.query': return await service.arkoLifecycle(stringListParam(params, 'messageRefs'), requestSignal)
+    case 'arko.lifecycle.change': return await service.arkoChangeLifecycle(params as unknown as import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, requestSignal)
+    case 'arko.deleted': return await service.arkoRecentlyDeleted(stringParam(params, 'cursor') || undefined, requestSignal)
     case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
     case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
     case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),

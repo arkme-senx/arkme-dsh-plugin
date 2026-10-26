@@ -386,7 +386,7 @@ export function createArkmeArkoHistoryToolDefinition(service: ArkmeArkoToolPort)
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       if (args.action === 'export') return JSON.stringify(await service.arkoExport(exec.signal))
-      const compact = (item: ArkmeArkoHistoryItem) => ({ messageRef: item.messageRef, role: item.role,
+      const compact = (item: ArkmeArkoHistoryItem) => ({ messageRef: item.messageRef, lifecycleVersion: item.lifecycleVersion, role: item.role,
         text: item.text.slice(0, 2000), textTruncated: item.text.length > 2000, createdAtMillis: item.createdAtMillis,
         orderAtMillis: item.orderAtMillis, status: item.status, runStatus: item.runStatus, createdRecordUids: item.createdRecordUids,
         ...(item.contentBlocks?.some(block => block.kind === 'image') ? { images: item.contentBlocks.filter(block => block.kind === 'image').map(block => ({ fileName: block.fileName, mimeType: block.mimeType, size: block.size })) } : {}) })
@@ -419,7 +419,35 @@ export const arkoPendingToolModule=defineArkmeCoreToolModule({
  async execute(){return JSON.stringify((await service.arkoPendingTurns()).map(turn=>({client_turn_uid:turn.clientTurnUid,session_id:turn.sessionId,text:turn.text,image_file_refs:turn.images?.map(file=>file.fileRef) ?? [],model_route_key:turn.modelRouteKey,reply_to_run_uid:turn.replyToRunUid,reply_to_assistant_msg_id:turn.replyToAssistantMsgId})))}}),
 })
 
+export const arkoLifecycleReadToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.lifecycle-read.v1', toolName: 'arkme_arko_lifecycle', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({
+    name: 'arkme_arko_lifecycle', description: 'Read authoritative Arko message states and versions, or recently deleted messages (30 day recovery). No Record or file deletion. Query the same refs after an unknown write outcome; never automatically repeat a write.',
+    parameters: { action: { type: 'string', required: true, description: 'query or deleted' }, message_refs: { type: 'array', items: { type: 'string' }, description: 'Up to 100 exact opaque messageRefs from Arko history.' }, cursor: { type: 'string', description: 'Exact recently deleted nextCursor.' } },
+    output: ARKO_OUTPUT, isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      if (args.action === 'query') return JSON.stringify(await service.arkoLifecycle(args.message_refs ?? [], exec.signal))
+      if (args.action !== 'deleted') throw new Error('action 必须为 query 或 deleted')
+      const page = await service.arkoRecentlyDeleted(args.cursor, exec.signal)
+      return JSON.stringify({ ...page, items: page.items.map(({ message, ...item }) => ({ ...item, ...(message ? { role: message.role, text: message.text.slice(0, 1000), textTruncated: message.text.length > 1000 } : {}) })) })
+    },
+  }),
+})
+export const arkoLifecycleChangeToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.lifecycle-change.v1', toolName: 'arkme_arko_change_lifecycle', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({
+    name: 'arkme_arko_change_lifecycle', description: 'Delete or restore exactly the Arko messages explicitly selected by the current human request. Requires current versions from arkme_arko_lifecycle. Delete affects only selected messages, never created records or independent forwarded copies. Unknown results require state reconciliation, not automatic retries.',
+    parameters: { action: { type: 'string', required: true, description: 'delete or restore' }, message_refs: { type: 'array', required: true, items: { type: 'string' }, description: '1-100 selected opaque messageRefs.' }, expected_versions: { type: 'array', required: true, items: { type: 'integer' }, description: 'Exact current lifecycle versions, in the same order.' } },
+    output: ARKO_OUTPUT,
+    async execute(args, exec) {
+      if ((args.action !== 'delete' && args.action !== 'restore') || args.message_refs.length !== args.expected_versions.length) throw new Error('操作参数无效')
+      return JSON.stringify(await service.arkoChangeLifecycle({ action: args.action, operationUid: stableUidForToolCall('arko-lifecycle', String(exec.callId)), targets: args.message_refs.map((messageRef, index) => ({ messageRef, expectedVersion: args.expected_versions[index]! })) }, exec.signal))
+    },
+  }),
+})
+
 export const arkoToolModules = [
+  arkoLifecycleReadToolModule, arkoLifecycleChangeToolModule,
  arkoModelsToolModule,arkoPendingToolModule,
   arkoProfileToolModule,
   arkoHistoryToolModule,

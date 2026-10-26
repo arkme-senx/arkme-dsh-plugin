@@ -1,6 +1,15 @@
+import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
+export type * from '../arko-lifecycle-contract.js'
+import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
+export type * from '../team-message-contract.js'
 export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
 export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
 
+export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
+export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
+export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
+import type { TeamNotificationPage, TeamNotificationPolicy } from '../team-notification-contract.js'
+export type { TeamNotificationEntry, TeamNotificationPage, TeamNotificationPolicy, TeamNotificationPort } from '../team-notification-contract.js'
 import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
@@ -546,6 +555,21 @@ export class ArkmeSdk {
     }
   }
 
+  private async requireArkoLifecycle(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoLifecycleV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持消息删除与恢复，请升级', retryable: false })
+  }
+  async arkoLifecycle(messageRefs: readonly string[] = [], signal?: AbortSignal): Promise<ArkmeArkoLifecycleSnapshot> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.query', { messageRefs }, signal)
+  }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal): Promise<ArkmeArkoLifecycleResult> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.change', { ...command }, signal)
+  }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal): Promise<ArkmeArkoDeletedPage> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
+  }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }
@@ -771,6 +795,30 @@ export class ArkmeSdk {
   async externalChats<O extends import('../team-external-chat-contract.js').ExternalChatOperation>(operation: O, params: import('../team-external-chat-contract.js').ExternalChatParameters[O], signal?: AbortSignal): Promise<import('../team-external-chat-contract.js').ExternalChatResults[O]> {
     if ((await this.capabilities(signal)).features.teamExternalChats !== true) throw new Error('当前 Provider 不支持对外私聊')
     return await this.call<import('../team-external-chat-contract.js').ExternalChatResults[O]>('team.external', { operation, params }, signal)
+  }
+  private async requireTeamMessages(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageInteractions!==1)throw new Error('当前 Provider 不支持 Team 消息交互，请升级')}
+  async forwardTeamMessages(input:import('../team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('../types.js').ArkmeSourceSendResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.forward',{input},signal)}
+  async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../types.js').ArkmeMessageCopyLinkResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.copy-link',{conversationRef,selections},signal)}
+  async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('../team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamReportResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.report',{conversationRef,messageRef,version,reason,description},signal)}
+  async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamMessage[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.preflight',{conversationRef,selections},signal)}
+  async readTeamMarks(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('../message-annotations.js').MessageUnderlineSnapshot}[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-read',{conversationRef,audience,markRefs},signal)}
+  async changeTeamMark(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRef:string,change:import('../message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('../message-annotations.js').MessageUnderlineSnapshot>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-change',{conversationRef,audience,markRef,change},signal)}
+  async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>>{await this.requireTeamMessages(signal);return await this.call('team.messages.conversations',{side,options},signal)}
+  async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline>{await this.requireTeamMessages(signal);return await this.call('team.messages.read',{conversationRef,options},signal)}
+  async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.send',{command},signal)}
+  async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
+  async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.task-update',{conversationRef,taskRef,action},signal)}
+  private async requireTeamNotifications(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.teamNotificationPoliciesV1!==true) throw new Error('当前 Provider 不支持团队消息通知设置')
+  }
+  async listTeamNotificationConversations(side:'team'|'external',cursor?:string,signal?:AbortSignal):Promise<TeamNotificationPage> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.list',{side,...(cursor?{cursor}:{})},signal)
+  }
+  async getTeamNotificationPolicy(conversationRef:string,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.get',{conversationRef},signal)
+  }
+  async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
   }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
@@ -2672,6 +2720,19 @@ export class ArkmeSdk {
   }
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
+  private async requireAnalytics(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.analyticsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统计能力 v1', retryable: false })
+  }
+  async personalKeywords(query: import('../statistics-contract.js').StatisticsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordSummary> { await this.requireAnalytics(signal); return this.call('statistics.keywords', { ...query }, signal) }
+  async personalKeywordRecords(query: import('../analytics-contract.js').PersonalKeywordRecordsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordRecords> { await this.requireAnalytics(signal); return this.call('statistics.keyword-records', { ...query }, signal) }
+  async conversationWordsState(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.state', { ...query }, signal) }
+  async conversationWordsCreate(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.create', { ...query }, signal) }
+  async conversationWordParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.participants', { ...query }, signal) }
+  async conversationWordMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; wordKey: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordMessages> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.messages', { ...query }, signal) }
+  async conversationActivity(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityState> { await this.requireAnalytics(signal); return this.call('chat.activity.read', { ...query }, signal) }
+  async conversationActivityParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.activity.participants', { ...query }, signal) }
+  async conversationActivityMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; hour: number; weekday: number | null; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityMessages> { await this.requireAnalytics(signal); return this.call('chat.activity.messages', { ...query }, signal) }
+
   async calendarChatStatistics(options: {
     sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
@@ -2883,4 +2944,5 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
 
-export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline } from '../team-external-chat-contract.js'
+export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline, ExternalChatTimelineItem } from '../team-external-chat-contract.js'
+export type {TeamForwardInput,TeamForwardDestination} from '../team-message-contract.js'

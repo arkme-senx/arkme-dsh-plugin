@@ -39,6 +39,7 @@ import { useReadMentionMembers } from './mention-read-status.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeLinkLabelMode, ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { retainPartialTimelineMedia } from './timeline-media.js'
+import { galleryImageDimensions, rememberGalleryImageDimensions, isLongGalleryImage, singleGalleryImageSize, type GalleryImageDimensions } from './media-gallery-layout.js'
 
 const mediaRoute = '/arkme-self/api/media'
 const textCollapseCharacterThreshold = 300
@@ -400,27 +401,50 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
   onOpenAsFile: (block: ArkmeContentBlock) => void
 }) {
   const mediaUrl = useArkmeMediaUrl()
+  const [imageDimensions, setImageDimensions] = useState<ReadonlyMap<string, GalleryImageDimensions>>(() => new Map())
+  const imageSize = (block: ArkmeContentBlock) => {
+    const key = mediaUrl(block) ?? arkmeContentMediaUrl(block)
+    return imageDimensions.get(key) ?? galleryImageDimensions(key)
+  }
+  const singleImage = blocks.length === 1 && blocks[0]?.kind === 'image'
+  const naturalSize = singleImage ? imageSize(blocks[0]!) : undefined
+  const singleSize = naturalSize === undefined ? undefined : singleGalleryImageSize(naturalSize)
   const columns = mediaColumns(blocks.length)
   const tileSize = columns === 1 ? 150 : 75
-  const width = tileSize * columns + mediaGap * (columns - 1)
+  const width = singleSize?.width ?? tileSize * columns + mediaGap * (columns - 1)
+  const tileStyle = { ...styles.mediaTile, ...(singleSize === undefined ? {} : { aspectRatio: `${singleSize.width} / ${singleSize.height}` }) }
   return <div
-    style={{ ...styles.mediaGrid, width, gridTemplateColumns: `repeat(${String(columns)}, ${String(tileSize)}px)` }}
+    style={{ ...styles.mediaGrid, width, gridTemplateColumns: `repeat(${String(columns)}, minmax(0, 1fr))` }}
     data-arkme-media-count={blocks.length}
     data-arkme-media-columns={columns}
   >
     {blocks.map(block => {
       const failure = failures.get(block.mediaRef)
-      if (failure !== undefined) return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure={failure} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
+      if (failure !== undefined) return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure={failure} style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
+      const dimensions = block.kind === 'image' ? imageSize(block) : undefined
+      const longImage = dimensions !== undefined && isLongGalleryImage(dimensions)
+      const dimensionsKey = mediaUrl(block) ?? arkmeContentMediaUrl(block)
       const src = mediaAttemptUrl(block, retryVersions.get(block.mediaRef) ?? 0, mediaUrl(block))
       return <button
         key={`${block.mediaRef}:${String(block.sortOrder)}`}
         type="button"
-        style={styles.mediaTile}
+        style={tileStyle}
         aria-label={block.kind === 'video' ? `播放视频 ${block.fileName}` : tr("预览图片 {v0}", { v0: block.fileName })}
         onClick={() => { onOpen(block) }}
       >
         {block.kind === 'image'
-          ? <img src={src} alt={block.fileName} loading="lazy" style={styles.mediaImage} onError={() => { onFailure(block, arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? 'retryable' : 'unsupported') }} />
+          ? <img src={src} alt={block.fileName} loading="lazy" style={{ ...styles.mediaImage, objectFit: singleImage || dimensions === undefined || longImage ? 'contain' : 'cover' }}
+            onLoad={event => {
+              const image = event.currentTarget
+              const value = rememberGalleryImageDimensions(dimensionsKey, image.naturalWidth, image.naturalHeight)
+              if (value === undefined) return
+              setImageDimensions(current => {
+                const existing = current.get(dimensionsKey)
+                if (existing?.width === value.width && existing.height === value.height) return current
+                return new Map(current).set(dimensionsKey, value)
+              })
+            }}
+            onError={() => { onFailure(block, arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? 'retryable' : 'unsupported') }} />
           : <>
             <video src={src} muted playsInline preload="metadata" style={styles.videoPreview} aria-hidden onError={event => { onFailure(block, event.currentTarget.error?.code === 4 || !arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? 'unsupported' : 'retryable') }} />
             <span style={styles.videoBadge} aria-hidden>▶ {durationLabel(block.durationSec)}</span>
@@ -428,6 +452,7 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
         {block.kind === 'image' && block.dynamicPhoto !== undefined && <span style={{ position: 'absolute', display: 'flex', left: 6, bottom: 6, pointerEvents: 'none' }} aria-label={tr("实况照片")}>
           <ArkmeLivePhotoBadge variant="thumbnail" />
         </span>}
+        {!singleImage && longImage && <span data-arkme-long-image style={{ position: 'absolute', right: 4, top: 4, padding: '1px 4px', borderRadius: 4, background: arkmeTheme.menu, color: arkmeTheme.secondary, fontSize: 9, lineHeight: '13px', pointerEvents: 'none' }}>{tr("长图")}</span>}
         <UploadProgress block={block} />
       </button>
     })}

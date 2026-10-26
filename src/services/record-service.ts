@@ -1608,7 +1608,7 @@ export class RecordService {
         key: `dsh-agent-input:${normalizedUid}`,
       },
     )
-    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
+    // The facade refreshes the Record projection; persisting input is not an account transition.
     return {
       recordUid: stringValue(data.record_uid) || normalizedUid,
       status: numberValue(data.status),

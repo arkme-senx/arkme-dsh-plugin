@@ -29,7 +29,8 @@ beforeEach(() => {
   sessionStorage.clear()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   vi.mocked(callArkme).mockImplementation(async operation => {
-    if (operation === 'statistics.detail') return { days: 10, recordCount: 12, wordsCount: 100, recordMin: 4, subjectCount: 2, keywords: [{ text: '记录', occurrenceCount: 5, recordCount: 2 }] } as never
+    if (operation === 'statistics.detail') return { days: 10, recordCount: 12, wordsCount: 100, recordMin: 4, subjectCount: 2 } as never
+    if (operation === 'statistics.keywords') return { keywords: [{ keywordId: 'keyword-1', snapshotId: 'snapshot-1', text: '记录', occurrenceCount: 5, recordCount: 2 }], snapshotId: 'snapshot-1', algorithmVersion: 'v1', coverage: { complete: true, records: 12, candidateLimit: 50, returned: 1 } } as never
     if (operation === 'statistics.active') return [] as never
     if (operation === 'statistics.long') return { items: [], nextOffset: null } as never
     if (operation === 'calendar.buckets') return { days: [] } as never
@@ -77,6 +78,7 @@ it('leaves the statistics panel open when Escape closes a nested keyword drawer,
   await act(async () => root.render(<Harness/>))
   await click('发给自己统计')
   await click('查看词频')
+  expect(callArkme).toHaveBeenCalledWith('statistics.keywords', expect.objectContaining({ accountScope: 'prod:7', fromStamp: 0 }), expect.anything())
   expect(host.querySelector('[aria-label="词频详情"]')).not.toBeNull()
   await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
   expect(host.querySelector('[aria-label="词频详情"]')).toBeNull()

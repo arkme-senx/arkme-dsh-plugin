@@ -81,13 +81,15 @@ export function arkmeConversationTargetScrollTop(root: HTMLDivElement, row: HTML
 }
 
 /** Resolve the same explicit target for both virtual mounting and DOM locating. */
-export function arkmeConversationTargetAnchor(rows: readonly { id: string; kind: string; item?: object; entryRef?: string }[], target: { itemUid: string; contextRef?: string }): string | undefined {
+export function arkmeConversationTargetAnchor(rows: readonly { id: string; kind: string; item?: object; entryRef?: string }[], target: { itemUid: string; contextRef?: string; systemRef?: string }): string | undefined {
+  if (target.systemRef) return rows.find(row => row.id === target.itemUid)?.id
   if (target.contextRef) return rows.find(row => row.kind === 'offline-context' && row.entryRef === target.contextRef)?.id
   return rows.find(row => row.kind === 'message' && row.item && 'itemUid' in row.item && row.item.itemUid === target.itemUid)?.id
 }
 
-export function arkmeConversationTargetRow(root: HTMLDivElement | null, target: { itemUid: string; momentId?: string; contextRef?: string }): HTMLElement | undefined {
+export function arkmeConversationTargetRow(root: HTMLDivElement | null, target: { itemUid: string; momentId?: string; contextRef?: string; systemRef?: string }): HTMLElement | undefined {
   if (!root) return undefined
+  if (target.systemRef) return [...root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')].find(row => row.dataset.arkmeConversationRow === target.itemUid)
   if (target.contextRef) return [...root.querySelectorAll<HTMLElement>('[data-offline-context-ref]')]
     .find(row => row.dataset.offlineContextRef === target.contextRef)
   if (!target.momentId) return [...root.querySelectorAll<HTMLElement>('[data-arkme-message-item-uid]')]

@@ -255,7 +255,11 @@ export function ArkmeActionMenu(props: {
   useEffect(() => {
     if (!open || !props.point || typeof document === 'undefined' || typeof document.createElement !== 'function') return
     const doc = props.pointDocument ?? document
+    const openedAt = doc.defaultView?.performance.now() ?? 0
     const closeOnScroll = (event: Event) => {
+      // A scroll queued before opening can arrive after the menu mounts. It
+      // describes the position already used by the pointer anchor, not a move.
+      if (event.timeStamp < openedAt) return
       // Scrolling a long native menu is allowed; scrolling its source dismisses
       // the pointer anchor rather than leaving commands over unrelated content.
       if (event.target && menu.current?.contains(event.target as Node)) return

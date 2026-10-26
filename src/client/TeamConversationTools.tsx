@@ -1,3 +1,5 @@
+import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -43,7 +45,32 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   const input = useRef<HTMLInputElement>(null), lifetime = useRef(new AbortController()), reader = useRef<AbortController>(), inFlight = useRef<Promise<TeamMessage[]>>()
   const [query, setQuery] = useState(''), [limit, setLimit] = useState(50), [notice, setNotice] = useState(''), [opening, setOpening] = useState('')
   const [exporting, setExporting] = useState(false), [privateBusy, setPrivateBusy] = useState(false)
-  const [dndUnavailable, setDndUnavailable] = useState(false)
+  const [policy, setPolicy] = useState(() => mergeTeamNotificationPolicy(undefined, conversation.notificationPolicy))
+  const [policyBusy, setPolicyBusy] = useState(false), [policyError, setPolicyError] = useState('')
+  const policyLock = useRef(false)
+  useEffect(() => { setPolicy(current => mergeTeamNotificationPolicy(current, conversation.notificationPolicy)) }, [conversation.notificationPolicy])
+  useEffect(() => {
+    if (open !== 'menu') return
+    const request = new AbortController()
+    setPolicyBusy(true); setPolicyError('')
+    void callArkme<TeamNotificationPolicy>('team.app.notification-policy.get', {conversationRef:conversation.ref,expectedAccountKey:accountKey}, request.signal)
+      .then(value => { if (!request.signal.aborted) setPolicy(current => mergeTeamNotificationPolicy(current,value)) })
+      .catch(error => { if (!request.signal.aborted) setPolicyError(errorText(error)) })
+      .finally(() => { if (!request.signal.aborted) setPolicyBusy(false) })
+    return () => request.abort()
+  }, [open,conversation.ref,accountKey])
+  const setMuted = async () => {
+    if (policyBusy || policyLock.current) return
+    policyLock.current = true; setPolicyBusy(true); setPolicyError('')
+    try {
+      const value = await callArkme<TeamNotificationPolicy>('team.app.notification-policy.set',
+        {conversationRef:conversation.ref,expectedAccountKey:accountKey,muted:!policy.muted},lifetime.current.signal)
+      if (!lifetime.current.signal.aborted) {
+        setPolicy(current=>mergeTeamNotificationPolicy(current,value)); invalidateTeamMessages(accountKey)
+      }
+    } catch (error) { if (!lifetime.current.signal.aborted) setPolicyError(errorText(error)) }
+    finally { policyLock.current=false; if (!lifetime.current.signal.aborted) setPolicyBusy(false) }
+  }
   const privateLock = useRef(false), locateLock = useRef(false), exportLock = useRef(false)
   useEffect(() => () => { lifetime.current.abort(); reader.current?.abort() }, [])
   useEffect(() => { if (overlayOpen) setOpen(undefined) }, [overlayOpen])
@@ -78,7 +105,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   }
   const toggle = (next: Panel) => {
     if (next === open) { setOpen(undefined); return }
-    onOpenPanel(); setOpen(next); setNotice(''); setDndUnavailable(false)
+    onOpenPanel(); setOpen(next); setNotice(''); setPolicyError('')
     if (next !== 'menu') void read().catch(() => {})
   }
   useSelectedMessageSearch(conversation.ref, text => {
@@ -150,9 +177,8 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
       {
         id: 'message-dnd', label: tr('消息免打扰'), icon: <BellSlash size={20} aria-hidden />,
         keepOpenOnSelect: true,
-        ...(dndUnavailable ? { error: tr('暂缺后端支持，免打扰尚未生效') } : {}),
-        // Team notifications are aggregated server-side; a local flag cannot mute just this conversation.
-        invoke: () => setDndUnavailable(true),
+        checked: policy.muted, busy: policyBusy, ...(policyError ? {error:policyError} : {}),
+        invoke: () => void setMuted(),
       },
       conversationExportActionItem({ busy: exporting, processed: archive.messages.length, invoke: () => void exportHistory() }),
     ]}/>

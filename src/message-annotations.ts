@@ -2,15 +2,15 @@ import { readMessageQuote, type ArkmeMessageQuote } from './message-quote.js'
 
 export interface MessageUnderline {
   id: string
-  actorId: number
+  actorId?: number
   actorName: string
   mine: boolean
-  anchor: ArkmeMessageQuote
+  anchor?: ArkmeMessageQuote
   state: 'available' | 'stale'
   pending?: boolean
 }
 export interface MessageUnderlineSnapshot { syncNotice?: string; revision: number; accessible: boolean; items: MessageUnderline[] }
-export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud' }
+export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud'; maxBatchSize?: number }
 export type MessageUnderlineChange = { operationId: string; kind: 'add'; anchor: ArkmeMessageQuote }
   | { operationId: string; kind: 'remove'; annotationId: string }
 const idPattern = /^[A-Za-z0-9._:-]{1,128}$/u
@@ -22,7 +22,7 @@ export function underlineCapabilities(value: unknown): MessageUnderlineCapabilit
   maxLength: Number.isSafeInteger(v?.max_length) ? Math.max(0, Math.min(2000, Number(v?.max_length))) : 0 }
 }
 /** Complete, permission-checked snapshots only. The actor cannot choose whether a mark is mine. */
-export function readUnderlineSnapshot(value: unknown, viewerId: number): MessageUnderlineSnapshot {
+export function readUnderlineSnapshot(value: unknown, viewerId: number) {
   const v = value as Record<string, unknown> | undefined
   if (!v || v.complete !== true || !Number.isSafeInteger(v.revision) || Number(v.revision) < 0 || typeof v.accessible !== 'boolean') throw new Error('标记响应不完整，请重试')
   if (!v.accessible) return { revision: Number(v.revision), accessible: false, items: [] }
@@ -36,7 +36,7 @@ export function readUnderlineSnapshot(value: unknown, viewerId: number): Message
       || !anchor || (a.state !== 'available' && a.state !== 'stale')) throw new Error('标记响应无效，请重试')
     seen.add(a.annotation_uid)
     return { id: a.annotation_uid, actorId: Number(a.actor_user_id), actorName: a.actor_name,
-      mine: Number(a.actor_user_id) === viewerId, anchor, state: a.state } as MessageUnderline
+      mine: Number(a.actor_user_id) === viewerId, anchor, state: a.state } satisfies MessageUnderline
   })
   return { revision: Number(v.revision), accessible: true, items }
 }
@@ -45,4 +45,19 @@ export function readUnderlineSnapshot(value: unknown, viewerId: number): Message
 export function acceptUnderlineSnapshot(previous: MessageUnderlineSnapshot | undefined, next: MessageUnderlineSnapshot, pending = false) {
   if (!next.accessible) return { ...next, items: [] }
   return pending || (previous && previous.revision > next.revision) ? previous : next
+}
+
+/** Team exposes server-determined ownership and public display names, never
+ * numeric member identities. Stale marks intentionally contain no old quote. */
+export function readTeamUnderlineSnapshot(value:unknown):MessageUnderlineSnapshot {
+ const v=value as Record<string,unknown>|undefined
+ if(!v || v.complete!==true || !Number.isSafeInteger(v.revision) || Number(v.revision)<0 || !Array.isArray(v.items) || v.items.length>100)throw new Error('标记响应不完整，请重试')
+ const ids=new Set<string>()
+ const items=v.items.map(raw=>{
+  const row=raw as Record<string,unknown>,anchor=readMessageQuote(row.anchor)
+  if(!underlineId(row.id)||ids.has(row.id)||typeof row.mine!=='boolean'||typeof row.actor_name!=='string'||row.actor_name.length>100||!['available','stale'].includes(String(row.state))||row.state==='available'&&!anchor||row.state==='stale'&&row.anchor!==undefined)throw new Error('标记响应无效，请重试')
+  ids.add(row.id)
+  return {id:row.id,mine:row.mine,actorName:row.actor_name||'用户',state:row.state as 'available'|'stale',...(anchor?{anchor}:{})}
+ })
+ return {revision:Number(v.revision),accessible:true,items}
 }

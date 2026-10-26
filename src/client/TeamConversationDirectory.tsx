@@ -24,7 +24,8 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   group: TeamConversationGroup; accountKey?: string; selected?: boolean; onClick(): void
 }) {
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'folder', group })
-  const { latest, channel, unread } = group
+  const { latest, channel } = group
+  const unread = group.attentionUnread
   const preview = latest.preview?.status === 'available'
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''

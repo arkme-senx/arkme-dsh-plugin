@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deletedArrangements', 'deletedArrangementDetail',
@@ -18,13 +19,14 @@ const expectedPublicMethods = [
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
   'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
-  'statisticsRead',
+  'statisticsRead', 'personalKeywordsRead', 'personalKeywordRecords', 'analyticsRead',
   'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
   'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
   'automaticCapabilities', 'updateAutomaticCapability',
   'relationPage', 'relationRecords', 'peopleList', 'peopleOpenChat', 'exploreEnrich', 'recordingImportReceipt', 'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
   'messageSyncStatus', 'retryMessageSync',
   'externalChats',
+  'listTeamNotificationConversations', 'getTeamNotificationPolicy', 'setTeamNotificationPolicy',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'offlineContext', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
@@ -36,7 +38,9 @@ const expectedPublicMethods = [
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
-  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
+  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
+  'listTeamConversations','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'localTranscriptEntries', 'publishLongArticle', 'stageLongArticleImage',
@@ -126,6 +130,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
+  'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
   'conversation-activity-service.ts',
   'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
@@ -133,7 +138,8 @@ const expectedServiceFiles = [
   'explore-projection.ts', 'explore-service.ts',
   'chat-message-sync-service.ts',
   'profile-image.ts',
-  'team-codex-transport.ts', 'selected-text-self-note.ts',
+  'team-codex-transport.ts', 'team-message-forward-service.ts', 'selected-text-self-note.ts',
+  'team-message-notification-service.ts',
   'reaction-service.ts',
   'reaction-notification-context.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
@@ -163,12 +169,12 @@ const expectedServiceFiles = [
   'recording-tool-workflow.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
-  'arko-service.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
+  'arko-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'calendar-day-review-service.ts',
   'people-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
-  'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
+  'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',

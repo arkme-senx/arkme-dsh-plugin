@@ -1498,6 +1498,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+    analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
@@ -1510,10 +1511,13 @@ arkoImagesV1?:true
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    arkoLifecycleV1?: true
     arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    teamMessageInteractions?: 1
+    teamNotificationPoliciesV1?: true
     teamProfiles?: true
     teamExternalChats?: true
     groupSelfNickname?: true
@@ -2281,7 +2285,7 @@ export interface ArkmeForwardRecordPreviewItem {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   contentLabel?: string
-  sourceType?: 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  sourceType?: 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
@@ -3848,6 +3852,7 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  lifecycleVersion?: number
   messageRef?: string
   orderAtMillis?: number
   sourceType?: number
@@ -4093,6 +4098,10 @@ export type ArkmeChatClientEvent = {
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
+  type: 'team-message-notification'
+  revision: number
+  notification: {eventUid:string;sourceRef:string;sourceKey:string;sourceKind:'team_conversation';title:string;body:string;eventAtMillis:number;expiresAtMillis:number}
+} | {
   type: 'message-notification'
   revision: number
   notification: {
@@ -4230,6 +4239,10 @@ export type ArkmePluginOperation =
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
   | 'team.external'
+  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
+  | 'team.messages.marks-read' | 'team.messages.marks-change'
+  | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
+  | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
@@ -4314,6 +4327,8 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.reconcile'
   | 'calendar.day-review.resume'
   | 'calendar.day-review.evidence'
+  | 'statistics.keywords'
+  | 'statistics.keyword-records'
   | 'statistics.detail'
   | 'statistics.active'
   | 'statistics.long'
@@ -4571,6 +4586,9 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'arko.lifecycle.query'
+  | 'arko.lifecycle.change'
+  | 'arko.deleted'
   | 'arko.messages'
   | 'arko.search'
   | 'arko.context'

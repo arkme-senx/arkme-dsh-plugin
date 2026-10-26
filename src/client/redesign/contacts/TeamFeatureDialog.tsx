@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom'
 import { tr, useArkmeLocale } from '../../locale.js'
 
 /** Shared focus, dismissal and sizing for the Team feature dialogs. */
-export function TeamFeatureDialog({ title, teamName, className = '', children, footer, onClose }: {
-  title: string; teamName: string; className?: string; children: ReactNode; footer?: ReactNode; onClose(): void
+export function TeamFeatureDialog({ title, teamName, className = '', children, footer, busy = false, onClose }: {
+  title: string; teamName: string; className?: string; children: ReactNode; footer?: ReactNode; busy?: boolean; onClose(): void
 }) {
   useArkmeLocale()
   const titleId = useId()
@@ -12,7 +12,7 @@ export function TeamFeatureDialog({ title, teamName, className = '', children, f
   useEffect(() => {
     if (typeof document === 'undefined') return
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    const focusDialog = () => dialog.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+    const focusDialog = () => (dialog.current?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? dialog.current)?.focus({ preventScroll: true })
     focusDialog()
     const containFocus = (event: FocusEvent) => {
       if (event.target instanceof Node && !dialog.current?.contains(event.target)) focusDialog()
@@ -23,12 +23,13 @@ export function TeamFeatureDialog({ title, teamName, className = '', children, f
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
+  useEffect(() => { if (busy) dialog.current?.focus({ preventScroll: true }) }, [busy])
 
   const keyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      onClose()
+      if (!busy) onClose()
       return
     }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
@@ -41,15 +42,16 @@ export function TeamFeatureDialog({ title, teamName, className = '', children, f
         return style.display !== 'none' && style.visibility !== 'hidden'
       })
     const first = controls[0], last = controls[controls.length - 1]
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+    if (!first) { event.preventDefault(); dialog.current?.focus() }
+    else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
   }
 
-  const content = <div className="arkme-contact-remark-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <section ref={dialog} className={`arkme-contact-remark-dialog arkme-team-sync-dialog ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={keyDown}>
+  const content = <div className="arkme-contact-remark-backdrop" onMouseDown={event => { if (!busy && event.target === event.currentTarget) onClose() }}>
+    <section ref={dialog} tabIndex={-1} className={`arkme-contact-remark-dialog arkme-team-sync-dialog ${className}`} role="dialog" aria-modal="true" aria-busy={busy || undefined} aria-labelledby={titleId} onKeyDown={keyDown}>
       <header className="arkme-contact-remark-header">
         <h2 id={titleId}>{title} <span>· {teamName}</span></h2>
-        <button type="button" className="arkme-contact-remark-close" aria-label={tr('关闭')} onClick={onClose}>×</button>
+        <button type="button" className="arkme-contact-remark-close" aria-label={tr('关闭')} disabled={busy} onClick={onClose}>×</button>
       </header>
       <div className="arkme-team-sync-body">{children}</div>
       {footer && <footer className="arkme-team-sync-footer">{footer}</footer>}

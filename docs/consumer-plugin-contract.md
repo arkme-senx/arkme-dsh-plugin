@@ -242,3 +242,17 @@ Gate this extension on `capabilities().features.contactTeamDiscovery === true`.
 After explicit user intent, `joinContactTeam(team.jotmoId, requestUid)` uses the same Host owner as the built-in UI. Generate a UUID once per intent and reuse it when retrying. `pending` means awaiting owner approval, not membership. Refresh contact search for current `joined`, `pending`, `rejected`, `none`, or `not_member` state. Image references are viewer-bound; signed storage URLs and internal team IDs are not part of this SDK contract.
 
 The equivalent DSH tools are `arkme_contact_search` and `arkme_team_join`; the latter participates in the existing conversational write-confirmation policy.
+
+
+### Team message interactions
+
+Check `capabilities().features.teamMessageInteractions === 1` before offering Team message actions. `TeamMessagePort`, `TeamForwardInput`, `TeamSendInput`, and the related DTOs are public SDK exports. They use account/side-scoped references from `listTeamConversations()` and `readTeamMessages()`, never Chat source IDs or guessed Record owners.
+
+- `preflightTeamMessages()` validates the entire selected list against exact message versions. An unavailable or changed occurrence rejects the selection; do not silently substitute a current version.
+- `sendTeamMessage()` retains the supplied client UID through the existing durable queue. A queued task is not a delivery receipt; read `teamMessageTasks()` and use `updateTeamSend()` on the original task.
+- `readTeamMarks()` / `changeTeamMark()` use `team` or `conversation` audience explicitly. Local-only marks stay on the current device. Stale shared marks deliberately omit historical text.
+- `createTeamMessageCopyLink()` creates the existing public frozen SID share. Ask for public-sharing intent; it is not a private conversation locator.
+- `forwardTeamMessages()` accepts either a real Team conversation or a native source target. Keep selections, request ID, record UID, creation time and optional comment UID/text immutable for the entire intent. Retry unresolved destinations with the original command; retain clean receipts. A warning means the card was accepted while its comment needs the original retry.
+- `reportTeamMessage()` preserves the selected version as platform evidence. Reporting does not delete the author's personal Record or grant platform review authority to team owners.
+
+Pass the consumer lifecycle `AbortSignal` to every call and abort it on account/profile retirement or disposal. Host capability/version rejection happens before the business mutation. The independent consumer fixture and verifier are `tests/consumers/team-message-interactions-consumer.mts` and `scripts/verify-team-message-consumer.mjs`.

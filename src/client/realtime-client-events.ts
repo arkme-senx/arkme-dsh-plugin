@@ -1,3 +1,4 @@
+import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
 import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
 import { invalidateMessageMarks } from './message-mark-invalidations.js'
 import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
@@ -9,7 +10,7 @@ import { invalidateTeamMessages } from './team-messaging-events.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { publishMemberEventHint } from './member-event-hints.js'
 import { arkmeMemberEvents } from './member-event-cache.js'
 import { invalidateDirectMessageAdmission } from './direct-message-admission.js'
@@ -79,6 +80,23 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     void arkmeAuthStore.refresh().catch(() => undefined)
   }, [authRevision])
+
+  // Notification lifetime follows the account, not token refresh or transport
+  // reconnection. A routine auth revision must not dismiss an unread notice.
+  const teamNotifications = useRef<ReturnType<typeof createTeamMessageNotificationPresenter> | undefined>(undefined)
+  useEffect(() => {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+    const userId = auth.userId, environment = auth.environment
+    const presenter = createTeamMessageNotificationPresenter(() => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return current?.status === 'authenticated' && current.userId === userId && current.environment === environment
+    })
+    teamNotifications.current = presenter
+    return () => {
+      presenter.dispose()
+      if (teamNotifications.current === presenter) teamNotifications.current = undefined
+    }
+  }, [auth?.environment, auth?.status, auth?.userId])
 
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
@@ -305,6 +323,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'attention-summary') {
           arkmeAttentionSummary.apply(update.summary)
+          return
+        }
+        if (update.type === 'team-message-notification') {
+          if (ownsNotifications) teamNotifications.current?.show(update.notification)
           return
         }
         if (update.type === 'message-notification') {

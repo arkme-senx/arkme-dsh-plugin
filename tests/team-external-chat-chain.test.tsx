@@ -41,12 +41,14 @@ it.skipIf(!process.env.JOTMO_EXTERNAL_CHAT_FIXTURE)('UI -> SDK -> Host -> authen
     for (let i = 0; i < 150; i++) { await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) }); if (condition()) return }
     throw Error(`UI did not settle: ${text()}`)
   }
-  const button = (label: string) => [...document.querySelectorAll('button')].find(v => v.textContent === label)!
+  const button = (label: string) => [...document.querySelectorAll('button')].find(v => v.textContent === label || v.getAttribute('aria-label') === label)!
   try {
     await act(async () => { view.render(<SharePrivateChat sourceRef="synthetic-source" name="外部联系人" onClose={() => {}}/>) })
     await waitFor(() => checkbox() !== null && !checkbox().disabled)
-    expect(text()).toContain('完整历史和后续消息')
+    expect(text()).toContain('全部历史和新消息')
     await act(async () => { checkbox().click() })
+    await act(async () => { button('确认共享').click() })
+    await waitFor(() => text().includes('共享设置已更新'))
     await waitFor(() => checkbox().checked === true)
     await act(async () => view.unmount())
     view = createRoot(container)
@@ -56,7 +58,7 @@ it.skipIf(!process.env.JOTMO_EXTERNAL_CHAT_FIXTURE)('UI -> SDK -> Host -> authen
     await waitFor(() => text().includes('外部联系人'))
     expect(document.querySelectorAll('textarea')).toHaveLength(0)
     expect([...document.querySelectorAll('button')].some(v => v.textContent === '取消共享')).toBe(false)
-    await act(async () => { button('外部联系人 ›').click() })
+    await act(async () => { button('查看与 外部联系人 的私聊').click() })
     await waitFor(() => text().includes('长文完整内容终点'))
     expect(text()).toContain('转发快记完整快照')
     await act(async () => { button('查看更早消息').click() })

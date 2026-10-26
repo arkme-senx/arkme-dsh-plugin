@@ -407,3 +407,15 @@ it('shares refresh scheduling while retaining cloud access invalidation and tran
     expect(invalidate).toHaveBeenCalledOnce()
   } finally { await act(async () => root.unmount()); session.dispose(); host.remove(); vi.unstubAllGlobals() }
 })
+
+it('retries a lost Team add without dereferencing a redacted stale anchor',async()=>{
+ const session=new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+ session.capability={supported:true,maxLength:2000}
+ vi.mocked(callArkme).mockRejectedValueOnce(new Error('response lost'))
+ await session.change(target,{kind:'add',anchor,operationId:'original'})
+ vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:{revision:1,accessible:true,items:[{id:'stale',mine:true,actorName:'你',state:'stale'}]}}]).mockRejectedValueOnce(new Error('原文已改变'))
+ await expect(session.retry?.()).resolves.toBeUndefined()
+ expect(session.notice).toBe('原文已改变')
+ expect(vi.mocked(callArkme).mock.calls[2]?.[1]).toMatchObject({change:{operationId:'original'}})
+ session.dispose()
+})

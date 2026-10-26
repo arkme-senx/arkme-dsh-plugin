@@ -24,3 +24,20 @@ it('cleans a real partial file when the filesystem rejects a write', async () =>
    await expect(store.read(recovered.file.fileRef + 'tampered')).rejects.toMatchObject({ code: 'generated-file-unavailable' })
  } finally { vi.mocked(open).mockRestore(); await rm(directory, { recursive: true, force: true }) }
 })
+
+it('invalidates an export during creation or a later controlled download when visibility changes', async () => {
+ const directory = await mkdtemp(join(tmpdir(), 'generated lifecycle '))
+ let revision = 0
+ const source = vi.fn(async (_signal?: AbortSignal) => revision)
+ const store = new GeneratedArtifacts(directory, async () => 'synthetic', async () => 7, source)
+ const signal = new AbortController().signal
+ try {
+  await expect(store.create(7, 'Arko.md', async write => { await write('private'); revision++ }, signal)).rejects.toMatchObject({ code: 'generated-file-unavailable' })
+  expect(await readdir(directory)).toEqual([])
+  expect(source).toHaveBeenCalledWith(signal)
+  const result = await store.create(7, 'Arko.md', async write => { await write('current') }, signal)
+  await expect(store.read(result.file.fileRef, signal)).resolves.toBeDefined()
+  revision++
+  await expect(store.read(result.file.fileRef, signal)).rejects.toMatchObject({ code: 'generated-file-unavailable' })
+ } finally { await rm(directory, {recursive:true, force:true}) }
+})

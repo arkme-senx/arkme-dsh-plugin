@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
@@ -32,6 +33,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
   getReadingDate(): string | undefined
 }) {
   const calendarAnchor = useRef<HTMLButtonElement>(null), menuAnchor = useRef<HTMLButtonElement>(null), searchAnchor = useRef<HTMLButtonElement>(null), searchInput = useRef<HTMLInputElement>(null)
+  const lifecycleGeneration = useSyncExternalStore(arkoLifecycleSync.subscribe, arkoLifecycleSync.snapshot, arkoLifecycleSync.snapshot)
   const [open, setOpen] = useState<'calendar' | 'search' | 'menu'>()
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(emptyPage), [searching, setSearching] = useState(false), [searchError, setSearchError] = useState('')
@@ -73,7 +75,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     setPage(emptyPage); setSearchError(''); if (query.trim()) setSearching(true)
     const timer = setTimeout(() => { void search() }, 300)
     return () => { clearTimeout(timer); searchController.current?.abort() }
-  }, [open, search, cancelLocation])
+  }, [open, search, cancelLocation, lifecycleGeneration])
   useEffect(() => {
     if (open !== 'search') return
     const frame = requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
@@ -114,7 +116,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
       { source: 'arko', mode: 'buckets', body: { start_date: range.startDate, end_date: nextDate(range.endDate), timezone: range.timezone } }, signal)
     if (result.coverage?.status !== 'complete' || !Array.isArray(result.daily_data)) throw new Error('日历读取不完整，请重试')
     return { days: result.daily_data.map(day => ({ bucketDate: day.date, count: day.count, hasRecords: day.has_items, protectedCount: 0 })) }
-  }, [])
+  }, [lifecycleGeneration])
   const toggle = (next: 'calendar' | 'search' | 'menu') => { if (open === next) { setOpen(undefined); return }; if (next !== 'menu') { cancelLocation(); onOpenPanel() }; setOpen(next) }
   useSelectedMessageSearch(accountScope ? `arko:${accountScope}` : undefined, text => {
     cancelLocation(); setQuery(text); onOpenPanel(); setOpen('search')

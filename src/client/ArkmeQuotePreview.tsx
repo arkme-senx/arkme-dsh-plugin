@@ -3,12 +3,12 @@ import type { ArkmeTimelineExtensionParent } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 /** Quoted text is inert prose: it cannot re-mention people or execute rich content. */
-export function ArkmeQuotePreview({ parent, onOpen }: { parent: ArkmeTimelineExtensionParent; onOpen?: (() => void) | undefined }) {
+export function ArkmeQuotePreview({ parent, onOpen, wholeMessageText }: { parent: ArkmeTimelineExtensionParent; wholeMessageText?: string | undefined; onOpen?: (() => void) | undefined }) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const content = useRef<HTMLSpanElement>(null)
   const unavailable = parent.quoteState === 'unavailable'
-  const text = unavailable ? '原消息已撤回或不可查看' : parent.quote?.text ?? ''
+  const text = unavailable ? '原消息已撤回或不可查看' : parent.quote?.text ?? wholeMessageText ?? ''
   useLayoutEffect(() => { setExpanded(false) }, [parent.itemUid, text])
   useLayoutEffect(() => {
     const element = content.current

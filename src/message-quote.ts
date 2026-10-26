@@ -51,8 +51,15 @@ export function quoteMatchesCanonical(quote: ArkmeMessageQuote, text: string): b
   // Existing private SQLite anchors can contain the original 32-unit context.
   // Retain their readability; only new captures use the portable safe boundary.
   return text.slice(quote.start, quote.end) === normalizeQuoteText(quote.text)
-    && (quote.prefix === context.prefix || quote.prefix === text.slice(Math.max(0, quote.start - 32), quote.start))
-    && (quote.suffix === context.suffix || quote.suffix === text.slice(quote.end, quote.end + 32))
+    && (quote.prefix === context.prefix || wellFormedQuoteContext(quote.prefix) === wellFormedQuoteContext(text.slice(Math.max(0, quote.start - 32), quote.start)))
+    && (quote.suffix === context.suffix || wellFormedQuoteContext(quote.suffix) === wellFormedQuoteContext(text.slice(quote.end, quote.end + 32)))
+}
+// A 32-unit hint may split a surrogate pair. Go's JSON decoder represents
+// that lone unit as U+FFFD; context matching uses the same scalar projection.
+function wellFormedQuoteContext(value:string):string {
+  let result=''
+  for(const scalar of value){const unit=scalar.charCodeAt(0);result+=scalar.length===1&&unit>=0xd800&&unit<=0xdfff?'\uFFFD':scalar}
+  return result
 }
 export function quoteCapabilitiesFromWire(value: unknown): ArkmeQuoteReplyCapabilities {
   const q = value as Record<string, unknown> | null

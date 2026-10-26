@@ -1,7 +1,14 @@
 import { DictationService } from './services/dictation-service.js'
+import {TeamMessageForwardService} from './services/team-message-forward-service.js'
+import type {TeamMessageReadOptions} from './team-message-contract.js'
+import type {TeamConversation,TeamPage,TeamSide,TeamTimeline} from './team-app-contract.js'
+import type {TeamSendTask} from './team-send-contract.js'
+import { TeamMessageNotificationService } from './services/team-message-notification-service.js'
+import type { TeamNotificationPage, TeamNotificationPolicy } from './team-notification-contract.js'
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
+import { PersonalKeywordService } from './services/personal-keyword-service.js'
 import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
 import { GENERATED_ARTIFACT_PREFIX } from './generated-artifacts.js'
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
@@ -396,6 +403,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly personalKeywords: PersonalKeywordService
   private readonly statistics: StatisticsService
   private readonly people: PeopleService
   private readonly explore: ExploreService
@@ -430,11 +438,27 @@ export class ArkmeService {
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
+  private readonly teamNotifications: TeamMessageNotificationService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  private readonly teamForward:TeamMessageForwardService
   async externalChats(operation: import('./team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown> {
     if (!['list','mine','share','unshare','page'].includes(operation)) throw new Error('Unsupported external chat operation')
     return await this.teamApp.execute(`team.app.external.${operation}`, params, signal)
+  }
+  async listTeamNotificationConversations(side:'team'|'external', cursor?:string, signal?:AbortSignal):Promise<TeamNotificationPage> {
+    if (side!=='team' && side!=='external') throw new TypeError('Choose team or external')
+    const page = await this.teamApp.execute('team.app.conversations',{side,...(cursor?{cursor}:{})},signal) as import('./team-app-contract.js').TeamPage<import('./team-app-contract.js').TeamConversation>
+    return {items:page.items.map(c=>({conversationRef:c.ref,displayName:c.side==='team'?`${c.visitor?.nickname??'用户'} · ${c.channel.name}`:c.channel.name,
+      side:c.side,policy:c.notificationPolicy!})),hasMore:page.hasMore,...(page.nextCursor?{nextCursor:page.nextCursor}:{})}
+  }
+  async getTeamNotificationPolicy(conversationRef:string, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    return await this.teamApp.execute('team.app.notification-policy.get',{conversationRef},signal) as TeamNotificationPolicy
+  }
+  async setTeamNotificationPolicy(conversationRef:string, muted:boolean, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    const value=await this.teamApp.execute('team.app.notification-policy.set',{conversationRef,muted},signal) as TeamNotificationPolicy
+    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision()})
+    return value
   }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
     const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
@@ -457,6 +481,40 @@ export class ArkmeService {
     return await this.uploadTeamAvatar(profileRef,bytes.toString('base64'),uploadUid,signal)
   }
   async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void> {await this.teamApp.execute('team.app.profile.avatar.abort',{uploadRef},signal)}
+  async forwardTeamMessages(input:import('./team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>{return this.teamForward.forward(input,signal)}
+  async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>{
+    return await this.executeTeamApp('team.app.copy-link',{conversationRef,selections},signal) as import('./types.js').ArkmeMessageCopyLinkResult
+  }
+  async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('./team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamReportResult>{
+    return await this.executeTeamApp('team.app.report',{conversationRef,messageRef,version,reason,description},signal) as import('./team-message-contract.js').TeamReportResult
+  }
+  async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamMessage[]>{
+    return await this.executeTeamApp('team.app.preflight',{conversationRef,selections},signal) as import('./team-app-contract.js').TeamMessage[]
+  }
+  async readTeamMarks(conversationRef:string,audience:import('./team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('./message-annotations.js').MessageUnderlineSnapshot}[]> {
+    return await this.executeTeamApp('team.app.mark.list',{conversationRef,audience,markRefs},signal) as {actionRef:string;snapshot:import('./message-annotations.js').MessageUnderlineSnapshot}[]
+  }
+  async changeTeamMark(conversationRef:string,audience:import('./team-message-contract.js').TeamMarkAudience,markRef:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('./message-annotations.js').MessageUnderlineSnapshot> {
+    return await this.executeTeamApp('team.app.mark.change',{conversationRef,audience,markRef,change},signal) as import('./message-annotations.js').MessageUnderlineSnapshot
+  }
+  async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>> {
+    if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
+    return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
+  }
+  async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
+    return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
+  }
+  async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask> {
+    signal?.throwIfAborted()
+    return await this.executeTeamApp('team.app.send.enqueue',command as unknown as Record<string,unknown>,signal) as TeamSendTask
+  }
+  async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]> {
+    return await this.executeTeamApp('team.app.send.tasks',{conversationRef},signal) as TeamSendTask[]
+  }
+  async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask> {
+    if (!['retry','cancel'].includes(action)) throw new TypeError('Invalid Team send action')
+    return await this.executeTeamApp(action==='retry'?'team.app.send.retry-task':'team.app.send.cancel-task',{conversationRef,taskRef},signal) as TeamSendTask
+  }
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
@@ -467,6 +525,22 @@ export class ArkmeService {
     if (operation === 'team.app.send.retry-task') return await this.teamDelivery.retry(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
+  }
+  async personalKeywordsRead(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, false, signal) as Promise<import('./analytics-contract.js').PersonalKeywordSummary> }
+  async personalKeywordRecords(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, true, signal) as Promise<import('./analytics-contract.js').PersonalKeywordRecords> }
+  async analyticsRead(input: import('./analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown> {
+    if (input.kind === 'personal_keywords') return input.action === 'state' ? this.personalKeywordsRead(input.query, signal) : this.personalKeywordRecords(input.query, signal)
+    if (input.kind === 'conversation_words') {
+      if (input.action === 'state') return this.conversationWordsState(input.query, signal)
+      if (input.action === 'participants') return this.conversationWordsParticipants(input.query, signal)
+      return this.conversationWordsMessages(input.query, signal)
+    }
+    if (input.kind === 'conversation_activity') {
+      if (input.action === 'state') return this.conversationActivityRead(input.query, signal)
+      if (input.action === 'participants') return this.conversationActivityParticipants(input.query, signal)
+      return this.conversationActivityMessages(input.query, signal)
+    }
+    throw new Error('统计能力不支持此操作')
   }
   async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
 
@@ -613,6 +687,10 @@ export class ArkmeService {
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
+    this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
+      if(target.kind==='private_chat'||target.kind==='group_chat')this.realtime.scheduleChatSessionProjection(target.ownerRef,sequence??0)
+      else await this.realtime.invalidateRecordProjection()
+    })
     this.messageActions = new MessageActionService(
       new ArkmeMessageActionGateway(
         this.runtime,
@@ -662,6 +740,14 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
       chatTimelineItems: async (...args) => await this.chat.chatTimelineItems(...args),
     })
+    this.teamNotifications = new TeamMessageNotificationService({
+      session:()=>this.runtime.accountScopedSession(),
+      resolve:(hint,session,signal)=>this.teamApp.resolveMessageNotification(hint,session,signal),
+      publish:notification=>{
+        if (!this.deviceLock.peek().locked) this.realtime.emitChatClientEvent({type:'team-message-notification',revision:this.realtime.nextChatClientRevision(),notification})
+      },
+    })
+    this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
@@ -739,6 +825,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
     this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
@@ -775,6 +862,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       source: this.source,
       media: this.media,
       chat: this.chat,
+      teamMedia:this.teamApp,
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
         await this.localFileOpener(path, signal)
@@ -1117,6 +1205,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+        analyticsV1: true,
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
@@ -1126,11 +1215,14 @@ arkoImagesV1:true,
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        arkoLifecycleV1: true,
         arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
         teamExternalChats: true,
+        teamMessageInteractions: 1,
+        teamNotificationPoliciesV1: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
@@ -1268,6 +1360,7 @@ arkoImagesV1:true,
     this.dictationOwner?.dispose()
     this.messageSync.dispose()
     this.unifiedTimeline.dispose()
+    this.teamNotifications.dispose()
     this.teamDelivery.dispose()
     this.selfRoles.dispose()
     this.recordingPresenceWriter.revoke()
@@ -1487,6 +1580,9 @@ arkoImagesV1:true,
     return await this.arko.arkoActivateModel(routeKey, signal)
   }
 
+  async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.arko.arkoLifecycle(refs, signal) }
+  async arkoChangeLifecycle(command: import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.arko.arkoChangeLifecycle(command, signal) }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.arko.arkoRecentlyDeleted(cursor, signal) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoMessages(query, signal)
@@ -2484,7 +2580,7 @@ arkoImagesV1:true,
   }
   async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService): Promise<unknown> {
     return await withReactionTrace(input, async () => {
-    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
+    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.teamConversationRef!==undefined ? this.teamApp.reactionTarget(target.teamConversationRef,target.teamMessageRef) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
       const [sources, profiles] = await Promise.all([
         this.source.chatSourcesBySessionUids([...new Set(items.map(item => item.sessionUID).filter(Boolean))], signal),
@@ -2548,41 +2644,78 @@ arkoImagesV1:true,
       if (input.action === 'query') {
         for (const item of page.items) if (item.actors_visible) include(sourceByTarget.get(item.target_id), item.groups.flatMap(group => group.actorIds))
       } else include(input.target.sourceRef, ids)
+      const teamKeys = new Map<string, Map<number, string>>()
+      if (input.action === 'query') {
+        for (const target of input.targets) if (target.teamConversationRef) {
+          const item = page.items.find(item => item.target_id === target.id)
+          if (item?.actors_visible) teamKeys.set(target.id, await this.teamApp.reactionActorKeys(
+            target.teamConversationRef, item.groups.flatMap(group => group.actorIds)))
+        }
+      } else if (input.target.teamConversationRef) {
+        teamKeys.set(input.target.id, await this.teamApp.reactionActorKeys(input.target.teamConversationRef, ids))
+      }
       if (input.action === 'query' && input.actorPresentation === 'deferred') {
         const references = new Map<string, Map<number, string>>()
         for (const [sourceRef, users] of sourceIds) references.set(sourceRef, await this.chat.reactionActorReferences(sourceRef, [...users]))
         if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
         return { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(({ actorIds, ...group }) => ({
           ...group, actors: item.actors_visible ? actorIds.map(userId => ({ userId, displayName: '用户', presentationPending: true,
+            ...(teamKeys.get(item.target_id)?.get(userId) ? { teamPersonKey: teamKeys.get(item.target_id)!.get(userId)! } : {}),
             ...(references.get(sourceByTarget.get(item.target_id) ?? '')?.get(userId) ? { memberRef: references.get(sourceByTarget.get(item.target_id)!)!.get(userId)! } : {}),
           })) : [],
         })) })) }
       }
-      const [profiles, labels] = await Promise.all([
-        measureReaction('actor-profiles', { count: ids.length }, () => this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000)),
+      const teamTargetIds = new Set(input.action === 'query' ? input.targets.filter(target => target.teamConversationRef).map(target => target.id) : [])
+      const teamActorIds = input.action === 'query'
+        ? [...new Set(page.items.filter(item => teamTargetIds.has(item.target_id) && item.actors_visible).flatMap(item => item.groups.flatMap(group => group.actorIds)))]
+        : input.target.teamConversationRef ? ids : []
+      const [profiles, labels, teamRemarks] = await Promise.all([
+        measureReaction('actor-profiles', { count: ids.length }, () => this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000)).catch(error => {
+          if (signal?.aborted || !teamActorIds.length) throw error
+          return new Map<number, { displayName?: string; avatarUrl?: string }>()
+        }),
         (async () => {
           const labels = new Map<string, Map<number, { remark: string; groupNickname: string }>>()
           for (const [sourceRef, users] of sourceIds) labels.set(sourceRef, await measureReaction('actor-labels', { count: users.size }, () => actorLabels(sourceRef, [...users])))
           return labels
         })(),
+        (async () => {
+          if (!teamActorIds.length) return new Map<number, string>()
+          try { return await this.source.privateRemarksByUserIds(teamActorIds, signal ? { signal } : {}) }
+          catch (error) { if (signal?.aborted) throw error; return new Map<number, string>() }
+        })(),
       ])
       const avatars = await actorAvatars(session.userId, profiles)
       if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-      const present = ({ actorIds, ...group }: WireGroup, sourceRef: string | undefined, visible = true) => ({ ...group, actors: visible ? actorIds.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(sourceRef ?? '')?.get(userId), avatars.get(userId))) : [] })
+      const present = ({ actorIds, ...group }: WireGroup, sourceRef: string | undefined, visible = true, team = false, aliases?: ReadonlyMap<number, string>) => ({ ...group, actors: visible ? actorIds.map(userId => ({ ...presentActor(userId, profiles.get(userId)?.displayName, team ? { remark: teamRemarks.get(userId) ?? '', groupNickname: '' } : labels.get(sourceRef ?? '')?.get(userId), avatars.get(userId)),
+        ...(aliases?.get(userId) ? { teamPersonKey: aliases.get(userId)! } : {}),
+      })) : [] })
       return input.action === 'query'
-        ? { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(group => present(group, sourceByTarget.get(item.target_id), item.actors_visible)) })) }
-        : { ...groupPage, items: groupPage.items.map(group => present(group, input.target.sourceRef)) }
+        ? { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(group => present(group, sourceByTarget.get(item.target_id), item.actors_visible, teamTargetIds.has(item.target_id), teamKeys.get(item.target_id))) })) }
+        : { ...groupPage, items: groupPage.items.map(group => present(group, input.target.sourceRef, true, !!input.target.teamConversationRef, teamKeys.get(input.target.id))) }
     }
     if (input.action !== 'actors') return result
     const page = result as { user_ids: number[]; has_more: boolean }
     const session = await this.runtime.requireSession()
-    const [profiles, labels] = await Promise.all([
-      this.profile.publicProfileSummariesByUserIds(page.user_ids, session, signal, 5_000),
+    const [profiles, labels, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(page.user_ids, session, signal, 5_000).catch(error => {
+        if (signal?.aborted || !input.target.teamConversationRef) throw error
+        return new Map<number, { displayName?: string; avatarUrl?: string }>()
+      }),
       actorLabels(input.target.sourceRef, page.user_ids),
+      (async () => {
+        if (!input.target.teamConversationRef || !page.user_ids.length) return new Map<number, string>()
+        try { return await this.source.privateRemarksByUserIds(page.user_ids, signal ? { signal } : {}) }
+        catch (error) { if (signal?.aborted) throw error; return new Map<number, string>() }
+      })(),
     ])
     const avatars = await actorAvatars(session.userId, profiles)
+    const teamKeys = input.target.teamConversationRef && page.user_ids.length
+      ? await this.teamApp.reactionActorKeys(input.target.teamConversationRef, page.user_ids) : new Map<number, string>()
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    return { items: page.user_ids.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(userId), avatars.get(userId))), has_more: page.has_more }
+    return { items: page.user_ids.map(userId => ({ ...presentActor(userId, profiles.get(userId)?.displayName, input.target.teamConversationRef ? { remark: remarks.get(userId) ?? '', groupNickname: '' } : labels.get(userId), avatars.get(userId)),
+      ...(teamKeys.get(userId) ? { teamPersonKey: teamKeys.get(userId)! } : {}),
+    })), has_more: page.has_more }
     })
   }
   async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
