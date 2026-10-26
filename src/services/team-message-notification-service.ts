@@ -1,12 +1,11 @@
 import type { ArkmeChatRealtimeNotice, ArkmeTeamPublicationHint } from '../chat-realtime.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { TeamAppService } from './team-app-service.js'
-import { ArkmeDesktopAttentionBridge, type ArkmeDesktopNotificationDispatchResult, type ArkmeDesktopNotificationPayload } from './desktop-attention-bridge.js'
 export type TeamDesktopNotice = NonNullable<Awaited<ReturnType<TeamAppService['resolveMessageNotification']>>>
 interface Ports {
   session():Promise<ArkmeSessionCredentials|undefined>
   resolve(hint:ArkmeTeamPublicationHint, session:ArkmeSessionCredentials, signal:AbortSignal):Promise<TeamDesktopNotice|undefined>
-  fallback(notice:TeamDesktopNotice):void
+  publish(notice:TeamDesktopNotice):void
 }
 interface Pending { hint:ArkmeTeamPublicationHint; userId:number; signal:AbortSignal; due:number; attempts:number }
 /** Independent bounded work lane. No Team failure enters Chat projection/retry state. */
@@ -16,9 +15,7 @@ export class TeamMessageNotificationService {
   private readonly running=new Set<string>()
   private timer:ReturnType<typeof setTimeout>|undefined
   private stopped=false
-  constructor(private readonly ports:Ports,
-    private readonly native:{showNotification(p:ArkmeDesktopNotificationPayload):Promise<ArkmeDesktopNotificationDispatchResult>}=new ArkmeDesktopAttentionBridge(),
-    private readonly now=Date.now) {}
+  constructor(private readonly ports:Ports, private readonly now=Date.now) {}
   accept(notice:ArkmeChatRealtimeNotice):void {
     const h=notice.teamPublication, signal=notice.connectionSignal, userId=notice.connectionUserId
     if(this.stopped||!h||!signal||!userId||signal.aborted||h.publishedAt< (notice.connectionStartedAtMillis??0) ||
@@ -50,15 +47,7 @@ export class TeamMessageNotificationService {
       const n=await this.ports.resolve(p.hint,session,signal)
       const current=await this.ports.session()
       if(!current||current.userId!==session.userId||current.refreshToken!==session.refreshToken||signal.aborted||this.stopped){this.pending.delete(key);return}
-      if(n&&n.expiresAtMillis>this.now()){
-        const result=await this.native.showNotification({idempotencyKey:n.eventUid,kind:'team.message',occurredAtMillis:n.eventAtMillis,
-          expiresAtMillis:n.expiresAtMillis,presentation:{title:n.title,body:n.body},activation:{kind:'team-conversation',sourceRef:n.sourceRef,sourceKey:n.sourceKey}})
-        if(result.outcome==='native-failed'||result.outcome==='rate-limited')throw new Error('native delivery pending')
-        if(result.fallbackToBrowser){
-          const live=await this.ports.session()
-          if(!p.signal.aborted&&!this.stopped&&live?.userId===session.userId&&live.refreshToken===session.refreshToken&&n.expiresAtMillis>this.now())this.ports.fallback(n)
-        }
-      }
+      if(n&&n.expiresAtMillis>this.now())this.ports.publish(n)
       this.remembered.set(key,p.hint.publishedAt+300000);this.pending.delete(key)
     }catch{
       p.attempts++;p.due=this.now()+Math.min(30000,1000*2**Math.min(p.attempts-1,5))

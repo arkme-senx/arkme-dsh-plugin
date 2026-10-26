@@ -6,8 +6,6 @@ import {prepareTeamAskDshNotes,canAskDshTeamMessage} from './team-ask-dsh.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { teamNotificationActivation } from './notification-activation-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { BellSlash } from '@phosphor-icons/react/dist/icons/BellSlash'
 import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
@@ -184,8 +182,6 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
     })
     return () => {
       live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close()
-      const pending=teamNotificationActivation.getSnapshot()
-      if(pending.source&&teamNotificationActivation.consume(pending.revision)&&pending.activationId)void arkmeDesktopNotifications.completeActivationV2(pending.activationId,'superseded')
     }
   }, [accountKey, active])
   return null
@@ -644,16 +640,6 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     })
   }
   if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
-  const activation = useSyncExternalStore(teamNotificationActivation.subscribe,teamNotificationActivation.getSnapshot)
-  useLayoutEffect(()=>{
-    if (!timeline || activation.source?.key !== timeline.conversation.key || ctrl.current.signal.aborted || !paneHost.current?.isConnected) return
-    // The Team workspace navigation and the authorized conversation have both
-    // committed. Reuse the common activation barrier without a Chat source.
-    teamNotificationActivation.markNavigationApplied(activation.revision)
-    teamNotificationActivation.markSurfaceCommitted(activation.revision)
-    const ready = teamNotificationActivation.takeReady(activation.revision)
-    if (ready?.activationId) void arkmeDesktopNotifications.completeActivationV2(ready.activationId,'resolved')
-  },[activation.revision,activation.source,timeline])
   const rawCurrent = timeline?.conversation ?? conversation
   const rawVisitor = rawCurrent.visitor
   const visitorIdentity = visibleMessages.find(m => m.side === 'external' && m.sender.personKey)?.sender

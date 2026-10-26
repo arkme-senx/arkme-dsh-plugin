@@ -89,7 +89,7 @@ try{
  assert.equal((await policy()).muted,true)
  await ctx.sessions.flush(agent.session)
  browser=await chromium.launch({channel:env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'});page=await browser.newPage({viewport:{width:1200,height:850}});page.setDefaultTimeout(20000)
- await page.addInitScript(()=>{window.__teamNotices=[];window.Notification=class{static permission='granted';static async requestPermission(){return 'granted'};constructor(title,options){this.title=title;this.options=options;window.__teamNotices.push(this)}close(){this.closed=true}}})
+ await page.addInitScript(()=>{window.__teamShellCalls=0;window.arkmeDesktopNotifications={show:async()=>{window.__teamShellCalls++;return {shown:false}},onActivated:()=>()=>{},permission:()=> 'granted'};window.__teamNotices=[];window.Notification=class{static permission='granted';static async requestPermission(){return 'granted'};constructor(title,options){this.title=title;this.options=options;window.__teamNotices.push(this)}close(){this.closed=true}}})
  page.on('pageerror',e=>errors.push(e.message))
  const url=ctx.get('webServer').getOrigin();await page.goto(ctx.get('connection').authenticatedUrl(url))
  const consumer=join(profile,'team-notification-consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}));await copyFile(join(repo,'tests/consumers/team-notifications/consumer.ts'),join(consumer,'consumer.ts'))
@@ -159,7 +159,8 @@ try{
  await page.evaluate(()=>window.__teamNotices[0].onclick());await new Promise(r=>setTimeout(r,700))
  assert.equal(await pane.locator('article').count(),0)
  if(env.ARKME_E2E_CAPTURE_DIR){await mkdir(env.ARKME_E2E_CAPTURE_DIR,{recursive:true});await page.screenshot({path:join(env.ARKME_E2E_CAPTURE_DIR,'team-notification-services-revoked.png')})}
+ assert.equal(await page.evaluate(()=>window.__teamShellCalls),0,'Team must use the browser API without requiring a new shell contract')
  assert.deepEqual(errors,[])
- console.log(JSON.stringify({acceptance:'team-notifications-real-services',conversation:uid,checks:['real-session-tool-confirmation','external-typed-SDK','UI-mute-persist-reopen','personal-mute-retains-unread','colleague-iOS-Android-unaffected','unmute-watermark-no-replay','new-message-PC-IM-SSE','MySQL-Redis-MQ-Push-vendor-wire','current-authorized-click-read-cursor','page-reply-external-push','sender-excluded','external-mute-is-personal','edits-receipts-no-alert','removed-member-click-denied'],boundaries:'only account/search/vendor/OS delivery fixtures'}))
+ console.log(JSON.stringify({acceptance:'team-notifications-real-services',conversation:uid,checks:['unchanged-Chat-only-shell','real-session-tool-confirmation','external-typed-SDK','UI-mute-persist-reopen','personal-mute-retains-unread','colleague-iOS-Android-unaffected','unmute-watermark-no-replay','new-message-PC-IM-SSE','MySQL-Redis-MQ-Push-vendor-wire','current-authorized-click-read-cursor','page-reply-external-push','sender-excluded','external-mute-is-personal','edits-receipts-no-alert','removed-member-click-denied'],boundaries:'only account/search/vendor/OS delivery fixtures'}))
 }catch(e){console.error(e);if(page)console.error((await page.locator('body').innerText()).slice(-5000));process.exitCode=1}
 finally{await browser?.close();if(ctx)await ctx.get('arkmeData').logout();await shutdown?.shutdown(process.exitCode||0);for(const s of streams)s.destroy();for(const s of [proxy,account]){s.closeAllConnections();await new Promise(r=>s.close(r))}}

@@ -1,6 +1,3 @@
-import { teamNotificationActivation } from './notification-activation-store.js'
-import { openTeamMessages } from './team-messaging-events.js'
-import type { TeamConversation } from '../team-app-contract.js'
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
@@ -247,10 +244,6 @@ export function apply(ctx: ClientContext): void {
       }, 'superseded')
     }
     const supersedePendingCommit = (): void => {
-      const team = teamNotificationActivation.getSnapshot()
-      if (team.source && teamNotificationActivation.consume(team.revision) && team.activationId) {
-        void arkmeDesktopNotifications.completeActivationV2(team.activationId,'superseded')
-      }
       const pending = arkmeNotificationActivation.getSnapshot()
       if (pending.source === undefined || !arkmeNotificationActivation.consume(pending.revision)) return
       completeDisplaced(pending)
@@ -277,18 +270,6 @@ export function apply(ctx: ClientContext): void {
       const request = new AbortController()
       resolving = { activation, controller: request }
       logNotificationActivation('resolve-start', activation)
-      if (activation.kind === 'team-conversation') {
-        void callArkme<TeamConversation>('team.app.notification.open',{notificationRef:activation.sourceRef},request.signal).then(conversation=>{
-          if(disposed||resolving?.controller!==request)return
-          teamNotificationActivation.publish(activation.activationId,conversation)
-          openTeamMessages({kind:'conversation',conversation})
-          resolving=undefined
-        }).catch(()=>{
-          if(disposed||resolving?.controller!==request)return
-          resolving=undefined;complete(activation,request.signal.aborted?'superseded':'failed')
-        })
-        return
-      }
       void resolveNotificationSource(activation, request.signal).then(result => {
         if (disposed || resolving?.controller !== request) return
         if (result.source === undefined) {

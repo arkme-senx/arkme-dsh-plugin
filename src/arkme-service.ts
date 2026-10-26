@@ -743,7 +743,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.teamNotifications = new TeamMessageNotificationService({
       session:()=>this.runtime.accountScopedSession(),
       resolve:(hint,session,signal)=>this.teamApp.resolveMessageNotification(hint,session,signal),
-      fallback:notification=>this.realtime.emitChatClientEvent({type:'team-message-notification',revision:this.realtime.nextChatClientRevision(),notification}),
+      publish:notification=>{
+        if (!this.deviceLock.peek().locked) this.realtime.emitChatClientEvent({type:'team-message-notification',revision:this.realtime.nextChatClientRevision(),notification})
+      },
     })
     this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
