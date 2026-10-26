@@ -1,4 +1,5 @@
-import { TeamMessageReply } from './TeamMessageReply.js'
+import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
+import {teamReplyPresentation} from './TeamMessageContent.js'
 import type { ReactNode } from 'react'
 import type { TeamConversation, TeamMessage } from '../team-app-contract.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
@@ -9,8 +10,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 
 /** Team keeps its own authorization; only the visual detail primitives are shared. */
-export function TeamMessageDetail({ message, conversation, avatar, onClose, onLocate, onExtend, replyParent, locatingReply, onLocateReply }: {
-  onExtend?: (() => void) | undefined; replyParent?: TeamMessage | undefined; locatingReply?: boolean; onLocateReply?(): void
+export function TeamMessageDetail({ message, conversation, avatar, onClose, onLocate, onExtend, onLocateReply }: {
+  onExtend?: (() => void) | undefined; onLocateReply?(): void
   message: TeamMessage; conversation: TeamConversation; avatar: ReactNode; onClose(): void; onLocate(): void
 }) {
   const source = conversation.side === 'team' ? `${conversation.channel.name} · ${conversation.visitor?.nickname ?? tr('外部联系人')}` : conversation.channel.name
@@ -20,7 +21,7 @@ export function TeamMessageDetail({ message, conversation, avatar, onClose, onLo
       const target = event.target instanceof Element ? event.target : null
       if (!target?.closest('[role="toolbar"], [role="menu"], [data-arkme-member-profile], [aria-modal="true"], [data-arkme-image-preview-viewport]')) onClose()
     }}>
-    {message.replyToKey && onLocateReply && <TeamMessageReply parent={replyParent} busy={locatingReply} onLocate={onLocateReply} />}
+    {message.reply && onLocateReply && <ArkmeQuotePreview parent={teamReplyPresentation(message)!} onOpen={onLocateReply} />}
     <TeamMessageContent message={message} conversationRef={conversation.ref} presentation="detail" />
     <button type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }} aria-label={tr('所在对话：{v0}', { v0: source })} onClick={onLocate}>
       <span aria-hidden>↗</span><span>{source}</span>

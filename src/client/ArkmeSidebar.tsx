@@ -1,4 +1,6 @@
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
+import {forwardTargetStyles} from './forward-target-styles.js'
+import {ArkmeForwardTargetDialog} from './ArkmeForwardTargetDialog.js'
 import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
@@ -669,79 +671,7 @@ const styles: Record<string, CSSProperties> = {
   composerExtensionTargetFile: { width: 42, height: 34, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: 5, background: arkmeTheme.elevated, textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   composerExtensionTargetImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   selectBar: { ...messageSelectionStyles.selectBar, position: 'absolute', inset: 0, zIndex: 35 },
-  forwardTargetBackdrop: {
-    position: 'absolute', inset: 0, zIndex: 70, display: 'grid', placeItems: 'center',
-    padding: 48, boxSizing: 'border-box', background: 'rgba(19,22,26,.30)',
-  },
-  forwardTargetDialog: {
-    width: 'min(520px, 100%)', height: 'min(660px, 100%)', minHeight: 'min(520px, 100%)',
-    display: 'flex', flexDirection: 'column', overflow: 'hidden',
-    border: `1px solid ${colors.border}`, borderRadius: 16, background: arkmeTheme.base,
-    boxShadow: '0 22px 64px rgba(20,23,31,.24)',
-  },
-  forwardTargetHeader: {
-    height: 54, flex: 'none', display: 'grid', gridTemplateColumns: '54px 1fr 54px', alignItems: 'center', padding: 0,
-    boxSizing: 'border-box',
-  },
-  forwardTargetTitle: { minWidth: 0, margin: 0, textAlign: 'center', color: colors.text, fontSize: 16, lineHeight: '22px', fontWeight: 600 },
-  forwardTargetClose: { width: 44, height: 44, border: 0, borderRadius: 10, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', fontSize: 30, lineHeight: '30px' },
-  forwardTargetSearchWrap: {
-    margin: '4px 18px 12px', height: 38, flex: 'none',
-  },
-  forwardTargetBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
-  forwardTargetList: { margin: 0, padding: '4px 18px 18px', listStyle: 'none' },
-  forwardTargetRow: {
-    position: 'relative',
-    width: '100%', minHeight: 56, display: 'grid', gridTemplateColumns: '20px 36px minmax(0, 1fr) auto', alignItems: 'center', gap: 10, padding: '9px 8px',
-    boxSizing: 'border-box', border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
-    cursor: 'pointer', textAlign: 'left', font: 'inherit',
-  },
-  forwardTargetRowSelected: {},
-  forwardTargetCheck: {
-    width: 20, height: 20, display: 'grid', placeItems: 'center', borderRadius: 999, border: `1px solid ${arkmeTheme.tertiary}`,
-    color: 'transparent', boxSizing: 'border-box', fontSize: 15, lineHeight: 1,
-    opacity: .4,
-  },
-  forwardTargetCheckSelected: { borderColor: arkmeTheme.text, background: arkmeTheme.text, color: arkmeTheme.base, opacity: 1 },
-  forwardTargetText: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
-  forwardTargetName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', fontWeight: 500 },
-  forwardTargetMeta: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
-  forwardTargetTime: { color: arkmeTheme.caption, fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' },
-  forwardTargetStatus: { padding: '16px 18px 28px', color: colors.secondary, textAlign: 'center', fontSize: 12, lineHeight: '18px' },
-  forwardTargetFooter: {
-    flex: 'none', padding: '10px 16px 14px', borderTop: `1px solid ${colors.border}`, boxSizing: 'border-box',
-    background: arkmeTheme.base,
-  },
-  forwardTargetRecipients: { display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '0 2px', color: colors.text, fontSize: 14, lineHeight: '20px', fontWeight: 600 },
-  forwardTargetAvatarStack: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' },
-  forwardTargetFooterDivider: { height: 1, margin: '8px 2px 0', background: colors.border },
-  forwardTargetPreview: {
-    position: 'relative', minHeight: 34, display: 'grid', gridTemplateColumns: '26px minmax(0, 1fr) 28px', alignItems: 'center', gap: 8,
-    padding: '0 2px 2px', marginTop: 6, boxSizing: 'border-box',
-  },
-  forwardTargetPreviewIcon: { width: 26, height: 32, color: colors.secondary, display: 'grid', placeItems: 'center' },
-  forwardTargetPreviewText: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
-  forwardTargetPreviewTitle: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.text, fontSize: 12, lineHeight: '16px', fontWeight: 400 },
-  forwardTargetPreviewSubtitle: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px' },
-  forwardTargetPreviewClose: {
-    width: 28, height: 28, borderRadius: 14, border: 0, background: 'transparent',
-    color: arkmeTheme.tertiary, display: 'grid', placeItems: 'center', cursor: 'pointer', padding: 0,
-  },
-  forwardTargetComposer: {
-    position: 'relative', minHeight: 54, marginTop: 6, boxSizing: 'border-box', borderRadius: 12, background: arkmeTheme.layer2,
-  },
-  forwardTargetCommentInput: {
-    width: '100%', minWidth: 0, minHeight: 54, maxHeight: 102, resize: 'none', border: 0, outline: 'none',
-    padding: '17px 66px 17px 16px', boxSizing: 'border-box', background: 'transparent', color: colors.text,
-    fontSize: 14, lineHeight: '20px', fontFamily: 'inherit',
-  },
-  forwardTargetSend: {
-    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-    width: 40, height: 40, border: 0, borderRadius: 999, display: 'grid', placeItems: 'center',
-    background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', padding: 0,
-  },
-  forwardTargetSendDisabled: { opacity: .45, cursor: 'default' },
-  forwardTargetSendError: { margin: '8px 2px 0', color: colors.danger, fontSize: 12, lineHeight: '16px' },
+  ...forwardTargetStyles,
   copyLinkDetailPanel: {
     position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 10,
     minWidth: 0, boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
@@ -1763,21 +1693,7 @@ export function arkmeForwardPreviewSubtitle(items: readonly ArkmeTimelineItem[])
 }
 
 
-function ArkmeForwardLinearIcon({ size = 18 }: { size?: number }) {
-  return <ArkmeSelectActionIcon kind="forward" size={size} />
-}
-
-function ArkmeForwardCloseBorderIcon() {
-  return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-    <circle cx="8" cy="8" r="6.5" stroke="currentColor" />
-    <path d="M6 6L10 10" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M10 6L6 10" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-}
-
-function ArkmeForwardSubmitIcon() {
-  return <ArkmeSelectActionIcon kind="forward" size={22} />
-}
+function ArkmeForwardSubmitIcon(){return <ArkmeSelectActionIcon kind="forward" size={22}/>}
 
 function ArkmeSearchIcon() {
   return <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden>
@@ -8471,42 +8387,21 @@ export function ArkmeSurface({
 
   const directRecordingNotice = ui.mode !== 'recordings' || !active ? <ArkmeDirectRecordingStatus floating /> : null
 
-  const forwardDialogContent = forwardTargetPicker !== undefined && (activeConversation || forwardTargetPicker.native !== undefined) ? (<div
-          data-arkme-notification-blocking-overlay="true"
-          style={{ ...styles.forwardTargetBackdrop, ...(forwardTargetPicker.native ? { position: 'fixed' as const, zIndex: 10000 } : {}) }}
-          role="presentation"
-          onMouseDown={event => { if (event.target === event.currentTarget && messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}
-        >
-          <section
-            style={styles.forwardTargetDialog}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="arkme-forward-target-title"
-          >
-            <header style={styles.forwardTargetHeader}>
-              <span aria-hidden />
-              <h3 id="arkme-forward-target-title" style={styles.forwardTargetTitle}>{tr("转发给")}</h3>
-              <button data-arkme-feedback="neutral"
-                type="button"
-                style={styles.forwardTargetClose}
-                disabled={messageActionBusy === 'forward'}
-                aria-label={tr("关闭转发对象选择")}
-                onClick={() => { if (messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}
-              >×</button>
-            </header>
-            <div style={styles.forwardTargetSearchWrap}>
-              <ArkmeForwardSearch
-                value={forwardTargetPicker.keyword}
-                disabled={messageActionBusy === 'forward'}
-                onChange={event => {
-                  const keyword = event.currentTarget.value
-                  setForwardTargetPicker(current => current === undefined
-                    ? current
-                    : { ...current, keyword })
-                }}
-              />
-            </div>
-            <div style={styles.forwardTargetBody}>
+  const forwardDialogContent=forwardTargetPicker!==undefined&&(activeConversation||forwardTargetPicker.native!==undefined)?<ArkmeForwardTargetDialog
+    fixed={forwardTargetPicker.native!==undefined} keyword={forwardTargetPicker.keyword} busy={messageActionBusy==='forward'}
+    onClose={()=>{if(messageActionBusy!=='forward')setForwardTargetPicker(undefined)}}
+    onKeywordChange={keyword=>setForwardTargetPicker(current=>current?{...current,keyword}:current)}
+    previewTitle={forwardTargetPicker.native?.preview.title??arkmeForwardPreviewTitle(forwardPickerMessageItems,source)}
+    previewSubtitle={forwardTargetPicker.native?.preview.subtitle??arkmeForwardPreviewSubtitle(forwardPickerMessageItems)}
+    previewContent={forwardTargetPicker.native?.preview.quote ? <div data-arkme-selected-forward-preview style={{ margin: '8px 2px', padding: '6px 10px', borderLeft: `2px solid ${arkmeTheme.accent}`, background: arkmeTheme.extensionSource, borderRadius: 4 }}>
+      <div style={{ whiteSpace: 'pre-wrap', color: arkmeTheme.secondary, fontSize: 11 }}>{forwardTargetPicker.native.preview.title}</div>
+      <blockquote style={{ margin: '5px 0 0', maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{forwardTargetPicker.native.preview.quote.text}</blockquote>
+      <div style={{ marginTop: 5, fontSize: 11, color: arkmeTheme.tertiary }}>引用样式仅本机显示，接收方及其他设备显示分段文本。</div>
+    </div> : undefined}
+    selectedAvatars={forwardSelectedTargets.length?<>{forwardSelectedTargets.slice(0,6).map(target=><ArkmeDirectorySourceAvatar key={target.sourceRef} source={target} size={26}/>)}</>:undefined}
+    comment={forwardTargetPicker.native?.delivery.comment??forwardTargetPicker.commentText} commentFrozen={forwardTargetPicker.native?.delivery.comment!==undefined}
+    onCommentChange={commentText=>setForwardTargetPicker(current=>current?{...current,commentText}:current)} error={forwardTargetPicker.sendError}
+    onSubmit={()=>{void confirmForwardTargets()}}>
               <ul style={styles.forwardTargetList} aria-label={tr("转发对象列表")}>
                 {(forwardSelfTarget !== undefined || forwardTargetPicker.keyword.trim() === '') && <li key="send_to_self">
                   {forwardSelfTarget !== undefined ? renderForwardTargetButton(forwardSelfTarget) : <div
@@ -8526,77 +8421,8 @@ export function ArkmeSurface({
                 </li>}
               </ul>
               {forwardDirectory.error !== '' && <div role="alert" style={styles.forwardTargetStatus}>{forwardDirectory.error}</div>}
-            </div>
-            {(forwardSelectedTargets.length > 0 || forwardTargetPicker.native?.preview.quote) && <footer style={styles.forwardTargetFooter}>
-              {forwardSelectedTargets.length > 0 && <div style={styles.forwardTargetRecipients}>
-                <span>{tr("发送给：")}</span>
-                <span style={styles.forwardTargetAvatarStack}>
-                  {forwardSelectedTargets.slice(0, 6).map(target => <ArkmeDirectorySourceAvatar
-                    key={target.sourceRef}
-                    source={target}
-                    size={26}
-                  />)}
-                </span>
-              </div>
-              }
-              <div style={styles.forwardTargetFooterDivider} />
-              {!forwardTargetPicker.native?.preview.quote && <div style={styles.forwardTargetPreview}>
-                <span style={styles.forwardTargetPreviewIcon}><ArkmeForwardLinearIcon size={18} /></span>
-                <span style={styles.forwardTargetPreviewText}>
-                  <span style={styles.forwardTargetPreviewTitle}><ArkmeRichText text={forwardTargetPicker.native?.preview.title ?? arkmeForwardPreviewTitle(forwardPickerMessageItems, source)} presentation="preview" /></span>
-                  <span style={styles.forwardTargetPreviewSubtitle}><ArkmeRichText text={forwardTargetPicker.native?.preview.subtitle ?? arkmeForwardPreviewSubtitle(forwardPickerMessageItems)} presentation="preview" /></span>
-                </span>
-                <button data-arkme-feedback="neutral"
-                  type="button"
-                  style={styles.forwardTargetPreviewClose}
-                  disabled={messageActionBusy === 'forward'}
-                  aria-label={tr("关闭转发对象选择")}
-                  onClick={() => { if (messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}
-                ><ArkmeForwardCloseBorderIcon /></button>
-              </div>
-              }
-              {forwardTargetPicker.native?.preview.quote && <div data-arkme-selected-forward-preview style={{ margin: '8px 2px', padding: '6px 10px', borderLeft: `2px solid ${arkmeTheme.accent}`, background: arkmeTheme.extensionSource, borderRadius: 4 }}>
-                <div style={{ whiteSpace: 'pre-wrap', color: arkmeTheme.secondary, fontSize: 11 }}>{forwardTargetPicker.native.preview.title}</div>
-                <blockquote style={{ margin: '5px 0 0', maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{forwardTargetPicker.native.preview.quote.text}</blockquote>
-                <div style={{ marginTop: 5, fontSize: 11, color: arkmeTheme.tertiary }}>引用样式仅本机显示，接收方及其他设备显示分段文本。</div>
-              </div>}
-              {forwardTargetPicker.sendError !== '' && <div role="alert" style={styles.forwardTargetSendError}>{forwardTargetPicker.sendError}</div>}
-              <div style={styles.forwardTargetComposer}>
-                <textarea
-                  style={styles.forwardTargetCommentInput}
-                  value={forwardTargetPicker.native?.delivery.comment ?? forwardTargetPicker.commentText}
-                  placeholder={tr("说点什么...")}
-                  aria-label={tr("转发附言")}
-                  disabled={messageActionBusy === 'forward' || forwardTargetPicker.native?.delivery.comment !== undefined}
-                  onChange={event => {
-                    const commentText = event.currentTarget.value
-                    setForwardTargetPicker(current => current === undefined
-                      ? current
-                      : { ...current, commentText })
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      void confirmForwardTargets()
-                    }
-                  }}
-                />
-                <button data-arkme-feedback="primary"
-                  type="button"
-                  style={{
-                    ...styles.forwardTargetSend,
-                    ...(messageActionBusy === 'forward' || forwardSelectedTargets.length === 0 ? styles.forwardTargetSendDisabled : {}),
-                  }}
-                  disabled={messageActionBusy === 'forward' || forwardSelectedTargets.length === 0}
-                  aria-label={messageActionBusy === 'forward' ? '转发中' : '发送转发'}
-                  onClick={() => { void confirmForwardTargets() }}
-                >
-                  <ArkmeForwardSubmitIcon />
-                </button>
-              </div>
-            </footer>}
-          </section>
-        </div>) : null
+  </ArkmeForwardTargetDialog>:null
+
   const forwardDialog = forwardTargetPicker?.native && forwardDialogContent ? createPortal(forwardDialogContent, document.body) : forwardDialogContent
   const retainedCallPage = authView === 'content' && <ArkmeRetainedCallPage
     key={`calls:${auth?.status}:${auth?.environment}:${auth?.userId}`}

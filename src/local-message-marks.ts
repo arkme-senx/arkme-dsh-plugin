@@ -63,7 +63,7 @@ export class LocalMessageMarkStore {
     try {
       const snapshot = readUnderlineSnapshot(JSON.parse(row.payload), viewerId)
       if (!snapshot.accessible || snapshot.items.some(item => !item.mine)) throw new Error('Invalid local owner')
-      return { ...snapshot, items: snapshot.items.map(item => ({ ...item, state: item.anchor.sourceDigest === digest ? 'available' : 'stale' })) }
+      return { ...snapshot, items: snapshot.items.map(item => ({ ...item, state: item.anchor!.sourceDigest === digest ? 'available' : 'stale' })) }
     } catch {
       // Never replace unreadable local data with an empty snapshot.
       throw new Error('本机标记数据读取失败，原数据已保留，请重试')
@@ -85,8 +85,8 @@ export class LocalMessageMarkStore {
       }
       let items = before.items
       if (change.kind === 'add') {
-        const duplicate = items.some(item => item.anchor.sourceDigest === change.anchor.sourceDigest
-          && item.anchor.start === change.anchor.start && item.anchor.end === change.anchor.end)
+        const duplicate = items.some(item => item.anchor!.sourceDigest === change.anchor.sourceDigest
+          && item.anchor!.start === change.anchor.start && item.anchor!.end === change.anchor.end)
         if (!duplicate) {
           if (items.length >= 500) throw new Error('这条消息的本机标记已达上限，请先取消不需要的标记')
           items = [...items, { id: `local:${randomUUID()}`, actorId: viewerId, actorName: '你', mine: true, anchor: change.anchor, state: 'available' }]

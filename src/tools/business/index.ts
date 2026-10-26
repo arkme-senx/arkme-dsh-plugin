@@ -1,3 +1,4 @@
+import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
@@ -72,6 +73,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   directoryReadToolModule,
   ...teamProfileTools,
   ...teamExternalChatTools,
+  ...teamMessageTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

@@ -1,5 +1,5 @@
 import type { ArkmeFileSendTask, ArkmeLocalFile } from './file-transfer-contract.js'
-import type { TeamContent, TeamMessage } from './team-app-contract.js'
+import type { TeamContent, TeamMessage, TeamReplyTarget } from './team-app-contract.js'
 
 /** Internal App delivery receipt. A Team destination is never a Chat source. */
 export interface TeamSendInput {
@@ -8,10 +8,9 @@ export interface TeamSendInput {
   expectedReplySeq: number
   content: TeamContent
   fileRefs: string[]
-  replyToRef?: string
+  reply?: TeamReplyTarget
 }
 export interface TeamSendTask extends TeamSendInput {
-  replyToKey?: string
   taskRef: string
   conversationKey: string
   createdAtMillis: number

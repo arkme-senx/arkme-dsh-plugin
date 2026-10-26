@@ -633,7 +633,9 @@ export class FileTransfers {
 
   async reception(mediaRef: string, start = false): Promise<ArkmeFileReception> {
     const userId = await this.ports.currentUser()
-    if (!mediaRef.startsWith('arkme-media-v1.') || mediaRef.length > 100) throw fail('media-ref-invalid', '原文件引用无效')
+    const ordinary=mediaRef.startsWith('arkme-media-v1.')&&mediaRef.length<=100
+    const team=mediaRef.startsWith('team-app-media.')&&mediaRef.length<=16_384
+    if(!ordinary&&!team)throw fail('media-ref-invalid','原文件引用无效')
     const state = await this.state(userId)
     const key = `${userId}:${mediaRef}`
     const localRef = state.originals[mediaRef]

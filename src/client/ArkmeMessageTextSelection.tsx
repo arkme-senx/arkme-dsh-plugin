@@ -20,8 +20,11 @@ export interface MessageSelectionTarget {
   /** Owner-local authority is never passed to ordinary Chat actions. */
   selectionDomain?: 'transcript' | 'native' | 'codex'
   localMarkRef?: string
+  /** Team-owned selection authority; never an ordinary Chat action reference. */
+  cloudMarkRef?:string
 }
-export function messageSelectionReference(target: MessageSelectionTarget): string | undefined {
+export function messageSelectionReference(target: MessageSelectionTarget, storage?:'local'|'cloud'): string | undefined {
+  if(storage==='cloud'&&target.cloudMarkRef)return target.cloudMarkRef
   return target.localMarkRef ?? target.item.messageActionRef
 }
 const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
@@ -146,13 +149,14 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
   selfNote?: { sourceLabel: string; accountKey?: string } | undefined
   /** Embedded native chat may occupy only part of a full-window clipped iframe. */
   getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
   selectionDomain?: 'transcript' | 'native' | 'codex' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
+  markScopeControl?: ReactNode
   onMarkStorageChange?: ((storage: 'local' | 'cloud') => void) | undefined
   markAudience?: 'self' | 'conversation' | undefined
   replyLabel?: string | undefined
@@ -320,9 +324,9 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const quote = verified?.snapshot === snapshot ? verified.quote : undefined
   const marks = quote && replyTarget ? (getMarks?.(replyTarget) ?? []).filter(mark => mark.state === 'available'
-    && mark.anchor.sourceDigest === quote.sourceDigest && mark.anchor.start < quote.end && mark.anchor.end > quote.start) : []
+    && mark.anchor?.sourceDigest === quote.sourceDigest && mark.anchor!.start < quote.end && mark.anchor!.end > quote.start) : []
   // A partial overlap is not permission to delete a larger mark. Cancel only an exact selection.
-  const ownMark = marks.find(mark => mark.mine && mark.anchor.start === quote?.start && mark.anchor.end === quote?.end)
+  const ownMark = marks.find(mark => mark.mine && mark.anchor!.start === quote?.start && mark.anchor!.end === quote?.end)
   const authors = [...new Set(marks.map(mark => mark.mine ? '你' : mark.actorName))]
   const canMark = !!onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1
   const chooseMarkScope = canMark && !!onMarkStorageChange
@@ -341,7 +345,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     } catch (error) { if (current.current === snapshot) setNotice(error instanceof Error ? error.message : '取消标记失败，请重试') }
   }
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
-    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || ((selectionDomain === 'native' || selectionDomain === 'codex') && !!replyTarget.localMarkRef))
+    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || !!replyTarget.cloudMarkRef
+      || ((selectionDomain === 'native' || selectionDomain === 'codex') && !!replyTarget.localMarkRef))
   const canSendSelf = !!selfNote && !!accountKey && !!replyTarget && replyTarget.item.status === 1 && replyTarget.sourceRef === replySourceRef
   const find = () => {
     if (!stillValid(snapshot) || !replySourceRef) return
@@ -443,7 +448,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       <button type="button" style={buttonStyle} onClick={selectAll}>{tr('全选')}</button>
     </>}
     {canMark && <span style={{ display: 'inline-flex', alignItems: 'center' }}><button type="button" aria-pressed={!!ownMark} disabled={!!ownMark?.pending}
-      title={ownMark ? `取消你对“${ownMark.anchor.text}”的标记` : undefined}
+      title={ownMark ? `取消你对“${ownMark.anchor!.text}”的标记` : undefined}
       style={{ ...buttonStyle, ...(ownMark ? { color: arkmeTheme.info, background: arkmeTheme.active } : {}) }}
       onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(markLabel)}</button>
       {chooseMarkScope && <><style>{'[data-arkme-mark-scope-menu] { z-index: 12001; }'}</style><ArkmeActionMenu open={markScopeOpen} label={tr('标记范围')} autoFocus
@@ -467,6 +472,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
     {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('转发')}</button>}
     </div>
+    {canMark && markScopeControl}
     {(authors.length > 0 || (markStorage === 'local' && !onMarkStorageChange && canMark)) && <div data-arkme-mark-authors tabIndex={0} aria-label="标记作者" style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary, minHeight: 0, maxHeight: 'min(160px, 35vh)', overflowY: 'auto', overflowWrap: 'anywhere' }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' && !onMarkStorageChange ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)

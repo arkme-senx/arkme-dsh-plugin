@@ -45,6 +45,24 @@ describe('ordinary Record forward snapshots', () => {
     expect(detail).toContain('第二条')
   })
 
+  it('keeps Team frozen cards anonymous through the shared Record and Chat projection', async () => {
+    const media = new MediaService({ config: { richMediaRenderEnabled: false } } as never, {} as never, {} as never, {} as never)
+    const profile = { sealProfileImageRef: vi.fn(async () => 'must-not-resolve') }
+    const reader = new RecordService({} as never, media, {} as never, undefined, undefined, undefined, undefined, undefined, profile)
+    const payload = { forward_records: { render_kind: 'forward_records', source_type: 'team_message', title: '团队转发', created_at: createdAt,
+      items: [{ owner_id: 777, source_sender_user_id: 888, owner_name: '团队来访者', text: '冻结正文', text_format: 'plain' }] } }
+    const raw = { record_uid: 'team-forward', send_at: createdAt, content_payload: payload }
+    const item = reader.recordTimelineItemFromRaw(raw, 42)
+    await reader.hydrateForwardAvatars(raw, 42, item)
+    const shared = await projectForwardRecordsWithAvatars(payload, 42, createdAt, media, profile)
+    for (const preview of [item.forwardRecords, shared]) {
+      expect(preview!.items[0]).toMatchObject({senderName:'团队来访者',textContent:'冻结正文',sourceType:'team_message'})
+      expect(preview!.items[0]).not.toHaveProperty('senderUserId')
+      expect(preview!.items[0]).not.toHaveProperty('avatarRef')
+    }
+    expect(profile.sealProfileImageRef).not.toHaveBeenCalled()
+  })
+
   it('seals one avatar per repeated sender and never invents an unresolved or AI avatar', async () => {
     const media = { forwardContentBlocks: () => [] }
     const profile = { sealProfileImageRef: vi.fn(async (viewer: number, sender: number) => `avatar:${viewer}:${sender}`) }

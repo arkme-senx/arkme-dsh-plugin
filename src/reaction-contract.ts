@@ -1,5 +1,9 @@
 export interface ReactionExpression { text: string; emoji?: string; hand?: string; color?: string }
-export type ReactionTargetRef = { id: string } & ({ sourceRef: string; messageActionRef: string; worldRecordRef?: never } | { worldRecordRef: string; sourceRef?: never; messageActionRef?: never })
+export type ReactionTargetRef = { id: string } & (
+  { sourceRef: string; messageActionRef: string; worldRecordRef?: never;teamConversationRef?:never;teamMessageRef?:never }
+  | { worldRecordRef: string; sourceRef?: never; messageActionRef?: never;teamConversationRef?:never;teamMessageRef?:never }
+  | { teamConversationRef:string;teamMessageRef:string;sourceRef?:never;messageActionRef?:never;worldRecordRef?:never }
+)
 export interface ReactionSelection { key: string; expression: ReactionExpression; at: number }
 export interface ReactionState { revision: number; selections: ReactionSelection[] }
 export interface ReactionActor { memberRef?: string; presentationPending?: boolean; userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
