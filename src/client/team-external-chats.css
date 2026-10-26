@@ -1,0 +1,10 @@
+.arkme-team-external-dialog .arkme-team-sync-body { padding:20px 24px 24px; line-height:1.6; }
+.arkme-team-external-dialog h3 { margin:16px 0 8px; font-size:16px; font-weight:600; }
+.arkme-team-external-dialog p { margin:8px 0 16px; }
+.arkme-team-external-dialog button { cursor:pointer; }
+.arkme-team-external-dialog button:disabled { cursor:default; opacity:.5; }
+.arkme-team-external-row { display:flex; align-items:center; gap:12px; padding:8px 0; }
+.arkme-team-external-row button { border:1px solid var(--arkme-line); border-radius:8px; padding:10px 12px; background:var(--dsw-alias-background-secondary,#f7f8fa); color:inherit; }
+.arkme-team-external-peer { flex:1; min-width:0; overflow-wrap:anywhere; text-align:left; }
+.arkme-team-external-message { padding:16px 0; border-bottom:1px solid var(--arkme-line); overflow-wrap:anywhere; }
+.arkme-team-external-message small { display:block; margin-bottom:8px; color:var(--dsw-alias-label-secondary,#68707c); }

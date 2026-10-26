@@ -200,6 +200,7 @@ export type ArkmeTeamJoinRejectReason = 'team_not_found'
 export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
 
 export interface ArkmeTeam {
+  key?: string
   profileRevision?: number
   canEditProfile?: boolean
   avatar?: ArkmeTeamAvatar
@@ -1485,6 +1486,8 @@ export interface ArkmeProviderCapabilities {
   environment: ArkmeEnvironment
   features: {
     authStatus: true
+    /** Interactive preset-account login; passwords must never enter model tools. */
+    passwordLogin?: true
     cachedSnapshot: true
     remoteRefresh: true
     search: true
@@ -1512,6 +1515,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamProfiles?: true
+    teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
     dshAccountSessions?: true
@@ -1540,6 +1544,7 @@ arkoImagesV1?:true
     imageCacheRead?: true
     selfRoles?: true
     directMessageAdmission?: true
+    messageTextAnchorsV1?: true
     reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
@@ -4084,7 +4089,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4188,6 +4193,7 @@ export type ArkmePluginOperation =
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
+  | 'source.message-anchor.capture'
   | 'source.message-underline.capabilities'
   | 'source.message-underline.list'
   | 'source.message-underline.change'
@@ -4202,6 +4208,7 @@ export type ArkmePluginOperation =
   | 'auth.app.poll'
   | 'auth.app.cancel'
   | 'auth.test.login'
+  | 'auth.password.login'
   | 'auth.email.send'
   | 'auth.email.bind'
   | 'auth.phone.send'
@@ -4222,6 +4229,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.external'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

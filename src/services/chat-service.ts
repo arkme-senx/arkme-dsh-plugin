@@ -2,7 +2,7 @@ import { commonGroupChanges } from './common-group-service.js'
 import { sealPersonSourcesCursor, openPersonSourcesCursor, type PersonRecordSourcesPage, type PersonSourcesCursor } from '../person-records.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
 import type { ArkmeTimelineMemberJoinEvent } from '../unified-chat-timeline.js'
-import { projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
+import { quoteContext, projectedMessageQuote, readMessageQuote, quoteCapabilitiesFromWire, quoteCanonicalText, quoteMatchesCanonical, quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import { underlineCapabilities, underlineId, readUnderlineSnapshot, type MessageUnderlineChange } from '../message-annotations.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
@@ -3610,9 +3610,9 @@ export class ChatService {
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
     const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
     if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('underline-source-invalid', '当前来源不支持标记', false, 403)
-    const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) => chat
-      ? this.runtime.authenticatedChatPost<Record<string, unknown>>(`/api/v1/chats/annotations/${action}`, { ...body, chat_session_uid: source.ownerRef }, session, signal)
-      : this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal)
+    const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) =>
+      this.runtime.authenticatedPost<Record<string, unknown>>(`/api/v1/records/annotations/${action}`, body, session, signal,
+        ...(action === 'create' || action === 'remove' ? [{ trackWriteOutcome: true }] : []))
     return { session, source, chat, post }
   }
 
@@ -3665,9 +3665,23 @@ export class ChatService {
     }
   }
 
+  async captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number): Promise<ArkmeMessageQuote> {
+    const { session, source } = await this.underlineContext(sourceRef)
+    const target = await this.openMessageActionRef(actionRef, session.userId, source)
+    const content = { title: target.title, textContent: target.textContent, textFormat: target.textFormat ?? 'plain' }
+    const canonical = quoteCanonicalText(content), text = canonical.slice(start, end)
+    const bisects = (offset: number) => offset > 0 && offset < canonical.length
+      && /[\uD800-\uDBFF]/u.test(canonical[offset - 1]!) && /[\uDC00-\uDFFF]/u.test(canonical[offset]!)
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end > canonical.length || end <= start || bisects(start) || bisects(end)) throw new ArkmePluginError('message-quote-range-invalid', '选区范围无效，请重新读取原文', false)
+    const anchor = readMessageQuote({ version: 1, projection: 'arkme-text-v1', start, end, text,
+      ...quoteContext(canonical, start, end), sourceDigest: createHash('sha256').update(quoteSourceContent(content)).digest('hex') })
+    if (!anchor) throw new ArkmePluginError('message-quote-range-invalid', '选区需包含完整文字，最多 2000 字符', false)
+    return anchor
+  }
+
   async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) {
     const { post } = await this.underlineContext(sourceRef)
-    try { return underlineCapabilities((await post('capabilities', {}, signal)).underline) }
+    try { return { ...underlineCapabilities((await post('capabilities', {}, signal)).underline), storage: 'cloud' as const } }
     catch (error) {
       if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) return underlineCapabilities(undefined)
       throw error
@@ -3677,20 +3691,38 @@ export class ChatService {
   async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) {
     if (!actionRefs.length || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length) throw new ArkmePluginError('underline-targets-invalid', '标记读取范围无效', false)
     const { session, source, chat, post } = await this.underlineContext(sourceRef)
-    const messages = await Promise.all(actionRefs.map(async (ref, target_index) => {
+    const rawTargets = await Promise.all(actionRefs.map(async ref => {
       const target = await this.openMessageActionRef(ref, session.userId, source)
-      return { target_index, record_uid: target.recordUid, record_owner_user_id: target.recordOwnerUserId,
-        ...(chat ? { relation_uid: target.relationUid, sequence: target.sourceSequence } : {}) }
+      return { record_uid: target.recordUid, record_owner_user_id: target.recordOwnerUserId,
+        ...(chat ? { chat_session_uid: source.ownerRef, relation_uid: target.relationUid, sequence: target.sourceSequence } : {}) }
     }))
+    // Different signed snapshots can refer to the same occurrence (list + detail).
+    const indices = new Map<string, number>(), messages: (typeof rawTargets[number] & { target_index: number })[] = []
+    const mapping = rawTargets.map(target => { const key = JSON.stringify(target); let index = indices.get(key)
+      if (index === undefined) { index = messages.length; indices.set(key, index); messages.push({ ...target, target_index: index }) }; return index })
     const data = await post('list', { messages }, signal)
     if (!Array.isArray(data.items) || data.items.length !== messages.length) throw new ArkmePluginError('underline-response-invalid', '标记读取不完整，请重试', true, 502)
-    const seen = new Set<number>()
-    return data.items.map(raw => {
+    const snapshots = new Map<number, ReturnType<typeof readUnderlineSnapshot>>()
+    for (const raw of data.items) {
       const item = objectValue(raw), index = Number(item.target_index)
-      if (!Number.isSafeInteger(item.target_index) || index < 0 || index >= messages.length || seen.has(index)) throw new ArkmePluginError('underline-response-invalid', '标记来源不匹配', true, 502)
-      seen.add(index)
-      return { actionRef: actionRefs[index]!, snapshot: readUnderlineSnapshot(item, session.userId) }
-    })
+      if (!Number.isSafeInteger(item.target_index) || index < 0 || index >= messages.length || snapshots.has(index)) throw new ArkmePluginError('underline-response-invalid', '标记来源不匹配', true, 502)
+      snapshots.set(index, readUnderlineSnapshot(item, session.userId))
+    }
+    const actors = [...new Set([...snapshots.values()].flatMap(snapshot => snapshot.items.map(item => item.actorId)))]
+    if (actors.length) {
+      // Reuse current-viewer name projection; names are never stored in mark state.
+      const [profiles, labels, members] = await Promise.all([
+        this.profile.publicProfileSummariesByUserIds(actors, session, signal).catch(() => new Map()),
+        this.source.privateChatViewerLabelsByUserIds(actors, signal === undefined ? {} : { signal }).catch(() => new Map()),
+        chat ? this.rawChatMembers(source.ownerRef, false, session, signal).catch(() => []) : Promise.resolve([]),
+      ])
+      signal?.throwIfAborted()
+      for (const snapshot of snapshots.values()) for (const item of snapshot.items) {
+        const member = members.find(raw => numberValue(raw.user_id) === item.actorId) ?? {}
+        item.actorName = item.actorId === session.userId ? '你' : projectChatMemberDisplayNames(member, item.actorId, labels.get(item.actorId)?.remark, profiles.get(item.actorId)?.displayName).displayName
+      }
+    }
+    return actionRefs.map((actionRef, index) => ({ actionRef, snapshot: snapshots.get(mapping[index]!)! }))
   }
 
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: MessageUnderlineChange, signal?: AbortSignal) {
@@ -3708,14 +3740,14 @@ export class ChatService {
     }
     const data = await post(change.kind === 'add' ? 'create' : 'remove', {
       operation_uid: change.operationId, record_uid: target.recordUid, record_owner_user_id: target.recordOwnerUserId,
-      ...(chat ? { relation_uid: target.relationUid, sequence: target.sourceSequence } : {}),
+      ...(chat ? { chat_session_uid: source.ownerRef, relation_uid: target.relationUid, sequence: target.sourceSequence } : {}),
       ...(change.kind === 'add' ? { anchor } : { annotation_uid: change.annotationId }),
     }, signal)
     try {
       const snapshot = readUnderlineSnapshot(data, session.userId)
-      if (data.operation_uid !== change.operationId || !snapshot.accessible || (change.kind === 'add'
-        ? !snapshot.items.some(item => item.mine && JSON.stringify(item.anchor) === JSON.stringify(anchor))
-        : snapshot.items.some(item => item.id === change.annotationId))) throw new Error('invalid receipt')
+      if (data.operation_uid !== change.operationId || data.accepted !== true
+        || !Number.isSafeInteger(data.accepted_revision) || Number(data.accepted_revision) < 0
+        || (snapshot.accessible && Number(data.accepted_revision) > snapshot.revision) || !underlineId(data.annotation_uid)) throw new Error('invalid receipt')
       return snapshot
     } catch {
       throw new ArkmePluginError('underline-receipt-missing', '标记提交结果待核对，请刷新核对或重试', true, 502, { writeOutcomeUnknown: true })
@@ -3882,11 +3914,12 @@ export class ChatService {
         },
         session,
         options.signal,
+        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
       this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
-      if (options.quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(options.quote))) {
+      if (options.quote !== undefined && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const extension = await this.hydrateUploadedExtension({
@@ -3958,8 +3991,9 @@ export class ChatService {
         },
         session,
         options.signal,
+        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
-      if (options.quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(options.quote))) {
+      if (options.quote !== undefined && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const createdRecordUid = stringValue(data.record_uid).trim()
@@ -5715,7 +5749,7 @@ export class ChatService {
               senderName,
               title: stringValue(payload.title),
               textContent: stringValue(payload.text_content),
-              textFormat: arkmeRecordTextFormat(payload),
+              textFormat: isBot ? 'markdown' : arkmeRecordTextFormat(payload),
               sendAtMillis,
               sourceSequence: numberValue(relation.seq),
               templateKind: numberValue(payload.template_kind),
@@ -6621,7 +6655,7 @@ export class ChatService {
             senderName,
             title: stringValue(payload.title),
             textContent: stringValue(payload.text_content),
-            textFormat: arkmeRecordTextFormat(payload),
+            textFormat: isBot ? 'markdown' : arkmeRecordTextFormat(payload),
             sendAtMillis,
             sourceSequence: numberValue(relation.seq),
             templateKind: numberValue(payload.template_kind),
@@ -6720,7 +6754,7 @@ export class ChatService {
     botProfiles: BotDisplayProfiles,
   ): Pick<ArkmeTimelineItem, 'extensionParentRecordUid' | 'extensionParent'> | undefined {
     const edge = objectValue(item.extension_edge ?? item.extensionEdge)
-    const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply, edge.quote_reply_state ?? item.quote_reply_state)
+    const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply, item.extension_projection_state === 'unavailable' ? 'unavailable' : edge.quote_reply_state ?? item.quote_reply_state)
     const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
     const previewRelation = timelineSenderRelation(preview)
     const previewRecord = objectValue(preview.record)

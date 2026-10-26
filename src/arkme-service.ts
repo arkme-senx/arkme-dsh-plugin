@@ -432,6 +432,10 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  async externalChats(operation: import('./team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (!['list','mine','share','unshare','page'].includes(operation)) throw new Error('Unsupported external chat operation')
+    return await this.teamApp.execute(`team.app.external.${operation}`, params, signal)
+  }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
     const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
     const team=teams.find(t=>t.jotmoId===jotmoId.trim());if(!team)throw new ArkmePluginError('team-not_accessible','团队不存在或无法访问',false,403)
@@ -1103,6 +1107,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       environment: this.config.environment,
       features: {
         authStatus: true,
+        passwordLogin: true,
         cachedSnapshot: true,
         remoteRefresh: true,
         search: true,
@@ -1125,6 +1130,7 @@ arkoImagesV1:true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamProfiles: true,
+        teamExternalChats: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
@@ -1148,6 +1154,7 @@ arkoImagesV1:true,
         selfRoles: true,
         imageCacheRead: true,
         directMessageAdmission: true,
+        messageTextAnchorsV1: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
@@ -2336,6 +2343,7 @@ arkoImagesV1:true,
   async sourceLocalMarkCapabilities(sourceRef: string) { return this.chat.sourceLocalMarkCapabilities(sourceRef) }
   async sourceLocalMarks(sourceRef: string, actionRefs: readonly string[]) { return this.chat.sourceLocalMarks(sourceRef, actionRefs) }
   async changeSourceLocalMark(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange) { return this.chat.changeSourceLocalMark(sourceRef, actionRef, change) }
+  async captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number) { return this.chat.captureSourceMessageAnchor(sourceRef, actionRef, start, end) }
   async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceUnderlineCapabilities(sourceRef, signal) }
   async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) { return this.chat.sourceUnderlines(sourceRef, actionRefs, signal) }
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }
@@ -2817,6 +2825,10 @@ arkoImagesV1:true,
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {
     return await this.auth.testLogin(userId)
+  }
+
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.loginByPassword(account, password, signal)
   }
 
   async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {

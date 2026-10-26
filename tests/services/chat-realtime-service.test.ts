@@ -21,6 +21,31 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
+  it.each(['current', 'other-account', 'aborted'] as const)('routes annotation hints without body reads and rejects stale ownership: %s', async scenario => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return {userId: 42, accessToken: 'access', refreshToken: 'refresh'} },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    const source = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return {recordCount: 0, wordsCount: 0, totalSec: 0} }, recordItem() { return undefined },
+    })
+    const timeline = vi.fn(async () => [])
+    const service = new ChatRealtimeService(runtime, source, {chatTimelineItems: timeline})
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => events.push(event))
+    const controller = new AbortController()
+    if (scenario === 'aborted') controller.abort()
+    try {
+      service.handleChatRealtimeNotice({cause: 'projection-invalidation', connectionUserId: scenario === 'other-account' ? 43 : 42,
+        connectionSignal: controller.signal, state: {revision: 1, connected: true, connectionGeneration: 1},
+        projectionInvalidation: {eventUid: 'mark-event', projection: 'message_annotations', eventAtMillis: 1}})
+      await new Promise(resolve => setImmediate(resolve))
+      expect(events).toEqual(scenario === 'current' ? [expect.objectContaining({type: 'projection-invalidated', projection: 'message_annotations'})] : [])
+      expect(timeline).not.toHaveBeenCalled()
+    } finally { service.dispose(); runtime.dispose() }
+  })
+
   it('publishes directory-only archive changes without invalidating content or calendar', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return {userId: 42, accessToken: 'access', refreshToken: 'refresh'} },

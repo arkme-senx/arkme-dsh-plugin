@@ -11,6 +11,12 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineCapabilities>
+  sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../../message-annotations.js').MessageUnderlineSnapshot }[]>
+  changeSourceUnderline(sourceRef: string, actionRef: string, change: import('../../message-annotations.js').MessageUnderlineChange, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineSnapshot>
+  captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number): Promise<import('../../message-quote.js').ArkmeMessageQuote>
+  extendSourceMessage(sourceRef: string, actionRef: string, text: string, recordUid: string, fileRefs?: readonly string[], options?: { relationUid?: string; quote?: import('../../message-quote.js').ArkmeMessageQuote; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSourceMessageExtendResult>
+
   nativeAnnotations(request: import('../../native-annotations.js').NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown>
   messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>

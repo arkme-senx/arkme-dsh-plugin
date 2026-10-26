@@ -1,12 +1,15 @@
 import { ArkmeScanGuide } from './ArkmeScanGuide.js'
 import { ArkmeJiwoBrandMark } from './ArkmeJiwoBrandMark.js'
 import { useArkmeBrand } from './product-brand.js'
-import type { ChangeEvent } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
+import { Eye } from '@phosphor-icons/react/dist/icons/Eye'
+import { EyeSlash } from '@phosphor-icons/react/dist/icons/EyeSlash'
+import type { ArkmePasswordLoginFields } from './use-password-login.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
 } from './arkme-login-locales.js'
 
-export type ArkmeLoginMode = 'jiwo' | 'wechat' | 'phone' | 'test'
+export type ArkmeLoginMode = 'jiwo' | 'wechat' | 'phone' | 'test' | 'password'
 
 export interface ArkmeLoginProps {
   cancellationDays?: number
@@ -20,6 +23,7 @@ export interface ArkmeLoginProps {
   submitBusy: boolean
   error: string
   phone: string
+  passwordLogin: ArkmePasswordLoginFields
   smsCode: string
   smsCountdown: number
   testLoginEnabled: boolean
@@ -49,6 +53,17 @@ export function formatLoginPhone(value: string): string {
 const loginStyles = `
   .dsh-arkme-login-page,
   .dsh-arkme-login-page * { box-sizing: border-box; }
+  .dsh-arkme-login-password-entry { margin-top: 12px; text-align: center; }
+  .dsh-arkme-login-password-link {
+    min-height: 32px; border: 0; padding: 6px 12px; background: transparent;
+    color: var(--arkme-login-secondary); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .dsh-arkme-login-password-link:hover { color: var(--arkme-login-text); }
+  .dsh-arkme-login-password-link:disabled { cursor: default; opacity: .6; }
+  .dsh-arkme-login-password-eye {
+    display: grid; place-items: center; flex: none; width: 36px; height: 36px;
+    border: 0; background: transparent; color: var(--arkme-login-secondary); cursor: pointer;
+  }
   .dsh-arkme-login-page {
     --arkme-login-base: var(--dsw-alias-bg-base, #ffffff);
     --arkme-login-surface: var(--dsw-alias-bg-layer-2, #ffffff);
@@ -683,6 +698,8 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
       : props.mode === 'test' && !props.testLoginEnabled
         ? props.jiwoScanLoginEnabled ? 'jiwo' : 'wechat'
         : props.mode
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  useEffect(() => { setPasswordVisible(false) }, [effectiveMode])
   const changePhone = (event: ChangeEvent<HTMLInputElement>) => {
     props.onPhoneChange(event.target.value.replace(/\D/g, '').slice(0, 11))
   }
@@ -727,7 +744,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
         <div className="dsh-arkme-login-brand">
           <p>{props.phoneBindingRequired === true ? t('account.setup') : t('welcome')}</p>
           <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">
-            {props.phoneBindingRequired === true ? t('title.binding') : t('title.login')}
+            {props.phoneBindingRequired === true ? t('title.binding') : t(effectiveMode === 'password' ? 'title.password' : 'title.login')}
           </h3>
           {props.phoneBindingRequired === true && <span>{t('subtitle.binding')}</span>}
         </div>
@@ -739,12 +756,13 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
         </>}
 
         {props.phoneBindingRequired !== true && <div className="dsh-arkme-login-tabs-wrap">
-          <div className="dsh-arkme-login-tabs" role="tablist" aria-label={t('tabs.aria')}>
+          {effectiveMode === 'password' ? <button type="button" className="dsh-arkme-login-password-link" disabled={props.busy}
+            onClick={() => { props.onModeChange('phone') }}>← {t('password.back')}</button> : <div className="dsh-arkme-login-tabs" role="tablist" aria-label={t('tabs.aria')}>
             {props.jiwoScanLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'jiwo'} onClick={() => { props.onModeChange('jiwo') }}>{t('tab.jiwo')}</button>}
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'wechat'} onClick={() => { props.onModeChange('wechat') }}>{t('tab.wechat')}</button>
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'phone'} onClick={() => { props.onModeChange('phone') }}>{t('tab.phone')}</button>
             {props.testLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'test'} onClick={() => { props.onModeChange('test') }}>{t('tab.test')}</button>}
-          </div>
+          </div>}
         </div>}
 
         <div className="dsh-arkme-login-method">
@@ -775,6 +793,34 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
                   </button>}
             </div>
             {effectiveMode === 'jiwo' && <ArkmeScanGuide t={t} />}
+          </div> : effectiveMode === 'password' ? <div role="group" aria-label={t('title.password')}>
+            <div className="dsh-arkme-login-field">
+              <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-account">{t('password.account')}</label>
+              <div className="dsh-arkme-login-input-shell">
+                <input id="dsh-arkme-login-account" className="dsh-arkme-login-input" autoComplete="username" autoFocus
+                  value={props.passwordLogin.account} maxLength={254} spellCheck={false} disabled={props.busy}
+                  placeholder={t('password.account.placeholder')}
+                  onChange={event => { props.passwordLogin.onAccountChange(event.target.value) }}
+                  onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) props.passwordLogin.onSubmit() }} />
+              </div>
+            </div>
+            <div className="dsh-arkme-login-field">
+              <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-password">{t('password.label')}</label>
+              <div className="dsh-arkme-login-input-shell">
+                <input id="dsh-arkme-login-password" className="dsh-arkme-login-input" autoComplete="current-password"
+                  type={passwordVisible ? 'text' : 'password'} value={props.passwordLogin.password} maxLength={1024} disabled={props.busy}
+                  placeholder={t('password.placeholder')}
+                  onChange={event => { props.passwordLogin.onPasswordChange(event.target.value) }}
+                  onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) props.passwordLogin.onSubmit() }} />
+                <button type="button" className="dsh-arkme-login-password-eye" disabled={props.busy}
+                  aria-label={t(passwordVisible ? 'password.hide' : 'password.show')} aria-pressed={passwordVisible}
+                  onClick={() => { setPasswordVisible(value => !value) }}>
+                  {passwordVisible ? <EyeSlash size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
+                </button>
+              </div>
+            </div>
+            <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} aria-busy={props.submitBusy}
+              onClick={props.passwordLogin.onSubmit}>{props.submitBusy ? t('login.submitting') : t('login.submit')}</button>
           </div> : effectiveMode === 'phone' ? <div className="dsh-arkme-login-phone-panel" role="tabpanel">
             <div className="dsh-arkme-login-field">
               <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-phone">{t('phone.label')}</label>
@@ -828,6 +874,10 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
             </div> : <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={props.onVerifyCode}>
               {props.submitBusy ? t('login.submitting') : t('login.submit')}
             </button>}
+            {props.phoneBindingRequired !== true && <div className="dsh-arkme-login-password-entry">
+              <button type="button" className="dsh-arkme-login-password-link" disabled={props.busy}
+                onClick={() => { props.onModeChange('password') }}>{t('title.password')}</button>
+            </div>}
           </div> : <div role="tabpanel">
             <p className="dsh-arkme-login-test-note">{t('test.note')}</p>
             <div className="dsh-arkme-login-field">

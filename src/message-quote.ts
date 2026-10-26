@@ -39,10 +39,20 @@ export function readMessageQuote(value: unknown): ArkmeMessageQuote | undefined 
     start: q.start, end: q.end, text: q.text, prefix: q.prefix, suffix: q.suffix,
     ...(q.recordVersion === undefined ? {} : { recordVersion: q.recordVersion }) }
 }
+/** New captures never serialize half a surrogate pair at the context boundary. */
+export function quoteContext(text: string, start: number, end: number): { prefix: string; suffix: string } {
+  let before = Math.max(0, start - 32), after = Math.min(text.length, end + 32)
+  if (before > 0 && /[\uDC00-\uDFFF]/u.test(text[before]!) && /[\uD800-\uDBFF]/u.test(text[before - 1]!)) before++
+  if (after < text.length && /[\uDC00-\uDFFF]/u.test(text[after]!) && /[\uD800-\uDBFF]/u.test(text[after - 1]!)) after--
+  return { prefix: text.slice(before, start), suffix: text.slice(end, after) }
+}
 export function quoteMatchesCanonical(quote: ArkmeMessageQuote, text: string): boolean {
+  const context = quoteContext(text, quote.start, quote.end)
+  // Existing private SQLite anchors can contain the original 32-unit context.
+  // Retain their readability; only new captures use the portable safe boundary.
   return text.slice(quote.start, quote.end) === normalizeQuoteText(quote.text)
-    && text.slice(Math.max(0, quote.start - 32), quote.start) === quote.prefix
-    && text.slice(quote.end, quote.end + 32) === quote.suffix
+    && (quote.prefix === context.prefix || quote.prefix === text.slice(Math.max(0, quote.start - 32), quote.start))
+    && (quote.suffix === context.suffix || quote.suffix === text.slice(quote.end, quote.end + 32))
 }
 export function quoteCapabilitiesFromWire(value: unknown): ArkmeQuoteReplyCapabilities {
   const q = value as Record<string, unknown> | null
