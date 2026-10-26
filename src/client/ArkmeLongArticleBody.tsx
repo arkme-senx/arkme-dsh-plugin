@@ -1,5 +1,5 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { useState, type CSSProperties } from 'react'
+import { useCallback, useMemo, useState, type CSSProperties } from 'react'
 import type { ArkmeContentBlock } from '../types.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { ArkmeMediaPreview } from './ArkmeRichContent.js'
@@ -18,15 +18,17 @@ function ArticleImage({ block, alt, onOpen }: { block: ArkmeContentBlock; alt: s
       </button>}
   </span>
 }
-export function ArkmeLongArticleBody({ text, blocks = [], textStyle }: { text: string; blocks?: ArkmeContentBlock[] | undefined; textStyle?: Pick<CSSProperties, 'fontSize' | 'lineHeight'> | undefined }) {
+const noBlocks: ArkmeContentBlock[] = []
+export function ArkmeLongArticleBody({ text, blocks = noBlocks, textStyle }: { text: string; blocks?: ArkmeContentBlock[] | undefined; textStyle?: Pick<CSSProperties, 'fontSize' | 'lineHeight'> | undefined }) {
   useArkmeLocale()
   const [selected, setSelected] = useState<ArkmeContentBlock>()
-  const images = blocks.filter(block => block.kind === 'image')
+  const images = useMemo(() => blocks.filter(block => block.kind === 'image'), [blocks])
+  const renderImage = useCallback((ref: string, alt: string) => {
+    const block = images.find(image => `arkme-asset:${image.fileAssetUid}` === ref)
+    return block ? <ArticleImage key={block.mediaRef} block={block} alt={alt} onOpen={() => { setSelected(block) }} /> : undefined
+  }, [images])
   return <>
-    <ArkmeMarkdownBody text={text} textStyle={textStyle} renderImage={(ref, alt) => {
-      const block = images.find(image => `arkme-asset:${image.fileAssetUid}` === ref)
-      return block ? <ArticleImage key={block.mediaRef} block={block} alt={alt} onOpen={() => { setSelected(block) }} /> : undefined
-    }} />
+    <ArkmeMarkdownBody text={text} textStyle={textStyle} renderImage={renderImage} />
     {selected && <ArkmeMediaPreview blocks={images} selected={selected} onSelect={setSelected} onClose={() => { setSelected(undefined) }} />}
   </>
 }

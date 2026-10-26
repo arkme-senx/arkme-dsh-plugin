@@ -1,3 +1,7 @@
+import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
+import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
+import { dayKey, dayLabel } from './conversation-message-presentation.js'
+import { SharedPersonRecords, personRecordKey, type PersonRecordItem, type SharedPersonSnapshot } from './shared-person-records.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
@@ -191,7 +195,7 @@ const styles: Record<string, CSSProperties> = {
   recordMain: { minWidth: 0, maxWidth: 'calc(100% - 44px)', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
   recordName: { margin: '0 0 4px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
   recordBubble: {
-    minWidth: 0, maxWidth: '100%', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
+    minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
     borderRadius: '5px 14px 14px 14px', background: ARKME_MEMBER_RECORD_OTHER_BUBBLE,
     color: arkmeTheme.text, fontSize: 14, lineHeight: '22px', overflowWrap: 'anywhere',
     '--arkme-bubble-fade': ARKME_MEMBER_RECORD_OTHER_BUBBLE,
@@ -445,11 +449,12 @@ export function formatArkmeMemberRecordTime(timestamp: number, nowMillis = Date.
 
 export type ArkmeMemberRecordTimelineEntry =
   | { kind: 'time'; key: string; timestamp: number; label: string }
-  | { kind: 'record'; key: string; item: ArkmeTimelineItem }
+  | { kind: 'record'; key: string; item: PersonRecordItem }
 
 export function arkmeMemberRecordTimeline(
   items: readonly ArkmeTimelineItem[],
   nowMillis = Date.now(),
+  dateOnly = false,
 ): ArkmeMemberRecordTimelineEntry[] {
   const sorted = [...items].sort((left, right) => left.sendAtMillis - right.sendAtMillis)
   const entries: ArkmeMemberRecordTimelineEntry[] = []
@@ -457,18 +462,18 @@ export function arkmeMemberRecordTimeline(
   for (const item of sorted) {
     const timestamp = item.sendAtMillis
     if (lastVisibleTimestamp === undefined || !Number.isFinite(timestamp)
-      || Math.abs(timestamp - lastVisibleTimestamp) > RECORD_TIME_GAP_MILLIS) {
+      || (dateOnly ? dayKey(timestamp) !== dayKey(lastVisibleTimestamp) : Math.abs(timestamp - lastVisibleTimestamp) > RECORD_TIME_GAP_MILLIS)) {
       if (Number.isFinite(timestamp) && timestamp > 0) {
         entries.push({
           kind: 'time',
-          key: `time:${item.itemUid}:${String(timestamp)}`,
+          key: `time:${personRecordKey(item)}:${String(timestamp)}`,
           timestamp,
-          label: formatArkmeMemberRecordTime(timestamp, nowMillis),
+          label: dateOnly ? dayLabel(timestamp, nowMillis) : formatArkmeMemberRecordTime(timestamp, nowMillis),
         })
         lastVisibleTimestamp = timestamp
       }
     }
-    entries.push({ kind: 'record', key: `record:${item.itemUid}`, item })
+    entries.push({ kind: 'record', key: `record:${personRecordKey(item)}`, item })
   }
   return entries
 }
@@ -477,11 +482,12 @@ interface MemberRecordsPanelProps {
   sourceRef: string
   sourceIdentityKey?: string | undefined
   sourceName?: string | undefined
+  source?: ArkmeSourceItem | undefined
   accountKey?: string | undefined
   member: ArkmeConversationMemberItem
   mode: ArkmeConversationMemberRecordMode
   onClose: () => void
-  onOpenOrigin?: ((item: ArkmeTimelineItem) => void) | undefined
+  onOpenOrigin?: ((item: ArkmeTimelineItem, source?: ArkmeSourceItem) => void) | undefined
 }
 export function ArkmeMemberRecordsPanel(props: MemberRecordsPanelProps) {
   useArkmeLocale()
@@ -497,7 +503,7 @@ export function ArkmeMemberRecordsPanel(props: MemberRecordsPanelProps) {
 }
 function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boolean; scopeControl?: ReactNode; onUseCurrent: () => void; unified: boolean }) {
   useArkmeLocale()
-  const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [items, setItems] = useState<PersonRecordItem[]>([])
   const [cursor, setCursor] = useState<number>()
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -505,13 +511,14 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
   const requestRef = useRef<AbortController>()
   const queryRef = useRef<{ key: string }>()
   const queryKey = JSON.stringify([props.accountKey ?? '', props.sourceIdentityKey ?? props.sourceRef, props.member.memberRef, props.mode, props.onlyCurrent ? 'conversation' : 'shared'])
-  const [sharedStatus, setSharedStatus] = useState<'loading' | 'pending' | 'upgrade'>('loading')
+  const [sharedProgress, setSharedProgress] = useState<SharedPersonSnapshot>()
+  const sharedLoader = useRef<SharedPersonRecords>()
   const restoredViewport = useRef<MemberRecordsSnapshot['viewport']>()
   const lastViewport = useRef<{ key: string; value: NonNullable<MemberRecordsSnapshot['viewport']> }>()
   const revoked = useRef(false)
   const latest = useRef({ key: '', items, cursor, hasMore })
   latest.current = { key: queryRef.current?.key ?? '', items, cursor, hasMore }
-  const visibleItems = queryRef.current?.key === queryKey && props.onlyCurrent ? items : []
+  const visibleItems = queryRef.current?.key === queryKey ? items : []
   const lastLoadRef = useRef<{ beforeSequence: number | undefined; refresh: boolean }>({ beforeSequence: undefined, refresh: false })
   const loadingRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -526,6 +533,34 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
   const [resizing, setResizing] = useState(false)
 
   const load = (beforeSequence?: number, refresh = false, rangeCursor = cursor) => {
+    if (!props.onlyCurrent) {
+      if (loadingRef.current) return
+      if (!sharedLoader.current) {
+        const controller = new AbortController()
+        requestRef.current = controller
+        const source = props.source ?? { sourceRef: props.sourceRef, kind: 'group_chat' as const, displayName: props.sourceName ?? '', activeAtMillis: 0, unreadCount: 0 }
+        sharedLoader.current = new SharedPersonRecords({ source, memberRef: props.member.memberRef }, {
+          sources: cursor => callArkme('source.person-records.sources', { sourceRef: props.sourceRef, memberRef: props.member.memberRef, ...(cursor ? { cursor } : {}) }, controller.signal),
+          records: (entry, before, limit) => callArkme('source.member-records', { sourceRef: entry.source.sourceRef, memberRef: entry.memberRef, mode: 'owner', limit, basicPresentation: true, ...(before === undefined ? {} : { beforeSequence: before }) }, controller.signal),
+        }, controller.signal, snapshot => {
+          if (controller.signal.aborted || requestRef.current !== controller) return
+          pendingScrollAnchorRef.current = !initialScrollRef.current || !bodyRef.current ? undefined : memberRecordsViewport(bodyRef.current)
+          setItems(snapshot.items); setSharedProgress(snapshot); setError(snapshot.error ? tr(snapshot.error) : '')
+          setHasMore(snapshot.hasMore); setCursor(snapshot.hasMore ? 1 : undefined)
+        })
+      }
+      const controller = requestRef.current!
+      loadingRef.current = true; setLoading(true); setError('')
+      void sharedLoader.current.load(beforeSequence !== undefined).catch(caught => {
+        if (controller.signal.aborted || requestRef.current !== controller) return
+        if (caught instanceof ArkmeClientError && !caught.body.retryable) { controller.abort(); loadingRef.current = false; setLoading(false); setItems([]); setHasMore(false); setCursor(undefined) }
+        setError(errorMessage(caught))
+      }).finally(() => {
+        if (controller.signal.aborted || requestRef.current !== controller) return
+        loadingRef.current = false; setLoading(false)
+      })
+      return
+    }
     const isLoadingOlder = beforeSequence !== undefined
     if (isLoadingOlder && loadingRef.current) return
     pendingScrollAnchorRef.current = !initialScrollRef.current || bodyRef.current === null ? undefined : memberRecordsViewport(bodyRef.current)
@@ -544,7 +579,7 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
       basicPresentation: props.mode === 'owner',
       ...(before === undefined ? {} : { beforeSequence: before }),
     }, controller.signal)
-    const operation = props.onlyCurrent ? readMemberRecordWindow(readPage, {
+    const operation = readMemberRecordWindow(readPage, {
       ...(beforeSequence === undefined ? {} : { beforeSequence }), refresh,
       ...(rangeCursor === undefined ? {} : { loadedCursor: rangeCursor }), signal: controller.signal,
       ...(props.accountKey ? { onPage: (page: ArkmeConversationMemberRecordPage) => {
@@ -552,9 +587,6 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
         pendingScrollAnchorRef.current = !initialScrollRef.current || !bodyRef.current ? undefined : memberRecordsViewport(bodyRef.current)
         setItems(current => mergeRecordItems(current, page.items))
       } } : {}),
-    }) : callArkme<{ version: number; shared: boolean }>('source.person-records.capabilities', { sourceRef: props.sourceRef, memberRef: props.member.memberRef }, controller.signal).then(capability => {
-      if (!controller.signal.aborted && requestRef.current === controller) setSharedStatus(capability.shared ? 'upgrade' : 'pending')
-      return undefined
     })
     void operation.then(page => {
       if (controller.signal.aborted || requestRef.current !== controller) return
@@ -593,7 +625,9 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
     const previous = latest.current
     queryRef.current = { key: queryKey }
     revoked.current = false
-    setSharedStatus('loading')
+    sharedLoader.current = undefined
+    setSharedProgress(undefined)
+    loadingRef.current = false
     let cached: MemberRecordsSnapshot | undefined
     if (!sameQuery) {
       initialScrollRef.current = false
@@ -654,21 +688,23 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
   }, [visibleItems, loading, error])
 
   useEffect(() => {
-    if (!props.onlyCurrent || loading || error !== '') return
+    if (loading || error !== '') return
     const frame = window.requestAnimationFrame(() => {
       const body = bodyRef.current
-      if (body !== null && shouldLoadOlderArkmeMemberRecords(body.scrollTop, hasMore, cursor, loadingRef.current)) {
+      if ((!props.onlyCurrent && sharedProgress?.discovering) || (props.onlyCurrent && body !== null && shouldLoadOlderArkmeMemberRecords(body.scrollTop, hasMore, cursor, loadingRef.current))) {
         load(cursor)
       }
     })
     return () => { window.cancelAnimationFrame(frame) }
-  }, [cursor, error, hasMore, items.length, loading])
+  }, [cursor, error, hasMore, items.length, loading, sharedProgress?.discovering])
 
   const title = props.unified ? tr('{v0}的内容', { v0: props.member.displayName }) : props.mode === 'mentioned'
     ? (props.member.isSelf ? '@我的快记' : tr("@{v0}的快记", { v0: props.member.displayName }))
     : (props.member.isSelf ? '我的快记' : tr("{v0}的快记", { v0: props.member.displayName }))
   const total = !props.onlyCurrent || props.member.statsKnown === false ? undefined : arkmeMemberRecordTotal(props.member, props.mode)
-  const timeline = useMemo(() => arkmeMemberRecordTimeline(visibleItems.map(item => props.mode === 'owner' && item.memberRef === props.member.memberRef ? { ...item, senderName: props.member.displayName, ...(props.member.avatarRef ? { avatarRef: props.member.avatarRef } : {}) } : item)), [visibleItems, props.mode, props.member])
+  const compactPerson = props.mode === 'owner'
+  const originName = (item: PersonRecordItem) => item.personSource?.kind === 'private_chat' ? tr('与TA的私聊') : item.personSource?.displayName ?? props.sourceName ?? ''
+  const timeline = useMemo(() => arkmeMemberRecordTimeline(visibleItems.map(item => props.mode === 'owner' && (!props.onlyCurrent || item.memberRef === props.member.memberRef) ? { ...item, senderName: props.member.displayName, ...(props.member.avatarRef ? { avatarRef: props.member.avatarRef } : {}) } : item), Date.now(), compactPerson), [visibleItems, props.mode, props.member, props.onlyCurrent])
   const effectiveWidth = availableWidth === undefined
     ? preferredWidth
     : clampArkmeMemberRecordsWidth(preferredWidth, availableWidth)
@@ -744,9 +780,12 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
     <ArkmeRightPanelHeader title={title} heading={props.unified ? <div style={{display:'flex',alignItems:'center',gap:10}}><ArkmeUserAvatar {...(props.member.avatarRef ? {avatarRef:props.member.avatarRef} : {})} size={32} label={props.member.displayName}/><strong style={{fontSize:16}}>{title}</strong></div> : undefined} subtitle={total === undefined ? undefined : String(total) + '条'}
       onClose={props.onClose} closeLabel={tr("关闭成员快记")} />
     {props.scopeControl}
+      {!props.onlyCurrent && sharedProgress && <div style={styles.loadMoreState} role="status" data-arkme-shared-progress>
+        {sharedProgress.discovering || loading ? tr('正在汇总共同对话 · 已读取 {v0}/{v1} 个对话', {v0:sharedProgress.read,v1:sharedProgress.discovered}) : tr('已读取 {v0} 个共同对话 · {v1} 条内容', {v0:sharedProgress.read,v1:visibleItems.length})}
+      </div>}
     <div ref={bodyRef} style={styles.drawerBody} onScroll={event => {
       if (props.accountKey && props.onlyCurrent && bodyRef.current) lastViewport.current = { key: queryKey, value: memberRecordsViewport(bodyRef.current) }
-      if (props.onlyCurrent && shouldLoadOlderArkmeMemberRecords(
+      if (shouldLoadOlderArkmeMemberRecords(
         event.currentTarget.scrollTop,
         hasMore,
         cursor,
@@ -755,15 +794,13 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
         load(cursor)
       }
     }}>
-      {!props.onlyCurrent && !loading && error === '' && <div style={styles.state} role="status">
-        <div>{tr(sharedStatus === 'upgrade' ? '共同对话汇总协议需要更新插件后使用' : '共同对话汇总接口开发中，开发完成后此功能完整可用。')}</div>
-        <button type="button" style={{...styles.retry,marginTop:14}} onClick={props.onUseCurrent}>{tr('先看此对话')}</button>
-      </div>}
-      {loading && visibleItems.length === 0 && <div role="status" aria-label={tr('正在加载快记')} style={styles.state}>{tr(props.onlyCurrent ? '正在加载快记…' : '正在检查共同对话汇总能力…')}{props.onlyCurrent && props.accountKey && <div aria-hidden style={{display:'grid',gap:12,marginTop:18}}>{[0,1,2].map(n=><div key={n} style={{height:54,borderRadius:10,background:arkmeTheme.hover,opacity:1-n*.2}}/>)}</div>}</div>}
+      {!props.onlyCurrent && !loading && hasMore && error === '' && <button type="button" style={styles.loadMoreRetry} onClick={() => load(1)}>{tr('加载更多内容')}</button>}
+
+      {loading && visibleItems.length === 0 && <div role="status" aria-label={tr('正在加载快记')} style={styles.state}>{tr(props.onlyCurrent ? '正在加载快记…' : '正在汇总共同对话…')}{props.onlyCurrent && props.accountKey && <div aria-hidden style={{display:'grid',gap:12,marginTop:18}}>{[0,1,2].map(n=><div key={n} style={{height:54,borderRadius:10,background:arkmeTheme.hover,opacity:1-n*.2}}/>)}</div>}</div>}
       {error !== '' && visibleItems.length === 0 && <div style={styles.state} role="alert">
         <div>{error}</div><button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { load() }}>{tr("重试")}</button>
       </div>}
-      {props.onlyCurrent && !loading && error === '' && visibleItems.length === 0 && <div style={styles.state}>{tr("暂无快记")}</div>}
+      {!loading && error === '' && (!sharedProgress?.discovering || props.onlyCurrent) && visibleItems.length === 0 && <div style={styles.state}>{tr("暂无快记")}</div>}
       {loading && visibleItems.length > 0 && <div style={styles.loadMoreState} role="status" aria-live="polite">{tr("正在加载快记…")}</div>}
       {error !== '' && visibleItems.length > 0 && <div style={styles.loadMoreState} role="alert" title={error}>
         <span>{tr("加载快记失败")}</span>
@@ -775,7 +812,7 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
           <article
             style={{ ...styles.recordRow, justifyContent: entry.item.isMe ? 'flex-end' : 'flex-start' }}
             data-arkme-member-record-row={entry.item.isMe ? 'self' : 'other'}
-            data-arkme-member-record-id={entry.item.itemUid}
+            data-arkme-member-record-id={personRecordKey(entry.item)}
           >
             {!entry.item.isMe && <ArkmeUserAvatar
               {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}
@@ -783,12 +820,18 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
               label={tr("{v0} 的头像", { v0: entry.item.senderName })}
             />}
             <div style={{ ...styles.recordMain, alignItems: entry.item.isMe ? 'flex-end' : 'flex-start' }}>
-              {props.unified && props.sourceName && <button type="button" data-arkme-member-record-origin style={{fontSize:11,color:arkmeTheme.tertiary,padding:0,border:0,background:'transparent',textAlign:'left',cursor:props.onOpenOrigin?'pointer':'default'}} onClick={() => props.onOpenOrigin?.(entry.item)} aria-label={tr('回到原对话并定位')}>{props.sourceName} · {formatArkmeMemberRecordTime(entry.item.sendAtMillis)}</button>}
-              <div style={styles.recordName}>{entry.item.senderName}</div>
-              <div style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
-                <ArkmeMessageContent item={entry.item} sourceRef={props.sourceRef}
-                  {...(props.sourceIdentityKey === undefined ? {} : { sourceIdentityKey: props.sourceIdentityKey })} highlightMentions />
+              {!compactPerson && <div style={styles.recordName}>{entry.item.senderName}</div>}
+              <div className={compactPerson ? 'arkme-timed-bubble' : undefined} style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
+                <ArkmeMessageContent item={entry.item} sourceRef={entry.item.personSource?.sourceRef ?? props.sourceRef}
+                  {...((entry.item.personSource?.sourceKey ?? props.sourceIdentityKey) === undefined ? {} : { sourceIdentityKey: (entry.item.personSource?.sourceKey ?? props.sourceIdentityKey)! })} highlightMentions />
+                {compactPerson && <ArkmeMessageTimestamp at={entry.item.sendAtMillis} />}
               </div>
+              {props.unified && originName(entry.item) && <button type="button" data-arkme-member-record-origin
+                style={{ ...arkmeDetailSourceBadgeStyle, alignSelf: 'flex-start', marginTop: 4, minHeight: 22, padding: '1px 5px', fontSize: 11, cursor: props.onOpenOrigin ? 'pointer' : 'default' }}
+                onClick={() => props.onOpenOrigin?.(entry.item, entry.item.personSource)} aria-label={tr('回到原对话并定位')}
+                title={tr('所在对话：{v0}', { v0: originName(entry.item) })}>
+                <span aria-hidden style={{ flex: 'none' }}>↗</span><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{originName(entry.item)}</span>
+              </button>}
             </div>
             {entry.item.isMe && <ArkmeUserAvatar
               {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}

@@ -139,7 +139,7 @@ describe('RecordService', () => {
         }
       },
     }
-    const service = new RecordService(runtime as never, {} as MediaService, source)
+    const service = new RecordService(runtime as never, { richContentBlocks: () => [], recordMediaUnavailable: () => false } as unknown as MediaService, source)
 
     await expect(service.getLongArticleDraft('source-ref-old', 'record-1')).resolves.toMatchObject({
       title: '草稿标题', textContent: '草稿正文', durationMillis: 1200,

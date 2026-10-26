@@ -1092,6 +1092,17 @@ export class ServiceRuntime {
     }
   }
 
+  async authenticatedAuthMultipartPost<T>(path: string, body: FormData, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'auth', 'write', {})
+    try { return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, options())
+    }
+  }
+
   /** Read a legacy private owner hosted by the main authenticated API. */
   async authenticatedAuthReadPost<T>(
     path: string,

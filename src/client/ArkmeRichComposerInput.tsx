@@ -1,3 +1,4 @@
+import { plainDictationTarget, type DictationTarget } from './dictation-target.js'
 import { ArkmeDocumentComposerInput, type ArkmeDocumentComposerHandle } from './ArkmeDocumentComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import {
@@ -30,6 +31,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export interface ArkmeRichComposerHandle {
+  createDictationTarget?(): DictationTarget | undefined
   readonly disabled: boolean
   readonly value: string
   readonly selectionStart: number
@@ -290,6 +292,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
+    const writeRef = useRef(onTextChange); writeRef.current = onTextChange
     const disabledRef = useRef(disabled)
     const selectionRef = useRef<ComposerSelection>({ start: value.length, end: value.length })
     const pendingSelectionRef = useRef<ComposerSelection>()
@@ -308,6 +311,19 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
     }
 
     useImperativeHandle(forwardedRef, () => ({
+      createDictationTarget() {
+        const root = editorRef.current
+        if (!root || disabledRef.current) return
+        const at = editorSelection(root, selectionRef.current).end
+        return plainDictationTarget({ read: () => valueRef.current, at, maxLength,
+          available: () => root.isConnected && !disabledRef.current,
+          write(text, caret) {
+            valueRef.current = text
+            pendingSelectionRef.current = { start: caret, end: caret }
+            writeRef.current(text)
+          },
+        })
+      },
       get disabled() { return disabledRef.current },
       get value() { return valueRef.current },
       get selectionStart() {

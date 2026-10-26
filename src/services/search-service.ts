@@ -238,6 +238,7 @@ export class SearchService {
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('../types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'
@@ -245,6 +246,15 @@ export class SearchService {
     sourceRef?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
+    if (options.articleScope !== undefined && (options.scene !== 'long_article'
+      || !['recent', 'shared_by_me', 'shared_with_me'].includes(options.articleScope))) {
+      throw new ArkmePluginError('long-article-scope-invalid', '长文分类无效', false, 400)
+    }
+    // The existing scene API has no sharing-direction contract. Do not send an
+    // ignored filter and accidentally present every accessible article as shared.
+    if (options.articleScope && options.articleScope !== 'recent') {
+      throw new ArkmePluginError('long-article-sharing-unavailable', '后端接口开发中，开发完成后此功能完整可用。', false, 501)
+    }
     const sceneKinds: Record<ArkmeSearchSceneKind, number> = {
       audio: 1,
       link: 2,

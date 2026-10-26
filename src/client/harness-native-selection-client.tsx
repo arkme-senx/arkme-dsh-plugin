@@ -1,3 +1,4 @@
+import { HarnessDictationInput } from './HarnessDictationInput.js'
 import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
 import { callArkme } from './api.js'
 import type { ArkmeAuthSnapshot } from '../types.js'
@@ -280,7 +281,7 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
 /** Register through a public additive slot; never replace native message renderers. */
 export function install(ctx: ClientContext, doc: Document = document): () => void {
   if (typeof ctx.slots?.spec !== 'function') return () => {}
-  return ctx.slots.inject(SLOT, () => {
+  const stopHeader = ctx.slots.inject(SLOT, () => {
     try {
       const spec = ctx.slots.spec(SLOT)
       if (spec?.kind !== 'list' || spec.scope !== 'session') return () => {}
@@ -291,4 +292,10 @@ export function install(ctx: ClientContext, doc: Document = document): () => voi
       return () => {}
     }
   })
+  const stopInput = ctx.slots.inject('conversation.input.left', () => {
+    const spec = ctx.slots.spec('conversation.input.left')
+    if (spec?.kind !== 'list' || spec.scope !== 'session') return () => {}
+    return ctx.slots.register({ name: 'conversation.input.left', id: 'arkme-dictation', order: 100 }, HarnessDictationInput)
+  })
+  return () => { stopHeader(); stopInput() }
 }

@@ -168,6 +168,8 @@ interface PickerState {
 
 export function useArkmeMessageActions(input: {
   scopeKey: string
+  /** Personal/chat records use the established source operations, distinct from Agent/Bot refs. */
+  sourceActions?: boolean
   items: readonly ArkmeMessageActionViewItem[]
   /** Visible selection facts, independent of the signed action capabilities. */
   selectionItems?: readonly ArkmeMessageSelectionItem[]
@@ -209,6 +211,7 @@ export function useArkmeMessageActions(input: {
     setBusy(undefined)
     setStatus('')
     requestIdsRef.current = undefined
+    return () => { revisionRef.current += 1 }
   }, [input.scopeKey])
 
   useEffect(() => {
@@ -278,8 +281,8 @@ export function useArkmeMessageActions(input: {
     const controller = new AbortController()
     const timeout = window.setTimeout(() => { controller.abort() }, MESSAGE_ACTION_REQUEST_TIMEOUT_MS)
     try {
-      const result = await callArkme<ArkmeMessageCopyLinkResult>('message-actions.copy-link', {
-        conversationRef,
+      const result = await callArkme<ArkmeMessageCopyLinkResult>(input.sourceActions ? 'source.message-copy-link' : 'message-actions.copy-link', {
+        ...(input.sourceActions ? { sourceRef: conversationRef } : { conversationRef }),
         actionRefs: items.map(item => item.actionRef),
       }, controller.signal)
       if (revision !== revisionRef.current) return
@@ -293,7 +296,7 @@ export function useArkmeMessageActions(input: {
       window.clearTimeout(timeout)
       if (revision === revisionRef.current) setBusy(undefined)
     }
-  }, [busy, showStatus])
+  }, [busy, showStatus, input.sourceActions])
 
   const openForward = useCallback(async (items: readonly ArkmeMessageActionViewItem[]) => {
     const revision = revisionRef.current
@@ -349,8 +352,8 @@ export function useArkmeMessageActions(input: {
           commentRecordUid: crypto.randomUUID(),
           sendAtMillis: Date.now(),
         }
-        const result = await callArkme<ArkmeSourceSendResult>('message-actions.forward', {
-          conversationRef,
+        const result = await callArkme<ArkmeSourceSendResult>(input.sourceActions ? 'source.forward-messages' : 'message-actions.forward', {
+          ...(input.sourceActions ? { sourceRef: conversationRef, relationUid: identity.commentRecordUid, expectedUserId: arkmeAuthStore.getSnapshot().auth?.userId } : { conversationRef }),
           targetSourceRef: target.sourceRef,
           actionRefs: forwardedItems.map(item => item.actionRef),
           requestId: `arkme-forward-${identity.requestId}`,
@@ -468,5 +471,9 @@ export function useArkmeMessageActions(input: {
     <button data-arkme-feedback="neutral" type="button" style={{ ...styles.selectButton, ...(busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={busy !== undefined} onClick={() => { setSelectedIds(undefined); requestIdsRef.current = undefined }} aria-label={tr("退出多选")}><span style={styles.icon}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={messageSelectionStyles.selectBarLabel}>{tr("退出多选")}</span></button>
   </div></>
 
-  return { selectMany, canSelectMany: input.selectionItems !== undefined && busy === undefined && picker === undefined, selecting: selectedIds !== undefined, selectedIds: selectedIds ?? new Set<string>(), openMenu, toggle, overlay, selectionBar }
+  return { copyLink, openForward, busy, dialogOpen: picker !== undefined, dismissOverlay: () => {
+    if (!picker && !menu) return false
+    if (!busy) { setPicker(undefined); setMenu(undefined) }
+    return true
+  }, selectMany, canSelectMany: input.selectionItems !== undefined && busy === undefined && picker === undefined, selecting: selectedIds !== undefined, selectedIds: selectedIds ?? new Set<string>(), openMenu, toggle, overlay, selectionBar }
 }

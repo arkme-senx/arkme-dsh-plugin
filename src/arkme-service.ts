@@ -1,3 +1,4 @@
+import { DictationService } from './services/dictation-service.js'
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
@@ -508,6 +509,11 @@ export class ArkmeService {
   private readonly conversationWords: ConversationWordFrequencyService
   private readonly speechStatistics: RecordingSpeechStatisticsService
   private readonly calendarDayReview: CalendarDayReviewService
+  private dictationOwner?: DictationService
+  async transcribeDictation(input: { expectedUserId: number; segmentId: string; pcm: string }, signal?: AbortSignal) {
+    this.dictationOwner ??= new DictationService(this.runtime)
+    return await this.dictationOwner.transcribe(input, signal)
+  }
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -829,6 +835,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.dictationOwner?.dispose()
     this.messageSync.reset()
     this.unifiedTimeline.reset()
     this.recordingPresenceWriter.revoke()
@@ -1258,6 +1265,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.dictationOwner?.dispose()
     this.messageSync.dispose()
     this.unifiedTimeline.dispose()
     this.teamDelivery.dispose()
@@ -1865,6 +1873,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
+    return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
+  }
   async personRecordsCapabilities(sourceRef: string, memberRef: string, signal?: AbortSignal) {
     return this.chat.personRecordsCapabilities(sourceRef, memberRef, signal)
   }
@@ -2923,6 +2934,7 @@ arkoImagesV1:true,
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('./types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'

@@ -8,7 +8,7 @@ const storage = () => { const data = new Map<string, string>(); return { getItem
 it('keeps an old, already-viewed conversation quiet on first load and after refresh', () => {
   const store = storage()
   const tracker = new HarnessActivityTracker('prod:42', store)
-  expect(tracker.update(list([session('a')]), [], undefined)).toEqual({ scope: 'prod:42', current: { id: 'a', title: 'a' }, pending: [], running: [], unread: [] })
+  expect(tracker.update(list([session('a')]), [], undefined)).toEqual({ scope: 'prod:42', current: { id: 'a', title: 'a' }, recent: { id: 'a', title: 'a' }, pending: [], running: [], unread: [] })
   expect(new HarnessActivityTracker('prod:42', store).update(list([session('a')]), [], undefined).unread).toEqual([])
 })
 
@@ -73,4 +73,24 @@ it('rejects stale-account or malformed bridge values and tolerates blocked local
   expect(parseHarnessActivity(JSON.stringify(value), 'prod:42')).toEqual(value)
   expect(parseHarnessActivity(JSON.stringify(value), 'prod:43')).toBeUndefined()
   expect(parseHarnessActivity('{"scope":"prod:42","running":3}', 'prod:42')).toBeUndefined()
+  expect(parseHarnessActivity(JSON.stringify({ ...value, recent: { id: 'a', title: 42 } }), 'prod:42')).toBeUndefined()
+})
+
+it('reports the latest real conversation by activity time, independent of selected or manually ordered sessions', () => {
+  const tracker = new HarnessActivityTracker('prod:42')
+  const rows = [session('older', { displayTitle: '正在看的旧会话', updatedAt: 10 }), session('recent', { displayTitle: '最新对话', updatedAt: 20 }),
+    session('blank', { blank: true, updatedAt: 100 }), session('archived', { updatedAt: 200 }), session('child', { origin: 'subagent', parentId: 'recent', updatedAt: 300 })]
+  expect(tracker.update(list(rows, 'older'), ['archived'], undefined).recent).toEqual({ id: 'recent', title: '最新对话' })
+  expect(tracker.update(list(rows, 'blank'), ['archived'], undefined).recent?.id).toBe('recent')
+  expect(tracker.update(list([{ ...rows[0]!, updatedAt: 30, displayTitle: '旧会话有了新消息' }, ...rows.slice(1)]), ['archived'], undefined).recent?.title).toBe('旧会话有了新消息')
+  expect(tracker.update(list(rows.filter(row => row.id !== 'recent')), ['archived'], undefined).recent?.id).toBe('older')
+})
+
+it('keeps catalog order for ties or missing timestamps and omits recent when there are no real visible conversations', () => {
+  const tracker = new HarnessActivityTracker('prod:42')
+  expect(tracker.update(list([session('a'), session('b')]), [], undefined).recent?.id).toBe('a')
+  expect(tracker.update(list([session('a', { updatedAt: Number.NaN }), session('b', { updatedAt: 5 })]), [], undefined).recent?.id).toBe('b')
+  expect(tracker.update(list([session('a', { updatedAt: 5 }), session('b', { updatedAt: 5 })]), [], undefined).recent?.id).toBe('a')
+  expect(tracker.update(list([session('blank', { blank: true })]), [], undefined).recent).toBeUndefined()
+  expect(tracker.update({ ...list([session('a')]), phase: 'pending' }, [], undefined).recent).toBeUndefined()
 })
