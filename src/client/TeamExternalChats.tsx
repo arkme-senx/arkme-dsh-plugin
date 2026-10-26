@@ -6,10 +6,39 @@ import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeMediaAccessContext } from './media-access.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 
 const failure = (error: unknown) => error instanceof Error ? error.message : '加载失败，请重试'
 const teamKey = (team: ArkmeTeam) => team.key ?? team.teamRef
 const sharedWith = (share: ExternalChatShare, team: ArkmeTeam) => team.key ? share.teamKey === team.key : share.teamRef === team.teamRef
+
+class ShareSaveTimeoutError extends Error {
+  constructor() { super(tr('保存超时，请重新加载后核对共享状态。')); this.name = 'ShareSaveTimeoutError' }
+}
+// A timeout cannot establish whether a write committed. Stop the batch and
+// require an authoritative reload before editing or submitting another change.
+async function saveWithDeadline<T>(submit: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted()
+  const controller = new AbortController()
+  const cancel = () => controller.abort(signal.reason)
+  let rejectCancelled!: (reason: unknown) => void
+  const cancelled = new Promise<never>((_, reject) => { rejectCancelled = reject })
+  const onAbort = () => rejectCancelled(controller.signal.reason)
+  controller.signal.addEventListener('abort', onAbort, {once: true})
+  signal.addEventListener('abort', cancel, {once: true})
+  const timer = setTimeout(() => controller.abort(new ShareSaveTimeoutError()), 30_000)
+  try { return await Promise.race([submit(controller.signal), cancelled]) }
+  finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', cancel)
+    controller.signal.removeEventListener('abort', onAbort)
+  }
+}
+function shareResultUncertain(error: unknown): boolean {
+  const code = (error as {body?: {code?: string}} | null)?.body?.code
+  return error instanceof ShareSaveTimeoutError || (error instanceof Error && error.name === 'AbortError')
+    || code === 'local-network-unavailable' || code === 'local-response-invalid'
+}
 
 // Reuse unchanged media references so polling does not restart playback. Each
 // reference is still reauthorized by the Host whenever it serves media bytes.
@@ -144,6 +173,7 @@ function ScopedSharePrivateChat({sourceRef, name, onClose}: {sourceRef: string; 
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [hasSaved, setHasSaved] = useState(false)
+  const [needsReload, setNeedsReload] = useState(false)
   const [error, setError] = useState('')
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
   const request = useRef<AbortController>()
@@ -152,13 +182,16 @@ function ScopedSharePrivateChat({sourceRef, name, onClose}: {sourceRef: string; 
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
-    setLoading(true); setReady(false); setError('')
+    setLoading(true); setReady(false); setError(''); setSaveErrors({}); setSaved(false)
     try {
-      const [teams, shares] = await Promise.all([callArkme<ArkmeTeam[]>('team.app.teams', {}, controller.signal), callArkme<ExternalChatDirectory>('team.app.external.mine', {sourceRef}, controller.signal)])
+      const [teams, shares] = await withArkmeReadDeadline(signal => Promise.all([
+        callArkme<ArkmeTeam[]>('team.app.teams', {}, signal),
+        callArkme<ExternalChatDirectory>('team.app.external.mine', {sourceRef}, signal),
+      ]), controller.signal)
       if (!controller.signal.aborted) {
         setTeams(teams); setShares(shares.items)
         setSelected(new Set(teams.filter(team => shares.items.some(share => sharedWith(share, team))).map(teamKey)))
-        setReady(true)
+        setReady(true); setNeedsReload(false)
       }
     } catch (error) {if (!controller.signal.aborted) setError(failure(error))}
     finally {if (!controller.signal.aborted) setLoading(false)}
@@ -167,7 +200,7 @@ function ScopedSharePrivateChat({sourceRef, name, onClose}: {sourceRef: string; 
   const changes = teams.filter(team => selected.has(teamKey(team)) !== shares.some(share => sharedWith(share, team)))
   const additions = changes.filter(team => selected.has(teamKey(team))).length
   async function save() {
-    if (savingRef.current || !ready || !changes.length) return
+    if (savingRef.current || needsReload || !ready || !changes.length) return
     savingRef.current = true
     const controller = new AbortController()
     request.current = controller
@@ -179,15 +212,20 @@ function ScopedSharePrivateChat({sourceRef, name, onClose}: {sourceRef: string; 
         const existing = shares.find(share => sharedWith(share, team))
         try {
           if (existing) {
-            await callArkme('team.app.external.unshare', {shareRef: existing.ref}, controller.signal)
+            await saveWithDeadline(signal => callArkme('team.app.external.unshare', {shareRef: existing.ref}, signal), controller.signal)
             if (!controller.signal.aborted) setShares(values => values.filter(value => value.key !== existing.key))
           } else {
-            const next = await callArkme<ExternalChatDirectory>('team.app.external.share', {teamRef: team.teamRef, sourceRef}, controller.signal)
+            const next = await saveWithDeadline(signal => callArkme<ExternalChatDirectory>('team.app.external.share', {teamRef: team.teamRef, sourceRef}, signal), controller.signal)
             if (!controller.signal.aborted) setShares(values => [...values.filter(share => !sharedWith(share, team)), ...next.items])
           }
           if (!controller.signal.aborted) setHasSaved(true)
         } catch (error) {
           if (controller.signal.aborted) return
+          if (shareResultUncertain(error)) {
+            failures[teamKey(team)] = tr('保存结果尚未确认，请重新加载后核对。')
+            setNeedsReload(true)
+            break
+          }
           failures[teamKey(team)] = failure(error)
         }
       }
@@ -200,23 +238,23 @@ function ScopedSharePrivateChat({sourceRef, name, onClose}: {sourceRef: string; 
   const failed = Object.keys(saveErrors).length > 0
   return <TeamFeatureDialog className="arkme-team-external-dialog arkme-private-chat-share-dialog" title={tr('共享到团队')} teamName={name} onClose={onClose} busy={saving}
     footer={<>
-      <span className="arkme-private-chat-share-summary" role="status">{saving ? tr('正在保存…') : saved ? tr('共享设置已更新') : ready ? tr('已共享到 {count} 个团队', {count: shares.length}) : ''}</span>
-      {!saved && <button type="button" className="arkme-contact-remark-cancel" disabled={saving} onClick={onClose}>{tr(hasSaved ? '关闭' : '取消')}</button>}
-      <button type="button" className="arkme-contact-remark-confirm" disabled={saving || (!saved && (!ready || !changes.length))} onClick={() => saved ? onClose() : void save()}>
-        {tr(saving ? '保存中…' : saved ? '完成' : failed ? '重试保存' : additions ? '确认共享' : '保存更改')}
+      <span className="arkme-private-chat-share-summary" role="status">{saving ? tr('正在保存…') : needsReload ? tr('保存结果待核对') : saved ? tr('共享设置已更新') : ready ? tr('已共享到 {count} 个团队', {count: shares.length}) : ''}</span>
+      {!saved && <button type="button" className="arkme-contact-remark-cancel" disabled={saving} onClick={onClose}>{tr(hasSaved || needsReload ? '关闭' : '取消')}</button>}
+      <button type="button" className="arkme-contact-remark-confirm" disabled={saving || loading || (!needsReload && !saved && (!ready || !changes.length))} onClick={() => needsReload ? void load() : saved ? onClose() : void save()}>
+        {tr(saving ? '保存中…' : needsReload ? '重新加载' : saved ? '完成' : failed ? '重试保存' : additions ? '确认共享' : '保存更改')}
       </button>
     </>}>
     <p className="arkme-private-chat-share-disclosure">{tr('团队成员可只读查看全部历史和新消息。')}</p>
     {error && <p className="arkme-private-chat-share-error" role="alert">{error} <button type="button" onClick={() => void load()}>{tr('重试')}</button></p>}
     {loading && <p className="arkme-private-chat-share-empty" role="status">{tr('正在加载团队…')}</p>}
     {ready && !teams.length && <p className="arkme-private-chat-share-empty">{tr('你尚未加入团队')}</p>}
-    {ready && teams.length > 0 && <fieldset className="arkme-private-chat-share-teams" disabled={saving}>
+    {ready && teams.length > 0 && <fieldset className="arkme-private-chat-share-teams" disabled={saving || needsReload}>
       <legend>{tr('选择团队')}</legend>
       {teams.map(team => {
         const key = teamKey(team), checked = selected.has(key), shared = shares.some(share => sharedWith(share, team))
         return <label key={key} className="arkme-private-chat-share-team" data-selected={checked}>
           <input type="checkbox" checked={checked} onChange={() => {
-            if (savingRef.current) return
+            if (savingRef.current || needsReload) return
             setSelected(values => {const next = new Set(values); if (next.has(key)) next.delete(key); else next.add(key); return next})
             setSaved(false); setSaveErrors({})
           }}/>

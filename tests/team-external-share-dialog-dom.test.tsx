@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 vi.mock('../src/client/ArkmeRichContent.js', () => ({ ArkmeMessageContent: () => null }))
 import { SharePrivateChat } from '../src/client/TeamExternalChats.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 
 const teams = ['设计团队', '销售团队'].map((name, i) => ({key: `team-${i}`, teamRef: `sealed-${i}`, name}))
 const share = (i: number) => ({key: `share-${i}`, ref: `grant-${i}`, teamKey: teams[i]!.key, teamRef: `old-sealed-${i}`, own: true})
@@ -155,4 +156,69 @@ it('handles an empty team list and aborts the old source before accepting anothe
   expect(oldSignal.aborted).toBe(true)
   await act(async () => finish({items: [share(0)]}))
   expect(inputs()[0]!.checked).toBe(false)
+})
+it('unlocks a stalled save, ignores its late result and reloads authoritative state before editing', async () => {
+  vi.useFakeTimers()
+  let finish!: (value: unknown) => void
+  let persisted = false
+  mocks.callArkme.mockImplementation((op) => {
+    if (op === 'team.app.teams') return Promise.resolve(teams)
+    if (op.endsWith('.share')) return new Promise(resolve => {finish = resolve})
+    return Promise.resolve({items: persisted ? [share(0)] : []})
+  })
+  try {
+    await open(); await click(inputs()[0]!); await click(inputs()[1]!)
+    await click(button('确认共享'))
+    const signal = writes()[0]![2] as AbortSignal
+    await act(async () => {await vi.advanceTimersByTimeAsync(30_000)})
+    expect(dialog().hasAttribute('aria-busy')).toBe(false)
+    expect(text()).toContain('保存结果待核对')
+    expect(signal.aborted).toBe(true)
+    expect(inputs().every(input => input.matches(':disabled'))).toBe(true)
+    expect(writes()).toHaveLength(1)
+    // The write may have committed even though the response was lost.
+    persisted = true
+    await act(async () => finish({items: [share(0)]}))
+    expect(text()).not.toContain('共享设置已更新')
+    await click(button('重新加载'))
+    expect(inputs()[0]!.checked).toBe(true)
+    expect(inputs()[1]!.checked).toBe(false)
+    expect(inputs()[0]!.matches(':disabled')).toBe(false)
+    expect(button('保存更改').disabled).toBe(true)
+  } finally {vi.useRealTimers()}
+})
+it.each(['local-network-unavailable', 'local-response-invalid'])('requires a state reload after an uncertain %s response', async code => {
+  let attempted = false
+  mocks.callArkme.mockImplementation(async op => {
+    if (op === 'team.app.teams') return teams
+    if (op.endsWith('.share')) {attempted = true; throw Object.assign(new Error('unconfirmed'), {body: {code}})}
+    return {items: attempted ? [share(0)] : []}
+  })
+  await open(); await click(inputs()[0]!); await click(inputs()[1]!)
+  await click(button('确认共享'))
+  expect(text()).toContain('保存结果待核对')
+  expect(inputs().every(input => input.matches(':disabled'))).toBe(true)
+  expect(button('重新加载').disabled).toBe(false)
+  await click(button('重新加载'))
+  expect(inputs()[0]!.checked).toBe(true)
+  expect(inputs()[1]!.checked).toBe(false)
+  expect(writes()).toHaveLength(1)
+})
+it('translates saving feedback without translating team names', async () => {
+  let active = 'en', sync!: () => void
+  const disconnect = connectArkmeLocale({getLocale: () => ({active}), subscribe: callback => {sync = callback; return () => {}}})
+  let finish!: (value: unknown) => void
+  mocks.callArkme.mockImplementation(op => op === 'team.app.teams' ? Promise.resolve(teams)
+    : op.endsWith('.share') ? new Promise(resolve => {finish = resolve}) : Promise.resolve({items: []}))
+  try {
+    await open(); await click(inputs()[0]!)
+    await click(button('Confirm sharing'))
+    expect(text()).toContain('Saving…')
+    expect(text()).not.toContain('正在保存')
+    expect(text()).toContain('设计团队')
+    await act(async () => finish({items: [share(0)]}))
+    expect(text()).toContain('Sharing settings updated')
+  } finally {
+    act(() => {active = 'zh'; sync()}); disconnect()
+  }
 })
