@@ -1,6 +1,6 @@
 import type { ArkmeTimelineItem } from '../types.js'
 import { arkmeEmojiUnicode } from '../arkme-emoji-text.js'
-import { MESSAGE_QUOTE_LIMIT, normalizeQuoteText, quoteCanonicalText, quoteSourceContent, quoteMatchesCanonical, type ArkmeMessageQuote } from '../message-quote.js'
+import { quoteContext, MESSAGE_QUOTE_LIMIT, normalizeQuoteText, quoteCanonicalText, quoteSourceContent, quoteMatchesCanonical, type ArkmeMessageQuote } from '../message-quote.js'
 
 const excluded = 'button,input,textarea,select,style,script,[data-arkme-mention-read],[aria-hidden="true"],img:not([data-arkme-rich-emoji])'
 const blocks = new Set(['P', 'DIV', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR', 'TD', 'TH', 'TABLE'])
@@ -55,7 +55,7 @@ export function captureQuoteAnchor(element: HTMLElement, range: Range, selectedT
   const start = selected[0]?.index, end = selected.at(-1)?.index
   if (start === undefined || end === undefined || canonical.slice(start, end + 1) !== normalizeQuoteText(selectedText)) throw new Error('选中文字已变化，请重新选择')
   return { version: 1 as const, projection: 'arkme-text-v1' as const, start, end: end + 1, text: selectedText,
-    prefix: canonical.slice(Math.max(0, start - 32), start), suffix: canonical.slice(end + 1, end + 33),
+    ...quoteContext(canonical, start, end + 1),
     ...(item.recordVersion === undefined ? {} : { recordVersion: item.recordVersion }) }
 }
 export async function quoteDigest(item: ArkmeTimelineItem): Promise<string> {

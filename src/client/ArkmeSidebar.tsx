@@ -2310,7 +2310,8 @@ export function ArkmeSurface({
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useArkmeComposerInputTimePreference()
   const composerExtensionTarget = composerDraft.extensionTarget
-  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId)
+  const [messageMarkStorage, setMessageMarkStorage] = useState<'local' | 'cloud'>('cloud')
+  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId, undefined, messageMarkStorage)
   const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote, sourceIsChat ? '回复' : '延展')
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
@@ -5805,7 +5806,7 @@ export function ArkmeSurface({
 
   const personalExtensionParents = usePersonalExtensionParents(
     `${authenticatedAccountKey}:${conversationKey}:${sourceProjectionRevision}`,
-    activeConversation && source !== undefined && isArkmeSelfWorkspaceSource(source) ? source.sourceRef : undefined, items,
+    activeConversation && source !== undefined && (isArkmeSelfWorkspaceSource(source) || source.kind === 'private_chat' || source.kind === 'group_chat') ? source.sourceRef : undefined, items, source?.sourceKey, source?.kind === 'private_chat' || source?.kind === 'group_chat',
   )
   const detailRawRow = items.find(item => item.itemUid === detailItemUid)
   const detailRow = detailRawRow && source ? recordMutations.project(detailRawRow, source, selfSources) : detailRawRow
@@ -8625,7 +8626,9 @@ export function ArkmeSurface({
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       selfNote={{ sourceLabel: source?.displayName || '发给自己', ...(authenticatedAccountKey ? { accountKey: authenticatedAccountKey } : {}) }}
       replyLabel={sourceIsChat ? '回复' : '延展'}
-      markStorage="local"
+      markStorage={messageMarkStorage}
+      onMarkStorageChange={setMessageMarkStorage}
+      markAudience={sourceIsChat ? 'conversation' : 'self'}
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}

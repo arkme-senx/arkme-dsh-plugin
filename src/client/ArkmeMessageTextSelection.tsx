@@ -10,6 +10,7 @@ import type { MessageUnderline } from '../message-annotations.js'
 import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 import { findSelectedMessageText } from './message-selection-search.js'
 import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './ArkmeSelectedTextReplace.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { forwardSelectedText } from './selected-text-forward.js'
 import type { SelectedTextNoteQuote } from '../selected-text-note.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -24,6 +25,8 @@ export function messageSelectionReference(target: MessageSelectionTarget): strin
   return target.localMarkRef ?? target.item.messageActionRef
 }
 const targets = new WeakMap<HTMLElement, { copyText: string; reply?: MessageSelectionTarget | undefined }>()
+/** Current registered source is used to verify the full digest before quote navigation highlights. */
+export function messageSelectionTarget(element: HTMLElement): MessageSelectionTarget | undefined { return targets.get(element)?.reply }
 /** Additive registration for native Harness bodies; never replace their renderer. */
 export function registerMessageTextSelectionTarget(element: HTMLElement, text: string, target: MessageSelectionTarget) {
   const entry = { copyText: text, reply: target }
@@ -143,13 +146,15 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
   selfNote?: { sourceLabel: string; accountKey?: string } | undefined
   /** Embedded native chat may occupy only part of a full-window clipped iframe. */
   getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
   selectionDomain?: 'transcript' | 'native' | 'codex' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
+  onMarkStorageChange?: ((storage: 'local' | 'cloud') => void) | undefined
+  markAudience?: 'self' | 'conversation' | undefined
   replyLabel?: string | undefined
   onReply?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => void) | undefined
   onUnderline?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => Promise<string | undefined>) | undefined
@@ -173,6 +178,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   const [verified, setVerified] = useState<{ snapshot: Snapshot; quote: ArkmeMessageQuote }>()
   const [snapshot, setSnapshot] = useState<Snapshot>()
   const [notice, setNotice] = useState('')
+  const [markScopeOpen, setMarkScopeOpen] = useState(false)
+  const markScopeMenu = useRef<HTMLElement | null>(null)
   const [position, setPosition] = useState({ left: 8, top: 8 })
   const toolbar = useRef<HTMLDivElement>(null)
   const anchors = useRef(new WeakMap<Snapshot, { source: string; quote: ArkmeMessageQuote }>())
@@ -180,8 +187,10 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   current.current = snapshot
   useEffect(() => {
     let dragging = false
-    const insideToolbar = (target: EventTarget | null) => target instanceof Node && toolbar.current?.contains(target)
+    const insideToolbar = (target: EventTarget | null) => target instanceof Node
+      && (toolbar.current?.contains(target) || markScopeMenu.current?.contains(target))
     const dismiss = () => { setSnapshot(undefined) }
+    const scroll = (event: Event) => { if (!insideToolbar(event.target)) dismiss() }
     const capture = () => { const next = captureSelection(document); return next && next.startEntry?.reply?.selectionDomain === selectionDomain && (selectionDomain === undefined || next.startEntry?.reply?.sourceRef === replySourceRef) ? next : undefined }
     const show = () => { setNotice(''); setSnapshot(capture()) }
     const down = (event: MouseEvent) => {
@@ -205,6 +214,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     }
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && current.current) {
+        if (markScopeMenu.current) return // The native menu consumes the first Escape.
         event.preventDefault(); event.stopPropagation(); dismiss()
       }
     }
@@ -228,7 +238,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     document.addEventListener('keydown', keydown, true)
     document.addEventListener('keyup', keyup)
     document.addEventListener('selectionchange', selectionChanged)
-    document.addEventListener('scroll', dismiss, true)
+    document.addEventListener('scroll', scroll, true)
     window.addEventListener('blur', dismiss)
     window.addEventListener('resize', dismiss)
     return () => {
@@ -238,11 +248,12 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       document.removeEventListener('keydown', keydown, true)
       document.removeEventListener('keyup', keyup)
       document.removeEventListener('selectionchange', selectionChanged)
-      document.removeEventListener('scroll', dismiss, true)
+      document.removeEventListener('scroll', scroll, true)
       window.removeEventListener('blur', dismiss)
       window.removeEventListener('resize', dismiss)
     }
   }, [selectionDomain, replySourceRef])
+  useEffect(() => { setMarkScopeOpen(false) }, [snapshot])
   useEffect(() => {
     const open = (event: Event) => {
       const { element, range, quote, entry } = (event as CustomEvent<{ element: HTMLElement; range: Range; quote: ArkmeMessageQuote; entry: ReturnType<typeof targets.get> }>).detail
@@ -286,12 +297,21 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   }, [snapshot])
   useLayoutEffect(() => {
     if (!snapshot || !toolbar.current) return
-    const viewport = getViewport?.() ?? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight }
-    toolbar.current.style.maxWidth = `${Math.max(80, viewport.right - viewport.left - 16)}px`
-    const box = toolbar.current.getBoundingClientRect(), rect = snapshot.rect
-    const left = Math.max(viewport.left + 8, Math.min(viewport.right - box.width - 8, rect.right - box.width))
-    const top = rect.top - box.height - 8 >= viewport.top + 8 ? rect.top - box.height - 8 : rect.bottom + 8
-    setPosition({ left, top: Math.max(viewport.top + 8, Math.min(viewport.bottom - box.height - 8, top)) })
+    const element = toolbar.current
+    const reposition = () => {
+      const viewport = getViewport?.() ?? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight }
+      element.style.maxWidth = `${Math.max(80, viewport.right - viewport.left - 16)}px`
+      const box = element.getBoundingClientRect(), rect = snapshot.rect
+      const left = Math.max(viewport.left + 8, Math.min(viewport.right - box.width - 8, rect.right - box.width))
+      const preferredTop = rect.top - box.height - 8 >= viewport.top + 8 ? rect.top - box.height - 8 : rect.bottom + 8
+      const top = Math.max(viewport.top + 8, Math.min(viewport.bottom - box.height - 8, preferredTop))
+      setPosition(previous => previous.left === left && previous.top === top ? previous : { left, top })
+    }
+    reposition()
+    // Realtime authors can resize an open menu without changing its selection.
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(reposition)
+    observer?.observe(element)
+    return () => observer?.disconnect()
   }, [snapshot, notice, verified, getViewport])
   if (typeof document === 'undefined') return null
   if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
@@ -304,6 +324,13 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   // A partial overlap is not permission to delete a larger mark. Cancel only an exact selection.
   const ownMark = marks.find(mark => mark.mine && mark.anchor.start === quote?.start && mark.anchor.end === quote?.end)
   const authors = [...new Set(marks.map(mark => mark.mine ? '你' : mark.actorName))]
+  const canMark = !!onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1
+  const chooseMarkScope = canMark && !!onMarkStorageChange
+  const localScope = chooseMarkScope && markStorage === 'local'
+  const markLabel = ownMark ? localScope ? '取消标记（仅此电脑）' : '取消标记'
+    : localScope ? '标记（仅此电脑）' : chooseMarkScope && markAudience === 'conversation' ? '共享标记' : '标记'
+  const cloudScopeLabel = markAudience === 'conversation' ? '会话成员可见' : '在我的设备间同步'
+  const scopeLabel = markStorage === 'local' ? '仅此电脑可见' : cloudScopeLabel
   const removeMark = async () => {
     if (!ownMark || !onRemoveMark || !replyTarget || !stillValid(snapshot)) return
     try {
@@ -395,11 +422,19 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   }
   return createPortal(<div ref={toolbar} role="toolbar" aria-label={tr('选中文字操作')}
     data-arkme-text-selection-toolbar
+    onFocus={() => queueMicrotask(() => {
+      // Native menu keyboard focus must keep the original prose selection visible.
+      if (current.current !== snapshot || !stillValid(snapshot)) return
+      const selection = document.getSelection()
+      if (selection?.isCollapsed) {
+        selection.removeAllRanges(); selection.addRange(snapshot.range)
+      }
+    })}
     onPointerDown={event => { event.preventDefault(); event.stopPropagation() }}
     onMouseDown={event => { event.preventDefault(); event.stopPropagation() }}
     onClick={event => event.stopPropagation()}
     style={{ position: 'fixed', ...position, zIndex: 12000, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 2,
-      maxWidth: 'calc(100vw - 16px)', padding: 4, borderRadius: 9, border: `1px solid ${arkmeTheme.border}`,
+      maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 16px)', padding: 4, borderRadius: 9, border: `1px solid ${arkmeTheme.border}`,
       background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow, userSelect: 'none' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
     <button type="button" style={buttonStyle} onClick={() => { void copy(snapshot.text) }}>{tr('复制')}</button>
@@ -407,10 +442,24 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       <span aria-hidden style={{ width: 1, height: 14, background: arkmeTheme.border }} />
       <button type="button" style={buttonStyle} onClick={selectAll}>{tr('全选')}</button>
     </>}
-    {onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1 && <button type="button" aria-pressed={!!ownMark} disabled={!!ownMark?.pending}
+    {canMark && <span style={{ display: 'inline-flex', alignItems: 'center' }}><button type="button" aria-pressed={!!ownMark} disabled={!!ownMark?.pending}
       title={ownMark ? `取消你对“${ownMark.anchor.text}”的标记` : undefined}
       style={{ ...buttonStyle, ...(ownMark ? { color: arkmeTheme.info, background: arkmeTheme.active } : {}) }}
-      onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(ownMark ? '取消标记' : '标记')}</button>}
+      onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(markLabel)}</button>
+      {chooseMarkScope && <><style>{'[data-arkme-mark-scope-menu] { z-index: 12001; }'}</style><ArkmeActionMenu open={markScopeOpen} label={tr('标记范围')} autoFocus
+        onClose={() => setMarkScopeOpen(false)} selectedIds={[markStorage ?? 'cloud']}
+        anchor={<button type="button" aria-label={tr('标记范围')} aria-haspopup="menu" aria-expanded={markScopeOpen}
+          title={tr('标记范围：{v0}', { v0: tr(scopeLabel) })} style={{ ...buttonStyle, padding: '6px 5px' }}
+          onClick={() => setMarkScopeOpen(value => !value)}><span aria-hidden>▾</span></button>}
+        actions={(['cloud', 'local'] as const).map(storage => ({ id: storage,
+          label: <span ref={node => {
+            const menu = node?.closest<HTMLElement>('[role="menu"]') ?? null
+            markScopeMenu.current = menu
+            menu?.setAttribute('data-arkme-mark-scope-menu', '')
+          }}>{tr(storage === 'cloud' ? cloudScopeLabel : '仅此电脑可见')}</span>,
+          onSelect: () => { setMarkScopeOpen(false); onMarkStorageChange(storage) },
+        }))} /></>}
+    </span>}
     {replySourceRef && snapshot.startEntry?.reply?.sourceRef === replySourceRef && snapshot.endEntry?.reply?.sourceRef === replySourceRef
       && <button type="button" style={buttonStyle} onClick={find}>{tr('查找')}</button>}
     {prepareReplace && replyTarget && replyTarget.sourceRef === replySourceRef && canReplace?.(replyTarget)
@@ -418,7 +467,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
     {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('转发')}</button>}
     </div>
-    {(authors.length > 0 || (markStorage === 'local' && onUnderline && replyTarget?.sourceRef === replySourceRef)) && <div data-arkme-mark-authors style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
+    {(authors.length > 0 || (markStorage === 'local' && !onMarkStorageChange && canMark)) && <div data-arkme-mark-authors tabIndex={0} aria-label="标记作者" style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary, minHeight: 0, maxHeight: 'min(160px, 35vh)', overflowY: 'auto', overflowWrap: 'anywhere' }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' && !onMarkStorageChange ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}
   </div>, document.body)
 }
