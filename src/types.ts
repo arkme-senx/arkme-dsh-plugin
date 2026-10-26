@@ -1511,6 +1511,7 @@ arkoImagesV1?:true
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    arkoLifecycleV1?: true
     arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
@@ -3849,6 +3850,7 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  lifecycleVersion?: number
   messageRef?: string
   orderAtMillis?: number
   sourceType?: number
@@ -4574,6 +4576,9 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'arko.lifecycle.query'
+  | 'arko.lifecycle.change'
+  | 'arko.deleted'
   | 'arko.messages'
   | 'arko.search'
   | 'arko.context'

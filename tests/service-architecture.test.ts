@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deletedArrangements', 'deletedArrangementDetail',
@@ -164,7 +165,7 @@ const expectedServiceFiles = [
   'recording-tool-workflow.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
-  'arko-service.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
+  'arko-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'calendar-day-review-service.ts',
   'people-service.ts',

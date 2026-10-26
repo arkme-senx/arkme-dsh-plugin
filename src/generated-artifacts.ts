@@ -15,7 +15,7 @@ const invalid = () => new ArkmePluginError('generated-file-unavailable', '生成
 export class GeneratedArtifacts {
   private active = false
   private readonly codec: EncryptedReferenceCodec
-  constructor(private readonly directory: string, secret: () => Promise<string>, private readonly currentUser: () => Promise<number>) {
+  constructor(private readonly directory: string, secret: () => Promise<string>, private readonly currentUser: () => Promise<number>, private readonly sourceRevision?: (signal?: AbortSignal) => Promise<number>) {
     this.codec = new EncryptedReferenceCodec(secret, invalid)
   }
   async create<T>(userId: number, fileName: string, produce: (write: (text: string) => Promise<void>) => Promise<T>, signal?: AbortSignal) {
@@ -25,6 +25,7 @@ export class GeneratedArtifacts {
     let published = false
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 })
+      const sourceRevision = await this.sourceRevision?.(signal)
       const retainedBytes = await this.cleanup()
       signal?.throwIfAborted()
       const file = await open(partial, 'wx', 0o600)
@@ -43,9 +44,10 @@ export class GeneratedArtifacts {
       } finally { await file.close() }
       signal?.throwIfAborted()
       if (await this.currentUser() !== userId) throw invalid()
+      if (this.sourceRevision && sourceRevision !== await this.sourceRevision(signal)) throw invalid()
       const expiresAtMillis = Date.now() + TTL
       await rename(partial, path)
-      const fileRef = await this.codec.seal(GENERATED_ARTIFACT_PREFIX, { id, userId, size, fileName, expiresAtMillis, sha256: hash.digest('hex') })
+      const fileRef = await this.codec.seal(GENERATED_ARTIFACT_PREFIX, { id, userId, size, fileName, expiresAtMillis, sha256: hash.digest('hex'), ...(sourceRevision === undefined ? {} : { sourceRevision }) })
       signal?.throwIfAborted()
       if (await this.currentUser() !== userId) throw invalid()
       published = true
@@ -56,12 +58,13 @@ export class GeneratedArtifacts {
       if (!published) await unlink(path).catch(() => undefined)
     }
   }
-  async read(ref: string): Promise<{ path: string; file: ArkmeLocalFile }> {
+  async read(ref: string, signal?: AbortSignal): Promise<{ path: string; file: ArkmeLocalFile }> {
     const payload = await this.codec.open(GENERATED_ARTIFACT_PREFIX, ref)
     if (payload.userId !== await this.currentUser() || typeof payload.id !== 'string' || !/^[0-9a-f-]{36}$/.test(payload.id)
       || typeof payload.expiresAtMillis !== 'number' || payload.expiresAtMillis <= Date.now()
       || typeof payload.size !== 'number' || payload.size < 1 || payload.size > MAX_BYTES
       || typeof payload.fileName !== 'string') throw invalid()
+    if (this.sourceRevision && payload.sourceRevision !== await this.sourceRevision(signal)) throw invalid()
     const path = join(this.directory, `${payload.id}.md`)
     const info = await stat(path).catch(() => undefined)
     if (!info?.isFile() || info.size !== payload.size) throw invalid()

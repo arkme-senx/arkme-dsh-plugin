@@ -1,5 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '操作结果暂时无法确认，请重试': 'The result could not be verified. Please try again.',
+  '删除的消息将放入「数据管理 → 最近删除」，30 天内可恢复，之后自动清空。': 'Deleted messages move to Data Management → Recently Deleted. Restore them within 30 days before they are automatically cleared.',
   "正在读取原内容…": "Loading original content…",
   "暂不支持公开，请移除此附件后继续。": "Not supported for public posts. Remove this attachment to continue.",
 

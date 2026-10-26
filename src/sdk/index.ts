@@ -1,3 +1,5 @@
+import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
+export type * from '../arko-lifecycle-contract.js'
 export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
 export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
 
@@ -549,6 +551,21 @@ export class ArkmeSdk {
     }
   }
 
+  private async requireArkoLifecycle(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoLifecycleV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持消息删除与恢复，请升级', retryable: false })
+  }
+  async arkoLifecycle(messageRefs: readonly string[] = [], signal?: AbortSignal): Promise<ArkmeArkoLifecycleSnapshot> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.query', { messageRefs }, signal)
+  }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal): Promise<ArkmeArkoLifecycleResult> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.change', { ...command }, signal)
+  }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal): Promise<ArkmeArkoDeletedPage> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
+  }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }

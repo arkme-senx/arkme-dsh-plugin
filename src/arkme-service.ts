@@ -1146,6 +1146,7 @@ arkoImagesV1:true,
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        arkoLifecycleV1: true,
         arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -1507,6 +1508,9 @@ arkoImagesV1:true,
     return await this.arko.arkoActivateModel(routeKey, signal)
   }
 
+  async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.arko.arkoLifecycle(refs, signal) }
+  async arkoChangeLifecycle(command: import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.arko.arkoChangeLifecycle(command, signal) }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.arko.arkoRecentlyDeleted(cursor, signal) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoMessages(query, signal)
