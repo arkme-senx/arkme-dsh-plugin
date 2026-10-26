@@ -33,10 +33,10 @@ export function reactionToolbarPosition(isMe: boolean, box: { left: number; righ
     paddingTop: beside ? 0 : 4 }
 }
 
-export function reactionPanelPosition(box: { left: number; top: number; bottom: number }, width: number, viewport: { width: number; height: number }): CSSProperties {
+export function reactionPanelPosition(box: { left: number; top: number; bottom: number }, width: number, viewport: { width: number; height: number }, preferredHeight = 180): CSSProperties {
   const above = Math.max(0, box.top - 16), below = Math.max(0, viewport.height - box.bottom - 16)
   const left = Math.max(8, Math.min(box.left, viewport.width - width - 8))
-  return above >= 180 || above >= below
+  return above >= preferredHeight || above >= below
     ? { left, bottom: Math.max(8, viewport.height - box.top + 8), maxHeight: above }
     : { left, top: Math.max(8, box.bottom + 8), maxHeight: below }
 }
@@ -104,7 +104,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     const reposition = () => {
       if (!panel.current) return
       const size = panel.current.getBoundingClientRect()
-      const next = reactionPanelPosition(box, size.width, { width: window.innerWidth, height: window.innerHeight })
+      const next = reactionPanelPosition(box, size.width, { width: window.innerWidth, height: window.innerHeight }, Math.max(180, size.height || 0))
       setPosition(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)
     }
     reposition()
@@ -173,6 +173,12 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
   useEffect(() => { setGroupPage(undefined); return () => groupAbort.current?.abort() }, [scope, target.id])
   const currentGroupPage = groupScope.current === viewScope ? groupPage : undefined
   const groups = snapshot ? currentGroupPage?.items ?? snapshot.groups : []
+  const actorIdentity = (actor: ReactionActor): ReactionActor =>
+    actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我'
+      ? { ...actor, displayName: actorGroupNickname?.trim() || actorName,
+        ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
+        ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}) }
+      : target.resolveActor?.(actor) ?? actor
   const loadGroups = async () => {
     if (groupBusy) return
     const controller = new AbortController(); groupAbort.current = controller
@@ -230,10 +236,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
       <span style={{ color: c.secondary, borderLeft: `1px solid ${c.border}`, marginLeft: 6, padding: '0 2px 0 7px', lineHeight: '16px' }}>
         {snapshot?.actors_visible ? <>
           {(group.actors?.length ? group.actors : mine ? [{ userId: Number(scope.split(':').at(-1)), displayName: '我' }] : []).map((actor, index) => {
-            const identity: ReactionActor = actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我' ? { ...actor, displayName: actorGroupNickname?.trim() || actorName,
-              ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
-              ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}),
-            } : target.resolveActor?.(actor) ?? actor
+            const identity = actorIdentity(actor)
             const name = identity.displayName
             return <span key={actor.userId}>{index > 0 && '、'}<button type="button" aria-label={`查看${name}的资料`} data-arkme-new-reaction={!newGroup && newActors.has(actor.userId) ? 'actor' : undefined} className={!newGroup && newActors.has(actor.userId) ? 'arkme-new-reaction' : undefined}
               onClick={event => { event.stopPropagation(); setProfileActor(identity) }}
@@ -251,7 +254,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
     {groupError && <div role="alert">{groupError}</div>}
     {actorKey && snapshot?.actors_visible && actorScope.current === viewScope && <div role="region" aria-label="表态者" style={{ flexBasis: '100%', padding: 6, border: `1px solid ${c.border}`, borderRadius: 6 }}>
       <button type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }}>×</button>
-      {actors?.items.map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
+      {actors?.items.map(actorIdentity).map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
       {actorBusy && <span role="status">加载中…</span>}
       {actorError && <button type="button" style={button} onClick={() => void loadActors(actorKey)}>{actorError} · 重试</button>}
       {actors?.has_more && <button type="button" disabled={actorBusy} style={button} onClick={() => void loadActors(actorKey, true)}>更多</button>}

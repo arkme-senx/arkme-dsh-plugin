@@ -121,6 +121,14 @@ export class TeamAppService {
     if(message.conversation_uid!==context.conversation_uid||message.side!==context.side||!['team','external'].includes(str(context.side)))throw invalid()
     return {team_conversation_uid:str(context.conversation_uid),team_message_uid:str(message.message_uid),team_side:context.side as 'team'|'external'}
   }
+  /** Presentation aliases for actors already authorized by the reaction owner. */
+  async reactionActorKeys(conversationRef: string, ids: readonly number[]): Promise<Map<number, string>> {
+    const actor = (await this.runtime.requireSession()).userId
+    const context = await this.open('conversation', conversationRef, actor)
+    if (context.side !== 'team') return new Map()
+    return new Map(await Promise.all([...new Set(ids)].map(async id =>
+      [id, await this.key(`person:${id}`, actor)] as const)))
+  }
   async replyKey(conversationRef: string, messageRef: string, actor: number): Promise<string> {
     const context = await this.open('conversation', conversationRef, actor)
     const message = await this.open('message', messageRef, actor)
