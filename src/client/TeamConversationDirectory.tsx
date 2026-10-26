@@ -9,6 +9,8 @@ import { TeamConversationRow } from './TeamMessagingPanel.js'
 import { conversationDirectoryStyles as styles, conversationTimeLabel } from './conversation-directory-presentation.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory, type TeamConversationGroup } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
+import { openTeamOutbound } from './team-outbound.js'
+import { UserPlus } from '@phosphor-icons/react/dist/icons/UserPlus'
 import { arkmeUi, type ArkmeUiState } from './ui-controller.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -22,7 +24,8 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   group: TeamConversationGroup; accountKey?: string; selected?: boolean; onClick(): void
 }) {
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'folder', group })
-  const { latest, channel, unread } = group
+  const { latest, channel } = group
+  const unread = group.attentionUnread
   const preview = latest.preview?.status === 'available'
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''
@@ -61,14 +64,20 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     if (!folder.teamRef || channel) return
     const controller = new AbortController(), teamRef = folder.teamRef
     void callArkme<TeamChannel>('team.app.channel', { teamRef, expectedAccountKey: accountKey }, controller.signal)
-      .then(value => { if (!controller.signal.aborted) { teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId)); arkmeUi.resolveTeamDirectory(teamRef, value) } })
+      .then(async value => {
+        controller.signal.throwIfAborted()
+        await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId))
+        controller.signal.throwIfAborted()
+        arkmeUi.resolveTeamDirectory(teamRef, value)
+      })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : tr('暂时无法打开团队，请重试')) })
     return () => controller.abort()
   }, [accountKey, folder.teamRef, channel, attempt])
   const groups = groupTeamConversations(directory.items, directory.hasLoaded && !directory.hasMore && !directory.error)
   const items = channel ? groups.find(group => group.key === channel.jotmoId)?.conversations ?? [] : []
   const visibleItems = items.filter(c => !teamEntryHidden(preferences, { kind: 'conversation', conversation: c }))
-    .sort((a, b) => Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: b })) - Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: a })))
+    .sort((a, b) => Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: b })) - Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: a }))
+      || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
   const removedItems = items.filter(c => teamEntryHidden(preferences, { kind: 'conversation', conversation: c }))
   const visibleGroups = groups.filter(group => !teamEntryHidden(preferences, { kind: 'folder', group }))
     .sort((a, b) => Number(teamEntryPinned(preferences, { kind: 'folder', group: b })) - Number(teamEntryPinned(preferences, { kind: 'folder', group: a })))
@@ -98,6 +107,9 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
       <button type="button" data-arkme-feedback="neutral" aria-label={tr('返回 Arkme 会话列表')} onClick={onBack}
         style={{width:30,height:30,display:'grid',placeItems:'center',padding:0,border:0,borderRadius:8,background:'transparent',color:'inherit',cursor:'pointer'}}><ArrowLeft size={20} /></button>
       <h2 style={{fontSize:15,lineHeight:'24px',fontWeight:500,margin:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{channel?.name ?? tr('团队对话')}</h2>
+      <button type="button" data-arkme-feedback="neutral" aria-label={tr('联系用户')} title={tr('联系用户')} disabled={resolving}
+        style={{marginLeft:'auto',flexShrink:0,width:32,height:32,display:'grid',placeItems:'center',padding:0,border:0,borderRadius:8,background:'transparent',color:'inherit',cursor:'pointer'}}
+        onClick={() => openTeamOutbound({ accountKey, teamJotmoId: channel?.jotmoId })}><UserPlus size={20} /></button>
     </header>
     <ArkmeOverlayScrollArea ref={scroll} aria-label={tr('团队会话列表')} style={{padding:'0 6px 8px'}}
       onScroll={event => { if (restoredScope.current === scope) arkmeUi.rememberTeamDirectoryScroll(scope,event.currentTarget.scrollTop) }}>

@@ -1,3 +1,12 @@
+import { realtimeDictationTool } from './recordings/realtime-dictation.js'
+import { articlesTool } from './records/articles.js'
+import {teamMessageTools} from './conversation/team-messages.js'
+import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import {teamExternalChatTools} from './contacts/team-external-chat.js'
+import { analyticsToolModules } from './conversation/analytics.js'
+import {teamNotificationTools} from './contacts/team-notifications.js'
+import { nativeAnnotationTools } from './conversation/native-annotations.js'
+import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
 import { messageSyncToolModules } from './conversation/message-sync.js'
 import {teamProfileTools} from './contacts/team-profile.js'
@@ -20,7 +29,7 @@ import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFav
 import { readSourceToolModule } from './conversation/read-source.js'
 import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
-import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
+import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
@@ -60,11 +69,16 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  realtimeDictationTool,
+  ...nativeAnnotationTools,
   ...messageSyncToolModules,
   ...selfRoleToolModules,
   ...officialNotificationToolModules,
   directoryReadToolModule,
   ...teamProfileTools,
+  ...teamExternalChatTools,
+  ...teamMessageTools,
+  ...teamNotificationTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,
@@ -86,6 +100,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
+  relationPagesTool,
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
@@ -97,10 +112,13 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
+  ...analyticsToolModules,
   copyLinkExtendToolModule,
+  articlesTool,
   sourceMembersToolModule,
   ...memberPageToolModules,
   sourceMemberRecordsToolModule,
+  personRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
@@ -114,6 +132,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listFavoriteStickersToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
+  readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

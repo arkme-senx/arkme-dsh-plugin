@@ -20,7 +20,7 @@ describe('Arkme persistent conversation frame', () => {
       close: () => {},
       initialAuth: { status: 'authenticated', environment: 'prod', userId: 1 },
       openedFromSession: undefined,
-      useSessions: (selector: (state: { current: string }) => unknown) => selector({ current: 'session-1' }),
+      useSessions: (selector: (state: { ids: string[]; byId: Record<string, { id: string; retainedBy: { mainView: number } }> }) => unknown) => selector({ ids: ['session-1'], byId: { 'session-1': { id: 'session-1', retainedBy: { mainView: 1 } } } }),
       renderSlot: () => null,
     } as never))
     expect(markup).toContain('data-arkme-owned="persistent-conversation-compat"')

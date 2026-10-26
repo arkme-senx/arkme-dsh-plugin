@@ -8,6 +8,7 @@ import { ExploreSurface } from '../src/client/explore/ExploreSurface.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 const mocks=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.call}))
+vi.mock('../src/client/ArkmeLocationDialog.js',()=>({ArkmeLocationDialog:({onClose}:{onClose():void})=><button onClick={onClose}>关闭位置</button>}))
 vi.mock('../src/client/ArkmeNoteDetails.js',()=>({ArkmeTimelineDetailDrawer:()=>null}))
 let host:HTMLDivElement,root:Root,scope=0
 const item=(id:string)=>({key:id,ref:id,title:'档案 '+id,summary:'真实保存的内容',category:'偏好',status:'',date:0})
@@ -31,12 +32,12 @@ afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreA
 async function click(text:string){const button=[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===text);expect(button).toBeTruthy();await act(async()=>button!.click())}
 async function renderSurface(){await act(async()=>root.render(<ExploreSurface module="profile" accountScope={'test:'+ ++scope}/>))}
 describe('Explore interactions',()=>{
-  it('groups all seven destinations and publishes module changes before closing the menu',async()=>{
+  it('groups all destinations and publishes module changes before closing the menu',async()=>{
     await act(async()=>root.render(<ExploreNavigation style={{}} active current="profile" locked={false}/>))
     const trigger=host.querySelector('button')!
     await act(async()=>trigger.click())
     const panel=document.querySelector('#arkme-explore-menu')!
-    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','世界'])
+    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','位置','世界'])
     await click('统计与分析');expect(arkmeUi.getViewSnapshot().mode).toBe('statistics')
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click())
@@ -44,6 +45,11 @@ describe('Explore interactions',()=>{
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click());await click('纪念日')
     expect(arkmeUi.getViewSnapshot()).toMatchObject({mode:'explore',exploreModule:'anniversaries'})
+    const beforeLocation = arkmeUi.getViewSnapshot()
+    await act(async()=>trigger.click());await click('位置')
+    expect(arkmeUi.getViewSnapshot()).toMatchObject({...beforeLocation,locationOpen:true})
+    expect(document.querySelector('#arkme-explore-menu')).toBeNull()
+    await click('关闭位置');expect(arkmeUi.getViewSnapshot()).toEqual(beforeLocation)
     await act(async()=>trigger.click());await click('世界');expect(arkmeUi.getViewSnapshot().mode).toBe('world')
     await act(async()=>trigger.click());await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
     expect(document.querySelector('#arkme-explore-menu')).toBeNull();expect(document.activeElement).toBe(trigger)
@@ -172,6 +178,29 @@ it('restores saved relationship content immediately, keeps it on refresh failure
   expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
 })
 
+it('restores the complete loaded list window, retains its counts on failure and retries without an old cursor', async () => {
+  const account='test:'+ ++scope, at=Date.now()-60_000
+  const savedItems=Array.from({length:150},(_,i)=>item('saved-'+i))
+  const savedPage={...page,module:'relations',items:savedItems,total:1200,nextCursor:'old-snapshot',filters:[{key:'',label:'全部',count:1200}]}
+  relationViewCache.write(account,'view',{filter:'',query:'',page:savedPage,listTop:1600,detailTop:0,savedAt:at},at)
+  const pending:Array<{params:any;resolve:(v:any)=>void;reject:(e:Error)=>void}>=[]
+  mocks.call.mockImplementation(async(op,params)=>{
+    expect(op).toBe('explore.list')
+    return new Promise((resolve,reject)=>pending.push({params,resolve,reject}))
+  })
+  await act(async()=>root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+  expect(host.querySelector('.explore-list')?.scrollTop).toBe(1600)
+  expect(pending[0]!.params).toEqual({module:'relations',filter:'',query:'',limit:150})
+  await act(async()=>pending[0]!.reject(new Error('离线')))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+  expect(host.querySelector('.explore-header-actions')?.textContent).toContain('1200')
+  await click('重试')
+  expect(pending[1]!.params).toEqual(pending[0]!.params)
+  await act(async()=>pending[1]!.resolve({...savedPage,nextCursor:'new-snapshot'}))
+  expect(host.querySelectorAll('.explore-row')).toHaveLength(150)
+})
+
 it('keeps later detail pages visible when refreshing the first page and persists independently loaded regions', async () => {
   const account = 'test:' + ++scope, at = Date.now() - 60_000
   const evidence = (key: string) => ({ key, label: '来源', speaker: '', text: key, date: 0, anchor: false })
@@ -190,4 +219,26 @@ it('keeps later detail pages visible when refreshing the first page and persists
   await act(async () => host.querySelector<HTMLButtonElement>('.explore-row')!.click())
   expect(mocks.call.mock.calls.filter(c => c[1]?.part === 'records')).toHaveLength(calls)
   expect(host.textContent).toContain('later-page')
+})
+
+it.each([0,60_000])('preserves the saved overview and renews only its reference on return (age %d)',async age=>{
+  const account='test:'+ ++scope,at=Date.now()-age
+  const selected={...items[0],ref:'fresh-ref',title:'列表标题',summary:'列表概述'}
+  const saved={...items[0],ref:'old-ref',title:'已经读过的详情标题',summary:'已经读过的完整详情概述'}
+  relationViewCache.write(account,'view',{filter:'',query:'',page:{...page,module:'relations',items:[selected]},selected,listTop:0,detailTop:200,savedAt:at},at)
+  relationViewCache.write(account,'relations:a',{detail:{item:saved,fields:[{label:'别名',value:'已读别名'}],evidence:[{key:'saved',label:'来源',speaker:'',text:'已读原文',date:0,anchor:false}],actions:[]},recordsAt:at,overviewAt:at,firstKeys:['saved']},at)
+  const pending:Array<{input:any;resolve:(v:any)=>void;reject:(e:Error)=>void}>=[]
+  mocks.call.mockImplementation(async(_op,input)=>new Promise((resolve,reject)=>pending.push({input,resolve,reject})))
+  await act(async()=>root.render(<ExploreSurface module="relations" accountScope={account}/>))
+  expect(host.querySelector('h1')?.textContent).toBe(saved.title)
+  expect(host.querySelector('.explore-detail-summary')?.textContent).toBe(saved.summary)
+  expect(host.textContent).toContain('已读原文')
+  expect(host.querySelector('.explore-detail')?.scrollTop).toBe(200)
+  const cached=relationViewCache.read(account,'relations:a',()=>true)?.value as any
+  expect(cached.detail.item.ref).toBe('fresh-ref')
+  if(age){
+    expect(pending.filter(r=>r.input.part==='overview').map(r=>r.input.ref)).toEqual(['fresh-ref'])
+    await act(async()=>{for(const r of pending)r.reject(new Error('离线'))})
+    expect(host.querySelector('.explore-detail-summary')?.textContent).toBe(saved.summary)
+  }
 })

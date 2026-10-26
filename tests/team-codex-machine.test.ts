@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
+import { wrappedCodexPrompt } from './fixtures/codex-prompt.js'
+import sharp from 'sharp'
 
 const teamRef=`team_v1_${'a'.repeat(32)}`
 const member:ArkmeTeamMember={userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1}
@@ -27,15 +29,107 @@ function fixture(cloud?:TeamCodexCloudPort){
     env:{...process.env,CODEX_HOME:codex,CODEX_THREAD_ID:'',...env},...(input?{input:JSON.stringify(input)}:{}),encoding:'utf8',timeout:5000})
   const enroll=async()=>{const invite=await service.invite(teamRef);installation=invite.id;const result=run(['enroll',installation]);expect(result.status,result.stderr).toBe(0);return invite}
   const claim=()=>JSON.parse(readFileSync(join(directory,installation,'claim.json'),'utf8'))
-  const record=(kind='UserPromptSubmit',override:Record<string,unknown>={})=>run(['capture',installation,'--home-key',claim().homeKey],{
-    hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
+  const registered=new Map<string,string>()
+  const register=(id='task_current_123',name='Codex')=>{
+    registered.set(id,name)
+    writeFileSync(join(codex,'session_index.jsonl'),[...registered].map(([id,thread_name])=>JSON.stringify({id,thread_name,updated_at:'2026-10-23T00:00:00Z'})).join('\n')+'\n')
+  }
+  const record=(kind='UserPromptSubmit',override:Record<string,unknown>={},persistent=true)=>{
+    if(persistent) {
+      const id=String(override.session_id??'task_current_123')
+      register(id,registered.get(id)??'Codex')
+    }
+    return run(['capture',installation,'--home-key',claim().homeKey],{
+      hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
+  }
   const tasks=async()=>(await service.state(teamRef)).tasks
   const task=async()=>(await tasks())[0]!
-  return {service,options,root,directory,codex,project,run,enroll,record,claim,tasks,task,
+  return {service,options,root,directory,codex,project,run,enroll,record,register,claim,tasks,task,
     setUser:(value:number|undefined)=>{user=value;service.fence()},advance:(value:number)=>{offset+=value}}
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('serves private images only through the exact owner, team, task and turn binding',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    mkdirSync(join(f.codex,'sessions'))
+    const path=join(f.codex,'sessions','images.jsonl')
+    native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','任务',path);native.close()
+    const bytes=await sharp({create:{width:4,height:3,channels:3,background:'#49a'}}).png().toBuffer()
+    writeFileSync(path,[{type:'session_meta',payload:{id:'task_current_123'}},
+      {type:'event_msg',payload:{type:'task_started',turn_id:'turn_123',root_turn_id:'turn_123'}},
+      {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+bytes.toString('base64')}]}}
+    ].map(x=>JSON.stringify(x)).join('\n')+'\n')
+    let ref=''
+    await vi.waitFor(async()=>{ref=(await f.service.events(teamRef,task.id)).items[0]?.privateImages?.[0]?.ref??'';expect(ref).not.toBe('')})
+    expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
+    await expect(f.service.image(teamRef,task.id,'other_turn','UserPromptSubmit',ref)).rejects.toThrow()
+    await expect(f.service.image(`team_v1_${'c'.repeat(32)}`,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
+    f.setUser(22)
+    await expect(f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
+    f.setUser(11);f.service.close();rmSync(path)
+    const restored=new TeamCodexService(f.options);services.push(restored)
+    expect((await restored.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
+  })
+  it('attaches native timing to the exact captured turn and keeps it after restart and pause',async()=>{
+    const f=fixture();await f.enroll();f.record();f.record('Stop');const task=await f.task()
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    mkdirSync(join(f.codex,'sessions'))
+    const path=join(f.codex,'sessions','current.jsonl'),start=Math.floor(Date.now()/1000)-200
+    native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','任务',path);native.close()
+    writeFileSync(path,[{type:'session_meta',payload:{id:'task_current_123'}},
+      {type:'event_msg',timestamp:new Date((start+128)*1000).toISOString(),payload:{type:'task_complete',turn_id:'turn_123',root_turn_id:'turn_123',started_at:start,completed_at:start+128,duration_ms:128012}}].map(x=>JSON.stringify(x)).join('\n')+'\n')
+    expect((await f.service.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    f.service.close();rmSync(path)
+    const restored=new TeamCodexService(f.options);services.push(restored)
+    expect((await restored.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    await restored.change(teamRef,task.installationId!,'pause')
+    expect((await restored.events(teamRef,task.id)).items.find(e=>e.kind==='Stop')?.timing?.durationMs).toBe(128012)
+    f.setUser(22)
+    await expect(restored.events(teamRef,task.id)).rejects.toThrow()
+  })
+  it('does not ingest internal suggestion requests or their later Interrupt, but accepts a persistent user quoting that envelope',async()=>{
+    const f=fixture();await f.enroll()
+    const prompt='This is an app-generated request for a suggested next user message. The user did not write this message.\n\n{"suggestion":null}'
+    f.record('UserPromptSubmit',{session_id:'background_123',prompt},false)
+    expect(await f.tasks()).toEqual([])
+    f.record('Interrupt',{session_id:'background_123'},false)
+    expect(await f.tasks()).toEqual([])
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'),{readOnly:true})
+    expect(journal.prepare('SELECT count(*) n FROM codex_events').get()).toEqual({n:0});journal.close()
+    f.record('UserPromptSubmit',{prompt})
+    expect((await f.tasks()).map(t=>t.title)).toEqual(['Codex'])
+  })
+  it('holds unregistered sessions until native metadata arrives, retains the same event, and survives a temporary metadata failure',async()=>{
+    const f=fixture();await f.enroll();f.record('UserPromptSubmit',{},false)
+    expect(await f.tasks()).toEqual([])
+    writeFileSync(join(f.codex,'session_index.jsonl'),JSON.stringify({id:'task_current_123',thread_name:'真实用户任务',updated_at:'2026-10-23T00:00:00Z'})+'\n')
+    const task=await f.task();expect(task).toMatchObject({title:'真实用户任务',eventCount:1})
+    writeFileSync(join(f.codex,'state_5.sqlite'),'corrupt')
+    expect(await f.task()).toMatchObject({id:task.id,title:task.title,eventCount:1})
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe('请修复页面')
+  })
+  it('quarantines pre-upgrade background rows without deleting their raw events',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    journal.prepare('DELETE FROM codex_session_visibility').run()
+    journal.prepare('UPDATE codex_events SET text=?').run('## Memory Writing Agent: Phase 2 (Consolidation)\n\nYou are a Memory Writing Agent.\n\nwork')
+    rmSync(join(f.codex,'session_index.jsonl'))
+    expect(await f.tasks()).toEqual([])
+    expect(journal.prepare('SELECT count(*) n FROM codex_events').get()).toEqual({n:1})
+    await expect(f.service.events(teamRef,task.id)).rejects.toThrow('尚未确认为用户任务')
+    journal.close()
+  })
+  it('extracts the current question before truncating its preview and keeps original events intact',async()=>{
+    const f=fixture();await f.enroll()
+    const body='实际问题：'+ '请核对录音器尺寸。'.repeat(40),prompt=wrappedCodexPrompt(body)
+    f.record('UserPromptSubmit',{prompt})
+    const task=await f.task()
+    expect(task.currentInput?.text).toBe(body.slice(0,240))
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(prompt)
+  })
   it('buffers a final reply during a short runtime restart, then ingests it exactly once',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     f.service.close()
@@ -332,6 +426,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
   })
   it('orders batches, pages without overlap and discards malformed/wrong-generation/wrong-home records',async()=>{
     const f=fixture(),invite=await f.enroll(),folder=join(f.directory,invite.id)
+    f.register()
     const control=JSON.parse(readFileSync(join(folder,'control.json'),'utf8')),at=Date.now()
     const sample={version:2,homeKey:f.claim().homeKey,sessionId:'task_current_123',generation:control.generation,
       turnId:'turn_invalid',kind:'UserPromptSubmit',text:'bad',at,project:{key:'unknown',name:'',cwd:'',branch:'',worktree:''}}
@@ -356,6 +451,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     writeFileSync(join(f.directory,legacy,'claim.json'),JSON.stringify({sessionId:'task_current_123',title:'原任务',at:now}))
     await f.service.tick();f.run(['record'],{session_id:'different_task_123',turn_id:'other',hook_event_name:'UserPromptSubmit',prompt:'ignore'})
     expect((await f.task()).eventCount).toBe(1)
+    f.register('task_current_123','原任务')
     await f.enroll();f.record();const task=await f.task();expect(await f.tasks()).toHaveLength(1)
     expect(task).toMatchObject({title:'原任务',eventCount:2})
     expect((await f.service.events(teamRef,task.id)).items.map(e=>e.text)).toEqual(['旧记录','请修复页面'])

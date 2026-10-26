@@ -61,6 +61,7 @@ it('serializes only safe Host recovery and image failure metadata across the rea
       body: JSON.stringify({ operation: 'directory.list', params: { section: 'contacts', limit: 1 } }),
     })
     expect(response.status).toBe(502)
+    expect(response.headers.get('server-timing')).toMatch(/^arkme;dur=\d+\.\d$/)
     expect(await response.json()).toEqual({ ok: false, error: {
       code: 'arkme-code-1002', message: '服务器繁忙', retryable: true,
       failureKind: 'rate_limited', retryAfterMillis: 1200, retryScope: 'route',

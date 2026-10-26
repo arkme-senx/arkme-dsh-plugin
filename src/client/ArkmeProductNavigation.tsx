@@ -1,3 +1,4 @@
+import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -154,6 +155,17 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getConversationSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
+  const lockAvailable = typeof window !== 'undefined'
+    && (window as Window & { arkmeDesktop?: { deviceLock?: { version?: number } } }).arkmeDesktop?.deviceLock?.version === 1
+  const [lockBusy, setLockBusy] = useState(false)
+  const [lockError, setLockError] = useState('')
+  const lockCurrentDevice = async () => {
+    if (lockBusy) return
+    setLockBusy(true); setLockError('')
+    try { await callArkme('device.lock.lock'); setProfileOpen(false) }
+    catch (error) { setLockError(error instanceof Error ? error.message : '锁定失败，请重试') }
+    finally { setLockBusy(false) }
+  }
   const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
@@ -166,6 +178,22 @@ export function ArkmeProductNavigation({
   const recordingHintId = useId()
   const [recordingHintOpen, setRecordingHintOpen] = useState(false)
   useEffect(() => { setRecordingHintOpen(false) }, [memberScope, isRecording])
+  useEffect(() => {
+    if (!recordingHintOpen) return
+    const hide = () => setRecordingHintOpen(false)
+    window.addEventListener('blur', hide)
+    window.addEventListener('focus', hide)
+    document.addEventListener('visibilitychange', hide)
+    document.addEventListener('pointercancel', hide, true)
+    document.addEventListener('pointerleave', hide)
+    return () => {
+      window.removeEventListener('blur', hide)
+      window.removeEventListener('focus', hide)
+      document.removeEventListener('visibilitychange', hide)
+      document.removeEventListener('pointercancel', hide, true)
+      document.removeEventListener('pointerleave', hide)
+    }
+  }, [recordingHintOpen])
   const membership = useMembership(memberScope, memberUserId, profileOpen)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileRevision = useProfileRevision()
@@ -264,6 +292,7 @@ export function ArkmeProductNavigation({
         style={styles.brand} tabIndex={0} aria-label={`${brand.name} ${productVersion}`}
         aria-describedby={navigationHint.describedBy('brand')}
         onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
+        onMouseMove={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
         onMouseLeave={navigationHint.hide}
         onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`, true) }}
         onBlur={navigationHint.hide}>
@@ -302,12 +331,16 @@ export function ArkmeProductNavigation({
           }}
           onClick={() => { void socialAccessStore.refreshIfStale(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
           onMouseEnter={event => {
-            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(navigationHint.canHover(event.currentTarget)) }
+            else navigationHint.show(event.currentTarget, item.id, hint)
+          }}
+          onMouseMove={event => {
+            if (showsRecording) setRecordingHintOpen(navigationHint.canHover(event.currentTarget))
             else navigationHint.show(event.currentTarget, item.id, hint)
           }}
           onMouseLeave={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
           onFocus={event => {
-            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(navigationHint.takeKeyboardFocus(event.currentTarget)) }
             else navigationHint.show(event.currentTarget, item.id, hint, true)
           }}
           onBlur={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
@@ -373,6 +406,8 @@ export function ArkmeProductNavigation({
           </button>
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
+            {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr('锁定')}</strong></span><CaretRight size={15} /></button>}
+            {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>
@@ -380,6 +415,7 @@ export function ArkmeProductNavigation({
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")}
           aria-describedby={navigationHint.describedBy('profile')}
           onMouseEnter={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
+          onMouseMove={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
           onMouseLeave={navigationHint.hide}
           onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
           onBlur={navigationHint.hide}

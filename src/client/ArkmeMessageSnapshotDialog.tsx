@@ -89,11 +89,11 @@ function SnapshotBackgroundWaveform({ amplitudes }: { amplitudes: readonly numbe
   </span>
 }
 
-export function ArkmeMessageSnapshotDialogContent({ item, detail, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void }) {
+export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void }) {
   const text = detail?.textContent.trim() || item.textContent.trim() || item.title.trim() || '暂无内容'
   const error = loadError?.trim()
   if (error !== undefined && error !== '') return <>
-    <p style={styles.preview}><ArkmeRichText text={text} presentation="preview" /></p>
+    <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
     <div role="alert" style={styles.error}>{tr("快记详情未加载成功：")}{error}</div>
   </>
   const durationMillis = Math.max(0, detail?.recordDurationMillis ?? item.recordDurationMillis ?? 0) + Math.max(0, detail?.editDurationMillis ?? item.editDurationMillis ?? 0)
@@ -134,7 +134,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, metadataUnavai
   ]
   if (createdAtMillis !== undefined) rows.splice(7, 0, { icon: <Clock size={19} weight="light" />, label: '创建时间', value: detailTimeLabel(createdAtMillis > 0 ? createdAtMillis : undefined) })
   return <>
-    <p style={styles.preview}><ArkmeRichText text={text} presentation="preview" /></p>
+    <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
     <div style={styles.stats} aria-label={tr("快记统计")}>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("字数")}</span><strong style={styles.statValue}>{String(Array.from(text).length)}</strong></div>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("记录时长")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.recordDurationMillis === undefined && item.recordDurationMillis === undefined && detail?.editDurationMillis === undefined && item.editDurationMillis === undefined ? tr('未记录') : arkmeMessageSnapshotDurationLabel(durationMillis)}</strong></div>
@@ -150,7 +150,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, metadataUnavai
   </>
 }
 
-export function ArkmeMessageSnapshotDialog({ item, detail, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void; onClose: () => void }) {
+export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void; onClose: () => void }) {
   useArkmeLocale()
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement>()
@@ -165,7 +165,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, metadataUnavailable, 
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label={tr("快记详情")} style={styles.dialog}>
         <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
-        <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
+        <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} {...(previewText === undefined ? {} : { previewText })} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,
     document.body,

@@ -1,0 +1,86 @@
+[
+  {
+    "format": "plain",
+    "text": "中文 😀\t repeated repeated\n重点",
+    "canonical": "中文 😀 repeated repeated 重点",
+    "digest": "726eb3ef284a00c0786c8c3e5acbe336c683ca3bf5f85798de924e3918ef76b3"
+  },
+  {
+    "format": "plain",
+    "text": "﻿ AB C D <&> \" \\u2028",
+    "canonical": "AB C D <&> \" \\u2028",
+    "digest": "f2e4f265bc5bc68a1719b915f3aca198ef50f8788a9320383ac30d3ec412b0cc"
+  },
+  {
+    "format": "plain",
+    "text": "[jm_emoji:thumb_up] [im_emoji:joy_face] [jm_emoji:unknown]",
+    "canonical": "👍 😂 [jm_emoji:unknown]",
+    "digest": "9c22ca16511a170be9384a89cb58b01c25c6290b1ff078ee0419f6d577c2b825"
+  },
+  {
+    "format": "markdown",
+    "text": "# 标题\n\n**重点** 和 *强调* ~~删除~~ [链接](https://example.test)",
+    "canonical": "标题 重点 和 强调 删除 链接",
+    "digest": "b69feff2fc9349fac377a658bb9c6528b1075d0346949d085c0a7297310fad0a"
+  },
+  {
+    "format": "markdown",
+    "text": "> 引用\n> 第二行\n\n- 第一项\n- 第二项\n  - 嵌套",
+    "canonical": "引用 第二行 第一项 第二项 嵌套",
+    "digest": "8f41d868868c827240ed771184720c1ee9c818ffdca2dda27b15547a7df62163"
+  },
+  {
+    "format": "markdown",
+    "text": "| 列一 | 列二 |\n| --- | --- |\n| A | B |",
+    "canonical": "列一 列二 A B",
+    "digest": "4404e4e56123c90c985f054016654de1e9b3891dc6a38e30aa11d2b6f6771383"
+  },
+  {
+    "format": "markdown",
+    "text": "代码 `a  b`\n\n```js\nconst a = 1\nconst b = 2\n```",
+    "canonical": "代码 a b const a = 1 const b = 2",
+    "digest": "0045b486c4bec8c3821e82a42b71698919d98266ce860a238321978ea6eab19e"
+  },
+  {
+    "format": "markdown",
+    "text": "![图片](https://example.test/a.png \"title\") 文字 ![内图](arkme-asset:abc)",
+    "canonical": "![图片](https://example.test/a.png \"title\") 文字 [图片]",
+    "digest": "c334f45ff258cda0cf284d08727678c7da1853935205d6effdef1c000ccacbf2"
+  },
+  {
+    "format": "markdown",
+    "text": "![ref][id]\n\n[id]: https://example.test/a.png\n\n[普通][id]",
+    "canonical": "![ref][id] 普通",
+    "digest": "1bbd87f09ebf608c81669357a23d2e3a3b1b2afd1aac258fc436fe89182849ee"
+  },
+  {
+    "format": "markdown",
+    "text": "a &amp; b &#x1F600; \\*literal\\* <b>bold</b>",
+    "canonical": "a & b 😀 *literal* <b>bold</b>",
+    "digest": "3c53005aa0e51299e38f047e49b444db82767999223e171e79cf4971845f16c2"
+  },
+  {
+    "format": "markdown",
+    "text": "first  \nsecond\n\n---\n\nlast",
+    "canonical": "firstsecond last",
+    "digest": "e9d7ab7b4fe8fad0312613874ade825afe50dfd41aee3e7a0bbc66a95ea774a7"
+  },
+  {
+    "format": "markdown",
+    "text": "<https://example.test> https://example.test\n\n- [x] 已完成\n- [ ] 待办",
+    "canonical": "https://example.test https://example.test 已完成 待办",
+    "digest": "c967655845e0f8fbcd160e7a1d38ecc11a9ac8cb44180f352d823f9a98990b6e"
+  },
+  {
+    "format": "markdown",
+    "text": "<div>\n原样\n</div>\n\nend",
+    "canonical": "<div> 原样 </div> end",
+    "digest": "d645f0a9a7c50b720d7e972a7c2926f5af1081880a9a600c059d1528c79016c6"
+  },
+  {
+    "format": "plain",
+    "text": "😀aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa重点aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀尾",
+    "canonical": "😀aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa重点aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀尾",
+    "digest": "00ebab0bd0656001e1fdda7fa756486fbf221ac7a61ddb58e65597cd902514c3"
+  }
+]

@@ -1,4 +1,5 @@
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
+import { lockMicrophone as lockDirectRecording } from '../microphone-lock.js'
 import { tr } from '../locale.js'
 import type { ArkmeMembership } from '../../types.js'
 import { recordingCoverageContains } from '../../recording-coverage.js'
@@ -43,15 +44,7 @@ export function directRecordingLimit(member: ArkmeMembership, now: number): numb
   return (active ? [5, 60, 120][member.memberType] ?? 5 : 5) * 60_000
 }
 
-export async function lockDirectRecording(): Promise<() => void> {
-  if (!navigator.locks) throw new Error('当前浏览器不支持安全的多窗口录音，请更新浏览器后重试')
-  return await new Promise((resolve, reject) => {
-    void navigator.locks.request('arkme.direct-microphone', { ifAvailable: true }, async lock => {
-      if (!lock) { reject(new Error('其他预览窗口正在录音或保存，请先在该窗口结束')); return }
-      await new Promise<void>(release => resolve(release))
-    }).catch(reject)
-  })
-}
+export { lockMicrophone as lockDirectRecording } from '../microphone-lock.js'
 
 const initial = (): DirectRecordingSnapshot => ({ phase: 'idle', stoppedRecordingIds: [], elapsedMillis: 0, maxMillis: 0, levels: [], pending: [], submitted: [], message: '', error: '', progress: 0, acceptedRevision: 0, startedAt: 0, volatile: false })
 const errorText = (error: unknown) => error instanceof Error ? error.message : '录音操作失败，请重试'

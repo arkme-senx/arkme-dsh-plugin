@@ -42,9 +42,9 @@ function normalizeWaitMillis(value: number | undefined): number {
   return Math.min(ARKO_MAX_WAIT_MILLIS, Math.trunc(value * 1000))
 }
 
-function normalizeText(value: string): string {
+function normalizeText(value: string, hasImages=false): string {
   const text = value.trim()
-  if (text === '') throw new Error('发送给 Arko 的内容不能为空')
+  if (text === '' && !hasImages) throw new Error('发送给 Arko 的内容不能为空')
   if ([...text].length > ARKO_MAX_TEXT_LENGTH) throw new Error('发送给 Arko 的内容过长')
   return text
 }
@@ -225,7 +225,9 @@ export function createArkmeArkoAskToolDefinition(service: ArkmeArkoToolPort): To
     name: 'arkme_arko_ask',
     description: 'Ask Arko, Arkme\'s conversational cloud AI agent, to answer or perform Arkme business operations for the signed-in user. When a previous result is waiting_user, continue that same run with both reply_to fields from next_action. This may trigger remote business effects, so call only after an explicit current human request.',
     parameters: {
-      text: { type: 'string', required: true, description: 'Exact user request to send to Arko.' },
+      text: { type: 'string', description: 'Exact user request; may be empty only with images.' },
+      image_file_refs:{type:'array',items:{type:'string'},description:'Ordered opaque image file_refs staged through Arkme Files. Never local paths or URLs; at most 9.'},
+      client_turn_uid:{type:'string',description:'Only when retrying an unresolved turn returned by arkme_arko_pending: preserve its exact identity and input.'},
       session_id: { type: 'integer', description: 'Optional existing Arko session_id. When omitted, the latest Arko session is restored or created.' },
       wait_seconds: { type: 'number', description: 'How long to wait for the streamed answer, 1-55 seconds. Defaults to 25. If it times out, use arkme_arko_run_status later.' },
       model_route_key: { type: 'string', description: 'Optional exact Arko model route key. Omit unless it came from a trusted Arkme model selection surface.' },
@@ -244,10 +246,11 @@ export function createArkmeArkoAskToolDefinition(service: ArkmeArkoToolPort): To
       if ((replyToRunUid === '') !== (replyToAssistantMsgId === undefined)) {
         throw new Error('继续 Arko 任务时必须同时提供 reply_to_run_uid 和 reply_to_assistant_msg_id')
       }
-      const result = await service.arkoAsk(normalizeText(args.text), {
+      const result = await service.arkoAsk(normalizeText(args.text ?? '',Boolean(args.image_file_refs?.length)), {
+        ...(args.image_file_refs?.length ? {imageFileRefs:args.image_file_refs} : {}),
         ...(sessionId === undefined ? {} : { sessionId }),
         waitMillis: normalizeWaitMillis(args.wait_seconds),
-        clientTurnUid: arkoTurnUidForToolCall(String(exec.callId)),
+        clientTurnUid: args.client_turn_uid ?? arkoTurnUidForToolCall(String(exec.callId)),
         ...(modelRouteKey === '' ? {} : { modelRouteKey }),
         ...(replyToRunUid === '' ? {} : { replyToRunUid }),
         ...(replyToAssistantMsgId === undefined ? {} : { replyToAssistantMsgId }),
@@ -364,8 +367,90 @@ export const arkoCancelToolModule = defineArkmeCoreToolModule({
   create: createArkmeArkoCancelToolDefinition,
 })
 
+/** All history modes share the Host owner. Snippets and tool previews are
+ * explicitly bounded; export is the complete-original-text transport. */
+export function createArkmeArkoHistoryToolDefinition(service: ArkmeArkoToolPort): ToolDefinition {
+  return defineTool({
+    name: 'arkme_arko_history',
+    description: 'Read owned Arko history without changing the active conversation or resuming a run. action=query/search/context/export. Search is literal body text; empty pages can still have a next cursor. Use message_ref from results for original context. Export produces a verified complete Markdown download reference. Body previews may be explicitly truncated; export retains full text.',
+    parameters: {
+      action: { type: 'string', required: true, description: 'query, search, context or export' },
+      keyword: { type: 'string', description: 'Literal keyword for search; not regex or semantic search.' },
+      cursor: { type: 'string', description: 'Exact opaque nextCursor. Keep all filters unchanged.' },
+      message_ref: { type: 'string', description: 'Opaque messageRef returned by query/search; required for context.' },
+      role: { type: 'string', description: 'Optional user or assistant filter.' },
+      start_at_ms: { type: 'integer', description: 'Inclusive history order time in Unix milliseconds.' },
+      end_at_ms: { type: 'integer', description: 'Exclusive history order time in Unix milliseconds.' },
+    },
+    output: ARKO_OUTPUT,
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      if (args.action === 'export') return JSON.stringify(await service.arkoExport(exec.signal))
+      const compact = (item: ArkmeArkoHistoryItem) => ({ messageRef: item.messageRef, lifecycleVersion: item.lifecycleVersion, role: item.role,
+        text: item.text.slice(0, 2000), textTruncated: item.text.length > 2000, createdAtMillis: item.createdAtMillis,
+        orderAtMillis: item.orderAtMillis, status: item.status, runStatus: item.runStatus, createdRecordUids: item.createdRecordUids,
+        ...(item.contentBlocks?.some(block => block.kind === 'image') ? { images: item.contentBlocks.filter(block => block.kind === 'image').map(block => ({ fileName: block.fileName, mimeType: block.mimeType, size: block.size })) } : {}) })
+      if (args.action === 'context') {
+        const window = await service.arkoContext({ messageRef: args.message_ref ?? '', before: 2, after: 2 }, exec.signal)
+        return JSON.stringify({ ...window, items: window.items.map(compact) })
+      }
+      if (args.action !== 'query' && args.action !== 'search') throw new Error('action 必须为 query/search/context/export')
+      if (args.role !== undefined && args.role !== 'user' && args.role !== 'assistant') throw new Error('role 必须为 user 或 assistant')
+      const query = { limit: 10, ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.role ? { role: args.role as 'user' | 'assistant' } : {}),
+        ...(args.start_at_ms === undefined ? {} : { startAtMillis: args.start_at_ms }), ...(args.end_at_ms === undefined ? {} : { endAtMillis: args.end_at_ms }) }
+      if (args.action === 'search') return JSON.stringify(await service.arkoSearch({ ...query, keyword: args.keyword ?? '' }, exec.signal))
+      const page = await service.arkoMessages(query, exec.signal)
+      return JSON.stringify({ ...page, items: page.items.map(compact) })
+    },
+  })
+}
+export const arkoHistoryToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.history.v1', toolName: 'arkme_arko_history', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: createArkmeArkoHistoryToolDefinition,
+})
+export const arkoModelsToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.arko.models.v1',toolName:'arkme_arko_models',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:(service:ArkmeArkoToolPort)=>defineTool({name:'arkme_arko_models',description:'Read published Arko model routes and their actual image input capability before selecting a model.',parameters:{},output:ARKO_OUTPUT,isConcurrencySafe:()=>true,
+ async execute(_args,exec){return JSON.stringify(await service.arkoModelCatalog(exec.signal))}}),
+})
+export const arkoPendingToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.arko.pending.v1',toolName:'arkme_arko_pending',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:(service:ArkmeArkoToolPort)=>defineTool({name:'arkme_arko_pending',description:'Read unresolved Arko turns in the current account. To confirm one, call arkme_arko_ask with the original text, file_refs, model or reply target and client_turn_uid; never create a replacement turn.',parameters:{},output:ARKO_OUTPUT,isConcurrencySafe:()=>true,
+ async execute(){return JSON.stringify((await service.arkoPendingTurns()).map(turn=>({client_turn_uid:turn.clientTurnUid,session_id:turn.sessionId,text:turn.text,image_file_refs:turn.images?.map(file=>file.fileRef) ?? [],model_route_key:turn.modelRouteKey,reply_to_run_uid:turn.replyToRunUid,reply_to_assistant_msg_id:turn.replyToAssistantMsgId})))}}),
+})
+
+export const arkoLifecycleReadToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.lifecycle-read.v1', toolName: 'arkme_arko_lifecycle', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({
+    name: 'arkme_arko_lifecycle', description: 'Read authoritative Arko message states and versions, or recently deleted messages (30 day recovery). No Record or file deletion. Query the same refs after an unknown write outcome; never automatically repeat a write.',
+    parameters: { action: { type: 'string', required: true, description: 'query or deleted' }, message_refs: { type: 'array', items: { type: 'string' }, description: 'Up to 100 exact opaque messageRefs from Arko history.' }, cursor: { type: 'string', description: 'Exact recently deleted nextCursor.' } },
+    output: ARKO_OUTPUT, isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      if (args.action === 'query') return JSON.stringify(await service.arkoLifecycle(args.message_refs ?? [], exec.signal))
+      if (args.action !== 'deleted') throw new Error('action 必须为 query 或 deleted')
+      const page = await service.arkoRecentlyDeleted(args.cursor, exec.signal)
+      return JSON.stringify({ ...page, items: page.items.map(({ message, ...item }) => ({ ...item, ...(message ? { role: message.role, text: message.text.slice(0, 1000), textTruncated: message.text.length > 1000 } : {}) })) })
+    },
+  }),
+})
+export const arkoLifecycleChangeToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.lifecycle-change.v1', toolName: 'arkme_arko_change_lifecycle', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({
+    name: 'arkme_arko_change_lifecycle', description: 'Delete or restore exactly the Arko messages explicitly selected by the current human request. Requires current versions from arkme_arko_lifecycle. Delete affects only selected messages, never created records or independent forwarded copies. Unknown results require state reconciliation, not automatic retries.',
+    parameters: { action: { type: 'string', required: true, description: 'delete or restore' }, message_refs: { type: 'array', required: true, items: { type: 'string' }, description: '1-100 selected opaque messageRefs.' }, expected_versions: { type: 'array', required: true, items: { type: 'integer' }, description: 'Exact current lifecycle versions, in the same order.' } },
+    output: ARKO_OUTPUT,
+    async execute(args, exec) {
+      if ((args.action !== 'delete' && args.action !== 'restore') || args.message_refs.length !== args.expected_versions.length) throw new Error('操作参数无效')
+      return JSON.stringify(await service.arkoChangeLifecycle({ action: args.action, operationUid: stableUidForToolCall('arko-lifecycle', String(exec.callId)), targets: args.message_refs.map((messageRef, index) => ({ messageRef, expectedVersion: args.expected_versions[index]! })) }, exec.signal))
+    },
+  }),
+})
+
 export const arkoToolModules = [
+  arkoLifecycleReadToolModule, arkoLifecycleChangeToolModule,
+ arkoModelsToolModule,arkoPendingToolModule,
   arkoProfileToolModule,
+  arkoHistoryToolModule,
   arkoSessionToolModule,
   arkoAskToolModule,
   arkoRunStatusToolModule,

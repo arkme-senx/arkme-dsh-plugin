@@ -57,8 +57,8 @@ async function send() { await click(host.querySelector('button[aria-label="发�
 beforeEach(() => {
   arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0 })
-  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16))
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id))
   vi.spyOn(window, 'scrollBy').mockImplementation(() => {})
   // jsdom supplies DOM selection but has no layout implementation.
   Range.prototype.getBoundingClientRect = () => new DOMRect(20, 100, 1, 21)
@@ -70,10 +70,15 @@ beforeEach(() => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
   ask = vi.fn().mockResolvedValue(result)
   history = []
+  const pending=new Map<string,unknown>()
   vi.mocked(callArkme).mockImplementation(async (method, input) => {
-    if (method === 'arko.ask') return ask(input)
+    if(method==='arko.pending.read')return [...pending.values()].filter((turn:any)=>input?.expectedUserId===undefined || turn.userId===input.expectedUserId) as never
+    if(method==='arko.pending.prepare'){const turn=input?.turn as any;pending.set(turn.clientTurnUid,structuredClone(turn));return {saved:true} as never}
+    if(method==='arko.pending.acknowledge'){pending.delete(String(input?.clientTurnUid));return {saved:true} as never}
+
+    if (method === 'arko.ask') { const result=await ask(input);pending.delete(String(input?.clientTurnUid));return result }
     if (method === 'arko.session') return { sessionId: 88 } as never
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [{ routeKey: 'model-a', displayName: 'Model A', selected: true }, { routeKey: 'model-b', displayName: 'Model B', selected: false }], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never
@@ -118,20 +123,125 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).not.toHaveBeenCalled()
     expect(host.textContent).toContain('图片能力尚未接通')
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
-  it('renders image-only bubbles and clears their draft only after server acceptance', async () => {
+  it.each(['', '请看这张图'])('clears the visible image draft while awaiting acceptance, text: %s', async text => {
     await imageDraft()
+    await act(async () => { arkmeComposerDraftStore.setText(draftKey, text) })
     let accept!: (value: unknown) => void
     ask.mockImplementation(() => new Promise(resolve => { accept = resolve }))
     await send()
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: '', imageFileRefs: [imageFile.fileRef], expectedUserId: 10001 }))
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text, imageFileRefs: [imageFile.fileRef], expectedUserId: 10001 }))
+    // Preserve the recovery owner until acceptance without showing the sent content twice.
+    expect(serialized()).toBe(text)
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).toBeNull()
+    expect(editor().closest<HTMLElement>('[data-arkme-composer-editor-box]')?.style.display).toBe('none')
+    expect(editor().textContent).toBe(text)
     expect(host.querySelector('[aria-label="消息图片"] img')?.getAttribute('alt')).toBe('test.png')
     await act(async () => { accept(result) })
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
     expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
+  })
+
+  it('keeps a newer draft visible and intact when an earlier image request completes', async () => {
+    await imageDraft()
+    let accept!: (value: unknown) => void
+    ask.mockImplementation(() => new Promise(resolve => { accept = resolve }))
+    await send()
+    await act(async () => { arkmeComposerDraftStore.setText(draftKey, '下一条草稿') })
+    expect(editor().textContent).toBe('下一条草稿')
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).not.toBeNull()
+    await act(async () => { accept(result) })
+    expect(serialized()).toBe('下一条草稿')
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+  })
+
+  it('keeps the draft visible until pending persistence succeeds', async () => {
+    await imageDraft()
+    let persist!: () => void
+    const original = vi.mocked(callArkme).getMockImplementation()!
+    vi.mocked(callArkme).mockImplementation(async (method, input) => {
+      if (method === 'arko.pending.prepare') await new Promise<void>(resolve => { persist = resolve })
+      return original(method, input)
+    })
+    let accept!: (value: unknown) => void
+    ask.mockImplementation(() => new Promise(resolve => { accept = resolve }))
+    await send()
+    expect(ask).not.toHaveBeenCalled()
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).not.toBeNull()
+    await act(async () => { persist() })
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).toBeNull()
+    expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
+    await act(async () => { accept(result) })
+  })
+
+  it.each([false, true])('preserves text undo and redo after an image send fails, retryable: %s', async retryable => {
+    let now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await imageDraft()
+    await act(async () => { documentEditor().commands.insertContent('原始') })
+    now += 1000
+    await act(async () => { documentEditor().commands.insertContent('修改') })
+    expect(serialized()).toBe('原始修改')
+    now += 1000
+    let reject!: (reason: unknown) => void
+    ask.mockImplementation(() => new Promise((_, fail) => { reject = fail }))
+    await send()
+    now += 1000
+    await act(async () => { reject(new ArkmeClientError({ code: 'rejected', message: '发送失败', retryable })) })
+    expect(serialized()).toBe('原始修改')
+    expect(editor().closest<HTMLElement>('[data-arkme-composer-editor-box]')?.style.display).not.toBe('none')
+    await act(async () => { documentEditor().commands.undo() })
+    expect(serialized()).toBe('原始')
+    await act(async () => { documentEditor().commands.redo() })
+    expect(serialized()).toBe('原始修改')
+    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
+  })
+
+  it('preserves an existing redo branch when an image send fails', async () => {
+    let now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await imageDraft()
+    await act(async () => { documentEditor().commands.insertContent('原始') })
+    now += 1000
+    await act(async () => { documentEditor().commands.insertContent('修改') })
+    await act(async () => { documentEditor().commands.undo() })
+    expect(serialized()).toBe('原始')
+    now += 1000
+    let reject!: (reason: unknown) => void
+    ask.mockImplementation(() => new Promise((_, fail) => { reject = fail }))
+    await send()
+    now += 1000
+    await act(async () => { reject(new ArkmeClientError({ code: 'rejected', message: '发送失败', retryable: false })) })
+    await act(async () => { documentEditor().commands.redo() })
+    expect(serialized()).toBe('原始修改')
+  })
+
+  it('preserves emoji identity and its undo sequence after an image send fails', async () => {
+    let now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await imageDraft()
+    await act(async () => { documentEditor().commands.insertContent('原始') })
+    now += 1000
+    await chooseEmoji()
+    const wire = serialized()
+    expect(wire).toContain(emoji.token)
+    now += 1000
+    let reject!: (reason: unknown) => void
+    ask.mockImplementation(() => new Promise((_, fail) => { reject = fail }))
+    await send()
+    now += 1000
+    await act(async () => { reject(new ArkmeClientError({ code: 'rejected', message: '发送失败', retryable: false })) })
+    expect(serialized()).toBe(wire)
+    expect(editor().querySelector('[data-arkme-editable-emoji]')).not.toBeNull()
+    await act(async () => { documentEditor().commands.undo() })
+    expect(serialized()).toBe('原始')
+    expect(arkmeComposerDraftStore.get(draftKey).emojis).toHaveLength(0)
+    await act(async () => { documentEditor().commands.redo() })
+    expect(serialized()).toBe(wire)
+    expect(arkmeComposerDraftStore.get(draftKey).emojis).toHaveLength(1)
   })
 
   it('retains images on a definitive rejection and removes the unsent optimistic bubble', async () => {
@@ -140,7 +250,8 @@ describe('Arko emoji input and send boundary', () => {
     await send()
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
     expect(host.querySelector('[aria-label="消息图片"]')).toBeNull()
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).not.toBeNull()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it('recovers image retry identity across a remount without losing the draft', async () => {
@@ -148,13 +259,14 @@ describe('Arko emoji input and send boundary', () => {
     ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'network', message: '超时', retryable: true }))
     await send()
     const first = ask.mock.calls[0]![0]
-    expect(readArkoPendingTurn(10001)?.images).toEqual([imageFile])
+    expect((await readArkoPendingTurn(10001))?.images).toEqual([imageFile])
+    expect(host.querySelector('footer [aria-label="待发送附件"]')).not.toBeNull()
     await act(async () => { root.render(null) })
     await mount()
     expect(host.querySelector('[aria-label="消息图片"] img')).not.toBeNull()
     await click([...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === '重试确认')!)
     expect(ask.mock.calls[1]![0]).toMatchObject({ clientTurnUid: first.clientTurnUid, imageFileRefs: first.imageFileRefs })
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
   })
 
@@ -174,8 +286,10 @@ describe('Arko emoji input and send boundary', () => {
       expect(event.defaultPrevented).toBe(true)
     })
     expect(stage).toHaveBeenCalledTimes(2)
-    expect(arkmeComposerDraftStore.get(draftKey).attachments.map(item => item.localFile?.fileName)).toEqual(['test.png', 'second.png'])
-    expect(host.textContent).toContain('text.txt')
+    const attachments = arkmeComposerDraftStore.get(draftKey).attachments
+    expect(attachments.map(item => item.localFile?.fileName)).toEqual(['test.png', undefined, 'second.png'])
+    expect(attachments[1]?.preparation).toMatchObject({ state: 'failed', fileName: 'text.txt' })
+    expect(host.querySelector('[aria-label="text.txt：准备失败，点击重试"]')).not.toBeNull()
     expect(ask).not.toHaveBeenCalled()
   })
 
@@ -208,7 +322,7 @@ describe('Arko emoji input and send boundary', () => {
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 20002 }) })
     await act(async () => { finish(imageFile) })
     expect(arkmeComposerDraftStore.get(arkmeArkoComposerDraftKey(20002)).attachments).toHaveLength(0)
-    expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(0)
+    expect(arkmeComposerDraftStore.get(draftKey).attachments.every(item => !item.localFile)).toBe(true)
   })
   it('keeps the recipient row and card geometry stable while focus reveals the shared border', async () => {
     await mount()
@@ -244,7 +358,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await act(async () => { arkmeArkoProfileStore.setProfile(10001, { displayName: '我的助手', version: 2 }) })
     await click(host.querySelector<HTMLElement>('[data-arkme-arko-input-card]')!)
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     expect(host.querySelector('[data-arkme-composer-destination-hint]')?.textContent).toBe('💡正在给 我的助手 发消息')
     expect(editor().getAttribute('aria-label')).toBe('发送给 我的助手')
     expect(ask).not.toHaveBeenCalled()
@@ -485,7 +599,7 @@ describe('Arko emoji input and send boundary', () => {
     await chooseEmoji()
     expect(serialized()).toBe(`前${emoji.token}${emoji.token}后`)
     expect(editor().querySelectorAll('[data-arkme-editable-emoji]')).toHaveLength(2)
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     expect(button('收藏表情')).toBeNull()
     expect(vi.mocked(callArkme).mock.calls.some(([method]) => method.startsWith('favorite-stickers.'))).toBe(false)
     await send()
@@ -627,7 +741,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await chooseEmoji()
     await send()
-    expect(readArkoPendingTurn(10001)?.text).toBe(emoji.token)
+    expect((await readArkoPendingTurn(10001))?.text).toBe(emoji.token)
     expect(button('选择表情').disabled).toBe(true)
     expect(editor().getAttribute('contenteditable')).toBe('false')
     expect(document.querySelector('[data-arkme-emoji-panel]')).toBeNull()
@@ -638,7 +752,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     await chooseEmoji()
     await send()
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     expect(button('选择表情').disabled).toBe(false)
     expect(host.querySelector('[data-arkme-rich-emoji]')).not.toBeNull()
     expect(host.textContent).toContain('当前不可发送')
@@ -696,7 +810,7 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     button('更多 Arko 操作').focus()
     await capabilities()
-    expect(document.activeElement).toBe(editor())
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor()))
     let complete!: (value: unknown) => void
     ask.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
     await capabilities()
@@ -754,7 +868,7 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).toHaveBeenCalledTimes(2)
     expect(ask.mock.calls[1]![0]).toEqual(first)
     expect(first.text).toBe(emoji.token)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it('closes on Escape and keeps active-run stop control separate from emoji editing', async () => {
@@ -789,4 +903,24 @@ describe('Arko emoji input and send boundary', () => {
     expect(ask).toHaveBeenCalledTimes(2)
     expect(ask).toHaveBeenLastCalledWith(expect.objectContaining({ text: emoji.token }))
   })
+})
+
+it('keeps emoji insertion selection when native focus restores an older caret', async () => {
+  await mount()
+  const view = documentEditor().view
+  const focus = view.dom.focus.bind(view.dom)
+  // Native focus can restore the pre-picker DOM caret. The editor's document
+  // selection must remain authoritative after the insertion transaction.
+  vi.spyOn(view.dom, 'focus').mockImplementation(options => {
+    focus(options)
+    const range = document.createRange()
+    range.setStart(view.dom.firstChild!, 0); range.collapse(true)
+    const selection = document.getSelection()!
+    selection.removeAllRanges(); selection.addRange(range)
+  })
+  await chooseEmoji()
+  const native = document.getSelection()!
+  expect({ model: view.state.selection.head, native: view.posAtDOM(native.anchorNode!, native.anchorOffset) }).toEqual({ model: 2, native: 2 })
+  await act(async () => { editor().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true })) })
+  expect(serialized()).toBe(`${emoji.token}\n`)
 })

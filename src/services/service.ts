@@ -32,12 +32,21 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
+  readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
+  localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
+arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
+arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
+prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>
+acknowledgeArkoTurn(userId:number,uid:string):Promise<void>
+arkoFileRefs(userId:number):Promise<string[]>
   readDayReviewPending?(scope: string, day: string): Promise<unknown>
   prepareDayReview?(scope: string, day: string, request: Record<string, unknown>): Promise<void>
   acknowledgeDayReview?(scope: string, day: string, requestId: string): Promise<void>
  readOfflineContextJournal?(scope:string):Promise<Record<string,import('../offline-context-contract.js').OfflineContextJournalEntry>>
  putOfflineContextJournal?(scope:string,id:string,entry:import('../offline-context-contract.js').OfflineContextJournalEntry):Promise<void>
  deleteOfflineContextJournal?(scope:string,id:string,fingerprint:string):Promise<void>
+  localDirectoryPreferences?(accountKey: string, entries?: import('../local-directory-preferences.js').LocalDirectoryPreferences, migrate?: boolean): Promise<import('../local-directory-preferences.js').LocalDirectoryPreferences>
   readConversationViewports?(accountKey: string, surface: string): Promise<import('../conversation-viewport-state.js').ConversationViewportEntries>
   writeConversationViewports?(accountKey: string, surface: string, entries: import('../conversation-viewport-state.js').ConversationViewportEntries): Promise<void>
   arrangementBoardCache?(environment: string, userId: number, pages?: import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages): Promise<import('../arrangement-board-cache.js').ArkmeArrangementBoardCachePages>
@@ -107,6 +116,7 @@ export interface StateStore extends RecentEmojiStore {
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
@@ -121,6 +131,7 @@ export interface StateStore extends RecentEmojiStore {
 
 export interface ArkmeServiceConfig {
   environment: ArkmeEnvironment
+  dshRemoteRealtimeBaseUrl?: string
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
@@ -629,17 +640,19 @@ export class ServiceRuntime {
   private registeredRead(baseUrl: string, path: string): boolean {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
-      '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
+      '/api/v1/chats/members/records/aggregate', '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
-      '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
+      '/api/v1/records/forward/capability', '/api/v1/search/records/scene/query', '/api/v1/reactions/query', '/api/v1/reactions/team/query', '/api/v1/reactions/team/actors/query', '/api/v1/reactions/team/groups/query', '/api/v1/reactions/notifications/query',
       '/api/v1/reactions/actors/query', '/api/v1/reactions/groups/query',
       '/api/v1/reactions/history/query', '/api/v1/reactions/received/query',
       '/api/v1/reactions/history-policy/query', '/api/v1/reactions/library/query',
+      '/api/v1/reactions/world/prepare', '/api/v1/reactions/world/query',
+      '/api/v1/reactions/world/actors/query', '/api/v1/reactions/world/groups/query',
     ]).has(path)) return true
     if (baseUrl === this.config.teamBaseUrl && new Set([
       '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
-      '/api/v1/team/conversations/list', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
+      '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
@@ -663,7 +676,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)
@@ -751,7 +764,11 @@ export class ServiceRuntime {
     // budget. Keep its receipt reachable instead of aborting at the 30s default.
     const publishing = baseUrl === this.config.extensionPublishBaseUrl?.trim()
       && ['/api/v1/extensions/publish-session/complete', '/api/v1/extensions/publish-session/resume'].includes(path)
-    const timeout = setTimeout(() => controller.abort(), publishing ? Math.max(100_000, this.config.requestTimeoutMs) : this.config.requestTimeoutMs)
+    const imageIntake = baseUrl === this.config.intelligentBaseUrl && path === '/api/v1/qa/new-msg-v3'
+    // Intake verifies the owned originals before acceptance (a two-minute
+    // server budget). Keep that receipt reachable without a new user setting.
+    const requestBudget = imageIntake ? 150_000 : publishing ? 100_000 : 0
+    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, this.config.requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
@@ -1004,7 +1021,7 @@ export class ServiceRuntime {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
     } finally {
-      if (['/api/v1/reactions/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
+      if (['/api/v1/reactions/team/set', '/api/v1/reactions/set', '/api/v1/reactions/world/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
         // Even an unknown write outcome must not join a read started before it.
         this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${this.config.recordBaseUrl.replace(/\/+$/, '')}/api/v1/reactions/`)
       }
@@ -1073,6 +1090,17 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedAuthMultipartPost<T>(path: string, body: FormData, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const options = () => this.authenticatedRequestOptions(session, 'auth', 'write', {})
+    try { return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, options()) }
+    catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, options())
     }
   }
 
@@ -1508,6 +1536,86 @@ export class ServiceRuntime {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
+  }
+
+  /** Keep the body inside coordinator admission until consumption ends. No stream
+   * recovery: a retry after a delivered item would splice two snapshots. */
+  async intelligentExportStream<T>(
+    initialSession: ArkmeSessionCredentials,
+    consume: (body: ReadableStream<Uint8Array>, signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const scope = this.requestScope(initialSession.userId)
+    return this.requestCoordinator.run({
+      scope, service: 'intelligent', lane: 'background-read', ...(signal ? { signal } : {}),
+      operation: async coordinatedSignal => {
+        const controller = new AbortController()
+        const abort = () => controller.abort(coordinatedSignal.reason)
+        if (coordinatedSignal.aborted) abort()
+        else coordinatedSignal.addEventListener('abort', abort, { once: true })
+        let initialScopeNotification = true
+        const unsubscribeScope = this.subscribeAccountScope(() => {
+          if (initialScopeNotification) { initialScopeNotification = false; return }
+          controller.abort(new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409))
+        })
+        const total = setTimeout(() => controller.abort(new Error('导出超过时间限制')), 5 * 60_000)
+        let idle: ReturnType<typeof setTimeout> | undefined
+        const resetIdle = () => { clearTimeout(idle); idle = setTimeout(() => controller.abort(new Error('导出读取超时')), 20_000) }
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+        try {
+          let session = initialSession
+          if ((await this.requireSession()).userId !== session.userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409)
+          let response: Response | undefined
+          for (let attempt = 0; attempt < 2; attempt++) {
+            resetIdle()
+            response = await this.fetchImpl(joinUrl(this.config.intelligentBaseUrl, '/api/v1/arko/messages/export'), {
+              method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN', Usersource: '3', Authorization: `Bearer ${session.accessToken}` },
+              body: '{}', signal: controller.signal,
+            })
+            if ((response.status === 401 || response.status === 403) && attempt === 0) {
+              await response.body?.cancel()
+              session = await this.refreshAccessToken(session, controller.signal)
+              continue
+            }
+            break
+          }
+          if (!response?.ok || !response.body) throw new ArkmePluginError('arko-export-unavailable', '导出服务暂不可用', true, 502)
+          if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+            // Failed JSON envelopes are small in this protocol. Do not call text()
+            // on an unbounded or incorrectly typed upstream body.
+            await response.body.cancel()
+            throw new ArkmePluginError('arko-export-rejected', '导出未能取得完整快照，请重试', true, 502)
+          }
+          reader = response.body.getReader()
+          controller.signal.addEventListener('abort', () => { void reader?.cancel(controller.signal.reason).catch(() => undefined) }, { once: true })
+          const input = reader
+          const bounded = new ReadableStream<Uint8Array>({
+            pull: async stream => {
+              try {
+                controller.signal.throwIfAborted()
+                resetIdle()
+                const part = await input.read()
+                clearTimeout(idle)
+                if (part.done) stream.close(); else stream.enqueue(part.value)
+              } catch (error) { stream.error(error) }
+            },
+            cancel: async reason => { controller.abort(reason); await input.cancel(reason) },
+          }, { highWaterMark: 0 })
+          const result = await consume(bounded, controller.signal)
+          controller.signal.throwIfAborted()
+          if (this.requestScope(initialSession.userId) !== scope || (await this.requireSession()).userId !== initialSession.userId) {
+            throw new ArkmePluginError('arko-account-changed', '账号已切换，导出已取消', false, 409)
+          }
+          return result
+        } finally {
+          unsubscribeScope(); clearTimeout(total); clearTimeout(idle)
+          controller.abort()
+          await reader?.cancel().catch(() => undefined)
+          reader?.releaseLock()
+          coordinatedSignal.removeEventListener('abort', abort)
+        }
+      },
+    })
   }
 
   async authenticatedIntelligentPost<T>(

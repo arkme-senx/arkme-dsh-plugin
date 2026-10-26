@@ -2,6 +2,7 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { NATIVE_FORWARD_MAX_MESSAGES, NATIVE_FORWARD_MAX_TEXT_BYTES, NATIVE_FORWARD_MAX_TOTAL_BYTES } from '../native-chat-selection-contract.js'
 import type {
   AgentMessageActionConversation,
+  ArkoMessageActionReader,
   MessageActionSource,
   NativeMessageSnapshot,
   AgentMessageActionReference,
@@ -20,6 +21,8 @@ import type {
   ArkmeSourceSendResult,
 } from '../types.js'
 import { ArkmePluginError, stringValue } from './service.js'
+
+const HISTORY_ACTION_PREFIX = 'arkme-arko-message-action-v1'
 
 const ACTION_REF_PREFIX = 'arkme-owner-message-action-v2'
 const AGENT_CONVERSATION_REF_PREFIX = 'arkme-agent-conversation-v2'
@@ -49,6 +52,7 @@ export class MessageActionService {
     private readonly gateway: MessageActionGateway,
     private readonly botRegistry: MessageActionBotRegistryPort,
     private readonly codec: MessageActionCapabilityCodec,
+    private readonly arkoReader?: ArkoMessageActionReader,
   ) {}
 
   async agentConversationRef(userId: number, sessionId: number): Promise<string> {
@@ -66,10 +70,18 @@ export class MessageActionService {
     item: ArkmeArkoHistoryItem,
     userId: number,
   ): Promise<Pick<ArkmeArkoHistoryItem, 'messageActionRef' | 'messageActionCapabilities'>> {
-    const textContent = item.text.trim()
-    if (textContent === '' || item.messageId <= 0 || item.sessionId <= 0 || item.status !== 1) return {}
+    const reference = this.agentReference(item, userId)
+    if (!reference) return {}
+    const compact = item.messageRef !== undefined
+    const payload = compact ? { userId, sessionId: item.sessionId, messageId: item.messageId, fingerprint: this.historyFingerprint(item), expiresAtMillis: Date.now() + 24 * 60 * 60_000 } : reference
+    return { messageActionRef: await this.codec.seal(compact ? HISTORY_ACTION_PREFIX : ACTION_REF_PREFIX, payload), messageActionCapabilities: capabilities(reference) }
+  }
+
+  private agentReference(item: ArkmeArkoHistoryItem, userId: number): AgentMessageActionReference | undefined {
+    if (item.role === 'user' && item.contentBlocks?.some(block => block.kind === 'image')) return undefined
+    if (item.text.trim() === '' || item.messageId <= 0 || item.sessionId <= 0 || item.status !== 1) return undefined
     const entryRecordUid = item.entryRecordUid?.trim() ?? ''
-    const reference: AgentMessageActionReference = {
+    return {
       version: 2,
       userId,
       ownerKind: 'agent',
@@ -82,11 +94,8 @@ export class MessageActionService {
       senderName: item.role === 'user' ? '我' : 'Agent',
       agentSessionId: item.sessionId,
       agentMessageId: item.messageId,
+      ...(item.sourceType === undefined ? {} : { shareableAgentReply: item.sourceType === 2 && item.messageType === 3 }),
       ...(item.role === 'user' && entryRecordUid !== '' ? { entryRecordUid } : {}),
-    }
-    return {
-      messageActionRef: await this.codec.seal(ACTION_REF_PREFIX, reference),
-      messageActionCapabilities: capabilities(reference),
     }
   }
 
@@ -163,7 +172,7 @@ export class MessageActionService {
     actionRefs: readonly string[],
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult> {
-    const { session, references } = await this.openConversationActions(conversationRef, actionRefs)
+    const { session, references } = await this.openConversationActions(conversationRef, actionRefs, signal)
     if (references.some(reference => !messageActionCanCopyLink(reference))) {
       throw new ArkmePluginError('message-actions-source-unavailable', '所选消息暂不支持复制链接', false, 409)
     }
@@ -175,11 +184,20 @@ export class MessageActionService {
     actionRefs: readonly string[],
     options: MessageActionForwardOptions,
   ): Promise<ArkmeSourceSendResult> {
-    const { session, references } = await this.openConversationActions(conversationRef, actionRefs)
+    const { session, references } = await this.openConversationActions(conversationRef, actionRefs, options.signal)
     if (references.some(reference => reference.textContent.trim() === '')) {
       throw new ArkmePluginError('message-actions-source-unavailable', '所选消息暂不支持转发', false, 409)
     }
     return await this.deliver(references, session, options)
+  }
+
+  async worldPublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) {
+    const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
+    const reference = references[0]!
+    if (reference.role !== 'user' || reference.senderUserId !== session.userId) throw new ArkmePluginError('world-source-not-owned', '只能公开自己发出的内容', false, 403)
+    signal?.throwIfAborted()
+    if ((await this.gateway.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { textContent: reference.textContent, sendAtMillis: reference.createdAtMillis }
   }
 
   async forwardNative(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
@@ -189,6 +207,16 @@ export class MessageActionService {
     }
     const references = this.nativeMessages(snapshot, session.userId)
     return await this.deliver(references, session, options)
+  }
+
+  async forwardCodex(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
+    const session = await this.gateway.requireSession()
+    if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) throw new ArkmePluginError('codex-account-changed', '账号已变化，请重新选择', false, 409)
+    const raw = snapshot as { taskTitle?: unknown; inputName?: unknown }
+    if (!raw || typeof raw.taskTitle !== 'string' || !raw.taskTitle.trim() || raw.taskTitle.length > 500 || typeof raw.inputName !== 'string' || raw.inputName.length > 200) throw new ArkmePluginError('codex-selection-invalid', 'Codex 对话来源无效，请重新选择', false, 400)
+    const references = this.nativeMessages(snapshot, session.userId).map(message => ({ ...message, ownerKind: 'codex' as const, taskTitle: raw.taskTitle as string,
+      senderUserId: 0, senderName: message.role === 'user' ? (raw.inputName as string || '用户') : 'Codex' }))
+    return this.deliver(references, session, options)
   }
 
   async copyLinkNative(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> {
@@ -277,9 +305,42 @@ export class MessageActionService {
     }
   }
 
+  private historyFingerprint(item: ArkmeArkoHistoryItem): string {
+    return this.codec.fingerprint([item.text, item.role, item.createdAtMillis, item.sourceType ?? 0, item.messageType ?? 0, item.entryRecordUid ?? ''])
+  }
+
+  private async openActionRefs(refs: string[], userId: number, signal?: AbortSignal): Promise<MessageActionReference[]> {
+    const compact = new Map<string, { sessionId: number; messageId: number; fingerprint: string }>()
+    for (const ref of refs) {
+      signal?.throwIfAborted()
+      if (!ref.startsWith(`${HISTORY_ACTION_PREFIX}.`)) continue
+      const value = await this.codec.open(HISTORY_ACTION_PREFIX, ref)
+      if (value.userId !== userId || !Number.isSafeInteger(value.sessionId) || numberValue(value.sessionId) < 1
+        || !Number.isSafeInteger(value.messageId) || numberValue(value.messageId) < 1 || numberValue(value.expiresAtMillis) <= Date.now()
+        || typeof value.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(value.fingerprint)) throw new ArkmePluginError('message-action-ref-invalid', '消息操作引用已失效，请刷新后重试', false, 403)
+      compact.set(ref, { sessionId: numberValue(value.sessionId), messageId: numberValue(value.messageId), fingerprint: value.fingerprint })
+    }
+    const facts = new Map<string, ArkmeArkoHistoryItem>()
+    if (compact.size) {
+      if (!this.arkoReader) throw new ArkmePluginError('message-actions-source-unavailable', '当前 Host 不支持历史消息操作', false, 409)
+      const rows = await this.arkoReader.read([...compact.values()].map(({ sessionId, messageId }) => ({ sessionId, messageId })), userId, signal)
+      signal?.throwIfAborted()
+      for (const item of rows) facts.set(`${item.sessionId}:${item.messageId}`, item)
+    }
+    return Promise.all(refs.map(async ref => {
+      const expected = compact.get(ref)
+      if (!expected) return this.openActionRef(ref, userId)
+      const item = facts.get(`${expected.sessionId}:${expected.messageId}`)
+      const reference = item ? this.agentReference(item, userId) : undefined
+      if (!item || !reference || this.historyFingerprint(item) !== expected.fingerprint) throw new ArkmePluginError('message-actions-source-changed', '原消息已变化或不可查看，请刷新后重试', false, 409)
+      return reference
+    }))
+  }
+
   private async openConversationActions(
     conversationRef: string,
     actionRefs: readonly string[],
+    signal?: AbortSignal,
   ): Promise<{ session: Awaited<ReturnType<MessageActionGateway['requireSession']>>; references: MessageActionReference[] }> {
     const session = await this.gateway.requireSession()
     const normalizedRefs = actionRefs.map(value => value.trim()).filter(value => value !== '')
@@ -288,7 +349,7 @@ export class MessageActionService {
       throw new ArkmePluginError('message-actions-selection-invalid', '请选择 1 至 100 条不重复消息', false, 400)
     }
     const expected = await this.openConversation(conversationRef, session.userId)
-    const references = await Promise.all(normalizedRefs.map(async ref => await this.openActionRef(ref, session.userId)))
+    const references = await this.openActionRefs(normalizedRefs, session.userId, signal)
     const identities = new Set<string>()
     for (const reference of references) {
       let matches: boolean
@@ -358,6 +419,7 @@ export class MessageActionService {
       }
       return {
         ...common, ownerKind, agentSessionId, agentMessageId,
+        ...(typeof raw.shareableAgentReply === 'boolean' ? { shareableAgentReply: raw.shareableAgentReply } : {}),
         ...(entryRecordUid === '' ? {} : { entryRecordUid }),
       }
     }

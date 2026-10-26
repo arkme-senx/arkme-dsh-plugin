@@ -1,4 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 import { ArkmeCallHistorySummary } from './ArkmeCallHistorySummary.js'
 import { ArkmeOverlayScrollArea } from './ArkmeOverlayScrollArea.js'
@@ -271,10 +272,10 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 68, flex: 'none', padding: '12px 22px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between',
     borderBottom: `1px solid ${arkmeTheme.borderSoft}`, boxSizing: 'border-box',
   },
-  detailIdentity: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 },
+  detailIdentity: { minWidth: 100, flex: '1 1 0', display: 'flex', alignItems: 'center', gap: 12 },
   detailTitleBlock: { minWidth: 0, display: 'grid', gap: 3 },
   detailTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16, lineHeight: '22px', fontWeight: 650 },
-  detailSub: { margin: 0, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px' },
+  detailSub: { margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px' },
   detailActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 8 },
   privateChatButton: {
     height: 36, padding: '0 11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -1297,6 +1298,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
               onClick={() => { void openSelectedPrivateChat() }}><ChatCircle size={17} />{openingPrivateChat ? tr("正在打开…") : '发起私聊'}</button>
             <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} aria-label={tr("和{v0}语音通话", { v0: selectedItem.peerDisplayName })} onClick={() => { startSelectedCall('audio') }}><PhoneCall size={19} /></button>
             <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} aria-label={tr("和{v0}视频通话", { v0: selectedItem.peerDisplayName })} onClick={() => { startSelectedCall('video') }}><CallVideoIcon size={19} /></button>
+            {active && detailState === 'ready' && detail && <ArkmeCallShareControls callRef={detail.callRef} />}
           </div>}
         </header>
         <ArkmeCallDetailContent key={callHistoryIdentity(selectedItem)} active={active} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} tourSample={tour.current !== undefined && tour.current >= 3} />

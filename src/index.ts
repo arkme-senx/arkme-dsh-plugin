@@ -1,3 +1,4 @@
+import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
@@ -89,7 +90,7 @@ import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
-import { createDshGatewayApi, type DshGatewayLike, type DshConnectionLike } from './dsh-remote/gateway-api.js'
+import { createDshGatewayApi, type DshGatewayLike } from './dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api-proxy-adapter.js'
 import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
 import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
@@ -297,6 +298,8 @@ export function resolveDshRemoteProfileRef(
 }
 
 export function apply(ctx: Context, config: Config): void {
+  const webPort = ctx.webServer.port
+  if (webPort === undefined) throw new Error('Arkme requires a listening DSH web server')
   const hostPolicy = resolveHostPolicy()
   config = resolveArkmeConfig(ctx, config)
   if (hostPolicy.credentialServicePrefix !== undefined) config = {...config, keychainServicePrefix:hostPolicy.credentialServicePrefix}
@@ -361,6 +364,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   let accountSessions: DshAccountSessions | undefined
   let remoteHost: DshRemoteHostFacade | undefined
+  service.setNativeAnnotationSource(async (target, signal) => {
+    if (!remoteHost?.annotationSource) throw new ArkmePluginError('native-annotation-source-not-ready', '来源电脑尚未准备好标记同步', true, 503)
+    return await remoteHost.annotationSource(target.sessionRef, target.eventSeq, signal)
+  }, () => remoteHost?.getStatus().runtimeRef)
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({
     profile: config.openclawProfile,
@@ -396,7 +403,7 @@ export function apply(ctx: Context, config: Config): void {
     installRuntime: {
       dshHome,
       profileName: 'web',
-      healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+      healthUrl: `http://127.0.0.1:${String(webPort)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
       disabledProfilePackages: () => extensionStore.list().flatMap(item =>
         !item.enabled && item.profilePackageName !== undefined ? [item.profilePackageName] : []),
@@ -413,7 +420,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   })
   const extensionShareDiscovery = new ArkmeExtensionShareDiscoveryRelay({
-    actualPort: ctx.webServer.port,
+    actualPort: webPort,
     discoveryPort: config.extensionShareDiscoveryPort ?? DEFAULT_EXTENSION_SHARE_DISCOVERY_PORT,
     enabled: config.extensionShareDiscoveryEnabled !== false,
     logger: ctx.logger,
@@ -426,7 +433,7 @@ export function apply(ctx: Context, config: Config): void {
     dshBinPath,
     execArgv: process.execArgv,
     stateDirectory,
-    healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+    healthUrl: `http://127.0.0.1:${String(webPort)}${config.routePath}`,
     restartArgv: [...process.execArgv, ...process.argv.slice(1)],
     helperPath: fileURLToPath(new URL('../lib/extension-profile-restart-helper.js', import.meta.url)),
     installStoreDirectory: extensionDirectory,
@@ -474,6 +481,7 @@ export function apply(ctx: Context, config: Config): void {
     await service.accountScope.start()
     return () => undefined
   }, 'dsh-arkme: desktop account scope attestation')
+  ctx.effect(() => service.accountScope.subscribe(() => { void service.deviceLockStatus().catch(() => undefined) }), 'dsh-arkme: desktop device lock lifecycle')
   ctx.inject(['llm'], modelCtx => {
     const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
     registerManagedAiProvider(modelCtx, {
@@ -561,9 +569,16 @@ export function apply(ctx: Context, config: Config): void {
       currentSelection?: () => unknown
     } | undefined
     const sessionPersistence = adaptSessionPersistence(apiCtx.get('sessionPersistence'))
+    const llm = apiCtx.get('llm') as {
+      resolveModelInfo?: (provider: string, model: string, signal?: AbortSignal) => Promise<{ inputModalities?: readonly string[] }>
+    } | undefined
     const apiProxy = new DshApiProxyAdapter(
       publicApi,
       {
+        ...(typeof llm?.resolveModelInfo !== 'function' ? {} : {
+          modelInputModalities: async (provider: string, model: string) =>
+            (await llm.resolveModelInfo!(provider, model, AbortSignal.timeout(2_000))).inputModalities,
+        }),
         ...(typeof agentDefaultModel?.currentSelection !== 'function'
           ? {}
           : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),
@@ -729,16 +744,21 @@ export function apply(ctx: Context, config: Config): void {
   ctx.inject(['typertGateway', 'sessionController', 'workspaceController', 'connection'], apiCtx => {
     if (apiCtx.get('apiProxy') !== undefined) return
     const lifetime = new AbortController()
-    apiCtx.effect(() => () => { lifetime.abort() }, 'arkme: DSH Gateway API lifetime')
+    const connection = apiCtx.connection
+    // This trusted in-process bridge retains Arkme's account/session guards;
+    // the caller cannot supply or change its DSH principal over the wire.
+    const peer = connection.createPeer({ principal: { kind: 'owner' } })
+    apiCtx.effect(() => async () => { lifetime.abort(); await peer.dispose() }, 'arkme: DSH Gateway API lifetime')
     attachRemoteApi(apiCtx, createDshGatewayApi(
       apiCtx,
       apiCtx.get('typertGateway') as DshGatewayLike,
-      apiCtx.get('connection') as DshConnectionLike,
+      connection,
       lifetime.signal,
-    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, apiCtx.get('connection') as DshConnectionLike))
+      peer,
+    ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, connection, peer))
   })
   const handler = createArkmeHostApi(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
     migrationManager,
@@ -762,10 +782,11 @@ export function apply(ctx: Context, config: Config): void {
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'uploads'),
     maxUploadBytes: config.maxUploadBytes,
+    requestTimeoutMs: config.requestTimeoutMs,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const selfRoleAvatarHandler = createArkmeSelfRoleAvatarHandler(service, richMediaOptions)
@@ -773,18 +794,18 @@ export function apply(ctx: Context, config: Config): void {
   const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
   const recordingImportHandler = createArkmeRecordingImportHandler(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
   const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
   const extensionIconOptions = {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     manager: () => extensionManager,
   }
@@ -793,7 +814,7 @@ export function apply(ctx: Context, config: Config): void {
   const extensionPreviewUploadHandler = createArkmeExtensionPreviewUploadHandler(extensionIconOptions)
   const extensionPreviewReadHandler = createArkmeExtensionPreviewReadHandler(extensionIconOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
-    expectedPort: ctx.webServer.port,
+    expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
   const sessionClient = {
@@ -887,7 +908,7 @@ export function apply(ctx: Context, config: Config): void {
     installedPackageNames: () => extensionStore.list().flatMap(item =>
       item.profilePackageName === undefined ? [] : [item.profilePackageName]),
     readRootHtml: async request => {
-      const response = await fetch(`http://127.0.0.1:${String(ctx.webServer.port)}/`, {
+      const response = await fetch(`http://127.0.0.1:${String(webPort)}/`, {
         headers: dshRootDocumentHeaders(request),
         signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 5_000)),
       })
@@ -1022,10 +1043,15 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 'dsh-arkme: local realtime events route')
   ctx.effect(() => {
-    const carrier = new DshNativeSocket(() => accountSessions, ctx.webServer.port, config.allowNonLoopback)
+    const carrier = new DshNativeSocket(() => accountSessions, webPort, config.allowNonLoopback)
     const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/native-streams`, handler: carrier.handler })
     return () => { remove(); carrier.close() }
   }, 'dsh-arkme: native subscription carrier')
+  ctx.effect(() => {
+    const carrier = new RealtimeDictationSocket(service.realtimeDictationOwner, webPort)
+    const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/dictation`, handler: carrier.handler })
+    return () => { remove(); carrier.close() }
+  }, 'dsh-arkme: realtime dictation carrier')
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
@@ -1068,7 +1094,7 @@ function validateConfig(ctx: Context, config: Config): void {
       ...(config.memoryCoreBaseUrl ? [config.memoryCoreBaseUrl] : []),
       config.audioBaseUrl,
       config.openApiBaseUrl,
-      ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
+      ...(config.dshRemoteRealtimeBaseUrl.trim() !== '' ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
       throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
@@ -1108,7 +1134,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['audioBaseUrl', config.audioBaseUrl],
     ['openApiBaseUrl', config.openApiBaseUrl],
     ['shareWebsite', config.shareWebsite],
-    ...(config.dshRemoteFeatureEnabled
+    ...(config.dshRemoteRealtimeBaseUrl.trim() !== ''
       ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
       : []),
   ] as const) {

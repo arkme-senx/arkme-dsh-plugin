@@ -15,11 +15,17 @@ import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_strategy_start',
+  'arkme_realtime_dictation',
+  'arkme_arko_change_lifecycle',
+  'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
+  'arkme_conversation_words_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
-  'arkme_team_profile_update',
+  'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_mark_change',
+  'arkme_team_notification_policy_set',
   'arkme_reactions_write',
+  'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
   'arkme_topic_home_visibility',
@@ -89,12 +95,20 @@ function cleanArgument(value: unknown, maxLength: number): string {
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
   if (name === 'arkme_recording_strategy_start') return `是否使用${args.strategy === 'baseline-sd-asr/20261026' ? '基线' : '当前'}方案处理刚才指定的录音，生成独立对比结果？这会增加处理与存储用量，不会替换正式正文或说话人绑定。`
+  if (name === 'arkme_realtime_dictation') return '是否对刚才提供的音频执行实时听写操作？这会使用当前账号的语音权益，不获取麦克风或发送消息。'
+  if (name === 'arkme_arko_change_lifecycle') return `是否${args.action === 'restore' ? '恢复' : '删除'}刚才选定的 ${Array.isArray(args.message_refs) ? args.message_refs.length : 0} 条 Arko 消息？删除后 30 天内可恢复，已创建的快记和安排会保留。`
+  if (name === 'arkme_conversation_words_generate') return '是否按刚才指定的对话、人员和日期范围开始或更新词频统计？这不会调用大模型或扣除 AI 积分。'
+  if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
+  if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
   if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
+  if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
+  if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
+  if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'
   if (name === 'arkme_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
     if (request.action === 'history-policy-set') return request.locked === true
@@ -109,10 +123,18 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     : '是否确认解除你对这个私聊用户的拒收？如果对方仍拒收，双方依然无法发送新消息。'
   if (name === 'arkme_recording_import') return args.action === 'retry'
     ? '是否确认重试这条失败的录音上传任务？'
-    : `是否确认按指定的开始时间导入所选录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？`
+    : `是否确认按指定的开始时间导入所选${Array.isArray(args.files) ? ` ${args.files.length} 个` : ''}录音，并将归属设为“${args.ownership === 'other' ? '其他' : '自己'}”？服务支持时，新录音处理完成后将发送通知，并自动生成对应日期的日总结和时间轴。`
   if (name === 'arkme_archive_set') return args.self_archived === true
     ? '是否确认归档此主题及其子主题？内容仍可搜索和引用，可在已归档中恢复。'
     : '是否确认取消此主题的单独归档？独立归档的子主题会保留；如果父级仍归档，此主题仍随父级归档。'
+  if (name === 'arkme_team_mark_change') return cleanArgument(args.audience,30)==='team' ? '是否确认修改这条消息的团队内部共享标记？' : '是否确认修改此会话双方都可见的共享标记？'
+  if (name === 'arkme_team_message_forward') return '是否确认将所选团队消息转发到指定目标？目标中的冻结内容和附件将按其当前访问权限提供。'
+  if (name === 'arkme_team_message_copy_link') return '是否确认生成所选团队消息的公开分享链接？取得链接的人可按分享审核规则查看这些内容。'
+  if (name === 'arkme_team_message_report') return '是否确认将这条团队消息的当前版本举报给平台审核？这不会删除作者的个人快记。'
+  if (name === 'arkme_team_send_task') return cleanArgument(args.action, 30) === 'cancel'
+    ? '是否确认取消这条尚未发布的团队发送任务？已发布消息仍遵循作者全局删除规则。'
+    : '是否确认继续原团队发送任务？将保留原请求身份，不创建重复消息。'
+  if (name === 'arkme_team_message_send') return '是否确认将这段文字发送到已选择的团队对外会话？引用和正文将按当前权限与版本校验。'
   if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
     ? '是否确认将这个主题的快记展示在首页？'
     : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'
@@ -215,6 +237,11 @@ function withCoreConversationalConfirmation(
       }
       if (definition.name === 'arkme_topic_home_visibility' && (args as Record<string, unknown>).show_in_home === undefined) {
         return await definition.execute(args, exec)
+      }
+      if (definition.name === 'arkme_realtime_dictation') {
+        const request = JSON.parse(String((args as Record<string, unknown>).request_json)) as { action?: string }
+        // The confirmed start returns a short-lived account-bound capability; audio/control use it.
+        if (['audio', 'status', 'finish', 'cancel'].includes(request.action ?? '')) return await definition.execute(args, exec)
       }
       if (exec.agent === undefined) throw new Error('该 Arkme 操作必须在一个真实 DSH Agent 会话中执行')
       const hooks = arkmeConfirmationContextHooks(definition)

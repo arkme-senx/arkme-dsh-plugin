@@ -1,3 +1,4 @@
+import { dictationAnchorExtension, documentDictationTarget } from './dictation-target.js'
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import { Extension, type Editor } from '@tiptap/core'
@@ -55,6 +56,7 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
     immediatelyRender: false,
     shouldRerenderOnTransaction: false,
     extensions: [
+      dictationAnchorExtension,
       ...(props.format === 'text' ? arkmeTextExtensions() : arkmeMarkdownExtensions()),
       Extension.create({
         name: 'arkmeLengthLimit',
@@ -186,6 +188,10 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
   }
 
   useImperativeHandle(forwardedRef, () => ({
+    createDictationTarget() {
+      if (!editor || latest.current.disabled) return
+      return documentDictationTarget(editor, currentSelection().to)
+    },
     insertEmoji(emoji) {
       if (!editor || latest.current.disabled || arkmeEmojiById[emoji.id] === undefined) return 'unavailable'
       const native = nativeSelection()
@@ -203,7 +209,8 @@ export const ArkmeDocumentComposerInput = forwardRef<ArkmeDocumentComposerHandle
         .replaceSelectionWith(editor.schema.nodes.arkmeEmoji!.create({ emojiId: emoji.id }))
       editor.view.dispatch(transaction)
       if (editor.state === previousState) return 'length-limit'
-      editor.view.dom.focus({ preventScroll: true })
+      // Reconcile the document selection after native focus restores its old caret.
+      editor.view.focus()
       return 'inserted'
     },
     captureSelection() {

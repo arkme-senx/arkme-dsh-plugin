@@ -647,6 +647,7 @@ export class CalendarService {
           displayItems: media.displayItemsByRecordUid.get(item.recordUid) ?? [],
           mediaUnavailable: media.unavailableRecordUids.has(item.recordUid),
         })
+        if (content.forwardRecords !== undefined) await this.record.hydrateForwardAvatars(raw, session.userId, content)
         const topicUid = stringValue(objectValue(objectValue(raw).topic_core).topic_uid).trim()
         const source = item.topicTitle ? sources.get(`topic:${topicUid}`) : sources.get(chatUid(raw))
         const rawItem = objectValue(raw), core = objectValue(rawItem.record_core)

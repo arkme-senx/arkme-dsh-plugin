@@ -9,6 +9,21 @@ import type { TeamServicePort } from '../src/services/team-service.js'
 
 const teamRef = `team_v1_${'a'.repeat(32)}`
 
+it('requires an origin for both shared-chat write adapters before reaching the owner', async () => {
+  const write = vi.fn()
+  const server = createServer(createArkmeHostApi({executeTeamApp: write, externalChats: write} as never, {expectedPort: 3080, allowNonLoopback: false}))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const endpoint = `http://127.0.0.1:${(server.address() as {port:number}).port}`
+  try {
+    for (const operation of ['team.app.external.share', 'team.app.external.unshare', 'team.external']) {
+      const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({operation, params:{operation:'share'}})})
+      expect(response.status).toBe(403)
+      expect((await response.json()).error.code).toBe('origin-required')
+    }
+    expect(write).not.toHaveBeenCalled()
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+})
+
 function teamFixture(): TeamServicePort {
   return {
     list: vi.fn(async options => ({ items: [], totalCount: 0, hasMore: false, options } as never)),
@@ -125,4 +140,25 @@ describe('Team Host and SDK contract', () => {
       body: JSON.stringify({ operation: 'team.join-by-jotmo-id', params: { items: [{ itemId: 'join-1', jotmoId: 'team_arch' }] } }),
     }))
   })
+})
+
+it('external private chat SDK capability checks then calls the same Host owner', async () => {
+  let supported=true
+  const calls: string[]=[]
+  const sharedItem = {itemUid: 'safe-message-key', senderName: '同名用户', senderSide: 'sharer', isMe: false, textContent: '只读正文'}
+  const service={externalChats:vi.fn(async (operation: string) => operation === 'page' ? {items:[sharedItem],hasMore:false,beforeSeq:1,mediaUrls:{}} : {items:[],hasMore:false})}
+  const fetchImpl=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+    const input=JSON.parse(String(init?.body))
+    calls.push(input.operation)
+    const data=input.operation==='provider.capabilities'?{contractVersion:1,features:{teamExternalChats:supported}}
+      :await dispatchArkmeHostOperation(service as never,input.operation,input.params)
+    return new Response(JSON.stringify({ok:true,value:data}),{headers:{'content-type':'application/json'}})
+  })
+  const sdk=new ArkmeSdk({fetchImpl:fetchImpl as typeof fetch})
+  await expect(sdk.externalChats('list',{teamRef:'opaque-team'})).resolves.toMatchObject({items:[]})
+  expect(service.externalChats).toHaveBeenCalledWith('list',{teamRef:'opaque-team'},undefined)
+  await expect(sdk.externalChats('page',{shareRef:'opaque-share'})).resolves.toMatchObject({items:[{senderSide:'sharer',isMe:false}]})
+  supported=false
+  await expect(sdk.externalChats('page',{shareRef:'opaque-share'})).rejects.toThrow('不支持')
+  expect(service.externalChats).toHaveBeenCalledTimes(2)
 })

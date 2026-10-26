@@ -4,7 +4,7 @@ import { createHash, webcrypto } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { captureQuoteAnchor, quoteHighlightRange, quoteDomProjection } from '../src/client/message-quote-selection.js'
-import { quoteCanonicalText, quoteSourceContent, readMessageQuote, projectedMessageQuote, quoteCapabilitiesFromWire, type ArkmeMessageQuote } from '../src/message-quote.js'
+import { quoteCanonicalText, quoteSourceContent, readMessageQuote, projectedMessageQuote, quoteCapabilitiesFromWire, quoteMatchesCanonical, type ArkmeMessageQuote } from '../src/message-quote.js'
 import { ArkmeMessageTextSelectionToolbar } from '../src/client/ArkmeMessageTextSelection.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeQuotePreview } from '../src/client/ArkmeQuotePreview.js'
@@ -112,4 +112,62 @@ it('keeps self topic quote drafts separate and preserves body when cancelling', 
   expect(restored.get(topic).extensionTarget?.quote).toEqual(quote)
   expect(restored.get(other).extensionTarget).toBeUndefined()
   restored.setExtensionTarget(topic, undefined); expect(restored.get(topic).text).toBe('延展正文')
+})
+
+it('matches Go JSON scalar context when a 32-unit hint splits an emoji',()=>{
+ const text='a😀'+'x'.repeat(31)+'Z'
+ const quote:ArkmeMessageQuote={version:1,projection:'arkme-text-v1',sourceDigest:'a'.repeat(64),recordVersion:3,start:34,end:35,text:'Z',prefix:'\uFFFD'+'x'.repeat(31),suffix:''}
+ expect(quoteMatchesCanonical(quote,text)).toBe(true)
+ expect(quoteMatchesCanonical({...quote,prefix:'wrong'},text)).toBe(false)
+ const after='Z'+'x'.repeat(31)+'😀a'
+ expect(quoteMatchesCanonical({...quote,start:0,end:1,prefix:'',suffix:'x'.repeat(31)+'\uFFFD'},after)).toBe(true)
+ expect(quoteMatchesCanonical({...quote,text:'wrong'},text)).toBe(false)
+})
+it('uses rendered overflow for short CJK quotations and remeasures after resizing', async () => {
+  let height = 72
+  const measure = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.tagName === 'SPAN' ? height : 0
+  })
+  let resized: (() => void) | undefined
+  vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resized = callback } observe() {} disconnect() {} })
+  try {
+    const quote = { version: 1, projection: 'arkme-text-v1', sourceDigest: 'a'.repeat(64), start: 0, end: 68, text: '这里是一段需要完整查看的中文引用。'.repeat(4), prefix: '', suffix: '' } as const
+    await act(async () => root.render(<ArkmeQuotePreview parent={{ ...base, quote, quoteState: 'available' }} />))
+    let expand = [...host.querySelectorAll('button')].find(button => button.textContent === '展开引用')!
+    expect(expand).toBeDefined()
+    await act(async () => expand.click())
+    expect(host.querySelector('[aria-expanded="true"]')?.textContent).toBe('收起引用')
+    expect(host.querySelector('button>span:last-child')?.getAttribute('style')).not.toContain('-webkit-line-clamp: 2')
+    await act(async () => (host.querySelector('[aria-expanded="true"]') as HTMLButtonElement).click())
+    height = 18
+    await act(async () => resized?.())
+    expect(host.querySelector('[aria-expanded]')).toBeNull()
+  } finally { measure.mockRestore() }
+})
+it('keeps the selection toolbar open while scrolling its author list and dismisses it on page scroll', async () => {
+  const sourceDigest = digest(base)
+  const marks = Array.from({ length: 500 }, (_, index) => ({ id: String(index), actorId: index + 1, actorName: '成员' + index,
+    mine: false, state: 'available' as const,
+    anchor: { version: 1 as const, projection: 'arkme-text-v1' as const, sourceDigest, start: 7, end: 9, text: '可以', prefix: '', suffix: '' } }))
+  await act(async () => root.render(<><ArkmeMessageTextSelectionToolbar replySourceRef="source" getMarks={() => marks} onUnderline={async () => undefined} /><ArkmeMessageContent item={base} sourceRef="source" /></>))
+  const p = host.querySelector('p')!; select(document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode()!, 7, 9)
+  await act(async () => p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+  await vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(document.querySelector('[data-arkme-mark-authors]')?.textContent).toContain('成员499')
+  })
+  const authors = document.querySelector('[data-arkme-mark-authors]')!
+  await act(async () => authors.dispatchEvent(new Event('scroll')))
+  expect(document.querySelector('[role="toolbar"]')).not.toBeNull()
+  await act(async () => document.dispatchEvent(new Event('scroll')))
+  expect(document.querySelector('[role="toolbar"]')).toBeNull()
+})
+
+it('requires explicit whole-message text and never exposes it when the source is unavailable',async()=>{
+ await act(async()=>root.render(<ArkmeQuotePreview parent={base}/>))
+ expect(host.textContent).not.toContain(base.textContent)
+ await act(async()=>root.render(<ArkmeQuotePreview parent={base} wholeMessageText={base.textContent}/>))
+ expect(host.textContent).toContain(base.textContent)
+ await act(async()=>root.render(<ArkmeQuotePreview parent={{...base,quoteState:'unavailable'}} wholeMessageText={base.textContent}/>))
+ expect(host.textContent).not.toContain(base.textContent)
 })

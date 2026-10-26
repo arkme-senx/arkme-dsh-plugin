@@ -1,3 +1,4 @@
+import { createMessageCopyLink } from './message-copy-link-create.js'
 import { createHash } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
@@ -19,6 +20,7 @@ function numberValue(value: unknown): number {
 }
 
 export class LocalMessageActionCapabilityCodec extends EncryptedReferenceCodec implements MessageActionCapabilityCodec {
+  fingerprint(payload: unknown): string { return createHash('sha256').update(JSON.stringify(payload)).digest('hex') }
   constructor(uniqueCode: () => Promise<string>) {
     super(uniqueCode, cause => new ArkmePluginError('message-action-ref-invalid', '消息操作引用无效', false, 400, { cause }))
   }
@@ -49,18 +51,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult> {
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/messages/copy-link/get-or-create',
-      { sources: references.map(reference => this.copyLinkSource(reference)) },
-      session,
-      signal,
-    )
-    const sid = stringValue(data.sid).trim()
-    const url = stringValue(data.url).trim()
-    if (sid === '' || !/^https?:\/\//i.test(url)) {
-      throw new ArkmePluginError('message-copy-link-response-invalid', '复制链接失败，请稍后重试', true, 502)
-    }
-    return { sid, url }
+    return await createMessageCopyLink(this.runtime, references.map(reference => this.copyLinkSource(reference)), session, signal)
   }
 
   async forwardToChat(input: Parameters<MessageActionGateway['forwardToChat']>[0]): Promise<ArkmeSourceSendResult> {
@@ -140,6 +131,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   private copyLinkSource(reference: MessageActionSource): Record<string, unknown> {
+    if (reference.ownerKind === 'codex') throw new ArkmePluginError('codex-copy-link-unsupported', '后端接口开发中，开发完成后此功能完整可用', false, 409)
     if (reference.ownerKind === 'dsh_native') return {
       kind: 'dsh_native', dsh_message: { session_id: reference.sessionId, message_id: reference.messageIdentity,
         role: reference.role, text_content: reference.textContent, send_at: reference.createdAtMillis },
@@ -157,6 +149,14 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   private chatForwardSourceItem(reference: MessageActionSource): Record<string, unknown> {
+    if (reference.ownerKind === 'codex') return {
+      source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
+      source_identity_id: `codex:${createHash('sha256').update(JSON.stringify([reference.sessionId, reference.messageIdentity])).digest('hex')}`,
+      // Generic agent snapshots do not carry Codex attribution yet. Preserve it in
+      // the visible snapshot as well, never impersonating a DSH session or person.
+      snapshot_text: `Codex · ${reference.taskTitle} · ${reference.senderName} · ${new Date(reference.createdAtMillis).toISOString()}\n\n${reference.textContent}`,
+      source_sender_user_id: 0,
+    }
     if (reference.ownerKind === 'dsh_native') return {
       source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
       source_identity_id: this.nativeIdentity(reference), snapshot_text: reference.textContent, source_sender_user_id: reference.senderUserId,
@@ -184,26 +184,22 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     requestId: string,
     sendAtMillis: number,
   ): Record<string, unknown> {
-    const sourceRecordUids = references.flatMap(reference => reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? [] : [reference.recordUid])
+    const sourceRecordUids = references.flatMap(reference => reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' || reference.ownerKind === 'codex' ? [] : [reference.recordUid])
     return {
       payload_kind: 1,
       schema_version: 1,
       text_state: 1,
       forward_records: {
-        render_kind: 'forward_records', schema_version: 1, forward_id: requestId,
-        source_type: ['agent', 'dsh_native'].includes(references[0]?.ownerKind ?? '') ? 'agent' : 'quick_records',
+        render_kind: 'forward_records', forward_id: requestId,
+        source_type: ['agent', 'dsh_native', 'codex'].includes(references[0]?.ownerKind ?? '') ? 'agent' : 'quick_records',
         title: '转发快记', source_record_uids: sourceRecordUids, created_at: sendAtMillis,
         summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits')}`),
-        items: references.map((reference, index) => ({
-          item_order: index,
-          source_kind: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent_message' : reference.ownerKind === 'bot_chat' ? 'chat_relation' : 'record',
-          source_type: reference.ownerKind === 'agent' || reference.ownerKind === 'dsh_native' ? 'agent' : reference.ownerKind === 'bot_chat' ? 'chat_record' : 'record',
-          ...(reference.ownerKind === 'dsh_native' ? {
-            render_format: 'markdown', source_identity_kind: 'agent_message', source_identity_id: this.nativeIdentity(reference),
+        items: references.map(reference => ({
+          ...(reference.ownerKind === 'codex' ? { text_format: 'markdown' } : reference.ownerKind === 'dsh_native' ? {
+            text_format: 'markdown',
             ...(reference.role === 'assistant' ? { source_avatar_kind: 'deepseek' } : {}),
           } : reference.ownerKind === 'agent' ? {
-            render_format: 'markdown', source_identity_kind: 'agent_message',
-            source_identity_id: `${String(reference.agentSessionId)}:${reference.messageIdentity}`,
+            text_format: 'markdown',
             ...(reference.entryRecordUid === undefined ? {} : { record_uid: reference.entryRecordUid }),
           } : { record_uid: reference.recordUid }),
           ...(reference.ownerKind === 'bot_chat' ? {
@@ -216,9 +212,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
           owner_name: reference.senderName,
           send_at: reference.createdAtMillis,
           template_kind: 1,
-          display_kind: 0,
-          text: reference.textContent,
-          text_preview: arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits'),
+          text: reference.ownerKind === 'codex' ? `Codex · ${reference.taskTitle}\n\n${reference.textContent}` : reference.textContent,
         })),
       },
     }

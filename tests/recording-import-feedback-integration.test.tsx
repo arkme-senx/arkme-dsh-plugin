@@ -2,6 +2,13 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Keep DOM portal children in the test renderer tree; import ownership and
+// account switching still run through the real workspace and dialog.
+vi.mock('react-dom', async importOriginal => ({
+  ...await importOriginal<typeof import('react-dom')>(),
+  createPortal: (children: unknown) => children,
+}))
+
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(),
   callArkme: vi.fn(async () => await new Promise(() => undefined)),
@@ -23,10 +30,11 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 describe('account-owned recording import feedback wiring', () => {
   let renderer: ReactTestRenderer
   beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
     vi.mocked(callArkme).mockReset().mockImplementation(async () => await new Promise(() => undefined))
   })
-  afterEach(async () => { await act(async () => { renderer?.unmount() }) })
+  afterEach(async () => { await act(async () => { renderer?.unmount() }); vi.unstubAllGlobals() })
 
   it('projects the dialog status through the real workspace and clears it on account change', async () => {
     const auth = { status: 'authenticated' as const, environment: 'test' as const, userId: 42 }

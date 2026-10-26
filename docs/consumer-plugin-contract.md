@@ -242,3 +242,31 @@ Gate this extension on `capabilities().features.contactTeamDiscovery === true`.
 After explicit user intent, `joinContactTeam(team.jotmoId, requestUid)` uses the same Host owner as the built-in UI. Generate a UUID once per intent and reuse it when retrying. `pending` means awaiting owner approval, not membership. Refresh contact search for current `joined`, `pending`, `rejected`, `none`, or `not_member` state. Image references are viewer-bound; signed storage URLs and internal team IDs are not part of this SDK contract.
 
 The equivalent DSH tools are `arkme_contact_search` and `arkme_team_join`; the latter participates in the existing conversational write-confirmation policy.
+
+
+### Team message interactions
+
+Check `capabilities().features.teamMessageInteractions === 1` before offering Team message actions. `TeamMessagePort`, `TeamForwardInput`, `TeamSendInput`, and the related DTOs are public SDK exports. They use account/side-scoped references from `listTeamConversations()` and `readTeamMessages()`, never Chat source IDs or guessed Record owners.
+
+- `preflightTeamMessages()` validates the entire selected list against exact message versions. An unavailable or changed occurrence rejects the selection; do not silently substitute a current version.
+- `sendTeamMessage()` retains the supplied client UID through the existing durable queue. A queued task is not a delivery receipt; read `teamMessageTasks()` and use `updateTeamSend()` on the original task.
+- `readTeamMarks()` / `changeTeamMark()` use `team` or `conversation` audience explicitly. Local-only marks stay on the current device. Stale shared marks deliberately omit historical text.
+- `createTeamMessageCopyLink()` creates the existing public frozen SID share. Ask for public-sharing intent; it is not a private conversation locator.
+- `forwardTeamMessages()` accepts either a real Team conversation or a native source target. Keep selections, request ID, record UID, creation time and optional comment UID/text immutable for the entire intent. Retry unresolved destinations with the original command; retain clean receipts. A warning means the card was accepted while its comment needs the original retry.
+- `reportTeamMessage()` preserves the selected version as platform evidence. Reporting does not delete the author's personal Record or grant platform review authority to team owners.
+
+Pass the consumer lifecycle `AbortSignal` to every call and abort it on account/profile retirement or disposal. Host capability/version rejection happens before the business mutation. The independent consumer fixture and verifier are `tests/consumers/team-message-interactions-consumer.mts` and `scripts/verify-team-message-consumer.mjs`.
+
+## 实时听写 v1
+
+先检查 `sdk.capabilities().features.realtimeDictationV1 === true`。`sdk.openRealtimeDictation({ expectedUserId, onUpdate, onError, signal })` 返回 `{ send(pcm), finish(), dispose() }`。该方法也会检查能力，旧 Provider 明确抛出 `CAPABILITY_UNSUPPORTED`。采集由调用者在用户点击后持有；SDK 不获取麦克风，不发布消息。
+
+`send` 接收 16kHz、16bit、有符号小端、单声道 PCM ArrayBuffer，每次不超过 3200 bytes；Host 将原始 PCM 二进制帧转发到与移动端相同的 `jotmo.dictation.v1` 通道。`onUpdate.text` 是整个会话的累计全文，服务可能修订已经返回的文字，调用方须替换自己的听写区域，不能当增量追加。`phase: finished` 才表示最后结果到齐；停止采集后调用 `finish()`，仍接收更新，直到终态再释放编辑器锚点。`failed` 附有安全错误 `{code,message,retryable}`，保留已经写入的草稿；不要自动重连或重放音频。
+
+卸载 Consumer、切换账号或 Profile 时，AbortSignal 或 `dispose()` 必须取消同源连接及上游流。每次采集最多 120 秒，并服从服务端 `ready.max_duration_ms` 给出的更小额度；JSON stop 后最多等待 10 秒。上下行缓冲上限 64KiB，超限停止并报错。能力只用于本机同源页面，不向远端网页开放。
+
+非浏览器的受信任 Consumer 可使用 `sdk.realtimeDictation(request, signal)` 调用同一个 Host owner：`start` 提供当前 `expectedUserId`，其余 `audio/status/finish/cancel` 提供返回的不透明 `streamRef`。`audio.pcm` 是同样小帧的 base64，不接受文件路径、任意 URL 或凭据。请求取消只取消当前 RPC；创建的会话由 Consumer 在 finally 中显式 `cancel`，且受 Host 的时长、空闲和容量边界约束。终态只保留 30 秒。不透明引用绑定当前账号，无法跨账号续用。
+
+模型 Tool `arkme_realtime_dictation` 使用同一请求和结果语义。开始需明确用户授权和正式会话确认；确认后产生的短时 `streamRef` 持有该流的音频/收尾/查询/取消能力，不逐帧重复确认。模型不能获取麦克风、Token、上游地址或系统文件，不能根据识别内容推导新的授权。
+
+默认上游与 Flutter 当前 `NetworkComposerDictationSession` 一致：正式服 `wss://realtime.jotmo.cc/api/v1/realtime/connect`，测试服 `wss://jotmo-realtime.senguo.me/api/v1/realtime/connect`；沿用 Host 既有环境配置 `dshRemoteRealtimeBaseUrl`。先通过当前环境主 API 的 `/api/v1/dictation/check` 检查可用性与额度，再以 `jotmo.dictation.v1` 子协议及 deferred 请求头建立连接，按 prepared/start/ready 握手发送音频。停止与取消使用 JSON 控制帧；只有 `result.is_final=true` 才作为已结算的最终结果。旧 `stream_asr_wss.dart` 不是当前移动端输入框听写 owner，不使用其地址和结束标记。仅 Host 通过 Authorization 请求头发送凭据，禁止在 URL 查询参数传 Token。该实时入口不再使用短语音文件上传与轮询，原短语音 RPC 保留兼容。

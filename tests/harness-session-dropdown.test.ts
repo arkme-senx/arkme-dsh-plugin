@@ -362,3 +362,33 @@ it('removes the mirrored status together with the adapter', async () => {
   expect(document.querySelector('[data-arkme-session-status]')).toBeNull()
   expect(document.querySelector('[data-arkme-session-trigger]')).toBeNull()
 })
+
+
+it('recognizes the 0.2 frame tracks, nested new-session button and resident blank header', async () => {
+  const { frame } = mount()
+  cleanup!(); cleanup = undefined
+  frame.style.gridTemplateColumns = '56px minmax(0px, 1fr) minmax(0px, 0px)'
+  const root = document.querySelector('[data-slot="sidebar"]')!.firstElementChild!
+  const create = root.querySelector(':scope > button')!
+  const wrapper = document.createElement('span'); create.replaceWith(wrapper); wrapper.append(create)
+  const oldHeader = document.querySelector('[data-slot="conversation.session.header"]')!
+  oldHeader.outerHTML = '<header><div data-conversation-header-leading></div><div></div></header>'
+  cleanup = installHarnessSessionDropdown(document)
+  // A native Tooltip wraps its child but preserves the button's actual handler.
+  expect(document.querySelector('[data-arkme-session-trigger]')).not.toBeNull()
+  expect(document.querySelector('[data-arkme-session-identity]')?.textContent).toBe('DeepSeek Harness')
+  expect(frame.hasAttribute('data-arkme-session-frame')).toBe(true)
+  expect(document.querySelector('[data-arkme-session-trigger]')?.textContent).toBe('新会话')
+})
+
+it('keeps the 0.2 plain-text crumb and selector stable through repeated observer updates', async () => {
+  const { header } = mount()
+  cleanup!(); cleanup = undefined
+  header.innerHTML = '<div data-conversation-header-leading></div><div data-slot="conversation.session.header"><div><div><nav><span><span>会话 A</span></span></nav><div><span data-slot="conversation.session.header.actions"></span></div></div></div></div>'
+  cleanup = installHarnessSessionDropdown(document)
+  for (let i = 0; i < 3; i++) { header.dataset.update = String(i); await flush() }
+  const trigger = document.querySelector<HTMLButtonElement>('[data-arkme-session-trigger]')!
+  expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A')
+  expect(trigger.closest('[data-arkme-session-native-title]')).toBeNull()
+  expect(header.textContent).toContain('DeepSeek Harness')
+})

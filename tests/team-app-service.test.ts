@@ -31,11 +31,189 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
   const privateChat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })) }
-  const contacts = { privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()) }
-  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts)
-  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const contacts = {
+    privateRemarksByUserIds: vi.fn(async (_ids: readonly number[], _options?: unknown) => new Map<number, string>()),
+    openSourceRef: vi.fn(async (ref: string, _user: number) => (ref === 'private-ref'
+      ? { kind: 'private_chat', ownerRef: 'original-chat' }
+      : { kind: 'group_chat', ownerRef: 'group-id' }) as never),
+  }
+  const candidates = { list: vi.fn<import('../src/team-member-add-contract.js').TeamMemberCandidatePort['list']>(async () => ({ items: [], hasMore: false })) }
+  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts, candidates)
+  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, candidates, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
+
+it('opens private matching references for maximum-size Team text without cloud IO', async () => {
+ const text = '长'.repeat(60_000) + ' end'
+ const f = fixture(() => ({ channel, conversation, messages: [{ ...message, record: { ...message.record, text_content: text } }] }))
+ const db = new DatabaseSync(':memory:')
+ const store = new LocalMessageMarkStore(db, work => { db.exec('BEGIN IMMEDIATE'); try { work(); db.exec('COMMIT') } catch (error) { db.exec('ROLLBACK'); throw error } })
+ Object.assign(f.runtime.stateStore, { messageMarks: store })
+ try {
+  const conversationRef = (await open(f)).conversation!.ref
+  const page = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+  const markRef = page.messages[0]!.localMarkRef!
+  expect(markRef.length).toBeLessThan(16_384)
+  expect(markRef.length).toBeLessThan(512 * 1024)
+  const calls = f.requests.length
+  const anchor = { version: 1, projection: 'arkme-text-v1', recordVersion: 3, sourceDigest: createHash('sha256').update(quoteSourceContent({ textContent: text })).digest('hex'), start: 0, end: 1, text: '长', prefix: '', suffix: '长'.repeat(32) }
+  const result = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'long', anchor, canonical: text } }) as MessageUnderlineSnapshot
+  expect(result.items[0]?.anchor).toEqual(anchor)
+  expect(f.requests).toHaveLength(calls)
+ } finally { db.close() }
+})
+describe('team group frontend handoff boundary', () => {
+  const member = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 3 }
+  it('checks a viewer-scoped group source and returns real teams without granting delegated group access', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    const result = await f.service.execute('team.app.group.context', { sourceRef: 'sealed-group', expectedAccountKey: 'test:90' }) as { state: string; teams: Array<{ teamRef: string }> }
+    expect(result.state).toBe('backend_pending'); expect(result.teams).toHaveLength(1)
+    expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine'])
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'sealed-group', teamRef: result.teams[0]!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
+    await expect(f.service.execute('team.app.group.directory', { teamRef: result.teams[0]!.teamRef })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.requests.every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    f.contacts.openSourceRef.mockRejectedValueOnce(new Error('invalid source'))
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'forged' })).rejects.toThrow('invalid source')
+    f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'private' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group' })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.group.context', { sourceRef: 'group', expectedAccountKey: 'test:90' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(0)
+  })
+  it('does not reuse removed team membership for either joins or the team group directory', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [member] : [] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.group.directory', { teamRef: teams[0]!.teamRef })).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group', teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+  })
+})
+
+describe('team World frontend boundary', () => {
+  const member = { team_id: '9223372036854775800', jotmo_id: 'our_team', name: '团队', role: 3 }
+  it('reads a separate team namespace and returns no fake personal feed or publishing grant', async () => {
+    const f = fixture(() => ({ teams: [member] }))
+    const page = await f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:90' }) as import('../src/team-world-contract.js').TeamWorldView
+    expect(page).toMatchObject({ state: 'backend_pending', team: { jotmoId: 'our_team' }, memberTeam: { jotmoId: 'our_team' } })
+    expect(page).not.toHaveProperty('items'); expect(page).not.toHaveProperty('canPublish')
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: page.memberTeam!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
+  })
+  it('uses only public discovery for a non-member and never returns private membership or uses member-only profile reads', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { jotmo_id: 'public_team', name: '公开团队', requires_approval: false, state: 'not_member' } })
+    const page = await f.service.execute('team.app.world.view', { jotmoId: 'public_team' }) as import('../src/team-world-contract.js').TeamWorldView
+    expect(page.team).toMatchObject({ name: '公开团队', jotmoId: 'public_team' }); expect(page.memberTeam).toBeUndefined()
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
+  })
+  it('rechecks removed membership, account binding and malformed requests without writes', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [member] : [] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef })).rejects.toThrow()
+    await expect(f.service.execute('team.app.world.view', { jotmoId: '' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:91' })).rejects.toThrow('账号已在其他页面切换')
+    expect(f.requests.every(v => v.path.endsWith('/list-mine'))).toBe(true)
+  })
+})
+
+describe('team public card projection', () => {
+  it('reads a real member channel but exposes only public presentation and never opens a conversation', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id, role: 3 }] } : channel)
+    const value = await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })
+    expect(value).toMatchObject({ name: channel.name, jotmoId: channel.jotmo_id, contact: { state: 'available', publicRef: channel.public_ref } })
+    expect(Object.keys(value as object).sort()).toEqual(['avatar', 'contact', 'jotmoId', 'name'])
+    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/message-channel/get'])
+  })
+  it('uses public discovery for external viewers without calling member-only channel APIs or inventing a contact link', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { name: '公开团队', jotmo_id: 'public_team', requires_approval: true, state: 'not_member', avatar: { mode: 'default' } } })
+    expect(await f.service.execute('team.app.public-card', { jotmoId: 'public_team' })).toMatchObject({ name: '公开团队', contact: { state: 'backend_pending' } })
+    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
+  })
+  it('preserves disabled channel state and rejects wrong identity or account', async () => {
+    let value = { ...channel, enabled: false }
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id }] } : value)
+    expect(await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).toMatchObject({ contact: { state: 'disabled' } })
+    value = { ...value, jotmo_id: 'wrong' }
+    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  })
+})
+
+describe('internal group preparation boundary', () => {
+  const owner = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 1 }
+  it('validates creation and linking without writing any group membership', async () => {
+    const f = fixture(() => ({ teams: [owner] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, expectedAccountKey: 'test:90', requestUid: 'attempt-1' }
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'create', name: '团队内部群' })).resolves.toEqual({ state: 'backend_pending' })
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'sealed-group' })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
+    expect(f.requests.every(value => value.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects missing names, malformed requests and non-group sources before preparing', async () => {
+    const f = fixture(() => ({ teams: [owner] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' }
+    for (const invalid of [{ mode: 'create', name: ' ' }, { mode: 'create', name: 'a'.repeat(121) }, { mode: 'create', name: '群', requestUid: '' }, { mode: 'link' }, { mode: 'other' }]) {
+      await expect(f.service.execute('team.app.internal-group.prepare', { ...params, ...invalid })).rejects.toThrow()
+    }
+    f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'private' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(1)
+  })
+  it('rechecks removed membership, admin role and account, without trusting the opened form', async () => {
+    let members = [owner]
+    const f = fixture(() => ({ teams: members }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const params = { teamRef: teams[0]!.teamRef, expectedAccountKey: 'test:90', requestUid: 'attempt-1', mode: 'create', name: '内部群' }
+    members = [{ ...owner, role: 3 }]
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('仅团队所有者或管理员')
+    members = []
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('无权访问')
+    f.changeAccount()
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow()
+    expect(f.requests).toHaveLength(3)
+  })
+})
+
+describe('member initiated team conversation handoff boundary', () => {
+  const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }
+  const recipient = { kind: 'chat-member', sourceRef: 'source-ref', memberRef: 'member-ref' }
+  it('requires authenticated membership and returns a pending state without calling a nonexistent creation API', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {})
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    const result = await f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })
+    expect(result).toEqual({ state: 'backend_pending' })
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('rejects a removed member and never substitutes another team', async () => {
+    let joined = true
+    const f = fixture(() => ({ teams: joined ? [memberTeam] : [{ ...memberTeam, team_id: 18 }] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    joined = false
+    await expect(f.service.execute('team.app.outbound.open', { teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+  })
+  it('rejects malformed targets and an account changed since the UI opened', async () => {
+    const f = fixture(() => ({ teams: [memberTeam] }))
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
+    await expect(f.service.execute('team.app.outbound.open', { teamRef: teams[0]!.teamRef, recipient: { kind: 'chat-member', memberRef: 'member' }, requestUid: 'attempt-1' })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })).rejects.toThrow()
+    expect(f.requests).toHaveLength(1)
+  })
+})
 
 it.each([
   [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
@@ -81,15 +259,15 @@ it('persists private Team marks across refreshed references without cloud writes
       sourceDigest: createHash('sha256').update(quoteSourceContent({ textContent: '已收到' })).digest('hex'),
       start: 0, end: 2, text: '已收', prefix: '', suffix: '到' }
     const calls = f.requests.length
-    expect(await f.service.execute('team.app.local-mark.capabilities', { conversationRef })).toEqual({ supported: true, maxLength: 2000, storage: 'local' })
-    const first = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'add', anchor } }) as MessageUnderlineSnapshot
+    expect(await f.service.execute('team.app.local-mark.capabilities', { conversationRef })).toEqual({ supported: true, maxLength: 2000, storage: 'local', maxBatchSize: 4 })
+    const first = await f.service.execute('team.app.local-mark.change', { conversationRef, markRef, change: { kind: 'add', operationId: 'add', anchor, canonical: '已收到' } }) as MessageUnderlineSnapshot
     expect(first.items[0]).toMatchObject({ mine: true, actorId: 90, anchor })
     expect(f.requests).toHaveLength(calls)
     const fresh = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
     const read = async (ref: string) => await f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [ref] }) as { snapshot: MessageUnderlineSnapshot }[]
     expect((await read(fresh.messages[0]!.localMarkRef!))[0]!.snapshot).toEqual(first)
     await expect(f.service.execute('team.app.local-mark.change', { conversationRef, markRef,
-      change: { kind: 'add', operationId: 'invalid', anchor: { ...anchor, text: '错字' } } })).rejects.toMatchObject({ code: 'team-local-mark-source-changed' })
+      change: { kind: 'add', operationId: 'invalid', canonical: '已收到', anchor: { ...anchor, text: '错字' } } })).rejects.toMatchObject({ code: 'team-local-mark-source-changed' })
     await expect(f.service.execute('team.app.local-mark.list', { conversationRef, markRefs: [page.messages[0]!.ref] })).rejects.toThrow()
     rawMessage = { ...message, record: { ...message.record, version: 4, text_content: '已经修改' } }
     const edited = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
@@ -108,6 +286,33 @@ it('persists private Team marks across refreshed references without cloud writes
 })
 
 describe('Team App owner adapter', () => {
+  it('projects a complete summary batch using stable opaque identities and the Team owner only', async()=>{
+    const f=fixture((path,body)=>path.endsWith('/summary-list')
+      ? {items:(body.message_uids as string[]).map(message_uid=>({message_uid,team_read:true,visitor_read:false,summary:{recipient_count:1000,read_count:200,unread_count:800}})),last_seq:2,my_read_seq:2,unread:0}
+      : {channel,conversation:{...conversation,side:'team'},messages:[message,{...message,message_uid:'second-message',seq:1}]})
+    const opened=await open(f), timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:timeline.messages.map(m=>m.ref)}) as {items:Array<{key:string;summary:unknown}>}
+    expect(result.items.map(m=>m.key)).toEqual(timeline.messages.map(m=>m.key))
+    expect(result.items[0]!.summary).toEqual({total:1000,read:200,unread:800})
+    expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'team',message_uids:['message-private','second-message']})
+    expect(f.requests.every(r=>!r.path.includes('chat')&&!r.path.includes('record')&&!r.path.includes('read-receipts/query'))).toBe(true)
+    expect(JSON.stringify(result)).not.toMatch(/message-private|second-message|user_id|conversation_uid/)
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref,timeline.messages[0]!.ref]})).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
+  it('does not disclose counts or identities in an external summary even if the server supplies them',async()=>{
+    const own={...message,side:'external',actor_user_id:90}
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items:[{message_uid:own.message_uid,team_read:true,visitor_read:true,summary:{recipient_count:1,read_count:1,unread_count:0},members:[{user_id:11}]}],last_seq:2,my_read_seq:2,unread:0} : {channel,conversation,messages:[own]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    const result=await f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})
+    expect(result).toEqual({items:[{key:timeline.messages[0]!.key,teamRead:true}],lastSeq:2,myReadSeq:2,unread:0})
+  })
+  it.each([[],[{message_uid:message.message_uid,team_read:true,summary:{recipient_count:10,read_count:9,unread_count:0}}]])('rejects incomplete summary truth %s instead of manufacturing unread',async items=>{
+    const f=fixture(path=>path.endsWith('/summary-list') ? {items,last_seq:2,my_read_seq:2,unread:0} : {channel,conversation:{...conversation,side:'team'},messages:[message]})
+    const opened=await open(f),timeline=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+    await expect(f.service.execute('team.app.receipt-summaries',{messageRefs:[timeline.messages[0]!.ref]})).rejects.toThrow()
+  })
   it('resolves official membership by provider identity, including users with no team conversations', async () => {
     let teams: unknown = [{ ...channel, team_id: '9223372036854775801', name: channel.name }]
     const f = fixture(path => path.endsWith('official-feedback-target') ? channel : { teams })
@@ -136,6 +341,7 @@ describe('Team App owner adapter', () => {
     expect(first.members).toHaveLength(messageSide==='team'?3:4)
     expect(first.members.map(m=>m.key)).toEqual(second.members.map(m=>m.key))
     expect(first.members.find(m=>m.isMe)).toMatchObject({nickname:'重名',read:true})
+    expect(first.members.find(m=>m.isMe)?.readAt).toBe(123)
     expect(first.members.at(-1)?.read).toBeUndefined()
     expect(JSON.stringify(first)).not.toMatch(/user_id|actor_user_id|sender_user_id/)
     expect(Object.keys(f.requests.at(-1)!.body).sort()).toEqual(['conversation_uid','cursor','limit','message_uid','side'])
@@ -427,12 +633,30 @@ describe('Team App owner adapter', () => {
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(members.items[0]?.canRemove).toBe(true)
+    expect(members.items[0]?.codexSync).toEqual({state:'unavailable',reason:'unsupported'})
     const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(refreshed.items[0]?.userRef).not.toBe(members.items[0]?.userRef)
     expect(refreshed.items[0]?.key).toBe(members.items[0]?.key)
     expect(JSON.stringify(members)).not.toContain('user_id')
     await f.service.execute('team.app.member.remove', { userRef: members.items[0]!.userRef })
     expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })
+  })
+  it('passes only validated member sync status without additional member-by-member calls', async () => {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [
+      { user_id: 11, display_name: '甲', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:false,can_view_conversations:true,private_path:'/private'} },
+      { user_id: 12, display_name: '乙', role: 3, codex_sync: {version:1,state:'not_connected',has_conversations:false,can_view_conversations:false} },
+      { user_id: 13, display_name: '丙', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:0,can_view_conversations:'true'} },
+    ], total_count: 3 } : { teams: [{ ...channel, role: 1 }] })
+    const c = await f.service.execute('team.app.official', {}) as TeamChannel
+    const result = await f.service.execute('team.app.members', {teamRef:c.teamRef,avatarMode:'deferred'}) as TeamMembers
+    expect(result.items.map(item => item.codexSync)).toEqual([
+      {state:'enabled',hasConversations:false,canViewConversations:true},
+      {state:'not_connected',hasConversations:false,canViewConversations:false},
+      {state:'unavailable',reason:'invalid'},
+    ])
+    expect(JSON.stringify(result)).not.toContain('/private')
+    expect(f.requests.filter(r => r.path.includes('members/list'))).toHaveLength(1)
+    expect(f.requests.some(r => r.path.includes('connection/status'))).toBe(false)
   })
   it('preserves optional profile avatars and unavailable identity without changing member authority', async () => {
     const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
@@ -484,7 +708,7 @@ describe('Team App owner adapter', () => {
   })
   it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
     const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
-    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100 })
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: event.kind==='team.receipt.changed' })
     expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()
@@ -539,6 +763,85 @@ describe('Team profile owner adapter',()=>{
  })
 })
 
+it('validates Team reply context, transports the quote and masks the parent locator',async()=>{
+ const rawParent={message_uid:'parent-private',seq:1,record_version:3,state:'available',sender:{nickname:'成员'},text:'已收到',quote:{version:1,projection:'arkme-text-v1',recordVersion:3,sourceDigest:'a'.repeat(64),start:0,end:2,text:'已收',prefix:'',suffix:'到'}}
+ const f=fixture(path=>({channel,conversation,messages:[{...message,reply:rawParent}],...(path.endsWith('/send')?{...message}: {})}))
+ const opened=await open(f),ref=opened.conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const parent=page.messages[0]!.reply!
+ expect(parent).toMatchObject({seq:1,version:3,state:'available',quote:rawParent.quote})
+ expect(JSON.stringify(parent)).not.toContain('parent-private')
+ await f.service.execute('team.app.send',{conversationRef:ref,clientUid:'client',content:{text_content:'回复',template_kind:1},replyToRef:parent.ref,replyRecordVersion:3,quote:parent.quote})
+ expect(f.requests.at(-1)!.body).toMatchObject({reply_to:'parent-private',reply_record_version:3,quote:rawParent.quote})
+ await f.service.execute('team.app.locate',{conversationRef:ref,messageRef:parent.ref})
+ expect(f.requests.at(-1)).toMatchObject({path:'/api/v1/team/conversations/timeline/locate',body:{message_uid:'parent-private'}})
+ f.changeAccount()
+ await expect(f.service.execute('team.app.send',{conversationRef:ref,replyToRef:parent.ref})).rejects.toMatchObject({code:'team-reference-invalid'})
+})
+
+it('reports exact authorized Team occurrences without trusting body, owner or reviewer input',async()=>{
+ let current=conversation
+ const f=fixture(path=>path.endsWith('/reports/create')?{report_uid:'accepted-report'}:{channel,conversation:current,messages:[message]})
+ const opened=await open(f),ref=opened.conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const command={conversationRef:ref,messageRef:page.messages[0]!.ref,version:3,reason:'privacy',description:'个人信息'}
+ expect(await f.service.execute('team.app.report',command)).toEqual({reportUid:'accepted-report'})
+ expect(f.requests.at(-1)?.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',message_uid:message.message_uid,expected_record_version:3,reason:'privacy',description:'个人信息'})
+ const calls=f.requests.length
+ await expect(f.service.execute('team.app.report',{...command,version:3.5})).rejects.toThrow()
+ expect(f.requests).toHaveLength(calls)
+ current={...conversation,conversation_uid:'foreign'}
+ const other=await open(f)
+ await expect(f.service.execute('team.app.report',{...command,conversationRef:other.conversation!.ref})).rejects.toThrow()
+ f.changeAccount()
+ await expect(f.service.execute('team.app.report',command)).rejects.toThrow()
+})
+
+it('creates the existing SID share from exact Team occurrences and never exposes raw owner input',async()=>{
+ const f=fixture((path,body)=>path==='/api/v1/chats/messages/copy-link/get-or-create'
+  ? new Response(JSON.stringify({code:200,data:{sid:'share-sid',url:'https://share.test/s/share-sid'}}),{headers:{'content-type':'application/json'}})
+  : {channel,conversation,messages:[message]})
+ const conversationRef=(await open(f)).conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const selections=[{messageRef:page.messages[0]!.ref,version:3}]
+ expect(await f.service.execute('team.app.copy-link',{conversationRef,selections})).toEqual({sid:'share-sid',url:'https://share.test/s/share-sid'})
+ expect(f.requests.at(-1)?.body).toEqual({sources:[{kind:'team_message',team_source:{conversation_uid:conversation.conversation_uid,message_uid:message.message_uid,side:'external',expected_record_version:3}}]})
+ const count=f.requests.length
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections:[...selections,...selections]})).rejects.toThrow()
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections:[{...selections[0],version:3.5}]})).rejects.toThrow()
+ expect(f.requests).toHaveLength(count)
+ f.changeAccount()
+ await expect(f.service.execute('team.app.copy-link',{conversationRef,selections})).rejects.toThrow()
+ expect(f.requests).toHaveLength(count)
+})
+
+it('binds a frozen Team card to owner-blind target media and removes source actor actions',async()=>{
+ const forward={source_type:'team_message',render_kind:'forward_records',title:'卡片',items:[{owner_name:'原作者',text:'冻结正文',files:[{file_asset_uid:'physical',media_key:'forward-owner-blind',name:'frozen.png'}]}]}
+ const full={...message,record:{...message.record,content_payload:{payload_kind:1,forward_records:forward},media:[{file_asset_uid:'forward-owner-blind',file_name:'frozen.png',mime_type:'image/png',file_kind:1,size:42}]}}
+ const f=fixture(()=>({channel,conversation,messages:[full]}))
+ const conversationRef=(await open(f)).conversation!.ref,page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const card=page.messages[0]!
+ expect(card.forwardRecords?.items[0]).toMatchObject({senderName:'原作者',textContent:'冻结正文',contentBlocks:[{mediaRef:card.media[0]?.ref}]})
+ expect(card.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
+ expect(JSON.stringify(card.forwardRecords)).not.toContain('private-signed')
+})
+
+it('projects scoped conversation cursor metadata without fetching bodies and rejects incomplete batches', async () => {
+  let broken = false
+  const f=fixture((path,body)=>path.endsWith('/read-state/query-list')
+    ? {items:broken?[]:(body.conversation_uids as string[]).map(conversation_uid=>({conversation_uid,accessible:true,last_seq:2,my_read_seq:2,unread:0}))}
+    : {channel,conversation})
+  const opened=await open(f), ref=opened.conversation!.ref
+  const data=await f.service.execute('team.app.read-states',{conversationRefs:[ref]})
+  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0,notificationPolicy:{muted:false,policyVersion:0,notifyAfterSeq:0}}])
+  expect(f.requests.at(-1)!.body).toEqual({side:'external',conversation_uids:[conversation.conversation_uid]})
+  expect(JSON.stringify(data)).not.toContain(conversation.conversation_uid)
+  broken=true
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref,ref]})).rejects.toThrow()
+  f.changeAccount()
+  await expect(f.service.execute('team.app.read-states',{conversationRefs:[ref]})).rejects.toThrow()
+})
 
 describe('Team visitor private chat authority', () => {
   it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
@@ -647,14 +950,14 @@ describe('Team people identity and private remarks', () => {
 
 it('projects server reply keys and rejects cross-conversation or cross-account reply references before sending', async () => {
   let current = conversation
-  const f = fixture(path => path.endsWith('/messages/send') ? {...message,reply_to:message.message_uid} : {channel,conversation:current,messages:[message]})
+  const f = fixture(path => path.endsWith('/messages/send') ? {...message,reply:{message_uid:message.message_uid,seq:1,record_version:3,state:'available',text:'原文',sender:{nickname:'同事'}}} : {channel,conversation:current,messages:[message]})
   const opened = await open(f), conversationRef = opened.conversation!.ref
   const page = await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
   const parent = page.messages[0]!
   const key = await f.service.replyKey(conversationRef,parent.ref,90)
   expect(key).toBe(parent.key)
-  const sent = await f.service.execute('team.app.send',{conversationRef,replyToRef:parent.ref,content:{text_content:'延展',template_kind:1}}) as TeamSendResult
-  expect(sent.message?.replyToKey).toBe(parent.key)
+  const sent = await f.service.execute('team.app.send',{conversationRef,replyToRef:parent.ref,replyRecordVersion:3,content:{text_content:'延展',template_kind:1}}) as TeamSendResult
+  expect(sent.message?.reply?.key).toBe(parent.key)
   expect(f.requests.at(-1)!.body.reply_to).toBe(message.message_uid)
   current = {...conversation,conversation_uid:'another'}
   const other = await open(f), before = f.requests.length
@@ -662,4 +965,213 @@ it('projects server reply keys and rejects cross-conversation or cross-account r
   expect(f.requests).toHaveLength(before)
   f.changeAccount()
   await expect(f.service.replyKey(conversationRef,parent.ref,91)).rejects.toThrow()
+})
+
+describe('team member candidate and pending add boundary', () => {
+  const owner = { team_id: 17, role: 1, name: '团队', jotmo_id: 'team' }
+  type Page = import('../src/team-member-add-contract.js').TeamMemberCandidatePage
+  async function ref(f: ReturnType<typeof fixture>) { return ((await f.service.execute('team.app.teams', {})) as Array<{ teamRef: string }>)[0]!.teamRef }
+  const handler = (path: string) => path.endsWith('/list-mine') ? { teams: [owner] } : { items: [{ user_id: 90 }, { user_id: 12 }], has_more: false }
+  it('deduplicates people by real account across sources and disables self/existing members without exposing IDs', async () => {
+    const f = fixture(handler), teamRef = await ref(f)
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '备注' }, { userId: 11, displayName: '备注' }, { userId: 12, displayName: '同名' }, { userId: 90, displayName: '我' }], hasMore: false })
+    const first = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
+    expect(first.items).toHaveLength(3)
+    expect(first.items[0]).toMatchObject({ displayName: '备注', alreadyMember: false, isSelf: false })
+    expect(first.items[1]).toMatchObject({ alreadyMember: true, isSelf: false })
+    expect(first.items[2]).toMatchObject({ alreadyMember: true, isSelf: true })
+    expect(first.items.some(item => 'userId' in item)).toBe(false)
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '群昵称' }], hasMore: false })
+    const second = await f.service.execute('team.app.member-candidates', { teamRef, source: 'group', sourceRef: 'group' }) as Page
+    expect(second.items[0]!.key).toBe(first.items[0]!.key)
+    await expect(f.service.execute('team.app.members.add', { teamRef, candidateRefs: [second.items[0]!.candidateRef], requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
+    expect(f.requests.every(req => /\/(list-mine|members\/list)$/.test(req.path))).toBe(true)
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
+  it('reads all membership pages so a later existing member cannot be selected', async () => {
+    const f = fixture((path, body) => path.endsWith('/list-mine') ? { teams: [owner] } : body.page_cursor ? { items: [{ user_id: 11 }], has_more: false } : { items: [{ user_id: 90 }], has_more: true, next_page_cursor: 'next' })
+    const teamRef = await ref(f)
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
+    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
+    expect(page.items[0]!.alreadyMember).toBe(true)
+    await expect(f.service.execute('team.app.members.add', { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' })).rejects.toThrow('已经加入')
+  })
+  it('binds cursors and sealed candidates to team, account and source', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [owner, { ...owner, team_id: 18 }] } : { items: [], has_more: false })
+    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>, teamRef = teams[0]!.teamRef
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: true, nextCursor: 'opaque-upstream-cursor' })
+    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
+    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'conversations', cursor: page.nextCursor })).rejects.toThrow()
+    await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts', cursor: page.nextCursor })
+    expect(f.candidates.list).toHaveBeenLastCalledWith('contacts', { cursor: 'opaque-upstream-cursor' })
+    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
+    await expect(f.service.execute('team.app.members.add', { ...add, teamRef: teams[1]!.teamRef })).rejects.toThrow()
+    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: [...add.candidateRefs, ...add.candidateRefs] })).rejects.toThrow()
+    f.changeAccount()
+    await expect(f.service.execute('team.app.members.add', { ...add, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  })
+  it('rechecks permission and joining at submit, and fails closed for malformed membership', async () => {
+    let role = 1, members: unknown = { items: [], has_more: false }
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ ...owner, role }] } : members), teamRef = await ref(f)
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
+    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
+    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
+    role = 3
+    await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow('仅团队所有者或管理员')
+    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow('仅团队所有者或管理员')
+    role = 2; members = { items: [{ user_id: 11 }], has_more: false }
+    await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow('已经加入')
+    members = { items: [], has_more: true, next_page_cursor: 'loop' }
+    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow()
+    members = { items: [] }
+    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow()
+  })
+  it('rejects expired candidates, empty selections and oversized batches', async () => {
+    const f = fixture(handler), teamRef = await ref(f)
+    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
+    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
+    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
+    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: [] })).rejects.toThrow()
+    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: Array(51).fill(add.candidateRefs[0]) })).rejects.toThrow()
+    const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 3_600_001)
+    try { await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow() } finally { clock.mockRestore() }
+  })
+})
+
+describe('explicit external private chats', () => {
+  const grant = {share_uid:'grant-secret',team_id:7,sharer_user_id:90,peer_user_id:91,chat_session_uid:'original-chat',sharer_name:'成员',peer_name:'客户'}
+  const page = {items:[{relation:{rel_uid:'relation-secret',seq:4,display_name_snapshot:'客户',attach_at:1700000000000},record:{status:1,payload:{version:2,text_content:'共享正文',media_display_items:[{file_asset_uid:'asset-private',file_uid:'file-private',file_name:'photo.png',mime_type:'image/png',download_url:'https://userfiles.jotmo.cc/private-signed'}]}}}],has_more:false,next_before_seq:4}
+  it('projects sender direction from identity rather than names without granting message mutations', async () => {
+    const messages = [90, 91, undefined].map((sender, index) => ({...page.items[0], relation: {...page.items[0]!.relation,
+      rel_uid: `message-${index}`, sender_user_id: sender, display_name_snapshot: '同名用户'}}))
+    const f = fixture(path => path.endsWith('/page') ? {...page, items: messages} : {items: [grant]})
+    const mine = await f.service.execute('team.app.external.mine', {sourceRef: 'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result = await f.service.execute('team.app.external.page', {shareRef: mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    expect(result.items.map(item => item.senderSide)).toEqual(['sharer', 'peer', 'unknown'])
+    expect(result.items.every(item => item.isMe === false)).toBe(true)
+    for (const item of result.items) {
+      expect(item).not.toHaveProperty('senderUserId')
+      expect(item).not.toHaveProperty('mutationTarget')
+      expect(item).not.toHaveProperty('ref')
+    }
+  })
+  it.each([42, undefined])('returns reauthorized full media size %s for a partial download', async size => {
+    const mediaPage = structuredClone(page)
+    Object.assign(mediaPage.items[0]!.record.payload.media_display_items[0]!, { size })
+    const f = fixture(path => path === '/private-signed'
+      ? new Response(new Uint8Array(5), { status: 206, headers: { 'content-length': '5', 'content-range': 'bytes 0-4/42' } })
+      : path.endsWith('/page') ? mediaPage : { items: [grant] })
+    const mine = await f.service.execute('team.app.external.mine', { sourceRef: 'private-ref' }) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const timeline = await f.service.execute('team.app.external.page', { shareRef: mine.items[0]!.ref }) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    const result = await f.service.fetchMedia(timeline.items[0]!.contentBlocks![0]!.mediaRef, 'bytes=0-4', new AbortController().signal)
+    expect(result).toMatchObject({ size: size ?? 0, fileName: 'photo.png', mimeType: 'image/png' })
+    expect(result.response.status).toBe(206)
+    expect(f.requests.at(-2)!.body).toEqual({ share_uid: 'grant-secret', before_seq: 5, limit: 1 })
+    expect(f.requests.at(-1)!.headers.get('range')).toBe('bytes=0-4')
+    await result.response.body?.cancel()
+  })
+  it('uses only the grant owner, hides raw identifiers and offers no mutation authority', async () => {
+    const f=fixture(path=>path.endsWith('/page')?page:{items:[grant],has_more:false})
+    const mine=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result=await f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    expect(result.items[0]).toMatchObject({textContent:'共享正文',senderName:'客户'})
+    expect(result.items[0]).not.toHaveProperty('ref')
+    expect(result.items[0]).not.toHaveProperty('mutationTarget')
+    expect(JSON.stringify(result)).not.toMatch(/grant-secret|relation-secret|original-chat|asset-private|file-private|private-signed/)
+    expect(f.requests.map(r=>r.path)).toEqual(['/api/v1/team/external-chats/mine','/api/v1/team/external-chats/page'])
+    expect(f.requests[1]!.body).toEqual({share_uid:'grant-secret',before_seq:0,limit:50})
+    f.changeAccount()
+    await expect(f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref})).rejects.toThrow()
+    expect(f.requests).toHaveLength(2)
+  })
+  it('reauthorizes media and stops before storage when sharing is revoked', async () => {
+    let revoked=false
+    const f=fixture(path=>path.endsWith('/page')?(revoked?new Response(JSON.stringify({code:1001,data:{reason:'external_chat_not_accessible'}}),{headers:{'content-type':'application/json'}}):page):{items:[grant]})
+    const mine=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result=await f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    revoked=true
+    await expect(f.service.execute('team.app.external.page',{shareRef:mine.items[0]!.ref})).rejects.toMatchObject({code:'team-external_chat_not_accessible'})
+    await expect(f.service.fetchMedia(result.items[0]!.contentBlocks![0]!.mediaRef,undefined,new AbortController().signal)).rejects.toThrow()
+    expect(f.requests.at(-1)!.body).toEqual({share_uid:'grant-secret',before_seq:5,limit:1})
+    expect(f.fetchImpl.mock.calls.every(([url])=>String(url).startsWith('https://team.test/'))).toBe(true)
+  })
+  it('identifies a shared team across freshly sealed references and rejects non-private sources', async () => {
+    const f=fixture(path=>path.endsWith('/my')?{teams:[{team_id:7,name:'团队',jotmo_id:'team'}]}:{items:[grant]})
+    const a=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const b=await f.service.execute('team.app.external.mine',{sourceRef:'private-ref'}) as typeof a
+    expect(a.items[0]!.teamKey).toBe(b.items[0]!.teamKey)
+    expect(a.items[0]!.teamRef).not.toBe(b.items[0]!.teamRef)
+    f.contacts.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'group'})
+    await expect(f.service.execute('team.app.external.mine',{sourceRef:'group'})).rejects.toThrow()
+    expect(f.requests).toHaveLength(2)
+  })
+  it('reads forwarded snapshot media through the grant and rejects stale versions or replaced assets', async () => {
+    const current = structuredClone(page)
+    const payload = current.items[0]!.record.payload as Record<string, unknown>
+    payload.media_display_items = []
+    payload.content_payload = { render_kind: 'forward_records', items: [{
+      source_type: 'record', owner_id: 999, owner_name: '快记作者', text: '已发送快照',
+      files: [{ file_uid: 'forward-file-secret', file_asset_uid: 'forward-asset-secret',
+        name: 'forward.png', mime_type: 'image/png', download_url: 'https://userfiles.jotmo.cc/forward-signed' }],
+      call_record_snapshot: { transcript_segments: [{ text: '通话快照', speaker_name: '说话人',
+        audio_url: 'https://userfiles.jotmo.cc/call-signed' }] },
+    }] }
+    const f = fixture(path => path === '/forward-signed' || path === '/call-signed'
+      ? new Response('media', { headers: { 'content-type': 'image/png' } })
+      : path.endsWith('/page') ? current : { items: [grant] })
+    const mine = await f.service.execute('team.app.external.mine', { sourceRef: 'private-ref' }) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result = await f.service.execute('team.app.external.page', { shareRef: mine.items[0]!.ref }) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    const forwarded = result.items[0]!.forwardRecords!.items[0]!
+    expect(forwarded).toMatchObject({ textContent: '已发送快照', senderName: '快记作者' })
+    expect(forwarded).not.toHaveProperty('senderUserId')
+    expect(JSON.stringify(result)).not.toMatch(/forward-file-secret|forward-asset-secret|forward-signed|call-signed/)
+    const ref = forwarded.contentBlocks![0]!.mediaRef
+    const fetched = await f.service.fetchMedia(ref, undefined, new AbortController().signal)
+    expect(await fetched.response.text()).toBe('media')
+    const call = await f.service.fetchMedia(forwarded.segments![0]!.contentBlocks![0]!.mediaRef, undefined, new AbortController().signal)
+    expect(await call.response.text()).toBe('media')
+    payload.version = 3
+    const before = f.fetchImpl.mock.calls.length
+    await expect(f.service.fetchMedia(ref, undefined, new AbortController().signal)).rejects.toThrow()
+    expect(f.fetchImpl.mock.calls.length).toBe(before + 1)
+    payload.version = 2
+    const forward = (payload.content_payload as { items: Array<{ files: Array<{ file_uid: string }> }> }).items[0]!
+    forward.files[0]!.file_uid = 'replacement-file'
+    await expect(f.service.fetchMedia(ref, undefined, new AbortController().signal)).rejects.toThrow()
+    expect(f.fetchImpl.mock.calls.length).toBe(before + 2)
+  })
+})
+it('policy is explicit, shared across both views, monotonic, and never clears unread',async()=>{
+ let policy={muted:true,policy_version:4,notify_after_seq:10}
+ const f=fixture((path,body)=>path.endsWith('/notification-policy/get')||path.endsWith('/notification-policy/set')?policy:{channel,conversation:{...conversation,notification_policy:policy}})
+ const c=(await open(f)).conversation!
+ expect(c.unread).toBe(1);expect(c.attentionUnread).toBe(0)
+ const result=await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})
+ expect(result).toMatchObject({muted:true,policyVersion:4});expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',muted:true})
+ policy={muted:false,policy_version:3,notify_after_seq:0}
+ expect(await f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).toMatchObject({muted:true,policyVersion:4})
+ await expect(f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:'false'})).rejects.toThrow()
+ f.changeAccount();await expect(f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).rejects.toThrow()
+})
+it('lost policy response is resolved by owner read and is never replayed as a toggle',async()=>{
+ const f=fixture(path=>path.endsWith('/notification-policy/set')?new Response('{}',{status:503}):path.endsWith('/notification-policy/get')?{muted:true,policy_version:1,notify_after_seq:3}:{channel,conversation})
+ const c=(await open(f)).conversation!
+ expect(await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})).toEqual({muted:true,policyVersion:1,notifyAfterSeq:3})
+ expect(f.requests.filter(r=>r.path.endsWith('/notification-policy/set'))).toHaveLength(1)
+},15000)
+
+it('extension Host scopes both refs and seals parent media without signed URLs',async()=>{
+ const f=fixture(path=>path.endsWith('/messages/extensions')
+   ? {message,items:[],total_count:0,has_more:false,next_seq:0,through_seq:2}
+   : {channel,conversation,messages:[{...message,reply:{message_uid:'parent-private',record_version:3,state:'available',text:'原文',title:'附件标题',sender:{nickname:'原作者'},media:message.record.media}}]})
+ const ref=(await open(f)).conversation!.ref
+ const timeline=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const reply=timeline.messages[0]!.reply!
+ expect(reply.media?.[0]?.url).toContain('/custom/api/team/media?ref=')
+ expect(JSON.stringify(reply)).not.toContain('private-signed')
+ const page=await f.service.execute('team.app.extensions',{conversationRef:ref,messageRef:timeline.messages[0]!.ref,limit:2,afterSeq:0}) as import('../src/team-app-contract.js').TeamExtensionPage
+ expect(page.message.key).toBe(timeline.messages[0]!.key)
+ expect(f.requests.at(-1)).toMatchObject({path:'/api/v1/team/conversations/messages/extensions',body:{conversation_uid:conversation.conversation_uid,side:'external',message_uid:message.message_uid,limit:2}})
+ f.changeAccount()
+ await expect(f.service.execute('team.app.extensions',{conversationRef:ref,messageRef:timeline.messages[0]!.ref})).rejects.toThrow()
 })

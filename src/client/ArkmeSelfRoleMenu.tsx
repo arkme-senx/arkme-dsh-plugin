@@ -1,18 +1,20 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconEllipsisOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { ArkmeActionMenu, type ArkmeMenuAction } from './ArkmeDshMenu.js'
 import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
 
-export type SelfRoleMenuAction = ArkmeMenuAction & { managementActions?: readonly ArkmeMenuAction[] }
+export type SelfRoleMenuAction = ArkmeMenuAction & { description?: string; managementActions?: readonly ArkmeMenuAction[] }
 
 /** A role selector has two sibling controls per row: selection and management.
  * Keep command menus native; don't nest interactive buttons inside native menu items. */
-export function ArkmeSelfRoleMenu({ open, anchor, actions, selectedIds, onClose }: {
+export function ArkmeSelfRoleMenu({ open, anchor, actions, selectedIds, onClose, showSelectionIndicator = false }: {
   open: boolean
   anchor: ReactNode
   actions: readonly SelfRoleMenuAction[]
   selectedIds: readonly string[]
+  showSelectionIndicator?: boolean
   onClose(): void
 }) {
   const host = useRef<HTMLSpanElement>(null)
@@ -74,12 +76,15 @@ export function ArkmeSelfRoleMenu({ open, anchor, actions, selectedIds, onClose 
       const selected = selectedIds.includes(action.id)
       return <div key={action.id} style={{ ...styles.row, ...(selected ? styles.selected : {}) }}>
         <button type="button" data-role-action={action.id} disabled={action.disabled} aria-pressed={selected}
-          style={styles.select} onClick={action.onSelect}>{action.icon}<span style={styles.name}>{action.label}</span></button>
+          style={styles.select} onClick={action.onSelect}>{action.icon}<span style={{ ...styles.name, flex: 1 }}>
+            <span style={styles.name} title={typeof action.label === 'string' ? action.label : undefined}>{action.label}</span>
+            {action.description && <span style={styles.description}>{action.description}</span>}
+          </span>{showSelectionIndicator && <span aria-hidden style={{ width: 16, flexShrink: 0 }}>{selected && <Check size={16} />}</span>}</button>
         {action.managementActions && <ArkmeActionMenu open={managedId === action.id} label="角色操作" side="right"
           autoFocus onClose={() => setManagedId('')} actions={action.managementActions}
           anchor={<button type="button" style={styles.manage} aria-label={`管理${String(action.label)}`}
             title="管理角色" aria-haspopup="menu" aria-expanded={managedId === action.id}
-            onClick={() => setManagedId(managedId === action.id ? '' : action.id)}><IconEllipsisOutline16 /></button>} />}
+            onClick={() => setManagedId(managedId === action.id ? '' : action.id)}><IconEllipsisOutlineMedium /></button>} />}
       </div>
     })}
   </div>
@@ -105,7 +110,8 @@ const styles: Record<string, CSSProperties> = {
   selected: { background: 'var(--dsw-alias-bg-active, #eef0f3)' },
   select: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 8px',
     border: 0, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 13, textAlign: 'left', cursor: 'pointer' },
-  name: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  name: { display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  description: { display: 'block', marginTop: 3, fontSize: 12, lineHeight: 1.5, whiteSpace: 'normal', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)' },
   manage: { display: 'grid', placeItems: 'center', width: 32, height: 32, border: 0, borderRadius: 6,
     background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', cursor: 'pointer' },
   separator: { height: 1, margin: '4px 6px', background: 'var(--dsw-alias-border-l1, #e6e8ec)' },

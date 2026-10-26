@@ -9,6 +9,8 @@ import type {
   ArkmeArrangementReorderInput,
   ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
+  ArkmeDeletedArrangementItem,
+  ArkmeDeletedArrangementPage,
   ArkmeArrangementCreationSource,
   ArkmeArrangementItem,
   ArkmeArrangementListStatus,
@@ -307,6 +309,34 @@ export class ArrangementService {
       if (board.supported !== true || !stringValue(board.version).trim()) throw new ArkmePluginError('arrangement-contract-invalid', '安排排序保存结果不确定，请刷新', true, 502)
       return { board: { supported: true, version: stringValue(board.version) } }
     })
+  }
+
+  /** Status 4 is an existing owner list filter. Never broaden live-list semantics. */
+  async deletedArrangements(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeDeletedArrangementPage> {
+    const session = await this.runtime.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/list',
+      { status: 4, limit, offset }, session, options.signal, { lane: 'interactive-read' })
+    const rows = listValue(data.list)
+    if (rows.some(row => Number(objectValue(row).status) !== 4)) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '未能确认已删除安排，请稍后重试', true, 502)
+    }
+    const items = await Promise.all(rows.map(async row => ({ ...await this.arrangementItem(row, session.userId), status: 'deleted' as const })))
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const nextOffset = offset + rows.length, hasMore = rows.length > 0 && nextOffset < total
+    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  async deletedArrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeDeletedArrangementItem> {
+    const session = await this.runtime.requireSession()
+    const reference = this.openArrangementRef(arrangementRef.trim(), session.userId)
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail',
+      { uid: reference.arrangementUid }, session, signal, { lane: 'interactive-read' })
+    if (stringValue(data.uid).trim() !== reference.arrangementUid || Number(data.status) !== 4) {
+      throw new ArkmePluginError('arrangement-contract-invalid', '已删除安排状态已变化，请刷新列表', true, 502)
+    }
+    return { ...await this.arrangementItem(data, session.userId), status: 'deleted' }
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {

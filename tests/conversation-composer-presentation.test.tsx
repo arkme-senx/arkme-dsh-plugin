@@ -154,7 +154,7 @@ describe('Arkme conversation composer presentation', () => {
 
   it('centers the composer tool icons in shared button geometry', () => {
     expect(sidebarSource).toContain('<ArkmeComposerToolButton ref={addMenuTriggerRef}')
-    expect(sidebarSource).toContain('(activeRecordReeditComposer === undefined ? preparingFiles : preparingReeditFiles) ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />')
+    expect(sidebarSource).toContain('activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />')
     expect(sidebarSource).not.toContain('aria-label={`前移')
     expect(sidebarSource).not.toContain('aria-label={`后移')
     expect(sidebarSource).not.toContain('正在保存 ${file.name}')

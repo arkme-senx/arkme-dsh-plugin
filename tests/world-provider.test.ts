@@ -519,7 +519,7 @@ describe('world Provider projection', () => {
     const page = await service.listWorldFeed()
     expect(page.items[0]).toMatchObject({ authorName: '公开昵称A', authorRef: expect.any(String) })
     await expect(service.worldAuthorLabels([page.items[0]!.authorRef!])).resolves.toEqual([
-      { authorRef: page.items[0]!.authorRef, authorName: '小王' },
+      { authorRef: page.items[0]!.authorRef, authorName: '小王', memberType: 'unknown' },
     ])
 
     const opened = await service.openPrivateChatFromWorldAuthor(page.items[0]!.authorRef!)

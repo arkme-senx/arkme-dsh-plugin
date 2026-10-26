@@ -39,7 +39,7 @@ export const RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS = [
 const DAY_MILLIS = 86_400_000
 const DEFAULT_RECORDING_ZOOM_INDEX = 6
 const WHEEL_ZOOM_THRESHOLD = 24
-const SPEAKER_ITEM_WIDTH = 180
+const SPEAKER_ITEM_WIDTH = 96
 const SPEAKER_LEGEND_PADDING = 6
 const SPEAKER_LEGEND_CARET_WIDTH = 16
 
@@ -770,12 +770,11 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       <details ref={legendRef} open={legendOpen} style={styles.legend} data-timeline-layer="speakers" onToggle={event => { setLegendOpen(event.currentTarget.open) }}>
       <summary ref={legendSummaryRef} style={styles.legendSummary} aria-label={tr("全天说话人图例")}>
         <span style={styles.legendItems}>
-          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={`${speaker.label} · ${tr('一致性')} ${tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}`} aria-label={tr("查看 {v0} 声音一致性", { v0: speaker.label })} style={styles.legendItem} onClick={event => { reviewSpeaker(event, speaker.items[0]!) }}>
+          {allDaySpeakers.slice(0, visibleSpeakerCount).map(speaker => <button data-arkme-feedback="neutral" type="button" key={speaker.key} title={speaker.label} aria-label={tr("查看 {v0} 声音一致性", { v0: speaker.label })} style={styles.legendItem} onClick={event => { reviewSpeaker(event, speaker.items[0]!) }}>
             {speaker.avatarRef === undefined
               ? <span aria-hidden style={{ ...styles.legendDot, background: recordingSpeakerColor(speaker.colorIndex) }} />
               : <ArkmeUserAvatar avatarRef={speaker.avatarRef} size={12} label={tr("{v0}头像", { v0: speaker.label })} />}
             <span style={{ ...styles.legendName, ...(speaker.avatarRef === undefined ? {} : { color: recordingSpeakerColor(speaker.colorIndex) }) }}>{speaker.label}</span>
-            <span style={{ flex: 'none', color: desktop.tertiary, fontSize: 10 }}>{tr('一致性')} {tr(recordingConsistencyLabel(consistencyByRef.get(speaker.items[0]!.itemRef), consistency.error))}</span>
           </button>)}
         </span>
         {hiddenSpeakerCount > 0 && <span style={{ ...styles.moreChip, width: moreChipWidth }}>+{hiddenSpeakerCount}</span>}

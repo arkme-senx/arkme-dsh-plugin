@@ -1,3 +1,4 @@
+import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
@@ -18,7 +19,7 @@ const MAX_ROWS = 20_000
 const keyOf = (source: ArkmeSourceItem) => source.sourceKey ?? source.sourceRef
 
 /** Merge pages and live changes without interpreting page absence as removal. */
-export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, incoming: ArkmeSourceItem, keepLive = false): ArkmeSourceItem {
+export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, incoming: ArkmeSourceItem, keepLive = false, keepLiveName = false): ArkmeSourceItem {
   if (previous === undefined) return incoming
   const stale = (incoming.latestSequence ?? 0) < (previous.latestSequence ?? 0)
     || keepLive && (incoming.latestSequence ?? 0) <= (previous.latestSequence ?? 0) && incoming.activeAtMillis <= previous.activeAtMillis
@@ -30,6 +31,12 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
     }
   }
   if (!stale && incoming.latestPreview === undefined) delete merged.latestPreview
+  // A page started before a live mutation cannot roll a current name back.
+  if (keepLiveName) {
+    merged.displayName = previous.displayName
+    if (previous.privateNickname === undefined) delete merged.privateNickname
+    else merged.privateNickname = previous.privateNickname
+  }
   // Message sequence and read cursor are separate server facts; restored relations can
   // change unread counts without changing the last message sequence.
   const readSequence = Math.max(previous.readSequence ?? 0, incoming.readSequence ?? 0)
@@ -45,7 +52,7 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
   if (!incoming.avatarRef && previous.avatarRef !== undefined) merged.avatarRef = previous.avatarRef
   if (!incoming.avatarRefs?.length && previous.avatarRefs !== undefined) merged.avatarRefs = previous.avatarRefs
   if (!incoming.groupAvatar?.slots.length && previous.groupAvatar !== undefined) merged.groupAvatar = previous.groupAvatar
-  return retainNewerArkmeChatPolicy(previous, merged)
+  return retainNewerArkmeChatActivity(previous, retainNewerArkmeChatPolicy(previous, merged))
 }
 
 function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: number; unreadCount: number; latestSequence?: number }): ArkmeSourceItem {
@@ -70,6 +77,7 @@ export class ConversationDirectoryService {
   private visibilityMutations = new Map<string, number>()
   private sources = new Map<string, ArkmeSourceItem>()
   private mutations = new Map<string, number>()
+  private nameMutations = new Map<string, number>()
   private visibility = new Map<string, ArkmeConversationDirectoryVisibilityItem>()
   private bots: ArkmeBotSummary[] = []
   private cachedBotKeys = new Map<string, string>()
@@ -119,7 +127,7 @@ export class ConversationDirectoryService {
     this.controller = new AbortController()
     this.generation++
     this.userId = undefined
-    this.sourceRemovals.clear(); this.pendingReadAcks.clear(); this.sources.clear(); this.mutations.clear(); this.visibility.clear(); this.visibilityMutations.clear(); this.avatars.clear()
+    this.sourceRemovals.clear(); this.pendingReadAcks.clear(); this.sources.clear(); this.mutations.clear(); this.nameMutations.clear(); this.visibility.clear(); this.visibilityMutations.clear(); this.avatars.clear()
     this.bots = []; this.cachedBotKeys.clear(); this.botPinnedKeys.clear(); this.deletedBotRefs.clear(); this.special = {}; this.restore = undefined; this.scan = undefined; this.firstPage = undefined; this.rawBaseline = undefined; this.avatarWork = undefined
     this.phase = 'cached'; this.error = undefined; this.lastPublished = ''; this.cachedAtMillis = 0; this.rescanRequested = false; this.rawBaselineComplete = false
   }
@@ -320,7 +328,7 @@ export class ConversationDirectoryService {
       const previous = this.sources.get(key)
       const ack = this.pendingReadAcks.get(key) ?? this.pendingReadAcks.get(item.sourceRef)
       const incoming = ack === undefined ? item : projectReadAck(item, ack)
-      const merged = mergeDirectorySource(previous, incoming, (this.mutations.get(key) ?? 0) > atRevision)
+      const merged = mergeDirectorySource(previous, incoming, (this.mutations.get(key) ?? 0) > atRevision, (this.nameMutations.get(key) ?? 0) > atRevision)
       if (authoritativeAvatars) {
         merged.avatarRef = item.avatarRef ?? ''
         merged.avatarRefs = item.avatarRefs ?? []
@@ -338,6 +346,7 @@ export class ConversationDirectoryService {
           this.visibility.set(`source:${merged.sourceRef}`, { ...inherited, entryRef: merged.sourceRef })
         }
       }
+      if (previous?.displayName !== merged.displayName || previous?.privateNickname !== merged.privateNickname) this.nameMutations.set(key, this.revision + 1)
       this.sources.set(key, merged); this.mutations.set(key, this.revision + 1); changed.push(merged)
     }
     const currentRefs = new Set(items.flatMap(item => { const source = this.sources.get(keyOf(item)); return source === undefined ? [] : [source.sourceRef] }))
@@ -488,7 +497,7 @@ export class ConversationDirectoryService {
       ? await this.source.chatDirectorySourceKey(expectedUserId, (await this.source.openSourceRef(sourceRef, expectedUserId)).ownerRef)
       : keyOf(source)
     if (generation !== this.generation) return
-    this.sources.delete(key); this.mutations.delete(key); this.avatars.delete(key)
+    this.sources.delete(key); this.mutations.delete(key); this.nameMutations.delete(key); this.avatars.delete(key)
     this.visibility.delete(`source:${sourceRef}`); this.visibilityMutations.delete(`source:${sourceRef}`)
     this.sourceRemovals.set(key, this.revision + 1)
     if (this.sourceRemovals.size > MAX_ROWS) this.sourceRemovals.delete(this.sourceRemovals.keys().next().value!)

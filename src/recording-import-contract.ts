@@ -336,6 +336,7 @@ export function toPublicRecordingImportJob(
           : '已取消'
   return {
     kind: 'local',
+    ...(job.batch ? { batch: { ...job.batch } } : {}),
     importRef,
     revision: job.revision,
     phase: job.phase,

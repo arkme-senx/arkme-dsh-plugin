@@ -6,6 +6,7 @@ import {
   LocalMessageActionCapabilityCodec,
 } from '../../src/services/message-action-infrastructure.js'
 import { MessageActionService } from '../../src/services/message-action-service.js'
+import { assertRecordForwardInput } from '../fixtures/record-forward-input.js'
 
 const userId = 42
 const signingKey = 'message-action-test-signing-key'
@@ -30,7 +31,10 @@ function runtime(overrides: Record<string, unknown> = {}) {
     stateStore: { uniqueCode: vi.fn(async () => signingKey) },
     requireSession: vi.fn(async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' })),
     authenticatedChatPost: vi.fn(async () => ({ sid: 'share-sid', url: 'https://jotmo.example/s/share-sid' })),
-    authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }),
+    authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => {
+      assertRecordForwardInput(body)
+      return body.topic_uid ? { record_uid: body.record_uid, record_status: 1, topic_uid: body.topic_uid, rel_uid: 'rel', relation_status: 1 } : { record_uid: body.record_uid, status: 1 }
+    }),
     ...overrides,
   }
 }
@@ -161,7 +165,8 @@ describe('MessageActionService', () => {
       targetSourceRef: 'opaque-target', requestId: 'request-stable', recordUid: forwardRecordUid, sendAtMillis: 1_786_000_123_000,
     })
     expect(ownerRuntime.authenticatedPost.mock.calls[0]?.[1]).toMatchObject({ content_payload: { forward_records: {
-      items: [{ source_kind: 'agent_message', text, text_preview: '文'.repeat(495) }],
+      summary_lines: ['Agent: ' + '文'.repeat(495)],
+      items: [{ text, text_format: 'markdown' }],
     } } })
   })
 
@@ -188,8 +193,6 @@ describe('MessageActionService', () => {
       content_payload: {
         forward_records: {
           items: [{
-            source_kind: 'agent_message',
-            source_type: 'agent',
             record_uid: 'agent-entry-record',
             owner_id: userId,
           }],
@@ -440,5 +443,36 @@ describe('native DSH copy link owner boundary', () => {
       await expect(service.copyLinkNative({ ...snapshot, messages }, userId)).rejects.toThrow()
     }
     expect(rt.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+})
+it('forwards Codex with distinct identities and visible provenance without impersonating DSH or the current user', async () => {
+  const snapshot={sessionId:'team:source:task',taskTitle:'来源任务',inputName:'同事',messages:[{key:'event',role:'user',text:'问题',anchorSeq:1,createdAtMillis:1000},{key:'answer',role:'assistant',text:'回答',anchorSeq:2,createdAtMillis:2000}]}
+  const options={targetSourceRef:'target',requestId:'codex-forward',recordUid:forwardRecordUid,sendAtMillis:3000}
+  const rt=runtime({authenticatedChatPost:vi.fn(async()=>({record_uid:'sent',seq:1}))})
+  const svc=messageActionService(rt,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'group'})})
+  await svc.forwardCodex(snapshot,userId,options)
+  const body=rt.authenticatedChatPost.mock.calls[0]![1] as any
+  expect(body.source_items[0]).toMatchObject({source_identity_id:expect.stringMatching(/^codex:/),snapshot_text:`Codex · 来源任务 · 同事 · ${new Date(snapshot.messages[0]!.createdAtMillis).toISOString()}\n\n问题`,source_sender_user_id:0})
+  expect(body.source_items[1].snapshot_text).toContain('Codex · 来源任务 · Codex')
+  expect(JSON.stringify(body)).not.toMatch(/deepseek|dsh:|agent_session_id/)
+  await expect(svc.forwardCodex(snapshot,999,options)).rejects.toThrow('账号已变化')
+  const recordRuntime=runtime()
+  await messageActionService(recordRuntime,{openSourceRef:async()=>({kind:'send_to_self',ownerRef:'self'}),invalidateSourceListCache(){}}).forwardCodex(snapshot,userId,options)
+  const payload=(recordRuntime.authenticatedPost.mock.calls[0]![1] as any).content_payload.forward_records
+  expect(payload.items.map((item:any)=>item.source_display_name)).toEqual(['同事','Codex'])
+  expect(payload.items.map((item:any)=>item.send_at)).toEqual([1000,2000])
+  expect(payload.source_record_uids).toEqual([])
+})
+
+describe('World message source ownership', () => {
+  it('reads a signed user message from its conversation and rejects assistant or cross-conversation input', async () => {
+    const owner = runtime(), service = messageActionService(owner)
+    const conversation = await service.agentConversationRef(42, 88)
+    const user = await service.agentHistoryItem(historyItem({ role: 'user', text: '本人正文' }), 42)
+    const assistant = await service.agentHistoryItem(historyItem(), 42)
+    expect(await service.worldPublishSource(conversation, user.messageActionRef!)).toMatchObject({ textContent: '本人正文' })
+    await expect(service.worldPublishSource(conversation, assistant.messageActionRef!)).rejects.toMatchObject({ code: 'world-source-not-owned' })
+    await expect(service.worldPublishSource(await service.agentConversationRef(42, 99), user.messageActionRef!)).rejects.toThrow()
+    expect(owner.authenticatedPost).not.toHaveBeenCalled(); expect(owner.authenticatedChatPost).not.toHaveBeenCalled()
   })
 })

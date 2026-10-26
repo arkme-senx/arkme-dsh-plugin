@@ -89,10 +89,11 @@ export class AuthService {
     }
   }
 
-  async logout(): Promise<ArkmeAuthSnapshot> {
+  async logout(expected?: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
     this.pendingCancellationLogin = undefined
     this.pendingPhoneUnbindSession = undefined
     const activeSession = await this.runtime.sessionStore.read()
+    if (expected !== undefined && (activeSession?.userId !== expected.userId || activeSession?.refreshToken !== expected.refreshToken)) throw this.loginContextChanged()
     const pendingSession = await this.runtime.readPendingBindingSession()
     const userIds = [...new Set([activeSession?.userId, pendingSession?.userId]
       .filter((userId): userId is number => userId !== undefined))]
@@ -100,7 +101,9 @@ export class AuthService {
       this.runtime.invalidateScope(this.runtime.requestScope(userId))
       this.runtime.clearRefreshForUser(userId)
     }
-    await this.runtime.deleteSession()
+    if (expected !== undefined) {
+      if (!await this.runtime.deleteSessionIfCurrent(expected)) throw this.loginContextChanged()
+    } else await this.runtime.deleteSession()
     await this.runtime.clearPendingBindingSession()
     this.profile.invalidate()
     this.jiwoAttemptGeneration += 1
@@ -433,6 +436,41 @@ export class AuthService {
     const session = { accessToken, refreshToken, userId }
     this.attempts.clear()
     return await this.acceptLoginSession(session, numberValue(data.rest_days_cancel))
+  }
+
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    const normalizedAccount = account.trim()
+    if (normalizedAccount === '' || normalizedAccount.length > 254) {
+      throw new ArkmePluginError('password-account-invalid', '请输入有效的账号', false)
+    }
+    if (password === '' || password.length > 1024) {
+      throw new ArkmePluginError('password-invalid', '请输入有效的密码', false)
+    }
+    let data: ScanResponse
+    try {
+      data = await this.runtime.post<ScanResponse>(this.runtime.config.authBaseUrl,
+        '/api/public/v1/auth/login-by-pwd', {
+          account: normalizedAccount, pwd: password,
+          unique_code: await this.runtime.stateStore.uniqueCode(), keep_cancel: true,
+        }, undefined, [200], signal)
+    } catch (error) {
+      if (error instanceof ArkmePluginError && error.code === 'arkme-code-1001') {
+        throw new ArkmePluginError('password-login-rejected', '账号或密码错误，请重新输入', false, 401)
+      }
+      throw error
+    }
+    signal?.throwIfAborted()
+    const userId = numberValue(data.user_id)
+    const accessToken = stringValue(data.access_token)
+    const refreshToken = stringValue(data.refresh_token)
+    if (!Number.isSafeInteger(userId) || userId <= 0 || accessToken === '' || refreshToken === '') {
+      throw new ArkmePluginError('login-contract-invalid', '账号密码登录响应不完整', false, 502)
+    }
+    this.pendingCancellationLogin = undefined
+    this.attempts.clear()
+    return await this.acceptLoginSession({ userId, accessToken, refreshToken }, numberValue(data.rest_days_cancel), {
+      assertCurrent: () => { signal?.throwIfAborted() },
+    })
   }
 
   private async emailBindingRequest(expectedUserId: number, email: string, code?: string): Promise<void> {

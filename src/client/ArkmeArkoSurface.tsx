@@ -1,3 +1,9 @@
+import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
+import type { ArkmeArkoLifecycleItem, ArkmeArkoLifecycleSnapshot } from '../arko-lifecycle-contract.js'
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
+import { attachmentPreparationHint } from './attachment-preparation.js'
+import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
+import type { ArkmeArkoContextWindow, ArkmeArkoMessagePage } from '../arko-history-contract.js'
 import { ArkmeSelectableMessageText, ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import { arkoMessageMarkTarget, arkoMessageMarkTransport } from './arko-message-marks.js'
@@ -12,22 +18,27 @@ import {
 } from 'react'
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
+import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
+import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
+import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
+import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { ArkmeComposerSendButton, arkmeComposerSendButtonStyle } from './ArkmeComposerSendButton.js'
 import { arkmeConversationMessageLayout, dayKey } from './conversation-message-presentation.js'
 import { ArkmeArkoHistoryTools } from './ArkmeArkoHistoryTools.js'
-import { arkoHistoryDate } from './arko-history-browser.js'
+import { ArkoMessageDeletionDialog } from './ArkoMessageDeletion.js'
+import { arkoHistoryDate, readLatestArkoMessages } from './arko-history-browser.js'
 import type {
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
   ArkmeArkoHistoryItem,
-  ArkmeArkoHistoryPage,
   ArkmeArkoModelCatalog,
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
   ArkmeContentBlock,
+  ArkmeTimelineItem,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
@@ -46,7 +57,7 @@ import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-stor
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { arkmeAttachmentsPending, arkmeArkoComposerDraftKey, arkmeComposerDraftStore, serializeArkmeComposerDraft, type ArkmeComposerDraftSnapshot } from './composer-draft-store.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
 import {
   arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout,
@@ -58,7 +69,6 @@ import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
-import { ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkoImageDraftStrip, ArkoMessageImages, useArkoImageDraft } from './ArkoImageAttachments.js'
 import { arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
 import { localFileBlock } from './file-send-tasks.js'
@@ -74,6 +84,8 @@ type ArkoMessageStatus = 'sending' | 'done' | 'error'
 const arkoQuestionMaxLength = 60 * 1024
 
 interface ArkoMessage {
+  messageRef?: string
+  lifecycleVersion?: number
   localMarkRef?: string
   id: string
   messageId?: number
@@ -84,6 +96,9 @@ interface ArkoMessage {
   reasoning?: string
   status: ArkoMessageStatus
   createdAtMillis?: number
+  orderAtMillis?: number
+  sourceType?: number
+  createdRecordUids?: string[]
   assistantMsgId?: number
   runUid?: string
   runStatus?: string
@@ -238,14 +253,6 @@ export function shouldShowArkoThinking(status: ArkoMessageStatus, reasoning?: st
   return status === 'sending' || (reasoning !== undefined && reasoning.trim() !== '')
 }
 
-export function arkoPreservedScrollTop(
-  previousScrollTop: number,
-  previousScrollHeight: number,
-  nextScrollHeight: number,
-): number {
-  return Math.max(0, previousScrollTop + (nextScrollHeight - previousScrollHeight))
-}
-
 function isActiveRunStatus(status: string | undefined): boolean {
   return status !== undefined && ACTIVE_RUN_STATUSES.has(status)
 }
@@ -318,14 +325,19 @@ function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
   const active = isActiveHistoryRun(item)
   return {
     id: `history:${String(item.messageId)}`,
+    ...(item.messageRef ? { messageRef: item.messageRef } : {}),
+    lifecycleVersion: item.lifecycleVersion ?? 0,
     messageId: item.messageId,
     sessionId: item.sessionId,
     ...(item.localMarkRef === undefined ? {} : { localMarkRef: item.localMarkRef }),
     role: item.role,
     text: active && placeholder ? '' : item.text,
     ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
-    status: active ? 'sending' : item.runStatus === 'failed' ? 'error' : 'done',
+    status: active ? 'sending' : item.runStatus === 'failed' || item.status === 3 || item.status === 5 ? 'error' : 'done',
     createdAtMillis: item.createdAtMillis,
+    createdRecordUids: item.createdRecordUids,
+    ...(item.sourceType === undefined ? {} : { sourceType: item.sourceType }),
+    ...(item.orderAtMillis === undefined ? {} : { orderAtMillis: item.orderAtMillis }),
     ...(item.reasoning.trim() === '' || (!active && reasoningPlaceholder) ? {} : { reasoning: item.reasoning }),
     ...(item.role !== 'assistant' ? {} : { assistantMsgId: item.messageId }),
     ...(item.runUid === undefined ? {} : { runUid: item.runUid }),
@@ -357,8 +369,8 @@ export function mergeHistory(current: ArkoMessage[], items: ArkmeArkoHistoryItem
   const byId = new Map(current.map(item => [item.id, item]))
   for (const item of items) byId.set(`history:${String(item.messageId)}`, historyMessage(item))
   return [...byId.values()].sort((left, right) => {
-    const leftAt = left.createdAtMillis ?? Number.MAX_SAFE_INTEGER
-    const rightAt = right.createdAtMillis ?? Number.MAX_SAFE_INTEGER
+    const leftAt = left.orderAtMillis ?? left.createdAtMillis ?? Number.MAX_SAFE_INTEGER
+    const rightAt = right.orderAtMillis ?? right.createdAtMillis ?? Number.MAX_SAFE_INTEGER
     if (leftAt !== rightAt) return leftAt - rightAt
     const leftId = left.messageId ?? Number.MAX_SAFE_INTEGER
     const rightId = right.messageId ?? Number.MAX_SAFE_INTEGER
@@ -394,10 +406,21 @@ function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
   return catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.displayName ?? '模型目录暂不可用'
 }
 
+function isImageTurnDraft(draft: ArkmeComposerDraftSnapshot, turn: ArkmeArkoPendingTurn): boolean {
+  const images = turn.images
+  return images !== undefined && images.length > 0
+    && serializeArkmeComposerDraft(draft).text.trim() === turn.text
+    && draft.attachments.length === images.length
+    && draft.attachments.every((attachment, index) => attachment.localFile?.fileRef === images[index]!.fileRef)
+}
+
 export function ArkmeArkoSurface() {
   useArkmeLocale()
   const shellRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const recordsRef = useRef<HTMLUListElement>(null)
+  const pendingHistoryViewport = useRef<ArkmeConversationViewportSnapshot>()
+  const returningToLatest = useRef(false)
   const followTailRef = useRef(true)
   const historyViewRef = useRef(false)
   const historySentinelRef = useRef<HTMLDivElement>(null)
@@ -405,6 +428,7 @@ export function ArkmeArkoSurface() {
   const composerInputBoundaryRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<ArkmeDocumentComposerHandle>(null)
+  const [dictationBusy, setDictationBusy] = useState(false)
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const pendingComposerFocusRef = useRef(false)
   const shortcutFocusOriginRef = useRef<HTMLElement | null>(null)
@@ -446,20 +470,93 @@ export function ArkmeArkoSurface() {
     return () => { active = false }
   }, [accountKey])
   const [messages, setMessages] = useState<ArkoMessage[]>([])
-  const [historyWindow, setHistoryWindow] = useState<{ items: ArkmeArkoHistoryItem[]; start: number }>()
+  const [historyWindow, setHistoryWindow] = useState<ArkmeArkoContextWindow>()
+  const [windowLoading, setWindowLoading] = useState(false)
+  const [windowError, setWindowError] = useState<{ direction: 'asc' | 'desc'; message: string }>()
+  const windowController = useRef<AbortController>()
+  const historyController = useRef<AbortController>()
+  const cancelWindowRead = useCallback(() => {
+    windowController.current?.abort()
+    setWindowLoading(false)
+    setWindowError(undefined)
+  }, [])
+  useEffect(() => () => { windowController.current?.abort(); historyController.current?.abort() }, [accountKey])
   historyViewRef.current = historyWindow !== undefined
-  const visibleMessages = useMemo(() => historyWindow === undefined ? messages : mergeHistory([], historyWindow.items.slice(historyWindow.start, historyWindow.start + 50)), [messages, historyWindow])
+  const lifecycleGeneration = useSyncExternalStore(arkoLifecycleSync.subscribe, arkoLifecycleSync.snapshot, arkoLifecycleSync.snapshot)
+  const [lifecycle, setLifecycle] = useState<Map<string, ArkmeArkoLifecycleItem>>(new Map())
+  const allMessages = useMemo(() => historyWindow === undefined ? messages : mergeHistory([], historyWindow.items), [messages, historyWindow])
+  const lifecycleRefs = useMemo(() => [...new Set([...messages, ...allMessages].flatMap(item => item.messageRef ? [item.messageRef] : []))], [messages, allMessages])
+  const lifecycleRefKey = JSON.stringify(lifecycleRefs)
+  useEffect(() => { setLifecycle(new Map()) }, [accountKey])
+  useEffect(() => {
+    if (!accountKey || !lifecycleRefs.length) return
+    const controller = new AbortController()
+    void (async () => {
+      for (let start = 0; start < lifecycleRefs.length; start += 100) {
+        const result = await callArkme<ArkmeArkoLifecycleSnapshot>('arko.lifecycle.query', { messageRefs: lifecycleRefs.slice(start, start + 100) }, controller.signal)
+        if (controller.signal.aborted) return
+        setLifecycle(current => {
+          const next = new Map(current)
+          for (const item of result.items) if (item.version >= (next.get(item.messageKey)?.version ?? 0)) next.set(item.messageKey, item)
+          return next
+        })
+      }
+    })().catch(() => undefined)
+    return () => controller.abort()
+  }, [accountKey, lifecycleGeneration, lifecycleRefKey])
+  const visibleMessages = useMemo(() => allMessages.filter(item => {
+    const state = lifecycle.get(`${item.sessionId}:${item.messageId}`)
+    return !state || state.state === 'active' || (item.lifecycleVersion ?? 0) > state.version
+  }), [allMessages, lifecycle])
   const [locationTarget, setLocationTarget] = useState<number>()
   useLayoutEffect(() => {
     if (locationTarget === undefined) return
     const element = bodyRef.current?.querySelector<HTMLElement>(`[data-arko-selection-key="history:${locationTarget}"]`)
     element?.scrollIntoView?.({ block: 'center' })
   }, [locationTarget, historyWindow])
-  useEffect(() => { setHistoryWindow(undefined); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
-  const [historyOffset, setHistoryOffset] = useState<number>()
+  useEffect(() => { setHistoryWindow(undefined); setWindowError(undefined); setWindowLoading(false); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
+  const [historyCursor, setHistoryCursor] = useState<string>()
   const [historyError, setHistoryError] = useState('')
   const [loading, setLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
+  const bottomVisibility = useScrollBottomVisibility(bodyRef, recordsRef, !loading, visibleMessages)
+  const measureBottom = useRef(bottomVisibility.measure)
+  measureBottom.current = bottomVisibility.measure
+  // Capture at response time, then restore before paint. Request-time positions
+  // must never overwrite scrolling performed while the older page was loading.
+  useLayoutEffect(() => {
+    const snapshot = pendingHistoryViewport.current
+    pendingHistoryViewport.current = undefined
+    const body = bodyRef.current
+    if (!body || historyViewRef.current) return
+    if (returningToLatest.current) {
+      returningToLatest.current = false
+      followTailRef.current = true
+      body.scrollTop = body.scrollHeight
+      bottomVisibility.measure()
+      return
+    }
+    if (!snapshot) return
+    const anchorOffset = arkmeConversationAnchorOffset(body, snapshot.anchorId)
+    body.scrollTop = arkmeConversationRestoredScrollTop(snapshot, {
+      currentScrollTop: body.scrollTop, scrollHeight: body.scrollHeight,
+      ...(anchorOffset === undefined ? {} : { anchorOffset }),
+    })
+    bottomVisibility.measure()
+  }, [messages, historyWindow, bottomVisibility.measure])
+  // Images and Markdown may grow after the initial commit. Follow only when the
+  // reader was already at the latest edge; reading older messages stays put.
+  useLayoutEffect(() => {
+    if (loading || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      const body = bodyRef.current
+      if (body && followTailRef.current && !historyViewRef.current) body.scrollTop = body.scrollHeight
+      bottomVisibility.measure()
+    })
+    if (bodyRef.current) observer.observe(bodyRef.current)
+    if (recordsRef.current) observer.observe(recordsRef.current)
+    return () => observer.disconnect()
+  }, [loading, visibleMessages, bottomVisibility.measure])
   const [sending, setSending] = useState(false)
   const [clearing, setClearing] = useState(false)
   const selectingModel = arkoModelCache.isSelecting(accountKey)
@@ -483,9 +580,27 @@ export function ArkmeArkoSurface() {
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
+  // The pending message owns the visible send. Keep the editor document mounted
+  // and unchanged so failure recovery preserves its undo/redo history.
+  const imageDraftSending = sending && pendingTurn?.userId === profileUserId
+    && pendingTurn !== undefined && isImageTurnDraft(draftSnapshot, pendingTurn)
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const detailBodyRef = useRef<HTMLDivElement>(null)
   const detailScope = `${authSnapshot.auth?.environment ?? ''}:${String(profileUserId)}:${String(session?.sessionId)}`
+  const [linkedRecord, setLinkedRecord] = useState<{ uid: string; value?: ArkmeTimelineItem; error?: string }>()
+  const [linkedOriginal, setLinkedOriginal] = useState(false)
+  const linkedController = useRef<AbortController>()
+  useEffect(() => { setLinkedRecord(undefined); return () => linkedController.current?.abort() }, [accountKey])
+  const openLinkedRecord = async (uid: string) => {
+    cancelWindowRead()
+    linkedController.current?.abort(); const controller = new AbortController(); linkedController.current = controller
+    setLinkedRecord({ uid }); setLinkedOriginal(false); setDetailSelection(undefined)
+    try {
+      const value = await callArkme<ArkmeTimelineItem>('record.app.detail', { recordUid: uid }, controller.signal)
+      if (!controller.signal.aborted) setLinkedRecord({ uid, value })
+    } catch (caught) { if (!controller.signal.aborted) setLinkedRecord({ uid, error: errorMessage(caught) }) }
+  }
+  const closeLinkedRecord = () => { linkedController.current?.abort(); setLinkedRecord(undefined) }
   const [detailSelection, setDetailSelection] = useState<{ scope: string; id: string }>()
   const detailMessage = detailSelection?.scope === detailScope
     ? visibleMessages.find(message => message.id === detailSelection.id && message.role !== 'divider')
@@ -497,6 +612,7 @@ export function ArkmeArkoSurface() {
       : undefined
   useEffect(() => { setDetailSelection(undefined) }, [detailScope])
   const openMessageDetail = (id: string, trigger: HTMLElement) => {
+    cancelWindowRead()
     followTailRef.current = false
     detailTriggerRef.current = trigger
     if (detailBodyRef.current !== null) detailBodyRef.current.scrollTop = 0
@@ -504,12 +620,13 @@ export function ArkmeArkoSurface() {
     setDetailSelection({ scope: detailScope, id })
   }
   const messageActionItems = useMemo<ArkmeMessageActionViewItem[]>(() => visibleMessages.flatMap(message => (
-    message.role === 'divider' || message.messageActionRef === undefined || message.messageActionConversationRef === undefined
+    message.role === 'divider' || ((!message.messageActionRef || !message.messageActionConversationRef) && !(message.role === 'user' && message.status === 'done' && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0))
       ? []
       : [{
         id: message.id,
-        actionRef: message.messageActionRef,
-        conversationRef: message.messageActionConversationRef,
+        actionRef: message.messageActionRef ?? '',
+        conversationRef: message.messageActionConversationRef ?? `arko:${message.sessionId}`,
+        ...(message.role === 'user' && message.status === 'done' && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0 ? { worldOrigin: { kind: 'arko' as const, sourceRef: `arko:${message.sessionId}`, itemUid: message.id, sessionId: message.sessionId!, messageId: message.messageId! } } : {}),
         copyText: arkmeEmojiPlainText(message.text),
         copyLinkAvailable: message.copyLinkAvailable === true,
         forwardAvailable: message.forwardAvailable === true,
@@ -517,12 +634,26 @@ export function ArkmeArkoSurface() {
   )), [visibleMessages])
   const messageSelectionItems = useMemo(() => visibleMessages.filter(message => message.role !== 'divider').map(message => ({ id: message.id, copyText: arkmeEmojiPlainText(message.text) })), [visibleMessages])
   const messageSelectionScope = profileUserId === undefined ? 'anonymous' : `user:${String(profileUserId)}:session:${String(session?.sessionId ?? 0)}`
+  const deletionScope = `${accountKey}:${messageSelectionScope}`
+  const [deletionRequest, setDeletionRequest] = useState<{ scope: string; ids: readonly string[]; refs: string[] }>()
+  const deletionCandidates = useMemo(() => new Set(visibleMessages.filter(message => message.role !== 'divider'
+    // User history can retain its initial queued status after the assistant completes.
+    && message.status !== 'sending' && (message.role !== 'assistant' || !isActiveRunStatus(message.runStatus))
+    && message.id !== pendingTurn?.localUserMessageId && message.id !== pendingTurn?.localAssistantMessageId
+    && !!message.messageRef && !lifecycle.get(`${message.sessionId}:${message.messageId}`)?.deleteBlockedReason
+    && (message.messageId ?? 0) > 0 && (message.sessionId ?? 0) > 0).map(message => message.id)), [visibleMessages, pendingTurn, lifecycle])
+  useEffect(() => { setDeletionRequest(undefined) }, [deletionScope])
   const markSourceRef = accountKey === undefined ? undefined : `arko:${accountKey}`
   const messageMarks = useMessageUnderlines(`${accountKey}:arko`, markSourceRef, profileUserId, arkoMessageMarkTransport)
   const messageActions = useArkmeMessageActions({
     scopeKey: messageSelectionScope,
     selectionItems: messageSelectionItems,
     items: messageActionItems,
+    deleteSelection: {
+      disabledReason: items => items.length > 100 ? tr('每次最多删除 100 条消息')
+        : items.some(item => !deletionCandidates.has(item.id)) ? tr('所选消息仍在生成或发送结果待确认，请完成后再删除') : undefined,
+      onRequest: items => setDeletionRequest({ scope: deletionScope, ids: items.map(item => item.id), refs: items.map(item => visibleMessages.find(message => message.id === item.id)!.messageRef!) }),
+    },
   })
 
   useEffect(() => {
@@ -532,6 +663,7 @@ export function ArkmeArkoSurface() {
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       if (!historyViewRef.current && followTailRef.current && bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+      measureBottom.current()
     })
   }, [])
 
@@ -543,21 +675,23 @@ export function ArkmeArkoSurface() {
   useEffect(() => {
     if (profileUserId === undefined) return
     arkmeArkoConversationPreviewStore.setLatestFromSurface(profileUserId, messages
-      .filter(message => message.role !== 'divider')
+      .filter(message => message.role !== 'divider' && (!lifecycle.has(`${message.sessionId}:${message.messageId}`) || lifecycle.get(`${message.sessionId}:${message.messageId}`)?.state === 'active'))
       .map(message => ({
         key: message.id,
         text: message.text.trim() || (message.contentBlocks?.length ? '[图片]' : ''),
         ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
         ...(message.createdAtMillis === undefined ? {} : { createdAtMillis: message.createdAtMillis }),
       })))
-  }, [messages, profileUserId])
+  }, [messages, profileUserId, lifecycle])
 
   useEffect(() => {
     if (profileUserId === undefined) {
       setPendingTurn(undefined)
       return
     }
-    const restored = readArkoPendingTurn(profileUserId)
+    let active=true
+    void readArkoPendingTurn(profileUserId).then(restored=>{
+    if (!active) return
     setPendingTurn(restored)
     if (restored === undefined) return
     setMessages(current => {
@@ -580,6 +714,8 @@ export function ArkmeArkoSurface() {
       }]
     })
     scrollToBottom()
+    }).catch(caught=>{if(active)setError(errorMessage(caught))})
+    return ()=>{active=false}
   }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
@@ -590,7 +726,7 @@ export function ArkmeArkoSurface() {
     void Promise.allSettled([
       callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal),
       callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
-      callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal),
+      readLatestArkoMessages(controller.signal),
       callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async snapshot => (
         snapshot.profile === null
           ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
@@ -609,7 +745,7 @@ export function ArkmeArkoSurface() {
       if (userProfileResult.status === 'fulfilled') setUserProfile(userProfileResult.value.profile)
       if (historyResult.status === 'fulfilled') {
         setMessages(current => mergeHistory(current, historyResult.value.items))
-        setHistoryOffset(historyResult.value.nextOffset)
+        setHistoryCursor(historyResult.value.nextCursor)
         scrollToBottom()
         const restoredRun = latestActiveRun(historyResult.value.items, sessionResult.value.sessionId)
         if (restoredRun !== undefined) {
@@ -625,21 +761,54 @@ export function ArkmeArkoSurface() {
     return () => { controller.abort() }
   }, [profileUserId, scrollToBottom])
 
+  const lifecycleHistoryRef = useRef({ accountKey, generation: lifecycleGeneration, allMessages, historyWindow })
+  lifecycleHistoryRef.current = { ...lifecycleHistoryRef.current, allMessages, historyWindow }
+  useEffect(() => {
+    const previous = lifecycleHistoryRef.current
+    lifecycleHistoryRef.current = { ...previous, accountKey, generation: lifecycleGeneration }
+    if (!accountKey || previous.accountKey !== accountKey || previous.generation === lifecycleGeneration) return
+    const controller = new AbortController()
+    const ordered = previous.allMessages.map(item => item.orderAtMillis ?? item.createdAtMillis).filter((at): at is number => at !== undefined && at > 0)
+    void (async () => {
+      let cursor: string | undefined
+      const visitedCursors = new Set<string>()
+      const interval = ordered.reduce((range, at) => ({ start: Math.min(range.start, at), end: Math.max(range.end, at) }), { start: Infinity, end: 0 })
+      // A single revision may restore messages absent from the original pages.
+      // Read only the loaded interval, with the same bounded pages and abort owner.
+      do {
+        const page: ArkmeArkoMessagePage = await callArkme('arko.messages', { limit: 100, direction: ordered.length ? 'asc' : 'desc',
+          ...(ordered.length ? { startAtMillis: interval.start, endAtMillis: interval.end + 1 } : {}),
+          ...(cursor ? { cursor } : {}) }, controller.signal)
+        if (controller.signal.aborted) return
+        if (previous.historyWindow) setHistoryWindow(current => current ? { ...current, items: [...new Map([...current.items, ...page.items].map(item => [item.messageId, item])).values()].sort((a,b) => (a.orderAtMillis ?? a.createdAtMillis) - (b.orderAtMillis ?? b.createdAtMillis) || a.messageId - b.messageId) } : current)
+        else setMessages(current => mergeHistory(current, page.items))
+        cursor = page.hasMore ? page.nextCursor : undefined
+        if (cursor) {
+          if (visitedCursors.has(cursor)) throw new Error('Arko history cursor did not advance')
+          visitedCursors.add(cursor)
+        }
+        // The no-history case needs only the latest bounded page.
+        if (!ordered.length) break
+      } while (cursor && !controller.signal.aborted)
+    })().catch(() => undefined)
+    return () => controller.abort()
+  }, [accountKey, lifecycleGeneration])
+
   useEffect(() => {
     if (activeRun === undefined) return
     const controller = new AbortController()
     let consecutiveFailures = 0
-    const finishRun = async (knownHistory?: ArkmeArkoHistoryPage): Promise<void> => {
+    const finishRun = async (knownHistory?: ArkmeArkoMessagePage): Promise<void> => {
       const [historyResult, profileResult] = await Promise.allSettled([
         knownHistory === undefined
-          ? callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal)
+          ? readLatestArkoMessages(controller.signal)
           : Promise.resolve(knownHistory),
         callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
       ])
       if (controller.signal.aborted) return
       if (historyResult.status === 'fulfilled') {
         setMessages(current => mergeHistory(current, historyResult.value.items))
-        setHistoryOffset(historyResult.value.nextOffset)
+        setHistoryCursor(historyResult.value.nextCursor)
         setHistoryError('')
         scrollToBottom()
       } else {
@@ -677,11 +846,7 @@ export function ArkmeArkoSurface() {
           if (controller.signal.aborted) return
           consecutiveFailures += 1
           try {
-            const history = await callArkme<ArkmeArkoHistoryPage>(
-              'arko.history',
-              { limit: 50, offset: 0 },
-              controller.signal,
-            )
+            const history = await readLatestArkoMessages(controller.signal)
             if (controller.signal.aborted) return
             if (arkoHistoryHasTerminalRun(
               history.items,
@@ -707,54 +872,97 @@ export function ArkmeArkoSurface() {
   }, [activeRun, profileUserId, scrollToBottom])
 
   const loadEarlier = useCallback(async () => {
-    if (historyOffset === undefined || historyLoadInFlightRef.current) return
-    const body = bodyRef.current
-    const previousScrollHeight = body?.scrollHeight ?? 0
-    const previousScrollTop = body?.scrollTop ?? 0
+    if (historyCursor === undefined || historyLoadInFlightRef.current) return
     historyLoadInFlightRef.current = true
     setHistoryLoading(true)
+    const controller = new AbortController(); historyController.current = controller
     try {
-      const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: historyOffset })
+      const page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50, cursor: historyCursor }, controller.signal)
+      if (controller.signal.aborted) return
+      if (!historyViewRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
       setMessages(current => mergeHistory(current, page.items))
-      setHistoryOffset(page.nextOffset)
+      setHistoryCursor(page.nextCursor)
       setHistoryError('')
-      requestAnimationFrame(() => {
-        const target = bodyRef.current
-        if (target === null || historyViewRef.current) return
-        target.scrollTop = arkoPreservedScrollTop(
-          previousScrollTop,
-          previousScrollHeight,
-          target.scrollHeight,
-        )
-      })
     } catch (caught) {
+      if (controller.signal.aborted) return
       setHistoryError(tr("加载更早的 Arko 对话记录失败：{v0}", { v0: errorMessage(caught) }))
     } finally {
       historyLoadInFlightRef.current = false
       setHistoryLoading(false)
     }
-  }, [historyOffset])
+  }, [historyCursor])
 
   useEffect(() => {
     const root = bodyRef.current
     const sentinel = historySentinelRef.current
-    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyOffset === undefined) return
+    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyCursor === undefined) return
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
       void loadEarlier()
     }, { root, rootMargin: '120px 0px 0px' })
     observer.observe(sentinel)
     return () => { observer.disconnect() }
-  }, [historyError, historyLoading, historyOffset, loadEarlier, loading, historyWindow])
+  }, [historyError, historyLoading, historyCursor, loadEarlier, loading, historyWindow])
+
+  const pageWindow = async (direction: 'asc' | 'desc') => {
+    const current = historyWindow
+    const cursor = direction === 'desc' ? current?.beforeCursor : current?.afterCursor
+    if (!current || !cursor || windowLoading) return
+    windowController.current?.abort()
+    const controller = new AbortController(); windowController.current = controller
+    setWindowLoading(true); setWindowError(undefined)
+    try {
+      const page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { cursor, direction, limit: 50 }, controller.signal)
+      if (controller.signal.aborted) return
+      const items = page.items.length ? page.items : current.items
+      const next: ArkmeArkoContextWindow = { ...current, items, hasBefore: direction === 'desc' ? page.hasMore : page.items.length > 0 || current.hasBefore, hasAfter: direction === 'asc' ? page.hasMore : page.items.length > 0 || current.hasAfter }
+      if (direction === 'desc') {
+        if (page.nextCursor) next.beforeCursor = page.nextCursor; else delete next.beforeCursor
+        if (page.afterCursor) next.afterCursor = page.afterCursor
+      } else {
+        if (page.nextCursor) next.afterCursor = page.nextCursor; else delete next.afterCursor
+        if (page.beforeCursor) next.beforeCursor = page.beforeCursor
+      }
+      setHistoryWindow(next)
+      setLocationTarget(undefined)
+      if (bodyRef.current) bodyRef.current.scrollTop = 0
+    } catch (caught) { if (!controller.signal.aborted) setWindowError({ direction, message: errorMessage(caught) }) }
+    finally { if (!controller.signal.aborted) setWindowLoading(false) }
+  }
+
+  const returnToLatest = async () => {
+    if (historyViewRef.current) {
+      cancelWindowRead()
+      const controller = new AbortController(); windowController.current = controller
+      const page = await readLatestArkoMessages(controller.signal)
+      controller.signal.throwIfAborted()
+      setMessages(current => mergeHistory(current, page.items))
+      setHistoryCursor(page.nextCursor)
+      setHistoryError('')
+      // The historical DOM is still mounted here. Own the next layout before
+      // its scroll events can turn off latest-follow or paint the old position.
+      returningToLatest.current = true
+      setHistoryWindow(undefined)
+      setLocationTarget(undefined)
+      historyViewRef.current = false
+    } else if (bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+      bottomVisibility.measure()
+    }
+    pendingHistoryViewport.current = undefined
+    followTailRef.current = true
+  }
 
   const retryHistory = useCallback(async () => {
     if (historyLoading) return
     setHistoryLoading(true)
     setHistoryError('')
+    const controller = new AbortController(); historyController.current = controller
     try {
-      const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 })
+      const page = await readLatestArkoMessages(controller.signal)
+      if (controller.signal.aborted) return
       setMessages(current => mergeHistory(current, page.items))
-      setHistoryOffset(page.nextOffset)
+      setHistoryCursor(page.nextCursor)
       scrollToBottom()
       if (session !== undefined) {
         const restoredRun = latestActiveRun(page.items, session.sessionId)
@@ -800,12 +1008,10 @@ export function ArkmeArkoSurface() {
       if (turn.images?.length) {
         const key = arkmeArkoComposerDraftKey(turn.userId)
         const current = arkmeComposerDraftStore.get(key)
-        if (serializeArkmeComposerDraft(current).text.trim() === turn.text
-          && JSON.stringify(current.attachments.map(attachment => attachment.localFile?.fileRef)) === JSON.stringify(turn.images.map(file => file.fileRef))) {
+        if (isImageTurnDraft(current, turn)) {
           arkmeComposerDraftStore.clear(key)
         }
       }
-      removeArkoPendingTurn(turn.userId)
       setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
       setSession(current => current === undefined ? current : { ...current, sessionId: result.sessionId })
       if (result.profile !== undefined && profileUserId !== undefined) {
@@ -849,7 +1055,7 @@ export function ArkmeArkoSurface() {
       } else if (!runActive) {
         // Synchronous replies never enter finishRun. Acquire the same authoritative
         // history references without blocking the composer or moving the viewport.
-        void callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }).then(page => {
+        void callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50 }).then(page => {
           if (!stillCurrent()) return
           const completed = new Map(page.items.filter(item => item.sessionId === result.sessionId
             && [result.userMsgId, result.assistantMsgId].includes(item.messageId))
@@ -865,13 +1071,13 @@ export function ArkmeArkoSurface() {
       const retryable = !(caught instanceof ArkmeClientError) || caught.body.retryable
       if (retryable) {
         setPendingTurn(turn)
-        writeArkoPendingTurn(turn)
+        await writeArkoPendingTurn(turn)
         setError(`Arko 发送结果暂未确认：${message}。请重试确认，系统会复用同一次请求，不会重复执行。`)
         setMessages(current => current.map(item => item.id === turn.localAssistantMessageId ? {
           ...item, role: 'assistant', text: '', status: 'error',
         } : item))
       } else {
-        removeArkoPendingTurn(turn.userId)
+        await removeArkoPendingTurn(turn.userId,turn.clientTurnUid)
         setPendingTurn(current => current?.clientTurnUid === turn.clientTurnUid ? undefined : current)
         setError(message)
         setMessages(current => turn.images?.length
@@ -886,7 +1092,7 @@ export function ArkmeArkoSurface() {
   }, [accountKey, activeRun, detailScope, profileUserId, sending])
 
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
-  const sendDisabled = loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
+  const sendDisabled = dictationBusy || loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
     || imageDraft.preparing !== ''
     || session === undefined || profileUserId === undefined
   const inputDisabled = loading || interactionLocked || session === undefined || profileUserId === undefined
@@ -903,19 +1109,18 @@ export function ArkmeArkoSurface() {
     const text = (presetText ?? serializeArkmeComposerDraft(currentDraft).text).trim()
     const attachments = presetText === undefined ? currentDraft.attachments : []
     const images = attachments.flatMap(attachment => attachment.localFile ? [attachment.localFile] : [])
-    if ((text === '' && attachments.length === 0) || sendInFlightRef.current || sendDisabled
+    if (arkmeAttachmentsPending(attachments) || (text === '' && attachments.length === 0) || sendInFlightRef.current || sendDisabled
       || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
     if (text.length > arkoQuestionMaxLength) {
       setError('内容长度超过上限，请删减后再发送')
       return
     }
     if (attachments.length !== images.length) { setError('图片草稿无效，请重新添加图片'); return }
-    const imageError = arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images)
+    const imageError = latestContinuation(messages, session.sessionId) === undefined ? arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images) : undefined
     if (imageError !== undefined) { setError(imageError); return }
-    if (images.length && latestContinuation(messages, session.sessionId) !== undefined) {
-      setError('当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留'); return
-    }
+
     sendInFlightRef.current = true
+    cancelWindowRead()
     setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
     try {
       const continuation = latestContinuation(messages, session.sessionId)
@@ -936,7 +1141,7 @@ export function ArkmeArkoSurface() {
           replyToAssistantMsgId: continuation.assistantMsgId,
         }),
       }
-      writeArkoPendingTurn(turn)
+      await writeArkoPendingTurn(turn)
       pendingComposerFocusRef.current = true
       shortcutFocusOriginRef.current = focusOrigin
       setPendingTurn(turn)
@@ -963,7 +1168,7 @@ export function ArkmeArkoSurface() {
     } finally {
       sendInFlightRef.current = false
     }
-  }, [catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
+  }, [cancelWindowRead, catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel || accountKey === undefined) return false
@@ -1018,6 +1223,7 @@ export function ArkmeArkoSurface() {
   }, [clearing, pendingTurn, scrollToBottom, sending])
 
   const displayName = arkoPresentationName(profile)
+  const composerPlaceholder = tr("问问 {v0}...", { v0: displayName })
   const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
   const canChooseModel = (catalog?.options.length ?? 0) > 0
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
@@ -1043,13 +1249,13 @@ export function ArkmeArkoSurface() {
       : selectingModel ? '正在切换模型'
     : pendingTurn !== undefined && !sending
       ? '请先确认上一次发送结果'
-      : imageDraft.preparing ? imageDraft.preparing : sending
+      : sending
         ? pendingTurn?.images?.length ? '正在发送图片并等待回复' : '等待回复'
         : continuation === undefined ? '' : '继续当前任务'
 
   return <div ref={shellRef} style={styles.shell}>
     {messageMarks.layer}
-    <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef}
+    <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef} selfNote={{ sourceLabel: displayName || 'Arko', ...(accountKey ? { accountKey } : {}) }}
       markStorage="local" onUnderline={messageMarks.mark} getMarks={messageMarks.getMarks} onRemoveMark={messageMarks.remove} />
     <style>{`
       [data-arkme-arko-composer] .ProseMirror { min-height: 38px; }
@@ -1065,37 +1271,39 @@ export function ArkmeArkoSurface() {
         <span style={styles.aiDisclaimer}>{tr("Agent · 内容由 AI 生成，仅供参考")}</span>
       </span>
       <ArkmeArkoHistoryTools key={accountKey} accountScope={accountKey ?? ''} name={displayName} host={shellRef}
-        detailOpen={detailMessage !== undefined}
+        detailOpen={detailMessage !== undefined || linkedRecord !== undefined}
         disabled={sendDisabled || messageActions.selecting} clearDisabled={messageActions.selecting || loading || interactionLocked || clearing || session === undefined}
-        onClear={() => setClearConfirmOpen(true)} onCapabilities={trigger => { void send('你能帮我干什么', trigger) }}
-        onOpenPanel={() => { setDetailSelection(undefined); followTailRef.current = false }}
+        onClear={() => { cancelWindowRead(); setClearConfirmOpen(true) }} onCapabilities={trigger => { void send('你能帮我干什么', trigger) }}
+        onOpenPanel={() => { cancelWindowRead(); closeLinkedRecord(); setDetailSelection(undefined); followTailRef.current = false }}
         getReadingDate={() => {
           const viewport = bodyRef.current, bounds = viewport?.getBoundingClientRect()
           const visible = bounds && Array.from(viewport!.querySelectorAll<HTMLElement>('[data-arko-at]')).find(node => node.getBoundingClientRect().bottom > bounds.top)
-          return visible ? arkoHistoryDate(Number(visible.dataset.arkoAt)) || undefined : undefined
+          return visible ? arkoHistoryDate(Number(visible.dataset.arkoOrderAt ?? visible.dataset.arkoAt)) || undefined : undefined
         }}
-        onLocate={(items, item) => {
+        onLocate={(window, item) => {
+          cancelWindowRead()
           setDetailSelection(undefined); followTailRef.current = false
-          const index = items.findIndex(candidate => candidate.sessionId === item.sessionId && candidate.messageId === item.messageId)
-          setHistoryWindow({ items, start: Math.max(0, index - 10) }); setLocationTarget(item.messageId)
+          setHistoryWindow(window); setLocationTarget(item.messageId)
         }} />
     </header>
     <ArkmeWideConversation enabled scopeKey={messageSelectionScope} viewportRef={bodyRef} turns controlsHidden={messageActions.selecting}>
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
     {historyWindow !== undefined && <div role="navigation" aria-label={tr('Arko 历史定位')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 22px', fontSize: 12, color: colors.secondary }}>
-      <span>{tr('历史消息')} · {historyWindow.start + 1}–{Math.min(historyWindow.start + 50, historyWindow.items.length)}</span>
-      <button type="button" style={styles.retryButton} disabled={historyWindow.start === 0} onClick={() => { setHistoryWindow({ ...historyWindow, start: Math.max(0, historyWindow.start - 50) }); setLocationTarget(undefined); if (bodyRef.current) bodyRef.current.scrollTop = 0 }}>{tr('更早')}</button>
-      <button type="button" style={styles.retryButton} disabled={historyWindow.start + 50 >= historyWindow.items.length} onClick={() => { setHistoryWindow({ ...historyWindow, start: historyWindow.start + 50 }); setLocationTarget(undefined); if (bodyRef.current) bodyRef.current.scrollTop = 0 }}>{tr('更晚')}</button>
-      <button type="button" style={{ ...styles.retryButton, marginLeft: 'auto' }} onClick={() => { setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true; scrollToBottom() }}>{tr('返回最新消息')}</button>
+      <span>{tr('历史消息')} · {historyWindow.items.length}</span>
+      <button type="button" style={styles.retryButton} disabled={windowLoading || !historyWindow.hasBefore} onClick={() => { void pageWindow('desc') }}>{tr('更早')}</button>
+      <button type="button" style={styles.retryButton} disabled={windowLoading || !historyWindow.hasAfter} onClick={() => { void pageWindow('asc') }}>{tr('更晚')}</button>
+      {windowLoading && <span role="status">{tr('正在读取…')}</span>}
+      {windowError && <span role="alert">{windowError.message}<button type="button" style={styles.retryButton} disabled={windowLoading} onClick={() => { void pageWindow(windowError.direction) }}>{tr('重试历史读取')}</button></span>}
+      {historyWindow.items.some(item => item.orderAtMillis && arkoHistoryDate(item.orderAtMillis) !== arkoHistoryDate(item.createdAtMillis)) && <span>{tr('日历按历史排序日期定位，消息保留原显示时间')}</span>}
     </div>}
     <div ref={bodyRef} data-arkme-width-viewport data-arko-message-viewport style={styles.body}
-      onScroll={event => { const node = event.currentTarget; followTailRef.current = !historyViewRef.current && node.scrollHeight - node.clientHeight - node.scrollTop < 80 }}>
+      onScroll={event => { const node = event.currentTarget; followTailRef.current = !historyViewRef.current && node.scrollHeight - node.clientHeight - node.scrollTop < 80; bottomVisibility.measure() }}>
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
-      {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
+      {historyWindow === undefined && historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
-          if (historyOffset === undefined) void retryHistory()
+          if (historyCursor === undefined) void retryHistory()
           else void loadEarlier()
         }}>
           {historyLoading ? tr("加载中...") : tr("重新加载")}
@@ -1108,7 +1316,7 @@ export function ArkmeArkoSurface() {
       {historyWindow === undefined && <div ref={historySentinelRef} style={styles.historySentinel} />}
       {historyWindow === undefined && historyLoading && <div style={styles.historyLoading} role="status">{tr("正在加载更早内容…")}</div>}
       {!loading && historyError === '' && visibleMessages.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
-      {visibleMessages.length > 0 && <ul style={styles.records} data-arkme-message-selection-scope data-arkme-message-selecting={messageActions.selecting}>
+      {visibleMessages.length > 0 && <ul ref={recordsRef} style={styles.records} data-arkme-message-selection-scope data-arkme-message-selecting={messageActions.selecting}>
         {visibleMessages.map((item, index) => {
           const previous = visibleMessages[index - 1]
           const startsDay = item.role !== 'divider' && item.createdAtMillis !== undefined && arkoHistoryDate(item.createdAtMillis) !== '' && (previous?.createdAtMillis === undefined || dayKey(previous.createdAtMillis) !== dayKey(item.createdAtMillis))
@@ -1128,8 +1336,9 @@ export function ArkmeArkoSurface() {
             data-arkme-width-avatar={item.role === 'user' ? userProfile?.avatarRef : undefined}
             data-arkme-width-sender={item.role === 'user' ? userProfile?.displayName || userProfile?.nickname || '我' : displayName}
             data-arkme-width-sender-kind={item.role === 'user' ? 'human' : 'arko'}
+            data-arkme-conversation-row={item.id}
             data-arko-selection-key={item.id}
-            data-arko-at={item.createdAtMillis}
+            data-arko-at={item.createdAtMillis} data-arko-order-at={item.orderAtMillis}
             data-arko-located={locationTarget !== undefined && locationTarget === item.messageId ? 'true' : undefined}
             style={{ ...styles.row, ...(item.role === 'user' ? styles.rowMe : styles.rowArko), ...(messageActions.selecting ? { ...messageSelectionStyles.rowSelectAvatarMode, marginBottom: 23 } : {}), ...(selectedForAction ? messageSelectionStyles.rowSelectedForAction : {}) }}
             onClick={event => {
@@ -1198,6 +1407,8 @@ export function ArkmeArkoSurface() {
       </ul>}
     </div>
 
+    <ArkmeConversationBottomControl showBackToBottom={bottomVisibility.visible || historyWindow !== undefined}
+      historical={historyWindow !== undefined} newMessageCount={0} onReturnToLatest={returnToLatest} />
     <RegionMarquee getStartArea={() => composerRef.current && composerInputBoundaryRef.current
       ? { element: composerRef.current, boundary: composerInputBoundaryRef.current } : undefined} viewportRef={bodyRef} scopeKey={messageSelectionScope}
       enabled={detailMessage === undefined && !loading && !clearing && !modelDialogOpen && !clearConfirmOpen && messageActions.canSelectMany}
@@ -1233,11 +1444,17 @@ export function ArkmeArkoSurface() {
         </div>
       </div>}
     >
+      {detailMessage.sourceType !== undefined && <p style={styles.detailMeta}>{tr('来源')}：{detailMessage.sourceType === 1 ? tr('历史助手') : 'Agent'}</p>}
+      {detailMessage.orderAtMillis !== undefined && detailMessage.orderAtMillis !== detailMessage.createdAtMillis && <p style={styles.detailMeta}>{tr('日历定位时间')}：{new Date(detailMessage.orderAtMillis).toLocaleString(arkmeIntlLocale())}</p>}
       <ArkoMessageImages {...(detailMessage.contentBlocks === undefined ? {} : { blocks: detailMessage.contentBlocks })} />
       <ArkmeSelectableMessageText text={detailMessage.text} target={arkoMessageMarkTarget(detailMessage, markSourceRef)}>
       {detailMessage.role === 'assistant' ? <ArkmeMarkdownBody text={detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }} />
         : <p style={styles.detailText}><ArkmeRichText text={detailMessage.text} linkLabelMode="raw" highlightMentions={false} /></p>}
       </ArkmeSelectableMessageText>
+      {!!detailMessage.createdRecordUids?.length && <section aria-label={tr('关联快记')}>
+        <h4 style={styles.sender}>{tr('关联快记')}</h4>
+        {detailMessage.createdRecordUids.map((uid, index) => <button type="button" key={uid} style={styles.retryButton} onClick={() => { void openLinkedRecord(uid) }}>{tr('查看关联快记')} {index + 1}</button>)}
+      </section>}
       {detailMessage.role === 'assistant' && detailMessage.reasoning?.trim() && <section aria-label={tr("思考内容")}>
         <h4 style={styles.sender}>{tr("思考内容")}</h4>
         <p style={styles.text}>{detailMessage.reasoning}</p>
@@ -1252,6 +1469,9 @@ export function ArkmeArkoSurface() {
       onSelect={selectModel} onClose={closeModelMenu}
     />}
 
+    {deletionRequest?.scope === deletionScope && <ArkoMessageDeletionDialog messageRefs={deletionRequest.refs} onClose={() => setDeletionRequest(undefined)} onFacts={items => {
+      setLifecycle(current => { const next = new Map(current); for (const item of items) if (item.version >= (next.get(item.messageKey)?.version ?? 0)) next.set(item.messageKey, item); return next })
+    }} />}
     {clearConfirmOpen && <div style={styles.backdrop} onMouseDown={event => {
       if (event.target === event.currentTarget) setClearConfirmOpen(false)
     }}>
@@ -1282,17 +1502,18 @@ export function ArkmeArkoSurface() {
         data-arkme-composer-focused={composerInputFocused ? 'true' : 'false'}
         style={{ ...styles.composerInner, ...arkmeConversationComposerFocusStyle(composerInputFocused),
           ...arkmeConversationComposerBorder(composerInputFocused ? colors.border : 'transparent', false, false) }}>
-      {draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
-        attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled || imageDraft.preparing !== ''} /></div>}
+      {!imageDraftSending && draftSnapshot.attachments.length > 0 && <div style={{ padding: '8px 8px 0' }}><ArkoImageDraftStrip key={accountKey}
+        attachments={draftSnapshot.attachments} draftKey={composerDraftKey} disabled={inputDisabled} /></div>}
+      {imageDraftSending && <div aria-hidden style={{ ...styles.textarea, color: colors.secondary }}>{composerPlaceholder}</div>}
       <ArkmeDocumentComposerInput
         format="text"
         key={accountKey}
         ref={textareaRef}
-        style={styles.textarea!}
+        style={imageDraftSending ? { ...styles.textarea, display: 'none' } : styles.textarea!}
         value={draft}
         emojis={draftSnapshot.emojis}
         maxLength={arkoQuestionMaxLength}
-        placeholder={tr("问问 {v0}...", { v0: displayName })}
+        placeholder={composerPlaceholder}
         ariaLabel={tr("发送给 {v0}", { v0: displayName })}
         disabled={inputDisabled || messageActions.selecting}
         onFocus={() => { setComposerInputFocused(true) }}
@@ -1313,7 +1534,7 @@ export function ArkmeArkoSurface() {
       <div style={styles.tools}>
         <ArkmeComposerToolButton ref={addButtonRef} aria-label={tr('添加内容')} aria-haspopup="menu" aria-expanded={addMenuOpen}
           disabled={inputDisabled || messageActions.selecting} onPointerDown={event => event.stopPropagation()} onClick={() => setAddMenuOpen(value => !value)}>
-          {imageDraft.preparing ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}
+          <ArkmeComposerPlusIcon />
         </ArkmeComposerToolButton>
         <ArkmeEmojiPicker
           key={accountKey}
@@ -1326,6 +1547,7 @@ export function ArkmeArkoSurface() {
           onBeforeToggle={() => { textareaRef.current?.captureSelection() }}
           onSelect={insertEmoji}
         />
+        <ArkmeDictationButton scopeKey={composerDraftKey} active={!messageActions.selecting} disabled={inputDisabled} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
         <span style={styles.hint} title={hint}>{hint}</span>
         <button data-arkme-feedback="neutral"
           type="button"
@@ -1339,7 +1561,7 @@ export function ArkmeArkoSurface() {
         ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
         {activeRun === undefined ? <ArkmeComposerSendButton
           ariaLabel={tr("发送")}
-          shortcutHint="Enter"
+          shortcutHint={attachmentPreparationHint(draftSnapshot.attachments) ?? "Enter"}
           disabled={sendDisabled || !hasDraftContent}
           onClick={() => { void send() }}
         /> : <button data-arkme-feedback="neutral"
@@ -1354,6 +1576,12 @@ export function ArkmeArkoSurface() {
       </div>
     </div></div></footer>
     </div>
+    {linkedRecord !== undefined && (linkedRecord.value !== undefined
+      ? <ArkmeTimelineDetailDrawer item={linkedRecord.value} canExtend={false} showOriginal={linkedOriginal} onToggleOriginal={() => setLinkedOriginal(value => !value)} onClose={closeLinkedRecord} />
+      : <ArkmeDetailShell title={tr('快记详情')} label={tr('快记详情')} onClose={closeLinkedRecord}>
+        <p role={linkedRecord.error ? 'alert' : 'status'}>{linkedRecord.error || tr('正在读取…')}</p>
+        {linkedRecord.error && <button type="button" style={styles.retryButton} onClick={() => { void openLinkedRecord(linkedRecord.uid) }}>{tr('重试')}</button>}
+      </ArkmeDetailShell>)}
     {messageActions.overlay}
     </ArkmeWideConversation>
   </div>

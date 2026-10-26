@@ -31,6 +31,46 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
 }
 
 describe('local-first directory', () => {
+  it('allows a current nickname page through a concurrent read acknowledgement', async () => {
+    const remote = gate<ArkmeSourceList>()
+    const initial = row(1, { displayName: '旧名字', privateNickname: '旧名字', latestSequence: 7 })
+    const cached = { ...page([initial]), projection: { revision: 1, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    const test = setup(() => remote.promise, cached)
+    await test.owner.read()
+    await test.owner.accept({ type: 'read-ack', revision: 2, sourceRef: initial.sourceRef, sourceKey: initial.sourceKey!, effectiveReadSequence: 7, unreadCount: 0 })
+    remote.resolve(page([{ ...initial, displayName: '当前昵称', privateNickname: '当前昵称' }]))
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]).toMatchObject({ displayName: '当前昵称', readSequence: 7 })
+  })
+
+  it('keeps a live nickname change when an older same-sequence page arrives afterwards', async () => {
+    const remote = gate<ArkmeSourceList>()
+    const initial = row(1, { displayName: '旧名字', privateNickname: '旧名字', latestSequence: 7 })
+    const cached = { ...page([initial]), projection: { revision: 1, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    const test = setup(() => remote.promise, cached)
+    await test.owner.read()
+    const current = { ...initial, displayName: '当前昵称', privateNickname: '当前昵称' }
+    await test.owner.accept({ type: 'sessions-delta', revision: 2, updates: [{ sourceKey: current.sourceKey!, source: current, timelineItems: [] }] })
+    remote.resolve(page([initial]))
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]).toMatchObject({ displayName: '当前昵称', privateNickname: '当前昵称', latestSequence: 7 })
+    expect(test.write).toHaveBeenLastCalledWith(1, expect.objectContaining({ items: [expect.objectContaining({ displayName: '当前昵称' })] }))
+  })
+
+  it('persists and restores member activity while rejecting same-sequence older pages', async () => {
+    const activity = row(1, { kind: 'group_chat', latestSequence: 7, activeAtMillis: 200,
+      latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' })
+    const cached = { ...page([activity]), projection: { revision: 8, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    const older = row(1, { kind: 'group_chat', latestSequence: 7, latestPreview: '旧消息', latestActivityAtMillis: 100, latestActivityKind: 'record' })
+    const test = setup(async () => page([older]), cached)
+    expect((await test.owner.read()).items[0]).toMatchObject(activity)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]).toMatchObject({ latestPreview: activity.latestPreview, latestActivityAtMillis: 200 })
+    expect(test.write).toHaveBeenLastCalledWith(1, expect.objectContaining({ items: [expect.objectContaining({ latestActivityAtMillis: 200 })] }))
+    const next = { ...activity, latestPreview: '新消息', latestActivityAtMillis: 201, latestActivityKind: 'record' as const, latestSequence: 8 }
+    expect(mergeDirectorySource(activity, next).latestPreview).toBe('新消息')
+  })
+
   it('refreshes a persisted generic card preview even when the last message sequence is unchanged', async () => {
     const cached = { ...page([row(1, { latestSequence: 8, latestPreview: '[卡片]' })]),
       projection: { revision: 8, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }

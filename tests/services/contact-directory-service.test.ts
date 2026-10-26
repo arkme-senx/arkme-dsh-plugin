@@ -62,6 +62,16 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it('provides read-only team candidates with real identities, remarks and avatar presentation', async () => {
+    const f = fixture({ contacts: { items: [{ user_id: 88, remark: '同事备注' }], has_more: false },
+      profiles: new Map([[88, { nickname: '小林', jotmoId: 'lin', avatarUrl: 'https://photo.invalid' }]]) })
+    const result = await f.service.teamMemberCandidates()
+    expect(result.items[0]).toMatchObject({ userId: 88, displayName: '同事备注', nickname: '小林', avatarRef: 'avatar-ref-88' })
+    expect(result.hasMore).toBe(false)
+    expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(f.runtime.authenticatedChatPost.mock.calls.every(([path]) => ['/api/v1/chats/contacts/list', '/api/v1/chats/list'].includes(path))).toBe(true)
+  })
+
   it('preserves generated avatars through list, detail, remark saves and temporary profile outages', async () => {
     const avatarFallback = { kind: 'phone_default', colorIndex: 3, label: '林' }
     const f = fixture({ contacts: { items: [{ user_id: 88, chat_session_uid: 'chat-88' }], has_more: false },

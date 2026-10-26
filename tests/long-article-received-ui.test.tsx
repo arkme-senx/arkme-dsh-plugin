@@ -1,3 +1,4 @@
+import { invalidateMessageQuoteSources } from '../src/client/message-quote-invalidations.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -26,10 +27,24 @@ it.each([false, true])('renders received Markdown and bound images with detail f
   })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root.render(<ArkmeLongArticleDialog sourceRef="chat" item={item} onClose={() => {}} />))
-  expect(api).toHaveBeenCalledWith('source.long-article.detail', { sourceRef: 'chat', itemUid: 'article', messageActionRef: 'signed-reference' })
+  expect(api).toHaveBeenCalledWith('source.long-article.detail', { sourceRef: 'chat', itemUid: 'article', messageActionRef: 'signed-reference' }, expect.any(AbortSignal))
   expect(host.querySelector('h1')?.textContent).toBe('标题')
   expect(host.querySelector('img')?.getAttribute('src')).toContain('ref=controlled')
   expect(host.textContent).not.toContain('arkme-asset:')
   expect([...host.querySelectorAll('button')].some(button => button.textContent === '编辑')).toBe(false)
   expect(host.querySelector('[role=alert]') !== null).toBe(failed)
 })
+
+it('revalidates open shared originals on invalidation and removes denied cached text and media', async () => {
+ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);let denied=false;const close=vi.fn();
+ api.mockImplementation(async (operation:string)=>{
+  if(operation==='provider.capabilities')return {features:{markdownLongArticles:true}};
+  if(operation==='source.long-article.detail') {if(denied)throw Object.assign(new Error('access revoked'),{body:{code:'long-article-access-revoked',retryable:false}});return {...item,editable:false,version:1,thinkingDurationMillis:0}}
+ });
+ host=document.createElement('div');document.body.append(host);root=createRoot(host);
+ await act(async()=>root.render(<ArkmeLongArticleDialog sourceRef="chat" item={item} onClose={close}/>));
+ expect(host.querySelector('img')).not.toBeNull();denied=true;
+ await act(async()=>{invalidateMessageQuoteSources();await new Promise(resolve=>setTimeout(resolve,120))});
+ expect(host.querySelector('img')).toBeNull();expect(host.querySelector('h1')).toBeNull();expect(close).toHaveBeenCalledOnce();expect(host.textContent).toContain('access revoked');
+ denied=false;await act(async()=>{invalidateMessageQuoteSources();await new Promise(resolve=>setTimeout(resolve,120))});expect(host.querySelector('img')).not.toBeNull();
+});

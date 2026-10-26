@@ -1,7 +1,12 @@
+import {TeamExternalChats} from '../../TeamExternalChats.js'
 import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
 import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
+import { TeamInternalGroupDialog } from '../../TeamInternalGroupDialog.js'
+import { TeamAddMembersDialog } from '../../TeamAddMembersDialog.js'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
@@ -17,6 +22,7 @@ import type { ArkmeTeam, ArkmeTeamMember, ArkmeTeamRole } from '../../../types.j
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import { TeamCodexSyncDialog } from './TeamCodexSyncDialog.js'
+import { TeamMemberCodexEntry } from './TeamMemberCodexEntry.js'
 import { arkmeUi } from '../../ui-controller.js'
 
 interface TeamDetailState {
@@ -56,6 +62,9 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const [profileBusy,setProfileBusy]=useState(false)
   const [syncTeam, setSyncTeam] = useState<ArkmeTeam>()
   const [messageChannelOpen, setMessageChannelOpen] = useState(false)
+  const [internalGroupOpen, setInternalGroupOpen] = useState(false)
+  const [addingMembers, setAddingMembers] = useState(false)
+  const [externalChatsOpen,setExternalChatsOpen]=useState(false)
   const [codexBusy, setCodexBusy] = useState(false)
   const navigationRef = useRef<AbortController>()
   useEffect(() => () => navigationRef.current?.abort(), [])
@@ -65,6 +74,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
   const avatarRequests = useRef(new Map<string, AbortController>())
+  const memberPages = useRef(new Map<string, string | undefined>())
+  const syncRequests = useRef(new Map<string, AbortController>())
 
   const hydrateAvatars = useCallback(async (appRef: string, pageCursor?: string) => {
     const key = pageCursor ?? 'first'
@@ -112,6 +123,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       for (const request of avatarRequests.current.values()) request.abort()
       avatarRequests.current.clear()
     }
+    for (const request of syncRequests.current.values()) request.abort()
+    syncRequests.current.clear()
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
@@ -134,6 +147,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       }, controller.signal)
       if (controller.signal.aborted || generationRef.current !== generation) return
       page.team.teamRef = appRef
+      if (pageCursor === undefined) memberPages.current.clear()
+      for (const member of page.items) memberPages.current.set(member.key, pageCursor)
       setState(current => {
         // A refresh with pending decoration must not erase already visible photos.
         if (page.avatarState === 'pending' || page.avatarState === 'unavailable') {
@@ -170,10 +185,37 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       controllerRef.current?.abort()
       for (const request of avatarRequests.current.values()) request.abort()
       avatarRequests.current.clear()
+      for (const request of syncRequests.current.values()) request.abort()
+      syncRequests.current.clear()
     }
   }, [load])
 
-  useEffect(()=>subscribeTeamMessageChanges(account=>{if(account===accountKey)void load(undefined,true)}),[accountKey,load])
+  const refreshMemberSync = async (member: TeamMembers['items'][number]) => {
+    if (!state.page || !memberPages.current.has(member.key)) throw new Error('成员状态已变化')
+    const generation = generationRef.current, controller = new AbortController()
+    syncRequests.current.get(member.key)?.abort()
+    syncRequests.current.set(member.key, controller)
+    const pageCursor = memberPages.current.get(member.key)
+    try {
+      const page = await callArkme<TeamMembers>('team.app.members', {
+        teamRef: state.page.team.teamRef, limit: 50, avatarMode: 'deferred',
+        ...(pageCursor === undefined ? {} : { pageCursor }),
+      }, controller.signal)
+      controller.signal.throwIfAborted()
+      if (generation !== generationRef.current || page.team.teamRef !== state.page.team.teamRef) throw new Error('成员状态已变化')
+      const fresh = page.items.find(item => item.key === member.key)
+      if (!fresh) throw new Error('成员状态已变化')
+      setState(current => !current.page ? current : { ...current, page: { ...current.page,
+        items: current.page.items.map(item => item.key === member.key ? { ...item,
+          codexSync: fresh.codexSync ?? { state: 'unavailable', reason: 'unsupported' },
+        } : item),
+      } })
+    } finally {
+      if (syncRequests.current.get(member.key) === controller) syncRequests.current.delete(member.key)
+    }
+  }
+
+  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly)=>{if(account===accountKey&&!receiptOnly)void load(undefined,true)}),[accountKey,load])
   const openProfile=async()=>{
     if(profileBusy||!state.page?.team.canEditProfile)return
     const controller=new AbortController();navigationRef.current?.abort();navigationRef.current=controller;setProfileBusy(true)
@@ -263,6 +305,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
         </span>
       </div>
     </header>
+    {externalChatsOpen && <TeamExternalChats teamRef={page.team.teamRef} teamKey={page.team.key} teamName={page.team.name} onClose={()=>setExternalChatsOpen(false)}/>}
     <section className="arkme-team-features" aria-label={tr('团队功能')}>
       <div className="arkme-team-features-container">
         <h2>{tr('团队功能')}</h2>
@@ -282,12 +325,27 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span>{tr('团队消息通道')}</span>
             <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
+          <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={internalGroupOpen} onClick={() => setInternalGroupOpen(true)}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><UsersThree size={22} /></span>
+            <span>{tr('团队内部群')}</span>
+            <span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" className="arkme-team-feature" onClick={() => arkmeUi.showTeamWorld({ name: page.team.name, jotmoId: page.team.jotmoId, avatar: page.team.avatar, returnTeamRef: teamRef })}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><Globe size={22} /></span>
+            <span>{tr('团队的世界')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={externalChatsOpen} onClick={()=>setExternalChatsOpen(true)}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><ChatCircle size={22}/></span>
+            <span>{tr('对外私聊')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
         </div>
       </div>
     </section>
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
-        <h2>{tr("团队成员")}</h2>
+        <div className="arkme-team-members-heading"><h2>{tr("团队成员")}</h2>
+          {(page.team.currentUserRole === 'owner' || page.team.currentUserRole === 'admin') && <button type="button" className="arkme-team-action" aria-haspopup="dialog" onClick={() => setAddingMembers(true)}>{tr('＋ 添加成员')}</button>}
+        </div>
         <div className="arkme-team-member-list" role="list">
           {confirmRemoval && <div className="team-confirm" role="alert"><p>{tr('确认移除 {v0}？', { v0: confirmRemoval.name })}</p>
             <button disabled={!!removing} onClick={() => { void removeMember() }}>{tr('确认')}</button><button disabled={!!removing} onClick={() => { setConfirmRemoval(undefined) }}>{tr('取消')}</button></div>}
@@ -307,11 +365,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
             </span>
-            <button type="button" className="arkme-team-member-conversations"
-              aria-label={tr('查看 {name} 的 Codex 对话',{name:member.displayName})}
-              disabled={codexBusy || !member.jotmoId} onClick={() => { void openCodex(member) }}>
-              {tr('查看对话')} <span aria-hidden>›</span>
-            </button>
+            <TeamMemberCodexEntry sync={member.codexSync} name={member.displayName} identityAvailable={!!member.jotmoId}
+              busy={codexBusy} onOpen={() => { void openCodex(member) }} onRetry={() => refreshMemberSync(member)} />
             {member.canRemove && <button type="button" className="arkme-team-action" disabled={!!removing} onClick={() => { setConfirmRemoval({ userRef: member.userRef, name: member.displayName }) }}>{tr('移除')}</button>}</span>
           </div>)}
           {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
@@ -336,6 +391,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       onClose={() => setMessageChannelOpen(false)} onChanged={() => { void load(undefined, true) }}
       onViewConversations={() => { setMessageChannelOpen(false); openTeamMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
+    {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
+    {addingMembers && <TeamAddMembersDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name} onClose={() => setAddingMembers(false)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

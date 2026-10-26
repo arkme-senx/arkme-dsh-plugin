@@ -20,6 +20,9 @@ vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
 }))
 
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
+// Orchestration uses react-test-renderer; real underline portals have dedicated DOM tests.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   const { forwardRef } = await import('react')
   return { ArkmeDocumentComposerInput: forwardRef(() => null) }
@@ -41,7 +44,7 @@ beforeEach(() => {
   vi.mocked(callArkme).mockReset()
   vi.mocked(callArkme).mockImplementation(async operation => {
     if (operation === 'arko.session') return { sessionId: 88 } as never
-    if (operation === 'arko.history') return { items: history } as never
+    if (operation === 'arko.messages') return { items: history } as never
     if (operation === 'arko.models') return { options: [], effectiveRouteKey: 'model' } as never
     if (operation === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (operation === 'user.profile') return { profile: {} } as never

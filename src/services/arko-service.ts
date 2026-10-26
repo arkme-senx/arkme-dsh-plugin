@@ -1,3 +1,13 @@
+import { ArkoLifecycle } from './arko-lifecycle.js'
+import type { ArkmeArkoLifecycleCommand } from '../arko-lifecycle-contract.js'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
+import { GeneratedArtifacts } from '../generated-artifacts.js'
+import { consumeArkoExport } from '../arko-history-export.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress } from '../arko-history-contract.js'
+import { randomUUID } from 'node:crypto'
+import { isValidArkoPendingTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from '../arko-turn-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeArkoAskResult,
@@ -21,6 +31,7 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { ArkoLocalMarks } from './arko-local-marks.js'
 
 export interface ArkoImagePorts {
+  withReferences?<T>(refs: readonly string[], userId: number, persist: () => Promise<T>): Promise<T>
   read(fileRef: string): Promise<{ file: ArkmeLocalFile }>
   upload(fileRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeUploadedAsset[]>
   project(raw: unknown, userId: number): ArkmeContentBlock[]
@@ -158,7 +169,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
   const extraData = parsedJsonRecord(extra.data)
   const activityAt = [
     data.send_at, data.sendAt, extraData.send_at, extraData.sendAt,
-    data.created_at, data.create_at, data.createdAt, data.createAt,
+    data.created_at_ms, data.created_at, data.create_at, data.createdAt, data.createAt,
     extraData.create_at, extraData.createAt, extra.create_at, extra.createAt,
     extraData.update_at, extraData.updateAt, data.updated_at, data.updatedAt,
   ].map(numberValue).find(candidate => candidate > 0) ?? 0
@@ -171,10 +182,11 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
   return {
     messageId,
     sessionId,
+    lifecycleVersion: numberValue(data.lifecycle_version),
     role: roleCode === 2 ? 'user' : 'assistant',
     text: stringValue(data.content ?? data.text_content ?? data.textContent),
     reasoning: stringValue(data.reason_content ?? data.reason_text ?? data.reasonText),
-    createdAtMillis: activityAt > 0 && activityAt < 100_000_000_000 ? activityAt * 1000 : activityAt,
+    createdAtMillis: activityAt === data.created_at_ms ? activityAt : activityAt > 0 && activityAt < 100_000_000_000 ? activityAt * 1000 : activityAt,
     status: numberValue(data.status ?? data.msg_status),
     ...(runUid === undefined ? {} : { runUid }),
     ...(runStatus === undefined ? {} : { runStatus }),
@@ -223,6 +235,9 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class ArkoService {
+  private readonly historyCodec: EncryptedReferenceCodec
+  private readonly generated: GeneratedArtifacts
+  readonly lifecycle: ArkoLifecycle
   readonly localMarks: ArkoLocalMarks
   private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
 
@@ -231,7 +246,17 @@ export class ArkoService {
     private readonly profile: ProfileService,
     private readonly messageActions?: MessageActionService,
     private readonly images?: ArkoImagePorts,
-  ) { this.localMarks = new ArkoLocalMarks(runtime) }
+  ) {
+    this.localMarks = new ArkoLocalMarks(runtime)
+    this.historyCodec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), () => new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404))
+    this.lifecycle = new ArkoLifecycle(runtime, this.historyCodec, (user, session, message) => this.messageRef(user, session, message), async (raw, user) => {
+      const session = await runtime.requireSession()
+      if (session.userId !== user) throw new ArkmePluginError('arko-account-changed', '账号已切换', false, 409)
+      return this.historyFacts(raw, session, true, 100)
+    })
+    this.generated = new GeneratedArtifacts(join(runtime.config.fileStateDirectory ?? join(homedir(), '.arkme'), 'generated-downloads'),
+      () => runtime.stateStore.uniqueCode(), async () => (await runtime.requireSession()).userId, async signal => (await this.lifecycle.query([], signal)).revision)
+  }
 
   dispose(): void {
     this.arkoProfileDisplayNameCache.clear()
@@ -320,34 +345,65 @@ export class ArkoService {
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
       '/api/v1/qa/message-list',
-      { limit: normalizedLimit, offset: normalizedOffset, session_type: ARKO_AGENT_DIRECT_SESSION_TYPE },
+      { limit: normalizedLimit, offset: normalizedOffset, session_type: ARKO_AGENT_DIRECT_SESSION_TYPE, client_capabilities: ['dsh.arko.images.v1'] },
       session,
       signal,
+      { lane: 'interactive-read', bypassCache: true, cacheMs: 0 },
     )
     const rawItems = listValue(data.message_ls)
+    const items = await this.projectHistory(rawItems, session)
+    const hasMore = rawItems.length === normalizedLimit
+    return {
+      items,
+      hasMore,
+      ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
+    }
+  }
+
+  private historyFacts(rawItems: unknown[], session: ArkmeSessionCredentials, strict = false, maxItems = 50): ArkmeArkoHistoryItem[] {
+    if (strict && rawItems.length > maxItems) throw new ArkmePluginError('arko-history-contract-invalid', '历史窗口过大', true, 502)
     const projectedItems = rawItems
       .map(raw => {
         const item = arkoHistoryItemFromData(raw)
-        if (item === undefined) return undefined
+        if (item === undefined) {
+          if (strict) throw new ArkmePluginError('arko-history-contract-invalid', '历史消息无效', true, 502)
+          return undefined
+        }
+        if (strict) {
+          const wire = objectValue(raw)
+          if (![1, 2].includes(numberValue(wire.source_type)) || ![1, 2, 3].includes(numberValue(wire.type)) || ![1, 2, 3, 5].includes(item.status)
+            || !Number.isSafeInteger(wire.created_at_ms) || !Number.isSafeInteger(wire.order_at_ms)) throw new ArkmePluginError('arko-history-contract-invalid', '历史消息字段不完整', true, 502)
+          item.reasoning = ''
+          item.createdAtMillis = numberValue(wire.created_at_ms)
+          item.sourceType = numberValue(wire.source_type); item.messageType = numberValue(wire.type); item.orderAtMillis = numberValue(wire.order_at_ms)
+        }
         const attachments = listValue(objectValue(raw).attachments).map(objectValue).filter(attachment =>
           stringValue(attachment.file_asset_uid) !== ''
           && ARKO_IMAGE_MIME_TYPES.some(mime => mime === attachment.mime_type))
         if (attachments.length === 0) return item
         const blocks = this.images?.project({ media_display_items: attachments.map(attachment => ({ ...attachment, file_kind: 1 })) }, session.userId) ?? []
         // Keep an explicit placeholder if the original is deleted or cannot be resolved.
-        const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock =>
-          blocks.find(block => block.fileAssetUid === attachment.file_asset_uid) ?? {
+        const contentBlocks = attachments.map((attachment, sortOrder): ArkmeContentBlock => {
+          const block = attachment.availability === 'unavailable' ? undefined : blocks.find(block => block.fileAssetUid === attachment.file_asset_uid)
+          return block ? { ...block, sortOrder } : {
             kind: 'image', mediaRef: '', fileAssetUid: stringValue(attachment.file_asset_uid),
             fileName: stringValue(attachment.file_name) || '图片', mimeType: stringValue(attachment.mime_type),
             size: numberValue(attachment.size), sortOrder,
-          })
+          }
+        })
         return { ...item, contentBlocks }
       })
       .filter((item): item is ArkmeArkoHistoryItem => item !== undefined)
+    return projectedItems
+  }
+
+  private async projectHistory(rawItems: unknown[], session: ArkmeSessionCredentials, strict = false): Promise<ArkmeArkoHistoryItem[]> {
+    const projectedItems = this.historyFacts(rawItems, session, strict)
     const conversationRefs = new Map<number, Promise<string>>()
-    const items = this.messageActions === undefined
-      ? projectedItems
-      : await Promise.all(projectedItems.map(async item => {
+    return await Promise.all(projectedItems.map(async original => {
+          const localMarkRef = await this.localMarks.project(original, session.userId)
+          const item = { ...original, ...(localMarkRef ? { localMarkRef } : {}),
+            ...(strict ? { messageRef: await this.messageRef(session.userId, original.sessionId, original.messageId) } : {}) }
           const action = await this.messageActions?.agentHistoryItem(item, session.userId)
           if (action?.messageActionRef === undefined) return item
           let itemConversationRef = conversationRefs.get(item.sessionId)
@@ -357,16 +413,110 @@ export class ArkoService {
           }
           return { ...item, ...action, messageActionConversationRef: await itemConversationRef }
         }))
-    const hasMore = rawItems.length === normalizedLimit
-    return {
-      items: await Promise.all(items.map(async item => {
-        const localMarkRef = await this.localMarks.project(item, session.userId)
-        return localMarkRef ? { ...item, localMarkRef } : item
-      })),
-      hasMore,
-      ...(hasMore ? { nextOffset: normalizedOffset + rawItems.length } : {}),
-    }
+
   }
+
+  private historyBody(query: ArkmeArkoHistoryQuery): Record<string, unknown> {
+    const limit = query.limit ?? 50, direction = query.direction ?? 'desc'
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !['asc', 'desc'].includes(direction)
+      || (query.role !== undefined && query.role !== 'user' && query.role !== 'assistant')
+      || (query.cursor !== undefined && (typeof query.cursor !== 'string' || query.cursor.length > 4096))
+      || [query.startAtMillis, query.endAtMillis].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0))) {
+      throw new ArkmePluginError('arko-history-invalid', '历史查询参数无效', false, 400)
+    }
+    return { limit, direction, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.role ? { role: query.role === 'user' ? 2 : 3 } : {}),
+      ...(query.startAtMillis === undefined ? {} : { start_at: query.startAtMillis }), ...(query.endAtMillis === undefined ? {} : { end_at: query.endAtMillis }) }
+  }
+  private async messageRef(userId: number, sessionId: number, messageId: number): Promise<string> {
+    return this.historyCodec.seal('arkme-arko-message-v1', { environment: this.runtime.config.environment, userId, sessionId, messageId, expiresAtMillis: Date.now() + 24 * 60 * 60_000 })
+  }
+  private historyContinuation(data: Record<string, unknown>) {
+    const hasMore = data.has_more === true, nextCursor = optionalString(data.next_cursor)
+    if (typeof data.has_more !== 'boolean' || (hasMore && !nextCursor) || !Number.isSafeInteger(data.scanned) || numberValue(data.scanned) < 0 || numberValue(data.scanned) > 500 || data.consistency !== 'live') {
+      throw new ArkmePluginError('arko-history-contract-invalid', '历史分页响应不完整', true, 502)
+    }
+    return { hasMore, ...(hasMore ? { nextCursor: nextCursor! } : {}), scanned: numberValue(data.scanned), consistency: 'live' as const }
+  }
+  async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.lifecycle.query(refs, signal) }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.lifecycle.change(command, signal) }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.lifecycle.recent(cursor, signal) }
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    return this.runtime.runCompositeOwnerRead('arko.messages', { ...query }, scoped => this.readMessages(query, scoped), signal, query.cursor ? 'background-read' : 'interactive-read')
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    return this.runtime.runCompositeOwnerRead('arko.search', { ...query }, scoped => this.readSearch(query, scoped), signal, query.cursor ? 'background-read' : 'interactive-read')
+  }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    return this.runtime.runCompositeOwnerRead('arko.context', { ...query }, scoped => this.readContext(query, scoped), signal)
+  }
+  private async readMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/query', this.historyBody(query), session, signal,
+      { lane: query.cursor ? 'background-read' : 'interactive-read', bypassCache: true, cacheMs: 0 })
+    const items = await this.projectHistory(listValue(data.items), session, true)
+    return { items, ...this.historyContinuation(data), ...(optionalString(data.before_cursor) ? { beforeCursor: stringValue(data.before_cursor) } : {}), ...(optionalString(data.after_cursor) ? { afterCursor: stringValue(data.after_cursor) } : {}) }
+  }
+  private async readSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    if (typeof query.keyword !== 'string' || query.keyword.trim() === '' || [...query.keyword.trim()].length > 200) throw new ArkmePluginError('arko-history-invalid', '请输入不超过 200 字的搜索词', false, 400)
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/search', { ...this.historyBody(query), keyword: query.keyword.trim() }, session, signal,
+      { lane: query.cursor ? 'background-read' : 'interactive-read', bypassCache: true, cacheMs: 0 })
+    if (!Array.isArray(data.items) || data.items.length > 50) throw new ArkmePluginError('arko-history-contract-invalid', '搜索响应无效', true, 502)
+    const items = await Promise.all(data.items.map(async raw => {
+      const item = objectValue(raw)
+      if (!Number.isSafeInteger(item.id) || numberValue(item.id) < 1 || !Number.isSafeInteger(item.session_id) || numberValue(item.session_id) < 1
+        || ![2, 3].includes(numberValue(item.role)) || ![1, 2, 3, 5].includes(numberValue(item.status)) || typeof item.snippet !== 'string' || item.snippet.length > 1024 || typeof item.created_at_ms !== 'number' || typeof item.order_at_ms !== 'number') throw new ArkmePluginError('arko-history-contract-invalid', '搜索响应无效', true, 502)
+      return { messageKey: `${numberValue(item.session_id)}:${numberValue(item.id)}`, messageRef: await this.messageRef(session.userId, numberValue(item.session_id), numberValue(item.id)), role: item.role === 2 ? 'user' as const : 'assistant' as const,
+        snippet: item.snippet, createdAtMillis: item.created_at_ms, orderAtMillis: item.order_at_ms, status: numberValue(item.status) }
+    }))
+    return { items, ...this.historyContinuation(data) }
+  }
+  private async readContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    const before = query.before ?? 20, after = query.after ?? 20
+    if (!Number.isInteger(before) || !Number.isInteger(after) || before < 0 || after < 0 || before + after > 49 || typeof query.messageRef !== 'string') throw new ArkmePluginError('arko-history-invalid', '上下文窗口参数无效', false, 400)
+    const session = await this.runtime.requireSession(), ref = await this.historyCodec.open('arkme-arko-message-v1', query.messageRef)
+    if (ref.userId !== session.userId || numberValue(ref.expiresAtMillis) <= Date.now() || !Number.isSafeInteger(ref.messageId) || !Number.isSafeInteger(ref.sessionId)) throw new ArkmePluginError('arko-message-unavailable', '消息已不可查看，请重新搜索', false, 404)
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/context', { session_id: ref.sessionId, message_id: ref.messageId, before, after }, session, signal,
+      { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+    const items = await this.projectHistory(listValue(data.items), session, true)
+    if (typeof data.has_before !== 'boolean' || typeof data.has_after !== 'boolean'
+      || (data.has_before && !optionalString(data.before_cursor)) || (data.has_after && !optionalString(data.after_cursor))
+      || !items.some(item => item.sessionId === ref.sessionId && item.messageId === ref.messageId)) throw new ArkmePluginError('arko-history-contract-invalid', '上下文响应不完整', true, 502)
+    const anchor = items.find(item => item.sessionId === ref.sessionId && item.messageId === ref.messageId)!
+    anchor.messageRef = query.messageRef
+    return { items, anchorMessageRef: query.messageRef, hasBefore: data.has_before, hasAfter: data.has_after,
+      ...(data.has_before ? { beforeCursor: stringValue(data.before_cursor) } : {}), ...(data.has_after ? { afterCursor: stringValue(data.after_cursor) } : {}) }
+  }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
+    const session = await this.runtime.requireSession()
+    const name = this.arkoProfileDisplayNameCache.get(session.userId)?.displayName ?? 'Arko'
+    const fileName = `${name.replace(/[\\/:*?"<>|\r\n]/g, '_')}-对话-${new Date().toISOString().slice(0, 10)}.md`
+    let lastProgress = 0
+    const report = (progress: ArkmeArkoExportProgress, force = false) => {
+      const now = Date.now()
+      if (force || now - lastProgress >= 100) {
+        lastProgress = now
+        try { onProgress?.(progress) } catch { /* Progress observers cannot affect export integrity. */ }
+      }
+    }
+    report({ count: 0 }, true)
+    const result = await this.generated.create(session.userId, fileName,
+      write => this.runtime.intelligentExportStream(session, (body, streamSignal) => consumeArkoExport(body, streamSignal, write, name, report), signal), signal)
+    report({ count: result.result }, true)
+    return { ...result.file, count: result.result }
+  }
+  async actionMessages(anchors: readonly { sessionId: number; messageId: number }[], userId: number, signal?: AbortSignal): Promise<ArkmeArkoHistoryItem[]> {
+    return this.runtime.runCompositeOwnerRead('arko.action-messages', { anchors }, async scoped => {
+      const session = await this.runtime.requireSession()
+      if (session.userId !== userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，请重新读取', false, 409)
+      const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/messages/details',
+        { anchors: anchors.map(anchor => ({ session_id: anchor.sessionId, message_id: anchor.messageId })) }, session, scoped,
+        { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+      if (!Array.isArray(data.items)) throw new ArkmePluginError('arko-history-contract-invalid', '消息读取不完整', true, 502)
+      return this.historyFacts(data.items, session, true, 100)
+    }, signal)
+  }
+  async readGeneratedFile(ref: string) { return this.generated.read(ref) }
 
   async arkoAsk(
     text: string,
@@ -386,7 +536,20 @@ export class ArkoService {
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
       throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
     }
-    const sessionId = options.sessionId ?? (await this.arkoEnsureSession(options.signal)).sessionId
+    const clientTurnUid=options.clientTurnUid?.trim() || randomUUID()
+    const previous=await this.runtime.stateStore.arkoTurn(session.userId,clientTurnUid)
+    if (previous!==undefined) {
+      const turn=previous.turn
+      if (turn.text!==text || (options.sessionId!==undefined && turn.sessionId!==options.sessionId)
+        || JSON.stringify(turn.images?.map(file=>file.fileRef) ?? [])!==JSON.stringify(options.imageFileRefs ?? [])
+        || turn.replyToRunUid!==(options.replyToRunUid?.trim() || undefined)
+        || turn.replyToAssistantMsgId!==options.replyToAssistantMsgId
+        || (options.modelRouteKey!==undefined && turn.modelRouteKey!==options.modelRouteKey)) {
+        throw new ArkmePluginError('arko-turn-conflict','本轮发送内容已冻结，请确认原请求结果',false)
+      }
+      if (previous.request!==undefined) return this.postArkoTurn(session,previous,options.waitMillis,options.signal)
+    }
+    const sessionId=previous?.turn.sessionId ?? options.sessionId ?? (await this.arkoEnsureSession(options.signal)).sessionId
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const replyToRunUid = options.replyToRunUid?.trim() ?? ''
     const replyToAssistantMsgId = options.replyToAssistantMsgId
@@ -396,7 +559,7 @@ export class ArkoService {
     if (hasContinuationRun !== hasContinuationMessage) {
       throw new ArkmePluginError('arko-continuation-invalid', 'Arko 续接参数不完整', false)
     }
-    let modelRouteKey = options.modelRouteKey?.trim() ?? ''
+    let modelRouteKey = previous?.turn.modelRouteKey ?? options.modelRouteKey?.trim() ?? ''
     if (hasContinuationRun && modelRouteKey !== '') {
       throw new ArkmePluginError('arko-continuation-model-invalid', '继续 Arko 任务时不能切换模型', false)
     }
@@ -413,21 +576,26 @@ export class ArkoService {
     }
     const imageFileRefs = options.imageFileRefs ?? []
     let attachments: ArkmeUploadedAsset[] = []
+    let files: ArkmeLocalFile[] = previous?.turn.images ?? []
     if (imageFileRefs.length > 0) {
-      if (hasContinuationRun) throw new ArkmePluginError('arko-image-continuation-unavailable', '当前任务续接尚未接通图片，请清除上下文后再发送；图片已保留', false)
+      if (hasContinuationRun && !(await this.arkoRunStatus(sessionId,replyToRunUid,options.signal)).imageInputSupported) {
+        throw new ArkmePluginError('arko-image-continuation-unavailable','当前任务使用的模型不支持图片，图片已保留',false)
+      }
       if (imageFileRefs.length > 9 || new Set(imageFileRefs).size !== imageFileRefs.length
         || imageFileRefs.some(ref => !/^arkme-file-v1\.[0-9a-f-]{36}$/.test(ref))) {
         throw new ArkmePluginError('arko-image-invalid', '请选择有效的图片附件', false)
       }
       // A cached UI capability must not allow an obsolete backend to accept text only.
-      const catalog = await this.arkoModelCatalog(options.signal)
-      const capability = catalog.options.find(option => option.routeKey === modelRouteKey)?.imageInput
+      const capability = hasContinuationRun ? { protocolVersion: 1 as const, maxImages: 9, maxImageBytes: 20*1024*1024, maxTotalBytes: 180*1024*1024, mimeTypes: [...ARKO_IMAGE_MIME_TYPES] } : (await this.arkoModelCatalog(options.signal)).options.find(option => option.routeKey === modelRouteKey)?.imageInput
       if (capability === undefined || this.images === undefined) {
         throw new ArkmePluginError('arko-images-unavailable', arkoImageInputError(undefined, [{ mimeType: '', size: 0, fileName: '' }])!, false)
       }
-      const files = await Promise.all(imageFileRefs.map(async ref => (await this.images!.read(ref)).file))
+      files = await Promise.all(imageFileRefs.map(async ref => (await this.images!.read(ref)).file))
       const invalid = arkoImageInputError(capability, files)
       if (invalid !== undefined) throw new ArkmePluginError('arko-image-invalid', invalid, false)
+      const turn=previous?.turn ?? this.newPendingTurn(session.userId,sessionId,clientTurnUid,text,files,modelRouteKey,replyToRunUid,replyToAssistantMsgId)
+      if (this.images.withReferences===undefined) throw new ArkmePluginError('arko-recovery-unavailable','当前插件缺少可靠图片恢复能力，请更新插件',false)
+      await this.images.withReferences(imageFileRefs,session.userId,()=>this.runtime.stateStore.prepareArkoTurn(session.userId,turn))
       attachments = await this.images.upload(imageFileRefs, options.signal)
       if (attachments.length !== imageFileRefs.length) throw new ArkmePluginError('arko-image-upload-incomplete', '图片上传未完成，请重试', true)
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('arko-account-changed', '账号已切换，本次发送已取消', false)
@@ -438,9 +606,7 @@ export class ArkoService {
       content: text,
       extra: '{}',
       ...(timezone === undefined || timezone.trim() === '' ? {} : { tz_inna: timezone.trim() }),
-      ...(options.clientTurnUid === undefined || options.clientTurnUid.trim() === ''
-        ? {}
-        : { client_turn_uid: options.clientTurnUid.trim() }),
+      client_turn_uid:clientTurnUid,
       ...(hasContinuationRun ? {
         reply_to_run_uid: replyToRunUid,
         reply_to_assistant_msg_id: replyToAssistantMsgId,
@@ -453,12 +619,49 @@ export class ArkoService {
       }),
     }
     if (modelRouteKey !== '') body.model_route_key = modelRouteKey
+    const turn=previous?.turn ?? this.newPendingTurn(session.userId,sessionId,clientTurnUid,text,files,modelRouteKey,replyToRunUid,replyToAssistantMsgId)
+    await this.runtime.stateStore.prepareArkoTurn(session.userId,turn,body)
+    return this.postArkoTurn(session,{turn,request:body},options.waitMillis,options.signal)
+  }
+
+  private newPendingTurn(userId:number,sessionId:number,clientTurnUid:string,text:string,images:ArkmeLocalFile[],modelRouteKey:string,replyToRunUid:string,replyToAssistantMsgId?:number):ArkmeArkoPendingTurn {
+    return {userId,sessionId,clientTurnUid,text,...(images.length?{images}:{}),createdAtMillis:Date.now(),localUserMessageId:randomUUID(),localAssistantMessageId:randomUUID(),
+      ...(replyToRunUid ? {replyToRunUid,replyToAssistantMsgId:replyToAssistantMsgId!} : modelRouteKey ? {modelRouteKey} : {})}
+  }
+  async arkoPendingTurns(expectedUserId?:number):Promise<ArkmeArkoPendingTurn[]> {
+    const session=await this.runtime.requireSession()
+    if (expectedUserId!==undefined && session.userId!==expectedUserId) throw new ArkmePluginError('arko-account-changed','账号已切换',false)
+    return this.runtime.stateStore.arkoPendingTurns(session.userId)
+  }
+  async arkoPrepareTurn(turn:ArkmeArkoPendingTurn):Promise<void> {
+    const session=await this.runtime.requireSession()
+    if (!isValidArkoPendingTurn(turn,session.userId)) throw new ArkmePluginError('arko-turn-invalid','Arko 待确认消息无效',false)
+    const refs=turn.images?.map(file=>file.fileRef) ?? []
+    if (refs.length) {
+      if (!this.images?.withReferences) throw new ArkmePluginError('arko-recovery-unavailable','可靠图片恢复能力不可用',false)
+      await this.images.withReferences(refs,session.userId,()=>this.runtime.stateStore.prepareArkoTurn(session.userId,turn))
+    } else await this.runtime.stateStore.prepareArkoTurn(session.userId,turn)
+  }
+  async arkoAcknowledgeTurn(uid:string,expectedUserId?:number):Promise<void> {
+    const session=await this.runtime.requireSession()
+    if (expectedUserId!==undefined && session.userId!==expectedUserId) throw new ArkmePluginError('arko-account-changed','账号已切换',false)
+    await this.runtime.stateStore.acknowledgeArkoTurn(session.userId,uid)
+  }
+  private async postArkoTurn(session:ArkmeSessionCredentials,stored:ArkmeArkoStoredTurn,waitMillis?:number,signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    const body=stored.request!,sessionId=stored.turn.sessionId
+    if ((await this.runtime.requireSession()).userId!==stored.turn.userId) throw new ArkmePluginError('arko-account-changed','账号已切换，本次发送已取消',false)
     const accepted = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
-      '/api/v1/qa/new-msg-v2',
+      Array.isArray(body.attachments) && body.attachments.length ? '/api/v1/qa/new-msg-v3' : '/api/v1/qa/new-msg-v2',
       body,
       session,
-      options.signal,
-    )
+      signal,
+    ).catch(async error => {
+      if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-1108') throw error
+      // A lifecycle rejection proves no admission. Remove this frozen intent;
+      // the caller preserves input and needs a new, explicit send after refresh.
+      await this.runtime.stateStore.acknowledgeArkoTurn(stored.turn.userId, stored.turn.clientTurnUid).catch(() => undefined)
+      throw new ArkmePluginError('arko-history-changed', '对话历史已更改，本次未发送；请刷新后重新发送', false, 409)
+    })
     const userMsgId = numberValue(accepted.user_msg_id)
     const assistantMsgId = numberValue(accepted.assistant_msg_id)
     const acceptedSessionId = numberValue(accepted.session_id) || sessionId
@@ -471,14 +674,20 @@ export class ArkoService {
     if (runUid === '') {
       throw new ArkmePluginError('arko-ask-contract-invalid', 'Arko 消息响应缺少运行标识', true, 502)
     }
+    // The server receipt is authoritative even if the local acknowledgement
+    // cannot reach disk. Retaining the frozen intent is safe: replay returns
+    // this same accepted turn and never creates a second user message.
+    try {
+      await this.runtime.stateStore.acknowledgeArkoTurn(stored.turn.userId,stored.turn.clientTurnUid)
+    } catch { /* Recover the accepted turn through its original identity. */ }
     let events: { events: string[]; timedOut: boolean }
     try {
       events = await this.authenticatedIntelligentSseEvents(
         '/api/v1/qa/stream-v2',
         { session_id: acceptedSessionId, user_msg_id: userMsgId, assistant_msg_id: assistantMsgId },
-        options.waitMillis ?? 25_000,
+        waitMillis ?? 25_000,
         session,
-        options.signal,
+        signal,
       )
     } catch (error) {
       if (error instanceof ArkmePluginError && error.code === 'arko-stream-cancelled') throw error
@@ -522,6 +731,7 @@ export class ArkoService {
       sequence,
       surfaceAssistantMsgId,
       retryable: booleanValue(data.retryable),
+      imageInputSupported:booleanValue(data.image_input_supported),
       ...(stringValue(data.error_code).trim() === '' ? {} : { errorCode: stringValue(data.error_code).trim() }),
       ...(stringValue(data.retry_of_run_uid).trim() === '' ? {} : { retryOfRunUid: stringValue(data.retry_of_run_uid).trim() }),
       ...(clientAction === undefined ? {} : { clientAction }),

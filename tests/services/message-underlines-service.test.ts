@@ -7,7 +7,7 @@ const source = {title:'',textContent:'重点',textFormat:'plain' as const,record
 const anchor = {version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:createHash('sha256').update(quoteSourceContent(source)).digest('hex'),start:0,end:2,text:'重点',prefix:'',suffix:''}
 const snapshot = {complete:true,accessible:true,revision:1,annotations:[{annotation_uid:'a',actor_user_id:42,actor_name:'你',anchor,state:'available'}]}
 function fixture(kind='group_chat') {
-  const post=vi.fn(async(path:string)=>path.endsWith('capabilities')?{underline:{enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:2000}}:{...snapshot,operation_uid:'op'})
+  const post=vi.fn(async(path:string)=>path.endsWith('capabilities')?{underline:{enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:2000}}:{...snapshot,operation_uid:'op',accepted:true,accepted_revision:1,annotation_uid:'a'})
   const service=Object.create(ChatService.prototype) as ChatService
   Object.assign(service,{runtime:{requireSession:async()=>({userId:42}),authenticatedPost:post,authenticatedChatPost:post},source:{openSourceRef:async()=>({kind,ownerRef:'chat'})},openMessageActionRef:vi.fn(async()=>source)})
   return {service,post}
@@ -15,7 +15,7 @@ function fixture(kind='group_chat') {
 it.each(['group_chat','private_chat','send_to_self','default_category','topic'])('routes signed %s underline writes and verifies receipt',async(kind)=>{
   const {service,post}=fixture(kind)
   await expect(service.changeSourceUnderline('src','signed',{kind:'add',operationId:'op',anchor})).resolves.toMatchObject({items:[{mine:true}]})
-  expect(post).toHaveBeenLastCalledWith(`/api/v1/${kind.includes('chat')?'chats':'records'}/annotations/create`,expect.objectContaining({record_uid:'record',record_owner_user_id:7,operation_uid:'op',anchor}),{userId:42},undefined)
+  expect(post).toHaveBeenLastCalledWith('/api/v1/records/annotations/create',expect.objectContaining({record_uid:'record',record_owner_user_id:7,operation_uid:'op',anchor}),{userId:42},undefined,{trackWriteOutcome:true})
   if(kind.includes('chat'))expect(post.mock.calls.at(-1)?.[1]).toMatchObject({chat_session_uid:'chat',relation_uid:'relation',sequence:8})
 })
 it('does not claim success for a missing or changed receipt',async()=>{
@@ -67,4 +67,13 @@ it('reports unavailable storage and never falls back to cloud writes', async () 
   const { service, runtime, post } = localFixture(); runtime.stateStore = {}
   await expect(service.sourceLocalMarkCapabilities('src')).rejects.toMatchObject({code:'local-mark-storage-unavailable'})
   expect(post).not.toHaveBeenCalled()
+})
+
+it('accepts the original receipt after the mark was later cancelled without resurrecting it', async () => {
+  const {service,post}=fixture();post.mockImplementation(async path=>path.endsWith('capabilities')?{underline:{enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:2000}}:{...snapshot,revision:2,annotations:[],operation_uid:'op',accepted:true,accepted_revision:1,annotation_uid:'original'} as never)
+  await expect(service.changeSourceUnderline('src','signed',{kind:'add',operationId:'op',anchor})).resolves.toMatchObject({revision:2,items:[]})
+})
+it('preserves an accepted receipt while stripping inaccessible current text', async () => {
+  const {service,post}=fixture();post.mockImplementation(async path=>path.endsWith('capabilities')?{underline:{enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:2000}}:{...snapshot,accessible:false,revision:0,operation_uid:'op',accepted:true,accepted_revision:1,annotation_uid:'original'} as never)
+  await expect(service.changeSourceUnderline('src','signed',{kind:'add',operationId:'op',anchor})).resolves.toMatchObject({accessible:false,items:[]})
 })

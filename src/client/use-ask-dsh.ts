@@ -79,7 +79,7 @@ export function useAskDsh(scopeKey: string, onComplete: () => void) {
         frame?.contentDocument?.querySelector<HTMLElement>('[data-composer-card] [contenteditable="true"][role="textbox"], [data-composer-card] textarea:not(:disabled)')?.focus({ preventScroll: true })
       })
     } catch (error) {
-      if (!controller.signal.aborted) setStatus(error instanceof Error ? error.message : '附件准备失败，请重试')
+      if (!controller.signal.aborted) setStatus(error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message ? error.message : '附件准备失败，请重试')
     } finally {
       stopAuth()
       if (running.current === controller) { running.current = undefined; setBusy(false) }

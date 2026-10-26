@@ -7,10 +7,22 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 
-export type ArkmeComposerAttachment = ({ asset: ArkmeUploadedAsset; localFile?: never } | { localFile: ArkmeLocalFile; asset?: never }) & { previewUrl?: string }
+export interface ArkmeAttachmentPreparation extends Omit<ArkmeLocalFile, 'fileRef'> {
+  id: string
+  state: 'queued' | 'preparing' | 'failed'
+  error?: string
+  retry(): void
+  cancel(): void
+}
+export type ArkmeComposerAttachment = (
+  | { asset: ArkmeUploadedAsset; localFile?: never; preparation?: never }
+  | { localFile: ArkmeLocalFile; asset?: never; preparation?: never }
+  | { preparation: ArkmeAttachmentPreparation; asset?: never; localFile?: never }
+) & { previewUrl?: string; clientId?: string }
 
-export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.localFile?.fileRef ?? item.asset!.fileAssetUid }
-export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): ArkmeUploadedAsset | ArkmeLocalFile { return item.localFile ?? item.asset! }
+export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.clientId ?? item.preparation?.id ?? item.localFile?.fileRef ?? item.asset!.fileAssetUid }
+export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): Omit<ArkmeLocalFile, 'fileRef'> { return item.preparation ?? item.localFile ?? item.asset! }
+export function arkmeAttachmentsPending(attachments: readonly ArkmeComposerAttachment[]): boolean { return attachments.some(item => item.preparation !== undefined) }
 
 export interface ArkmeComposerMention {
   originalIndex?: number
@@ -334,6 +346,7 @@ export function arkmeArkoComposerDraftKey(userId: number | undefined): string | 
 }
 
 export function releaseArkmeComposerAttachment(attachment: ArkmeComposerAttachment): void {
+  attachment.preparation?.cancel()
   if (attachment.previewUrl === undefined || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') return
   URL.revokeObjectURL(attachment.previewUrl)
 }
@@ -344,8 +357,9 @@ export function releaseArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot):
 
 export class ArkmeComposerDraftStore {
   private readonly drafts = new Map<string, ArkmeComposerDraftSnapshot>()
-  private readonly listeners = new Set<(key?: string) => void>()
+  private readonly listeners = new Set<(key?: string, reason?: 'evict') => void>()
   private readonly persisted = new Map<string, string>()
+  private nativePersistence = false
   private lastPersisted = ''
   private pendingPersisted: string | undefined
   private revision = 0
@@ -357,7 +371,8 @@ export class ArkmeComposerDraftStore {
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
   beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
     const draft = this.get(key)
-    const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(arkmeAttachmentId)])
+    // The tile ID is transient; send idempotency must survive draft restoration.
+    const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(item => item.localFile?.fileRef ?? item.asset?.fileAssetUid ?? arkmeAttachmentId(item))])
     const current = draft.fileSendIdentity
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
@@ -395,6 +410,13 @@ export class ArkmeComposerDraftStore {
     } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
   }
 
+  /** Native files become the authority; browser data is read only for migration. */
+  useNativePersistence(): void { this.nativePersistence = true }
+  confirmNativeSave(key: string): void {
+    if (!this.nativePersistence || !this.persisted.delete(key)) return
+    try { this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.persistedPayload()) } catch { /* Native tombstones prevent stale browser data from returning. */ }
+  }
+
   /** A per-key snapshot for desktop replication; includes ordinary text drafts. */
   entries(): ReadonlyMap<string, ArkmeComposerDraftSnapshot> { return new Map(this.drafts) }
 
@@ -421,7 +443,7 @@ export class ArkmeComposerDraftStore {
     if (draft !== undefined) this.store(key, { ...draft, leftAtMillis: atMillis }, 'preserve')
   }
 
-  readonly subscribe = (listener: (key?: string) => void): (() => void) => {
+  readonly subscribe = (listener: (key?: string, reason?: 'evict') => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
@@ -592,6 +614,13 @@ export class ArkmeComposerDraftStore {
     this.store(key, { ...current, attachments: retained })
   }
 
+  /** Preparation updates the existing tile without changing its selection order. */
+  updateAttachments(key: string, update: (items: readonly ArkmeComposerAttachment[]) => readonly ArkmeComposerAttachment[]): void {
+    const current = this.get(key)
+    const attachments = update(current.attachments)
+    if (attachments !== current.attachments) this.storeOrDelete(key, { ...current, attachments })
+  }
+
   removeAttachment(key: string | undefined, fileAssetUid: string): void {
     if (key === undefined) return
     const current = this.drafts.get(key)
@@ -684,7 +713,7 @@ export class ArkmeComposerDraftStore {
       releaseArkmeComposerDraft(snapshot)
       changed = true
     }
-    if (changed) this.publish()
+    if (changed) this.publish(undefined, this.nativePersistence ? 'evict' : undefined)
   }
 
   private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot, timing: 'edit' | 'preserve' = 'edit'): void {
@@ -739,29 +768,31 @@ export class ArkmeComposerDraftStore {
 
   private persistedPayload(): string { return `[${[...this.persisted.values()].join(',')}]` }
 
-  private publish(key?: string): void {
+  private publish(key?: string, reason?: 'evict'): void {
     try {
-      // Persist only durable drafts. Plain typing must not serialize every other conversation.
-      const before = key === undefined ? undefined : this.persisted.get(key)
-      this.refreshPersisted(key)
-      if (key === undefined || before !== this.persisted.get(key)) {
-        this.pendingPersisted = this.persistedPayload()
-      }
-      // A failed write remains pending, including deletions. Plain edits retry
-      // the cached payload without serializing unrelated durable drafts again.
-      if (this.pendingPersisted !== undefined) {
-        if (this.pendingPersisted !== this.lastPersisted) {
-          this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.pendingPersisted)
-          this.lastPersisted = this.pendingPersisted
+      if (!this.nativePersistence) {
+        // Persist only durable drafts. Plain typing must not serialize every other conversation.
+        const before = key === undefined ? undefined : this.persisted.get(key)
+        this.refreshPersisted(key)
+        if (key === undefined || before !== this.persisted.get(key)) {
+          this.pendingPersisted = this.persistedPayload()
         }
-        this.pendingPersisted = undefined
+        // A failed write remains pending, including deletions. Plain edits retry
+        // the cached payload without serializing unrelated durable drafts again.
+        if (this.pendingPersisted !== undefined) {
+          if (this.pendingPersisted !== this.lastPersisted) {
+            this.storage?.setItem(ArkmeComposerDraftStore.storageKey, this.pendingPersisted)
+            this.lastPersisted = this.pendingPersisted
+          }
+          this.pendingPersisted = undefined
+        }
       }
     } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1
     if (key !== undefined && this.drafts.has(key)) this.changeRevisions.set(key, this.revision)
     else if (key !== undefined) this.changeRevisions.delete(key)
     else for (const changedKey of this.changeRevisions.keys()) if (!this.drafts.has(changedKey)) this.changeRevisions.delete(changedKey)
-    for (const listener of this.listeners) listener(key)
+    for (const listener of this.listeners) { if (reason) listener(key, reason); else listener(key) }
   }
 
 }

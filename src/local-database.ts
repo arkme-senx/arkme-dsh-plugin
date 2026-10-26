@@ -1,4 +1,8 @@
+import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
+import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
+import { LocalSelfNoteQuotes } from './local-self-note-quotes.js'
+import { LocalWorldReactions } from './local-world-reactions.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
 import { normalizeConversationViewports, type ConversationViewportEntries } from './conversation-viewport-state.js'
 import { applyMemberUpdate, mergeMemberJoinEvents, validateMemberUpdate, cachedMemberItem } from './member-directory.js'
@@ -128,6 +132,8 @@ function selfRoleSnapshotFromRow(row: SelfRoleBindingRow): ArkmeSelfRoleSnapshot
 }
 
 export class ArkmeLocalDatabase implements RecentEmojiStore {
+  readonly selfNoteQuotes: LocalSelfNoteQuotes
+  readonly worldReactions: LocalWorldReactions
   readonly messageMarks: LocalMessageMarkStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
@@ -151,6 +157,14 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       );
       CREATE TABLE IF NOT EXISTS recent_emoji (
         account_key TEXT PRIMARY KEY, emoji_ids TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS local_transcript_edits (
+        account_key TEXT NOT NULL, scope TEXT NOT NULL, item_id TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, scope, item_id)
+      );
+      CREATE TABLE IF NOT EXISTS local_directory_preferences (
+        account_key TEXT NOT NULL, entry_key TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(account_key, entry_key)
       );
       CREATE TABLE IF NOT EXISTS conversation_viewports (
         account_key TEXT NOT NULL, surface TEXT NOT NULL, payload TEXT NOT NULL,
@@ -269,6 +283,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       }
     })
     this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
+    this.selfNoteQuotes = new LocalSelfNoteQuotes(this.database)
+    this.worldReactions = new LocalWorldReactions(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
     this.selfRoleSync = new SelfRoleSyncStore(this.database, action => this.transaction(action))
     const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
@@ -931,6 +947,12 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.recordReeditFileRefs(userId)
   }
 
+  async arkoPendingTurns(userId:number) { return this.operationalState.arkoPendingTurns(userId) }
+  async arkoTurn(userId:number,uid:string) { return this.operationalState.arkoTurn(userId,uid) }
+  async prepareArkoTurn(userId:number,turn:import('./arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>) { return this.operationalState.prepareArkoTurn(userId,turn,request) }
+  async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
+  async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
+
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
   async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }
@@ -965,6 +987,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.operationalState.listRecordingImportJobs(userId)
+  }
+
+  async planRecordingToolBatch(...args: Parameters<ArkmeStateStore['planRecordingToolBatch']>) {
+    return await this.operationalState.planRecordingToolBatch(...args)
   }
 
   async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
@@ -1164,6 +1190,34 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   async recentEmojiIds(accountKey: string): Promise<string[]> {
     return this.readRecentEmojiIds(accountKey)
+  }
+
+  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: LocalTranscriptChange): Promise<Record<string, LocalTranscriptEntry>> {
+    const read = (id: string): LocalTranscriptEntry | undefined => {
+      const row = this.database.prepare('SELECT payload FROM local_transcript_edits WHERE account_key=? AND scope=? AND item_id=?').get(account, scope, id) as { payload: string } | undefined
+      return row ? JSON.parse(row.payload) as LocalTranscriptEntry : undefined
+    }
+    if (change) this.transaction(() => {
+      const entry = changeLocalTranscript(read(change.id), change, Number(account.split(':').at(-1)))
+      this.database.prepare('INSERT OR REPLACE INTO local_transcript_edits(account_key,scope,item_id,payload) VALUES (?,?,?,?)').run(account, scope, change.id, JSON.stringify(entry))
+    })
+    const result: Record<string, LocalTranscriptEntry> = Object.create(null)
+    for (const id of ids) { const entry = read(id); if (entry) result[id] = entry }
+    return result
+  }
+
+  async localDirectoryPreferences(accountKey: string, entries?: LocalDirectoryPreferences, migrate = false): Promise<LocalDirectoryPreferences> {
+    if (entries) this.transaction(() => {
+      const statement = this.database.prepare(migrate
+        ? 'INSERT OR IGNORE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)'
+        : 'INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)')
+      for (const [key, value] of Object.entries(normalizeLocalDirectoryPreferences(entries))) statement.run(accountKey, key, JSON.stringify(value))
+    })
+    const result: LocalDirectoryPreferences = Object.create(null)
+    for (const row of this.database.prepare('SELECT entry_key,payload FROM local_directory_preferences WHERE account_key=?').all(accountKey) as { entry_key: string; payload: string }[]) {
+      try { Object.assign(result, normalizeLocalDirectoryPreferences({ [row.entry_key]: JSON.parse(row.payload) })) } catch { /* Ignore corrupt individual entries. */ }
+    }
+    return result
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

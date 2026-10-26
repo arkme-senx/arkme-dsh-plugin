@@ -6,7 +6,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  IconEllipsisOutline16, type MenuEntry,
+  IconEllipsisOutlineMedium, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
@@ -55,6 +55,8 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
 import { arkmeGroupBotAvatarIdentity, arkmeInvalidateBotAvatarResolution, type ArkmeBotAvatarIdentity } from './ArkmeBotAvatarActions.js'
 import { useGroupBots, arkmeGroupBotsChanged } from './use-group-bots.js'
+import { TeamGroupJoinPanel } from './TeamGroupControls.js'
+import { TeamInternalGroupDialog } from './TeamInternalGroupDialog.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -302,7 +304,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
 }
 
 export function ArkmeConversationMoreIcon() {
-  return <IconEllipsisOutline16 size={24} />
+  return <IconEllipsisOutlineMedium size={24} />
 }
 
 function MagicWandIcon() {
@@ -523,6 +525,7 @@ function CloseGlyph() {
 
 export function AddMembersDrawer(props: {
   source: ArkmeSourceItem
+  accountScope?: string | undefined
   open: boolean
   onClose: () => void
   onAdded: () => void
@@ -530,6 +533,7 @@ export function AddMembersDrawer(props: {
 }) {
   useArkmeLocale()
   type Focus = 'all' | 'group' | 'privateChat' | 'bot'
+  const [entryKind, setEntryKind] = useState<'people' | 'bot' | 'team'>('people')
   const [query, setQuery] = useState('')
   const [snapshot, setSnapshot] = useState<ArkmeGroupMemberCandidateList>()
   const [groups, setGroups] = useState<ArkmeSourceItem[]>([])
@@ -566,6 +570,7 @@ export function AddMembersDrawer(props: {
     }
     const controller = new AbortController()
     let cancelled = false
+    setEntryKind('people')
     setQuery('')
     setSnapshot(undefined)
     setGroups([])
@@ -676,20 +681,19 @@ export function AddMembersDrawer(props: {
   const selectedBotItems = botItems.filter(item => selectedBots.includes(item.botRef))
   const visibleGroups = groups.filter(item => normalizedQuery === '' || item.displayName.toLocaleLowerCase().includes(normalizedQuery)
     || (groupCandidates[item.sourceRef]?.items ?? []).some(candidate => candidate.displayName.toLocaleLowerCase().includes(normalizedQuery)))
-  const visibleBots = botItems.filter(item => normalizedQuery === '' || item.name.toLocaleLowerCase().includes(normalizedQuery)
+  const visibleBots = (entryKind === 'bot' ? botItems : []).filter(item => normalizedQuery === '' || item.name.toLocaleLowerCase().includes(normalizedQuery)
     || item.description.toLocaleLowerCase().includes(normalizedQuery))
-  const matchedMembers = [...people, ...groupMemberByRef.values()]
+  const matchedMembers = (entryKind === 'people' ? [...people, ...groupMemberByRef.values()] : [])
     .filter(item => item.displayName.toLocaleLowerCase().includes(normalizedQuery))
     .filter((item, index, values) => values.findIndex(value => value.candidateRef === item.candidateRef) === index)
-  const matchedGroups = groups.filter(item => item.displayName.toLocaleLowerCase().includes(normalizedQuery))
+  const matchedGroups = (entryKind === 'people' ? groups : []).filter(item => item.displayName.toLocaleLowerCase().includes(normalizedQuery))
   const matchedBots = visibleBots
-  const effectiveFocus: Focus = isSearchMode ? 'all' : focus
+  const effectiveFocus: Focus = entryKind === 'bot' ? 'bot' : isSearchMode ? 'all' : focus
   const selectedCount = selectedCandidateByRef.size + selectedBots.length
   const showStrangerSection = !isSearchMode && !loading && (effectiveFocus === 'privateChat' || (effectiveFocus === 'all' && visiblePrivateChats.length > 0))
   const focusRows: Array<{ focus: Exclude<Focus, 'all'>; label: string; count: number }> = [
     { focus: 'group', label: '群聊', count: groups.length },
     { focus: 'privateChat', label: '陌生人', count: snapshot?.strangerCount ?? 0 },
-    { focus: 'bot', label: 'Bot', count: botItems.length },
   ]
   const focusIcon = (value: Exclude<Focus, 'all'>) => value === 'group'
     ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3" stroke="currentColor" strokeWidth="1.5"/><path d="M3.5 19c.5-3.3 2.5-5 5.5-5s5 1.7 5.5 5M16 6.5a3 3 0 0 1 0 5.5M16.5 14c2.2.3 3.6 1.8 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -786,13 +790,22 @@ export function AddMembersDrawer(props: {
   }}>
     <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: colors.panel, color: colors.text }} role="dialog" aria-modal="true" aria-label={tr("添加成员")}>
       <ArkmeRightPanelHeader title={tr("添加成员")} onClose={props.onClose} closeLabel={tr("关闭")} />
+      <div role="tablist" aria-label={tr('成员类型')} style={{ display: 'flex', flex: 'none', gap: 4, padding: '8px 12px 0' }}>
+        {(['people', 'bot', 'team'] as const).map(kind => <button key={kind} role="tab" type="button" aria-selected={entryKind === kind} disabled={busy}
+          onClick={() => { setEntryKind(kind); setFocus(kind === 'bot' ? 'bot' : 'all'); setQuery('') }}
+          style={{ flex: 1, padding: '8px 4px', border: 0, borderRadius: 8, background: entryKind === kind ? colors.subtle : 'transparent', color: entryKind === kind ? colors.text : colors.secondary, cursor: 'pointer' }}>
+          {tr(kind === 'people' ? '联系人' : kind === 'bot' ? 'Bot' : '团队')}
+        </button>)}
+      </div>
+      {entryKind === 'team' ? props.accountScope ? <TeamGroupJoinPanel key={JSON.stringify([props.accountScope, props.source.sourceRef])} accountKey={props.accountScope} source={props.source} />
+        : <p role="alert" style={{ padding: 16 }}>{tr('请登录后再添加团队')}</p> : <>
       <div style={{ position: 'relative', margin: '16px 12px 8px' }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: colors.secondary }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
         <input className="arkme-group-member-search" style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: arkmeTheme.base }} value={query} placeholder={tr("搜索")} aria-label={tr("搜索成员候选人")} disabled={busy} onChange={event => { setQuery(event.target.value) }} />
         {query !== '' ? <button data-arkme-feedback="neutral" type="button" aria-label={tr("清除搜索")} disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
       </div>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
-        {!isSearchMode && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>{tr("我的会话")}</div>{focusRows.map(row => {
+        {!isSearchMode && entryKind === 'people' && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>{tr("我的会话")}</div>{focusRows.map(row => {
           const active = focus === row.focus
           return <button data-arkme-feedback="neutral" key={row.focus} type="button" onClick={() => { setFocus(current => current === row.focus ? 'all' : row.focus) }} style={{ width: '100%', height: 52, padding: '0 12px', border: 0, borderBottom: `1px solid ${colors.border}`, outline: 0, background: 'transparent', display: 'flex', alignItems: 'center', gap: 12, color: active ? colors.text : colors.secondary, position: 'relative', cursor: 'pointer' }}>
             {active && <span style={{ position: 'absolute', left: 0, width: 2, height: 16, borderRadius: 2, background: colors.text }} />}{focusIcon(row.focus)}<strong style={{ fontSize: 14, fontWeight: active ? 700 : 500 }}>{row.label}</strong><span style={{ marginLeft: 'auto', fontSize: 12 }}>{row.count}</span>
@@ -833,6 +846,7 @@ export function AddMembersDrawer(props: {
           }}
         >{busy ? tr("处理中…") : buttonText}</button>
       </div>
+      </>}
     </section>
   </div>
 }
@@ -909,7 +923,7 @@ export function InviteCollaboratorsDialog(props: {
   </div>
 }
 
-function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
+export function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
   return <span
     role="switch"
     aria-label={tr("消息免打扰")}
@@ -1199,6 +1213,7 @@ function GroupSettingsMenu(props: {
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
   onRestrictionsOpen: () => void
+  onInternalGroupOpen?: () => void
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
@@ -1384,6 +1399,7 @@ function GroupSettingsMenu(props: {
     { type: 'separator', id: 'management-separator' },
     { id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename },
     { id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage },
+    ...(props.onInternalGroupOpen ? [{ id: 'internal-group', label: '关联为团队内部群', icon: <ClientIcon src={icons.members} size={16} />, disabled: !canManage }] : []),
   ]
   entries.push(
     { type: 'separator', id: 'export-separator' },
@@ -1429,6 +1445,10 @@ function GroupSettingsMenu(props: {
       }
       if (id === 'restrictions') {
         if (canManage) { close(); props.onRestrictionsOpen() }
+        return
+      }
+      if (id === 'internal-group') {
+        if (canManage) { close(); props.onInternalGroupOpen?.() }
         return
       }
       if (id === 'leave') { close(); void leaveOrDissolve() }
@@ -1706,6 +1726,7 @@ export function ArkmeGroupChatControls(props: {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
+  const [internalGroupOpen, setInternalGroupOpen] = useState(false)
   const [selfNicknameOpen, setSelfNicknameOpen] = useState(false)
   const [renameSource, setRenameSource] = useState<ArkmeGroupActionTarget>()
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
@@ -1717,6 +1738,7 @@ export function ArkmeGroupChatControls(props: {
   useEffect(() => {
     setRestrictionsOpen(false)
     setSelfNicknameOpen(false)
+    setInternalGroupOpen(false)
   }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
     if (mountedRef.current) props.onError(message)
@@ -1774,6 +1796,7 @@ export function ArkmeGroupChatControls(props: {
         onSelfNickname={() => { setSelfNicknameOpen(true) }}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
+        {...(props.accountScope ? { onInternalGroupOpen: () => setInternalGroupOpen(true) } : {})}
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onMembershipChanged={props.onMembershipChanged}
         onMessageDndUpdated={props.onMessageDndUpdated}
@@ -1783,6 +1806,8 @@ export function ArkmeGroupChatControls(props: {
         exportProcessed={props.exportProcessed ?? 0}
       />
     </div>
+    {internalGroupOpen && props.accountScope && <TeamInternalGroupDialog accountKey={props.accountScope} target={{ mode: 'link', source: props.source }}
+      onClose={() => { setInternalGroupOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }} />}
     {overlayHost !== null && createPortal(<>
       <GroupAiPolishPanel
         source={props.source}
@@ -1820,7 +1845,9 @@ export function ArkmeGroupChatControls(props: {
         onError={reportError}
       />
       <AddMembersDrawer
+        key={JSON.stringify([props.accountScope, props.source.sourceRef])}
         source={props.source}
+        accountScope={props.accountScope}
         open={addMembersOpen}
         onClose={() => { setAddMembersOpen(false) }}
         onAdded={() => {

@@ -152,16 +152,21 @@ export class DshCloudNativeTransport {
     }
     const args = object(object(body.payload).args)
     const ok = (value: unknown) => ({ ok: true, value })
+    // Journals do not contain the Host's durable task store. An offline read
+    // must not manufacture an authoritative empty catalogue or delivery history.
+    if (mode === 'call' && String(endpoint).startsWith('schedule/')) {
+      return { ok: false, error: { code: 'RUNTIME_OFFLINE', message: '源电脑未连接，暂无法读取或修改提醒', details: {} } }
+    }
     if (mode === 'call' && endpoint === 'session/list') {
       const rows = await this.sessions(runtime, signal)
       return ok({ items: rows.map(row => ({ sessionId: row.session_ref, updatedAt: row.source_updated_at, running: false, blank: row.blank === true,
-        projections: { asOfSeq: row.projection_as_of_seq ?? -1, values: { title: row.title || null } } })) })
+        projections: { kind: 'cached', asOfSeq: row.projection_as_of_seq ?? -1, values: { title: row.title || null } } })) })
     }
     if (mode === 'call' && endpoint === 'session/canOpenWorkspacePath') return ok(false)
     let frame: unknown
     let watch: Lease['watch']
     if (mode === 'pull' && endpoint === '$events') frame = { type: 'ready', clientId: randomUUID(), host: { home: '' } }
-    else if (mode === 'pull' && endpoint === 'session/control') frame = { type: 'baseline', value: { queues: {}, jobs: {}, projections: {} } }
+    else if (mode === 'pull' && endpoint === 'session/control') frame = { type: 'baseline', value: { projections: {} } }
     else if (mode === 'pull' && endpoint === 'workspace/follow') frame = { type: 'baseline', value: { items: [], archivedSessionIds: (await this.sessions(runtime, signal)).filter(row => row.archived === true).map(row => row.session_ref) } }
     else if ((mode === 'pull' && endpoint === 'session/follow') || (mode === 'call' && endpoint === 'session/page')) {
       const request = object(args.request), address = object(request.address)

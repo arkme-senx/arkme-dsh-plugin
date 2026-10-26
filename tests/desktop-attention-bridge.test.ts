@@ -217,3 +217,14 @@ it('lifecycle sampling never blocks the session poll on native bridge IO', async
     await Promise.resolve()
   } finally { vi.unstubAllEnvs() }
 })
+
+it('suppresses private Browser fallback while the native app is locked', async () => {
+ const fetchImpl = vi.fn(async () => success({schemaVersion: 1, sessionId: config.sessionId, capabilities: {
+   notificationShow: false, badgeApplySnapshot: {mode: 'count'}, deviceLock: {version: 1, locked: true},
+ }}))
+ const bridge = new ArkmeDesktopAttentionBridge(config, fetchImpl)
+ expect(await bridge.showNotification({idempotencyKey: 'locked', kind: 'chat.message', occurredAtMillis: 1, expiresAtMillis: 200,
+   presentation: {title: 'private contact', body: 'private text'}, activation: {kind: 'chat-source', sourceRef: 'opaque'}}))
+   .toEqual({fallbackToBrowser: false, outcome: 'accepted'})
+ expect(fetchImpl).toHaveBeenCalledTimes(1)
+})

@@ -1,6 +1,7 @@
 import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import type { ArkmeBotSummary, ArkmeCalendarRecordItem, ArkmeCalendarRecordLocation, ArkmeCallHistoryItem, ArkmeCallDetail, ArkmeSourceItem, ArkmeSharedRecordingPreview } from '../types.js'
 import { callArkme } from './api.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import { dayActivityMatchesFilter, dayActivityQueryKey, type DayActivityDetailPage, type DayActivityEntry, type DayActivityPage, type DayActivityQuery, type DayActivityReader, type DayActivityKind } from './calendar-activity-model.js'
 import { groupDayActivities } from './multisource-day-activity-reader.js'
 
@@ -17,6 +18,7 @@ type ReadSession = {
   page: number
   entries: Map<string, DayActivityEntry>
   details: Map<string, DayActivityDetailPage['items']>
+  detailVersions: Map<string, number>
   targets: Map<string, Target>
   groups: Map<string, DayActivityEntry[]>
   calls: Map<string, ArkmeCallHistoryItem>
@@ -88,7 +90,7 @@ function relationLabel(flags: string[]): string {
   return '我发送'
 }
 function inRange(value: number, start: number, end: number): boolean { return value >= start && value < end }
-function localDayBounds(query: DayActivityQuery): [number, number] {
+export function localDayBounds(query: DayActivityQuery): [number, number] {
   const [year, month, day] = query.bucketDate.split('-').map(Number)
   const format = new Intl.DateTimeFormat('en-CA', { timeZone: query.timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
   const guess = Date.UTC(year!, month! - 1, day!)
@@ -128,9 +130,13 @@ function locationSummary(raw: Record<string, unknown>): { label?: string; captur
 export function createDocumentedDayActivityReader(accountScope: string, read: typeof callArkme = callArkme): DayActivityReader & { resolveTarget(ref: string): Target | undefined } {
   let current: ReadSession | undefined
   let revision = 0
+  const setDetails = (session: ReadSession, id: string, items: DayActivityDetailPage['items']) => {
+    session.details.set(id, items)
+    session.detailVersions.set(id, (session.detailVersions.get(id) ?? 0) + 1)
+  }
   const request = async (source: SourceName, mode: 'details' | 'coverage' | 'transcripts', body: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => {
     signal.throwIfAborted()
-    return await read('calendar.activity', { source, mode, body }, signal)
+    return await withArkmeReadDeadline(requestSignal => read('calendar.activity', { source, mode, body }, requestSignal), signal)
   }
   const readSource = async (session: ReadSession, source: SourceName, signal: AbortSignal) => {
     const state = session.sources[source]
@@ -190,7 +196,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
               title: kind === 'dsh' ? 'DSH · 我提交的输入' : note.title || sourceInfo?.displayName || '我的记录', preview: arkmeEmojiTokenSafePrefix((note.preview || note.textContent), 240, 'codeUnits'), sourceName: sourceInfo?.displayName || note.topicTitle || '个人记录',
               ...(sourceInfo ? { sourceIdentity: sourceInfo.sourceKey || sourceInfo.sourceRef, avatar: { avatarRef: sourceInfo.avatarRef, avatarRefs: sourceInfo.avatarRefs, groupAvatar: sourceInfo.groupAvatar }, ...(kind === 'private_chat' ? { participant: { name: sourceInfo.displayName } } : {}) } : {}),
               ...(note.locationSummary ? { locationSummary: note.locationSummary } : {}), ...(note.locationObservation ? { location: note.locationObservation } : {}), ...(note.locationRef ? { canLoadLocation: true } : {}) })
-            session.details.set(id, [{ id, occurredAtMillis: occurred, author: { name: '我' }, text: note.textContent || note.preview, ...(note.content ? { content: note.content } : {}) }])
+            setDetails(session, id, [{ id, occurredAtMillis: occurred, author: { name: '我' }, text: note.textContent || note.preview, ...(note.content ? { content: note.content } : {}) }])
             if (sourceInfo) session.targets.set(id, { kind: 'source', source: sourceInfo })
             if (sourceInfo && (kind === 'private_chat' || kind === 'group_chat')) session.recordLinks.set(id, `${sourceInfo.sourceKey || sourceInfo.sourceRef}|${note.recordUid}`)
             if (note.locationRef) session.locationRefs.set(id, { ref: note.locationRef, recordUid: note.recordUid })
@@ -207,7 +213,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
           if (sourceInfo) entry.avatar = { avatarRef: sourceInfo.avatarRef, avatarRefs: sourceInfo.avatarRefs, groupAvatar: sourceInfo.groupAvatar }
           session.entries.set(id, entry); if (sourceInfo) session.targets.set(id, { kind: 'source', source: sourceInfo })
           if (locationRef) session.locationRefs.set(id, { ref: locationRef, recordUid: id.slice(5) })
-          session.details.set(id, [{ id, occurredAtMillis: occurred, author: { name: '我' }, text: firstString(record.text_content) || entry.preview }])
+          setDetails(session, id, [{ id, occurredAtMillis: occurred, author: { name: '我' }, text: firstString(record.text_content) || entry.preview }])
         } else if (source === 'chat' || source === 'arko' || source === 'bot') {
           const kind: DayActivityKind = source === 'chat' ? sourceKind(item) : source
           if (!dayActivityMatchesFilter(session.query.kind, kind)) continue
@@ -228,7 +234,7 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
             const link = `${sourceInfo.sourceKey || sourceInfo.sourceRef}|${recordUid}`
             session.chatRecordLinks.set(link, [...new Set([...(session.chatRecordLinks.get(link) ?? []), id])])
           }
-          session.details.set(id, [{ id, occurredAtMillis: occurred, author: { name: entry.participation === 'self' ? '我' : firstString(objectValue(item.relation).display_name_snapshot) || sourceInfo?.displayName || entry.sourceName }, text: fullText(item) || entry.preview }])
+          setDetails(session, id, [{ id, occurredAtMillis: occurred, author: { name: entry.participation === 'self' ? '我' : firstString(objectValue(item.relation).display_name_snapshot) || sourceInfo?.displayName || entry.sourceName }, text: fullText(item) || entry.preview }])
           if (sourceInfo) session.targets.set(id, { kind: 'source', source: sourceInfo })
           if (source === 'arko') session.targets.set(id, { kind: 'arko' })
         } else if (source === 'call') {
@@ -244,13 +250,13 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
           const title = `与 ${firstString(item.peer_display_name, item.peerDisplayName, item.participant_name, item.participantName) || '未命名用户'} ${firstString(item.media_type, item.mediaType) === 'video' ? '视频通话' : '语音通话'}`
           const summary = firstString(item.summary_preview, item.summaryPreview, item.summary, item.result_label, item.resultLabel)
           const entry: DayActivityEntry = { id, kind: 'call', startAtMillis: occurred, endAtMillis: Math.max(occurred, end), title, preview: summary, sourceName: '', recordCount: 1, access: 'available', participation: 'participated', statusLabel: firstString(item.result_label, item.resultLabel, item.call_result, item.callResult) }
-          session.entries.set(id, entry); session.details.set(id, [{ id, occurredAtMillis: occurred, author: { name: title }, text: summary || '通话记录' }])
+          session.entries.set(id, entry); setDetails(session, id, [{ id, occurredAtMillis: occurred, author: { name: title }, text: summary || '通话记录' }])
         }
       }
     } catch (error) {
       if (current !== session || signal.aborted) throw error
       state.loaded = true; state.hasMore = false; state.failed = error instanceof Error ? error.message : '读取失败'
-      session.warnings.push(`${source} 数据加载失败，可刷新重试。`)
+      session.warnings.push(`${({ record: '个人记录', chat: '对话', call: '通话', audio: '录音', arko: 'Arko 对话', bot: 'Bot 对话' })[source]}加载失败，请重试。`)
     }
   }
   const result = (session: ReadSession): DayActivityPage => {
@@ -263,16 +269,20 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
         const ref = session.locationRefs.get(noteId)
         if (ref) session.locationRefs.set(chatId, ref)
         const content = session.details.get(noteId)?.[0]?.content
-        if (content) session.details.set(chatId, (session.details.get(chatId) ?? []).map(item => ({ ...item, content })))
+        const details = session.details.get(chatId) ?? []
+        if (content && details.some(item => item.content !== content)) setDetails(session, chatId, details.map(item => ({ ...item, content })))
       }
     }
     const grouped = groupDayActivities([...session.entries.values()].filter(item => dayActivityMatchesFilter(session.query.kind, item.kind)
       && !session.chatRecordLinks.has(session.recordLinks.get(item.id) ?? '')), session.query.mode)
     session.groups = grouped.groups
+    // Versions follow actual members and rich content, not unrelated source completions.
+    // Keep only IDs/counters in the key; never duplicate message bodies into UI keys.
+    const items = grouped.items.map(item => ({ ...item, detailRevision: JSON.stringify(
+      grouped.groups.get(item.id)!.map(member => [member.id, session.detailVersions.get(member.id) ?? 0])) }))
     const missing = (Object.entries(session.sources) as Array<[SourceName, SourcePage]>).filter(([, state]) => state.failed || state.partial || !state.loaded || state.hasMore).flatMap(([source]): DayActivityKind[] => source === 'record' ? ['note', 'recording'] : source === 'chat' ? ['private_chat', 'group_chat'] : source === 'audio' ? ['recording'] : [source])
     const hasMore = Object.values(session.sources).some(state => state.hasMore)
-    session.page += 1
-    return { query: session.query, snapshotId: session.id, order: 'descending', replaceItems: true, items: grouped.items, completeness: missing.length || hasMore ? 'partial' : 'complete', missingKinds: [...new Set(missing)], hasMore, ...(hasMore ? { nextCursor: `${session.id}:${session.page}` } : {}), dayStartMillis: session.start, dayEndMillis: session.end, warnings: [...new Set(session.warnings)], ...(session.coverage ? { coverage: session.coverage } : {}), ...(session.speechIntervals.length ? { speechIntervals: session.speechIntervals } : {}), notice: '数据按来源独立读取；概览只统计当前已加载内容，不代表全天完整总量。' }
+    return { query: session.query, snapshotId: session.id, order: 'descending', replaceItems: true, items, completeness: missing.length || hasMore ? 'partial' : 'complete', missingKinds: [...new Set(missing)], hasMore, ...(hasMore ? { nextCursor: `${session.id}:${session.page}` } : {}), dayStartMillis: session.start, dayEndMillis: session.end, warnings: [...new Set(session.warnings)], ...(session.coverage ? { coverage: session.coverage } : {}), ...(session.speechIntervals.length ? { speechIntervals: session.speechIntervals } : {}), notice: '数据按来源独立读取；概览只统计当前已加载内容，不代表全天完整总量。' }
   }
   return {
     capabilities: { kinds: ['note', 'private_chat', 'group_chat', 'call', 'recording', 'arko', 'bot', 'dsh'], modes: ['activities', 'records'], autoLocationLimit: 100, background: false, notice: '私聊、群聊、通话、录音、Arko、Bot 与个人记录按来源独立读取；来源失败或历史不完整时会保留明确状态。' },
@@ -285,13 +295,17 @@ export function createDocumentedDayActivityReader(accountScope: string, read: ty
         const [start, end] = localDayBounds(query)
         const wants = (kind: DayActivityKind) => dayActivityMatchesFilter(query.kind, kind)
         const state = (enabled: boolean): SourcePage => ({ hasMore: enabled, loaded: !enabled })
-        session = { id: `documented-read-${++revision}`, key: dayActivityQueryKey(query), query, start, end, page: 0, entries: new Map(), details: new Map(), targets: new Map(), groups: new Map(), calls: new Map(), recordings: new Map(), recordLinks: new Map(), chatRecordLinks: new Map(), locationRefs: new Map(), sources: { record: state(['note', 'dsh', 'private_chat', 'group_chat', 'recording'].some(kind => wants(kind as DayActivityKind))), chat: state(wants('private_chat') || wants('group_chat')), call: state(wants('call')), audio: state(wants('recording')), arko: state(wants('arko')), bot: state(wants('bot')) }, speechIntervals: [], warnings: [] }
+        session = { id: `documented-read-${++revision}`, key: dayActivityQueryKey(query), query, start, end, page: 0, entries: new Map(), details: new Map(), detailVersions: new Map(), targets: new Map(), groups: new Map(), calls: new Map(), recordings: new Map(), recordLinks: new Map(), chatRecordLinks: new Map(), locationRefs: new Map(), sources: { record: state(['note', 'dsh', 'private_chat', 'group_chat', 'recording'].some(kind => wants(kind as DayActivityKind))), chat: state(wants('private_chat') || wants('group_chat')), call: state(wants('call')), audio: state(wants('recording')), arko: state(wants('arko')), bot: state(wants('bot')) }, speechIntervals: [], warnings: [] }
         current = session
       }
       const sources: SourceName[] = ['record', 'chat', 'call', 'audio', 'arko', 'bot']
-      await Promise.all(sources.filter(source => session!.sources[source].hasMore || !session!.sources[source].loaded).map(source => readSource(session!, source, options.signal)))
+      await Promise.all(sources.filter(source => session!.sources[source].hasMore || !session!.sources[source].loaded).map(async source => {
+        await readSource(session!, source, options.signal)
+        if (current === session && !options.signal.aborted) options.onProgress?.(result(session!))
+      }))
       options.signal.throwIfAborted()
       if (current !== session) throw new Error('日期或账号已变化，请刷新')
+      session.page += 1
       return result(session)
     },
     async loadDetail(query, activityId, options) {

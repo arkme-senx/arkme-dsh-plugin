@@ -338,7 +338,7 @@ it('adds archives to the existing data management without replacing its other en
   await click('‹ 数据管理')
   mock.call.mockResolvedValue({items: [], mayHaveMore: false, unverifiedCount: 0, accountScope: 'test:42'})
   await click('最近删除')
-  expect(mock.call).toHaveBeenLastCalledWith('data.deleted', {expectedAccountScope: 'test:42'}, expect.any(AbortSignal))
+  expect(mock.call).toHaveBeenCalledWith('data.deleted', {expectedAccountScope: 'test:42'}, expect.any(AbortSignal))
   expect(host.querySelector('[data-arkme-archive-management]')).toBeNull()
 })
 

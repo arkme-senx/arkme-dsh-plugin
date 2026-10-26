@@ -93,6 +93,7 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer?.unmount(); await tick() })
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   async function choose(files: File[]) {
@@ -102,6 +103,38 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
   }
+
+  it('uses the native chooser when available and keeps a cancellation quiet', async () => {
+    const pick = vi.fn(async () => [])
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(pick).toHaveBeenCalledOnce()
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('surfaces native picker failures without opening a competing browser chooser', async () => {
+    const pick = vi.fn(async () => { throw new Error('系统文件选择窗口未能打开') })
+    const browserPicker = vi.fn(async () => [])
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+      arkmeDesktop: { recordingImports: { version: 1, pick } }, showOpenFilePicker: browserPicker,
+    }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
+    await act(async () => {
+      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      await tick()
+    })
+    expect(browserPicker).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'alert' }).some(node => renderedText(node).includes('系统文件选择窗口未能打开'))).toBe(true)
+  })
 
   function memoryJournal() {
     const records = new Map<string, import('../src/client/recordings/recording-import-journal.js').ImportQueueRecord>()
@@ -1804,4 +1837,34 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer.unmount(); await tick() })
     expect(preflightSignal?.aborted).toBe(true)
   })
+  function stubBrowserPicker(choose: () => Promise<unknown[]>) {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { showOpenFilePicker: choose }))
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { hasFocus: () => true, visibilityState: 'visible' }))
+    return renderer.root.findAll(node => node.type === 'div' && node.props.role === 'button')[0]!
+  }
+
+  it('renders an actionable toast for chooser failures without starting an upload', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const trigger = stubBrowserPicker(async () => { throw new DOMException('User activation required.', 'NotAllowedError') })
+    await act(async () => { trigger.props.onClick({ type: 'click', isTrusted: true, detail: 1 }); await tick() })
+    const toast = renderer.root.findByProps({ 'data-arkme-recording-picker-toast': true })
+    expect(renderedText(toast)).toBe('无法打开文件选择器：User activation required.')
+    expect(toast.props.role).toBe('alert')
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('keeps normal cancellation silent and does not repeat held keyboard requests', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const choose = vi.fn(async () => { throw new DOMException('The user aborted a request.', 'AbortError') })
+    const trigger = stubBrowserPicker(choose)
+    const preventDefault = vi.fn()
+    await act(async () => { trigger.props.onKeyDown({ key: 'Enter', repeat: true, preventDefault }); await tick() })
+    expect(choose).not.toHaveBeenCalled()
+    expect(preventDefault).toHaveBeenCalledOnce()
+    await act(async () => { trigger.props.onClick({ type: 'click', isTrusted: true, detail: 1 }); await tick() })
+    expect(choose).toHaveBeenCalledOnce()
+    expect(renderer.root.findAllByProps({ 'data-arkme-recording-picker-toast': true })).toHaveLength(0)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
 })

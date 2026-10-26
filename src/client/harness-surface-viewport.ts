@@ -52,6 +52,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
       set(viewport, `--arkme-harness-content-${key}`, `${value}px`)
     }
     const visible = surface.getAttribute('data-arkme-visible') === 'true'
+    viewport.toggleAttribute('data-arkme-history-active', surface.hasAttribute('data-arkme-history-session'))
     if (visible) viewport.removeAttribute('data-arkme-session-preview')
     else if (!viewport.hasAttribute('data-arkme-session-preview')) viewport.setAttribute('data-arkme-session-preview', '')
     const nextContent = native.querySelector<HTMLElement>('[data-arkme-session-frame]')
@@ -61,7 +62,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
       contentFrame = nextContent
       contentFrame?.setAttribute('data-arkme-harness-content-frame', '')
     }
-    const nextHeader = contentFrame?.querySelector<HTMLElement>('[data-slot="conversation.session.header"] > header') ?? undefined
+    const nextHeader = contentFrame?.querySelector<HTMLElement>('[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])') ?? undefined
     if (nextHeader !== sessionHeader) {
       if (sessionHeader) resize?.unobserve(sessionHeader)
       sessionHeader = nextHeader
@@ -129,6 +130,8 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     native.documentElement.setAttribute('data-arkme-harness-viewport', '')
     viewportStyle = native.createElement('style')
     viewportStyle.textContent = `
+      html[data-arkme-history-active] [data-arkme-session-anchor],
+      html[data-arkme-history-active] [data-arkme-session-identity] { visibility: hidden !important; pointer-events: none !important; }
       html[data-arkme-harness-viewport], html[data-arkme-harness-viewport] body { background: transparent !important; }
       [data-arkme-harness-content-frame] {
         position: absolute !important; left: var(--arkme-harness-content-left); top: var(--arkme-harness-content-top);
@@ -157,7 +160,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
   const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(position) : undefined
   resize?.observe(seat)
   const visibility = new win.MutationObserver(sync)
-  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
+  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-history-session'] })
   frame.addEventListener('load', attach)
   win.addEventListener('resize', position)
   win.addEventListener('scroll', position, true)
@@ -174,6 +177,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     win.removeEventListener('scroll', position, true)
     native?.documentElement.removeAttribute('data-arkme-harness-viewport')
     native?.documentElement.removeAttribute('data-arkme-session-preview')
+    native?.documentElement.removeAttribute('data-arkme-history-active')
     for (const key of ['left', 'top', 'width', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-content-${key}`)
     for (const key of ['top', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-panel-${key}`)
   }

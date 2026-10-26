@@ -46,3 +46,11 @@ describe('restoreArkmeComposerFocus', () => {
     expect(target.focus).toHaveBeenCalledOnce()
   })
 })
+
+it('does not collapse a newer reader selection when a delayed send restores focus', () => {
+ const { target } = focusTarget()
+ const body = { ownerDocument: { getSelection: () => ({ isCollapsed: false }) } } as unknown as HTMLElement
+ expect(restoreArkmeComposerFocus(target, body, body, true)).toBe(false)
+ expect(target.focus).not.toHaveBeenCalled()
+ expect(target.setSelectionRange).not.toHaveBeenCalled()
+})

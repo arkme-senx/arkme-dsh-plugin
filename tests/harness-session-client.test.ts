@@ -44,8 +44,9 @@ it('reports the iframe public selection, coalesces list events, clears on hide a
   const open = vi.fn()
   apply({
     effect: (effect: () => () => undefined) => { stop = effect() },
-    sessions: { open, list: {
-      getSnapshot: () => ({ current }),
+    uiWorkspace: { openSession: open },
+    sessions: { subagentAddress: () => undefined, list: {
+      getSnapshot: () => ({ phase: 'ready', byId: current ? { [current]: { id: current, retainedBy: { mainView: 1 } } } : {} }),
       subscribe: (callback: () => undefined) => { changed = callback; return unsubscribe },
     } },
   } as unknown as ClientContext)
@@ -116,7 +117,8 @@ it('mounts local navigation without remote reporting and removes it on dispose',
   vi.stubGlobal('document', Object.assign(new EventTarget(), { querySelector: () => null }))
   const fetcher = vi.fn()
   vi.stubGlobal('fetch', fetcher)
-  apply({ effect: (effect: () => () => void) => { stop = effect() }, sessions: { open, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
+  apply({ effect: (effect: () => () => void) => { stop = effect() }, uiWorkspace: { openSession: open },
+    sessions: { subagentAddress: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as unknown as ClientContext)
   const navigation = (window as HarnessSessionWindow)[HARNESS_SESSION_NAVIGATION_KEY]!
   navigation.open('local-task')
   expect(open).toHaveBeenCalledExactlyOnceWith('local-task')
@@ -153,7 +155,7 @@ it('registers the configured default workspace before creating an attachment con
   const createWorkspace = vi.fn(async () => ({ workspaceId: 'default-id' }))
   const createSession = vi.fn(async () => { throw new Error('stop after create') })
   apply({ effect: (effect: () => () => void) => { stop = effect() }, get: (key: string) => key === 'workspaces' ? { create: createWorkspace } : undefined,
-    sessions: { create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
+    sessions: { retain: vi.fn(), create: createSession, scope: () => undefined, binding: () => undefined, list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {}, current: undefined }) } },
   } as unknown as ClientContext)
   const bridge = (window as unknown as import('../src/client/harness-attachment-draft.js').HarnessDraftWindow).__arkmeHarnessAttachmentDraft!
   await expect(bridge.prepare({ operationId: 'default-workspace', files: [], signal: new AbortController().signal })).rejects.toThrow('stop after create')
@@ -176,6 +178,7 @@ it.each(['stale', 'ready', 'missing'] as const)('confirms composer workspace mem
   apply({ effect: (effect: () => () => void) => { stop = effect() },
     get: () => ({ create: createWorkspace, list: { getSnapshot: () => ({ items }) } }),
     sessions: {
+      retain: () => ({ ready: Promise.resolve(), release: vi.fn() }),
       create: async (options: { sessionId: string }) => {
         id = options.sessionId
         if (state === 'ready') items = [{ workspaceId: 'default', sessionIds: [id] }]

@@ -1,5 +1,15 @@
 import { getArkmeLocale, tr } from './locale.js'
 const english: Record<string,string> = {
+  '未开通同步': 'Sync not enabled',
+  '已开通·暂无对话': 'Sync enabled · No conversations yet',
+  '已暂停同步': 'Sync paused',
+  '已关闭同步': 'Sync disabled',
+  '同步状态暂不可用': 'Sync status unavailable',
+  '状态获取失败': 'Could not load status',
+  '正在获取同步状态…': 'Loading sync status…',
+  '暂无对话查看权限': 'Conversation access unavailable',
+  '成员同步状态接口开发中，暂时无法确认是否开通。': 'The member sync status API is under development. Connection status cannot be confirmed yet.',
+  '重试获取 {name} 的同步状态': 'Retry loading sync status for {name}',
   '团队已读 {v0}/{v1}': 'Team read {v0}/{v1}',
   '团队阅读状态': 'Team read status',
   '阅读状态待更新': 'Read status needs updating',
@@ -13,6 +23,7 @@ const english: Record<string,string> = {
   '已读 {v0}/{v1}': 'Read {v0}/{v1}',
   '已加载 {v0} 人': '{v0} members loaded',
   '更新失败，点击重试': 'Update failed. Retry',
+  '已加载成员中暂无符合条件的成员': 'No matching members in loaded pages',
   '暂无未读成员': 'No unread members shown',
   '暂无已读成员': 'No read members shown',
   '暂无其他成员': 'No other members',

@@ -235,11 +235,12 @@ describe('WorldService', () => {
       async write() {}, async delete() {},
     }
     let requestIndex = 0
+    let textContent = '带图片的世界'
     const fetchImpl = vi.fn(async () => {
       requestIndex += 1
       return new Response(JSON.stringify({ code: 200, data: {
         list: [{
-          record_uid: 'record-1', user_id: 7, nick_name: '小明', text_content: '带图片的世界',
+          record_uid: 'record-1', user_id: 7, nick_name: `小明${String(requestIndex)}`, text_content: textContent,
           avatar: `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?version=${String(requestIndex)}`,
           images: [`https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world.png?version=${String(requestIndex)}`],
         }],
@@ -258,11 +259,16 @@ describe('WorldService', () => {
 
     expect(second.items[0]?.avatarRef).toBe(first.items[0]?.avatarRef)
     expect(second.items[0]?.imageRefs).toEqual(first.items[0]?.imageRefs)
+    expect(first.items[0]?.localReactionTarget).toBeDefined()
+    expect(second.items[0]?.localReactionTarget).toEqual(first.items[0]?.localReactionTarget)
     const imageRef = second.items[0]?.imageRefs[0]
     expect(imageRef).toBeDefined()
     await expect(service.openWorldImageRef(imageRef ?? '', 42)).resolves.toMatchObject({
       sourceUrl: expect.stringContaining('version=2'),
     })
+    textContent = '修改后的正文'
+    const changed = await service.listWorldFeed()
+    expect(changed.items[0]?.localReactionTarget).not.toEqual(first.items[0]?.localReactionTarget)
   })
 
   it('reuses resolved file-asset avatar URLs for a quick World re-entry', async () => {

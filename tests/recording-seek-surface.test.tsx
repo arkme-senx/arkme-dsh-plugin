@@ -2,6 +2,12 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Keep DOM portal children in this renderer; playback uses the real controller.
+vi.mock('react-dom', async importOriginal => ({
+  ...await importOriginal<typeof import('react-dom')>(),
+  createPortal: (children: unknown) => children,
+}))
+
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: mocks.callArkme,
@@ -28,11 +34,13 @@ describe('recording surface selection and real playback controller', () => {
     // Keep another past day selectable in the current month, even when run on the 1st.
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 15, 12))
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     audios.length = 0
     vi.stubGlobal('Audio', class extends FakeAudio {
       constructor(src: string) { super(src); audios.push(this) }
     })
     mocks.callArkme.mockReset().mockImplementation(async (operation, params) => {
+      if (operation === 'transcript.local.read') return {}
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.playback.open') return { playbackRef: params.itemRef, startOffsetMillis: 2_000, endOffsetMillis: 12_000 }
       if (operation === 'recordings.day') return {
@@ -112,7 +120,6 @@ describe('recording surface selection and real playback controller', () => {
   })
 
   it('speaker editor completion refreshes the current body without interrupting valid audio', async () => {
-    vi.stubGlobal('document', new EventTarget())
     const rows = renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
     await act(async () => { rows[0]!.props.onSelect(); await tick() })
     const audio = audios[0]!

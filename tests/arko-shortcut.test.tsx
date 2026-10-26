@@ -28,6 +28,9 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 }))
 
 // These tests exercise Arko orchestration; the real editor is covered in arko-emoji-dom and browser tests.
+// Orchestration uses react-test-renderer; real underline portals have dedicated DOM tests.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   const { forwardRef } = await import('react')
   return { ArkmeDocumentComposerInput: forwardRef(() => null) }
@@ -61,13 +64,18 @@ beforeEach(() => {
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
   vi.stubGlobal('document', { activeElement: null, body: {}, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
+  const pending=new Map<string,unknown>()
   vi.mocked(callArkme).mockImplementation(async (method, input) => {
-    if (method === 'arko.ask') return ask(input)
+    if(method==='arko.pending.read')return [...pending.values()].filter((turn:any)=>input?.expectedUserId===undefined || turn.userId===input.expectedUserId) as never
+    if(method==='arko.pending.prepare'){const turn=input?.turn as any;pending.set(turn.clientTurnUid,structuredClone(turn));return {saved:true} as never}
+    if(method==='arko.pending.acknowledge'){pending.delete(String(input?.clientTurnUid));return {saved:true} as never}
+
+    if (method === 'arko.ask') { const result=await ask(input);pending.delete(String(input?.clientTurnUid));return result }
     if (method === 'arko.session') {
       if (!sessionAvailable) throw new Error('session unavailable')
       return { sessionId: 88 } as never
     }
-    if (method === 'arko.history') return { items: history } as never
+    if (method === 'arko.messages') return { items: history } as never
     if (method === 'arko.models') return { options: [], effectiveRouteKey: 'model-a' } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (method === 'user.profile') return { profile: {} } as never
@@ -113,7 +121,7 @@ describe('Arko capability shortcut', () => {
     const message = renderer.root.findAllByType('li').at(-1)!
     expect(message.findAllByType('p').map(node => visibleText(node))).toEqual(['已检查访问权限', '无法访问指定内容'])
     expect(shortcut().props.disabled).toBe(false)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
   })
 
   it.each([[], ['record-1']])('omits immediate result footnotes and permits the next send: %j', async createdRecordUids => {
@@ -125,7 +133,7 @@ describe('Arko capability shortcut', () => {
     expect(visibleText(bubble.findByType('p'))).toBe('可以帮你记录')
     expect(bubble.parent!.children.at(-1)).toBe(bubble)
     expect(shortcut().props.disabled).toBe(false)
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     await act(async () => { shortcut().props.onClick() })
     expect(ask).toHaveBeenCalledTimes(2)
   })
@@ -181,7 +189,7 @@ describe('Arko capability shortcut', () => {
     let historyCalls = 0
     const original = vi.mocked(callArkme).getMockImplementation()!
     vi.mocked(callArkme).mockImplementation(async (method, input) => {
-      if (method === 'arko.history' && ++historyCalls === 1) throw new Error('history unavailable')
+      if (method === 'arko.messages' && ++historyCalls === 1) throw new Error('history unavailable')
       return original(method, input)
     })
     history = [{ messageId: 8, sessionId: 88, role: 'assistant', text: '恢复的回答', reasoning: '', createdAtMillis: 1,
@@ -454,9 +462,9 @@ describe('Arko capability shortcut', () => {
     arkmeComposerDraftStore.setText(draftKey, '刷新后保留')
     await mount()
     await act(async () => { shortcut().props.onClick() })
-    const saved = readArkoPendingTurn(10001)
+    const saved = await readArkoPendingTurn(10001)
     expect(saved?.text).toBe('你能帮我干什么')
-    expect(readArkoPendingTurn(20002)).toBeUndefined()
+    expect(await readArkoPendingTurn(20002)).toBeUndefined()
     act(() => renderer.unmount())
     await mount()
     expect(shortcut().props.disabled).toBe(true)
@@ -464,7 +472,7 @@ describe('Arko capability shortcut', () => {
     const retry = renderer.root.findAllByType('button').find(button => button.children.includes('重试确认'))!
     await act(async () => { retry.props.onClick() })
     expect(ask.mock.calls[1]![0]).toEqual(ask.mock.calls[0]![0])
-    expect(readArkoPendingTurn(10001)).toBeUndefined()
+    expect(await readArkoPendingTurn(10001)).toBeUndefined()
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('刷新后保留')
   })
 

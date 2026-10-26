@@ -9,6 +9,7 @@ import { AlphabeticalContactList, DirectoryItemRow } from './AlphabeticalContact
 import { CollapsibleDirectorySection } from './CollapsibleDirectorySection.js'
 import { ContactDirectoryToolbar } from './ContactDirectoryToolbar.js'
 import { normalizeDirectorySearch, projectDirectorySearch } from './contact-directory-search.js'
+import { manualSpeakerDirectoryPage } from './manual-speaker-directory.js'
 import {
   CONTACT_DIRECTORY_SECTION_ORDER,
   applyContactProfileUpdates,
@@ -28,6 +29,7 @@ const SECTION_LABELS: Record<ArkmeDirectorySectionKind, { label: string; empty: 
   groups: { label: '群聊', empty: '暂无群聊' },
   bots: { label: 'Bot', empty: '暂无 Bot' },
   'unmarked-speakers': { label: '未标记说话人', empty: '暂无未标记说话人' },
+  'manual-speakers': { get label() { return tr('手动说话人') }, get empty() { return tr('暂无手动说话人，可在录音标记时创建') } },
   teams: { label: '团队', empty: '暂无团队' },
   contacts: { get label() { return tr("联系人") }, empty: '暂无联系人' },
 }
@@ -75,6 +77,7 @@ function itemIsSelected(item: ArkmeDirectoryItem, selection: ArkmeDirectorySelec
     || (item.kind === 'bot' && selection.kind === 'bot' && item.bot.botRef === selection.bot.botRef)
     || (item.kind === 'contact' && selection.kind === 'contact' && item.contactRef === selection.contactRef)
     || (item.kind === 'team' && selection.kind === 'team' && item.teamRef === selection.teamRef)
+    || (item.kind === 'manual-speaker' && selection.kind === 'manual-speaker' && item.speakerKey === selection.speakerKey)
     || (item.kind === 'unmarked-speaker'
       && selection.kind === 'unmarked-speaker'
       && item.candidateRef === selection.candidateRef)
@@ -138,6 +141,7 @@ export function ContactDirectoryContent({
                 key={item.kind === 'group' ? item.sourceRef
                   : item.kind === 'bot' ? item.bot.botRef
                     : item.kind === 'unmarked-speaker' ? item.candidateRef
+                      : item.kind === 'manual-speaker' ? item.speakerKey
                       : item.kind === 'team' ? item.teamRef : item.contactRef}
                 item={item}
                 selected={itemIsSelected(item, state.selection)}
@@ -152,7 +156,9 @@ export function ContactDirectoryContent({
   </nav>
 }
 
-const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, signal) => await callArkme<ArkmeDirectoryPage>(
+export const defaultLoadPage: ContactDirectoryPageLoader = async (section, options, signal) => section === 'manual-speakers'
+  ? manualSpeakerDirectoryPage(await callArkme('people.list', { source: 'speakers' }, signal))
+  : await callArkme<ArkmeDirectoryPage>(
   section === 'teams' ? 'team.app.directory' : 'directory.list',
   {
     section,
@@ -200,7 +206,7 @@ export function ContactDirectorySurface({
     { accountKey, initialState },
     value => {
       if (value.initialState?.accountKey !== value.accountKey) return createContactDirectoryState(value.accountKey)
-      const sections = { ...value.initialState.sections }
+      const sections = { ...createContactDirectoryState(value.accountKey).sections, ...value.initialState.sections }
       // Requests from the previous mount were aborted; a cached loading flag cannot resume them.
       for (const kind of CONTACT_DIRECTORY_SECTION_ORDER) {
         const section = sections[kind]
@@ -315,6 +321,8 @@ export function ContactDirectorySurface({
       if (section === 'contacts' && mode !== 'count' && page.cursorStale !== true && !page.hasMore) preserveContactsSelectionRef.current = false
       if (before.selection.kind !== 'none' && next.selection.kind === 'none') {
         onSelectionChangeRef.current({ kind: 'none' })
+      } else if (next.selection.kind === 'manual-speaker' && next.selection !== before.selection) {
+        onSelectionChangeRef.current(next.selection)
       }
     }).catch(error => {
       if (controller.signal.aborted) return
@@ -323,8 +331,8 @@ export function ContactDirectorySurface({
     })
   }, [active, accountKey, commit])
 
-  useEffect(() => subscribeTeamMessageChanges(account => {
-    if (account === accountKey && active) load('teams', 'replace', true)
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
+    if (account === accountKey && active && !receiptOnly) load('teams', 'replace', true)
   }), [accountKey, active, load])
 
   useEffect(() => {
@@ -367,11 +375,16 @@ export function ContactDirectorySurface({
   }, [active, load])
 
   useEffect(() => {
-    const resumingStaleDirectory = active && !wasActiveRef.current && cacheFresh === false
+    const resumingDirectory = active && !wasActiveRef.current
+    const resumingStaleDirectory = resumingDirectory && cacheFresh === false
     wasActiveRef.current = active
     if (!active) return
     const contactsAdded = contactsAddedRevisionRef.current !== contactsAddedRevision
-    if (!contactsAdded && !resumingStaleDirectory) return
+    if (!contactsAdded && !resumingStaleDirectory) {
+      // A recording mark may create an identity while Contacts stays mounted but hidden.
+      if (resumingDirectory) load('manual-speakers', 'replace', true)
+      return
+    }
     contactsAddedRevisionRef.current = contactsAddedRevision
     // Adding a contact does not remove the current detail, even when it lives on a later page.
     if (contactsAdded) preserveContactsSelectionRef.current = true
@@ -381,6 +394,7 @@ export function ContactDirectorySurface({
 
   const controlledSelectionKey = selection?.kind === 'group' ? `group:${selection.sourceRef}`
     : selection?.kind === 'bot' ? `bot:${selection.bot.botRef}`
+    : selection?.kind === 'manual-speaker' ? `manual-speaker:${selection.speakerKey}:${selection.speakerRef}:${selection.displayName}`
     : selection?.kind === 'contact'
     ? `contact:${selection.contactRef}`
     : selection?.kind === 'team'
@@ -396,6 +410,8 @@ export function ContactDirectorySurface({
         || (current.kind === 'group' && selection.kind === 'group' && current.sourceRef === selection.sourceRef)
         || (current.kind === 'bot' && selection.kind === 'bot' && current.bot.botRef === selection.bot.botRef)
         || (current.kind === 'contact' && selection.kind === 'contact' && current.contactRef === selection.contactRef)
+        || (current.kind === 'manual-speaker' && selection.kind === 'manual-speaker'
+          && current.speakerKey === selection.speakerKey && current.speakerRef === selection.speakerRef && current.displayName === selection.displayName)
         || (current.kind === 'team' && selection.kind === 'team' && current.teamRef === selection.teamRef)
         || (current.kind === 'unmarked-speaker' && selection.kind === 'unmarked-speaker'
           && current.candidateRef === selection.candidateRef))

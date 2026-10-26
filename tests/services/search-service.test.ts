@@ -20,6 +20,21 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it('requires an applied sharing receipt and rejects ignored filters on old servers', async () => {
+    const authenticatedPost = vi.fn(async () => ({ items: [] }))
+    const service = new SearchService({ authenticatedPost, requireSession: async () => ({ userId: 42 }) } as never, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+    for (const articleScope of ['shared_by_me', 'shared_with_me'] as const) {
+      await expect(service.searchScene({ scene: 'long_article', articleScope, limit: 30 })).rejects.toMatchObject({ code: 'long-article-sharing-unavailable', retryable: false })
+      expect(authenticatedPost.mock.calls.at(-1)?.[1]).toMatchObject({ article_scope: articleScope, scene_kind: 5 })
+    }
+    await expect(service.searchScene({ scene: 'file', articleScope: 'shared_by_me', limit: 30 })).rejects.toMatchObject({ code: 'long-article-scope-invalid' })
+    await expect(service.searchScene({ scene: 'long_article', articleScope: 'unknown' as never, limit: 30 })).rejects.toMatchObject({ code: 'long-article-scope-invalid' })
+  })
+  it('returns a sharing classification only after the backend confirms it', async () => {
+    const authenticatedPost = vi.fn(async () => ({ applied_article_scope: 'shared_with_me', items: [], has_more: true, next_cursor: 'account-scope-cursor' }))
+    const service = new SearchService({ authenticatedPost, requireSession: async () => ({ userId: 42 }) } as never, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+    expect(await service.searchScene({ scene: 'long_article', articleScope: 'shared_with_me', limit: 30 })).toMatchObject({ appliedArticleScope: 'shared_with_me', hasMore: true, nextCursor: 'account-scope-cursor' })
+  })
   it.each([
     ['send_to_self', { search_scope: 'global', source_kinds: [1, 2] }],
     ['default_category', { search_scope: 'global', source_kinds: [1] }],
@@ -132,14 +147,14 @@ describe('SearchService', () => {
     const pending = controllers.map((controller, index) => {
       const signal = controller.signal
       const request = kind === 'keyword' ? search.searchRemote({ query: String(index), limit: 30, signal })
-        : kind === 'scene' ? search.searchScene({ scene: 'file', limit: 30, signal })
+        : kind === 'scene' ? search.searchScene({ scene: 'file', limit: 30, cursor: `page-${index}`, signal })
           : kind === 'assets' ? media.queryFileAssets([String(index)], signal)
             : new ArkmePrivacyVisibilityService(runtime).lockedRecordUids(session, signal)
       return expect(request).rejects.toMatchObject({ name: 'AbortError' })
     })
     let write: Promise<unknown> | undefined
     try {
-      await vi.waitFor(() => expect(reads).toHaveLength(4), { timeout: 2_000 })
+      await vi.waitFor(() => expect(reads).toHaveLength(kind === 'scene' ? 1 : 4), { timeout: 2_000 })
       write = runtime.authenticatedPost('/write-fixture', {}, session)
       await vi.waitFor(() => expect(written).toBe(true), { timeout: 500 })
       await expect(write).resolves.toEqual({ saved: true })

@@ -139,7 +139,7 @@ describe('RecordService', () => {
         }
       },
     }
-    const service = new RecordService(runtime as never, {} as MediaService, source)
+    const service = new RecordService(runtime as never, { richContentBlocks: () => [], recordMediaUnavailable: () => false } as unknown as MediaService, source)
 
     await expect(service.getLongArticleDraft('source-ref-old', 'record-1')).resolves.toMatchObject({
       title: '草稿标题', textContent: '草稿正文', durationMillis: 1200,
@@ -1331,4 +1331,26 @@ describe('RecordService', () => {
     )).rejects.toMatchObject({ code: 'record-file-asset-invalid' })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+})
+
+it('does not cancel a concurrent authorized write when a DSH user input is persisted', async () => {
+  const sessions: ArkmeSessionStore = {
+    async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async write() {}, async delete() {},
+  }
+  const runtime = new ServiceRuntime(config, sessions, {} as StateStore, async () => new Response(JSON.stringify({ code: 0, data: { record_uid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', status: 1 } })))
+  const service = new RecordService(runtime, {} as MediaService, {} as never)
+  let entered!: () => void, finish!: () => void, writeSignal!: AbortSignal
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { finish = resolve })
+  const pending = runtime.requestCoordinator.run({ scope: 'user:42', lane: 'write', service: 'chat', operation: async signal => {
+    writeSignal = signal; entered(); await held; return 'confirmed'
+  } }).then(value => ({ value }), error => ({ error }))
+  try {
+    await started
+    await service.createDSHAgentInputText('ccfe56ca-4d7a-4c95-b383-fce1c65a635b', '确认本次词频任务', Date.now())
+    expect(writeSignal.aborted).toBe(false)
+    finish()
+    expect(await pending).toEqual({ value: 'confirmed' })
+  } finally { finish(); await pending; runtime.dispose() }
 })

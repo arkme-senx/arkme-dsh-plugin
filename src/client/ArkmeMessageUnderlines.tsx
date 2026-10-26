@@ -1,3 +1,4 @@
+import { startMessageMarkRefresh } from './message-mark-refresh.js'
 import { useEffect, useId, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { openMarkedMessageSelection, registeredMessageTargets, messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
@@ -5,6 +6,7 @@ import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import type { MessageUnderline } from '../message-annotations.js'
 import { MessageUnderlineSession, underlineTargetKey, type MessageMarkTransport } from './message-underline-session.js'
+import { subscribeMessageMarkInvalidations } from './message-mark-invalidations.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export type MarkPosition = { key: string; target: MessageSelectionTarget; ids: string[]; left: number; top: number; width: number; height: number; element?: HTMLElement; stale: boolean; changed?: boolean; pending: boolean }
@@ -47,12 +49,13 @@ function visibleBox(element: HTMLElement) {
   return box.bottom > top && box.top < bottom && box.right > left && box.left < right ? { left, top, right, bottom } : undefined
 }
 
-export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined, transport?: MessageMarkTransport) {
+export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined, transport?: MessageMarkTransport, storage: 'local' | 'cloud' = 'local') {
   const [revision, update] = useReducer((value: number) => value + 1, 0)
-  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, 'local', transport) : undefined, [scope, !!sourceRef, viewerId, transport])
+  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, storage, transport) : undefined, [scope, !!sourceRef, viewerId, transport, storage])
   if (session && sourceRef) session.sourceRef = sourceRef
   useEffect(() => { if (session) void session.prepare(); return () => session?.dispose() }, [session])
   return {
+    storage: session?.capability?.storage ?? 'local',
     mark: session ? async (target: MessageSelectionTarget, anchor: ArkmeMessageQuote) => {
       if (!session.capability?.supported) {
         await session.prepare()
@@ -73,7 +76,7 @@ export function useMessageUnderlines(scope: string, sourceRef: string | undefine
       void session.change(target, { kind: 'remove', annotationId: mark.id, operationId: crypto.randomUUID() }).catch(error => session.report(error))
       return undefined
     } : undefined,
-    layer: session ? <UnderlineLayer key={scope} session={session} revision={revision} /> : null,
+    layer: session ? <UnderlineLayer key={`${scope}:${storage}`} session={session} revision={revision} /> : null,
   }
 }
 
@@ -89,6 +92,33 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
   const forceRead = useRef<() => void>()
   const digestCache = useRef(new Map<string, Promise<string>>())
   const signature = useRef('')
+  const requestRead = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => {
+    if (!session.capability?.supported) return
+    const refresh = startMessageMarkRefresh({
+      read: async () => await session.read(registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element)).map(({ target }) => target)),
+      visible: () => !document.hidden,
+      subscribe: invalidate => {
+        const stopTransport = session.subscribe(invalidate)
+        const stopCloud = session.storage === 'cloud' ? subscribeMessageMarkInvalidations(clear => {
+          if (clear) {
+            session.invalidate(); signature.current = ''; setPositions([])
+            highlightApi?.delete(highlightName)
+          }
+          invalidate()
+        }) : undefined
+        return () => { stopTransport?.(); stopCloud?.() }
+      },
+      onError: error => session.report(error),
+    })
+    const sync = () => refresh.request(0)
+    requestRead.current = () => refresh.request()
+    window.addEventListener('focus', sync); document.addEventListener('visibilitychange', sync)
+    return () => {
+      requestRead.current = undefined; refresh.dispose()
+      window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync)
+    }
+  }, [session, session.capability?.supported, highlightApi, highlightName])
   useEffect(() => {
     if (!session.capability?.supported) {
       highlightApi?.delete(highlightName)
@@ -100,10 +130,10 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
       const currentGeneration = ++generation
       if (document.hidden) return
       const targets = registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element))
-      const nextSignature = targets.map(({ target }) => messageSelectionReference(target)).join('|')
+      const nextSignature = targets.map(({ target }) => messageSelectionReference(target,session.storage)).join('|')
       if (force || nextSignature !== signature.current) {
         signature.current = nextSignature
-        void session.read(targets.map(({ target }) => target))
+        requestRead.current?.()
       }
       const painted: MarkPosition[] = []
       const ranges: Range[] = []
@@ -122,7 +152,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         const stale: MessageUnderline[] = []
         const merged = new Map<string, MarkPosition>()
         for (const mark of marks) {
-          const range = mark.state === 'available' && mark.anchor.sourceDigest === digest ? quoteHighlightRange(element, mark.anchor) : undefined
+          const range = mark.state === 'available' && mark.anchor?.sourceDigest === digest ? quoteHighlightRange(element, mark.anchor!) : undefined
           if (!range) { stale.push(mark); continue }
           ranges.push(range)
           for (const rect of Array.from(range.getClientRects())) {
@@ -140,7 +170,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         painted.push(...merged.values())
         if (stale.length) {
           const box = element.getBoundingClientRect()
-          if (box.bottom <= clip.bottom) painted.push({ key: `stale:${painted.length}`, target, ids: stale.map(mark => mark.id), left: Math.max(clip.left, box.right - 145), top: box.bottom - 4, width: 145, height: 20, element, stale: true, changed: stale.some(mark => mark.state === 'stale' || mark.anchor.sourceDigest !== digest), pending: false })
+          if (box.bottom <= clip.bottom) painted.push({ key: `stale:${painted.length}`, target, ids: stale.map(mark => mark.id), left: Math.max(clip.left, box.right - 145), top: box.bottom - 4, width: 145, height: 20, element, stale: true, changed: stale.some(mark => mark.state === 'stale' || mark.anchor?.sourceDigest !== digest), pending: false })
         }
       }
       if (disposed || currentGeneration !== generation) return
@@ -148,12 +178,12 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         highlightApi.set(highlightName, new Highlight(...ranges))
       }
       const merged = mergeUnderlinePositions(painted)
-      const geometry = (values: MarkPosition[]) => JSON.stringify(values.map(({ target, element: _element, ...position }) => ({ ...position, target: messageSelectionReference(target), content: quoteSourceContent(target.item), version: target.item.recordVersion })))
+      const geometry = (values: MarkPosition[]) => JSON.stringify(values.map(({ target, element: _element, ...position }) => ({ ...position, target: messageSelectionReference(target,session.storage), content: quoteSourceContent(target.item), version: target.item.recordVersion })))
       setPositions(previous => previous.length === merged.length && previous.every((position, index) => position.element === merged[index]?.element)
         && geometry(previous) === geometry(merged) ? previous : merged)
     }
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { void scan() }) }
-    const sync = () => { void scan(true) }
+    const sync = () => requestRead.current?.()
     forceRead.current = sync
     const observer = new MutationObserver(records => {
       if (records.some(record => !(record.target instanceof Element ? record.target : record.target.parentElement)?.closest('[data-arkme-underline-layer]'))) schedule()
@@ -161,14 +191,10 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
     const resize = new ResizeObserver(schedule); resize.observe(document.body)
     document.addEventListener('scroll', schedule, true); window.addEventListener('resize', schedule)
-    window.addEventListener('focus', sync); document.addEventListener('visibilitychange', sync)
-    // Lightweight, visible-message reconciliation until a backend annotation event is available.
-    const interval = setInterval(sync, 15_000)
     void scan()
     return () => {
-      disposed = true; ++generation; cancelAnimationFrame(frame); clearInterval(interval); observer.disconnect(); resize.disconnect()
+      disposed = true; ++generation; cancelAnimationFrame(frame); observer.disconnect(); resize.disconnect()
       document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule)
-      window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync)
     }
   }, [session, revision, highlightName, nativeHighlight])
   useEffect(() => () => {
@@ -192,9 +218,9 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         || fresh.target.item.recordVersion !== position.target.item.recordVersion) return
       const items = (session.snapshots.get(underlineTargetKey(position.target))?.items ?? []).filter(item => position.ids.includes(item.id) && item.state === 'available')
       // Select the full original range so cancellation scope is visible. Prefer my smallest mark.
-      const selected = items.sort((a, b) => Number(b.mine) - Number(a.mine) || (a.anchor.end - a.anchor.start) - (b.anchor.end - b.anchor.start))[0]
-      const range = selected && quoteHighlightRange(position.element, selected.anchor)
-      if (!range || !selected) return
+      const selected = items.sort((a, b) => Number(b.mine) - Number(a.mine) || ((a.anchor?.end ?? 0) - (a.anchor?.start ?? 0)) - ((b.anchor?.end ?? 0) - (b.anchor?.start ?? 0)))[0]
+      const range = selected?.anchor && quoteHighlightRange(position.element, selected.anchor)
+      if (!range || !selected?.anchor) return
       if (openMarkedMessageSelection(position.element, range, selected.anchor)) { event.preventDefault(); event.stopPropagation() }
     }
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') setPopup(undefined) }
@@ -211,6 +237,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     try { await session.change(popup.target, { kind: 'remove', annotationId: mark.id, operationId: crypto.randomUUID() }); forceRead.current?.() }
     catch (error) { session.notice = error instanceof Error ? error.message : '取消失败'; setPopup(undefined) }
   }
+  if (typeof document === 'undefined' || !document.body) return null
   return createPortal(<div data-arkme-underline-layer onClick={event => event.stopPropagation()}>
     <style>{`
       ::highlight(${highlightName}) { background-color: rgba(233, 180, 47, .28); }
@@ -231,7 +258,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
         maxWidth: 280, maxHeight: 160, overflowY: 'auto', padding: 10, borderRadius: 8, border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow, color: arkmeTheme.text, fontSize: 12 }}>
       <div>{[...new Set(popupItems.map(item => item.mine ? '你' : item.actorName))].join('、')}标记了这段</div>
       <div style={{ color: arkmeTheme.secondary, marginTop: 4 }}>{popup.stale ? popup.changed ? '原文已修改，未在新文字中猜测位置' : '当前内容折叠或展示不同，可在消息详情查看原文' : '标记不修改原消息'}</div>
-      {popup.stale && popupItems.map(item => <div key={item.id} style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>“{item.anchor.text}”</div>)}
+      {popup.stale && popupItems.map(item => <div key={item.id} style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{item.anchor ? `“${item.anchor.text}”` : '原文已修改，标记未定位'}</div>)}
       {popupItems.filter(item => item.mine).map(item => <button key={item.id} type="button" disabled={session.pending.has(underlineTargetKey(popup.target))} onClick={() => { void cancel(item) }} style={actionStyle}>取消我的标记</button>)}
     </div>}
     {session.notice && session.capability?.supported && <div role="status" style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 12002, maxWidth: 360, padding: 10, borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.secondary, border: `1px solid ${arkmeTheme.border}`, fontSize: 12 }}>

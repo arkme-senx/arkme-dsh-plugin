@@ -94,9 +94,32 @@ export class IndexedImportJournal implements ImportJournal {
   }
 }
 
+/** Keep pre-upgrade browser sources visible alongside newly granted native files. */
+export class DesktopImportJournal implements ImportJournal {
+  constructor(private readonly accountKey: string, private readonly bridge: Pick<DesktopImportBridge, 'list' | 'change'>,
+    private readonly browser: ImportJournal = new IndexedImportJournal()) {}
+
+  async list(accountKey: string): Promise<ImportQueueRecord[]> {
+    if (accountKey !== this.accountKey) throw new Error('导入队列账号不匹配')
+    const [legacy, native] = await Promise.all([this.browser.list(accountKey), this.bridge.list(accountKey)])
+    // Native storage is authoritative if an interrupted source conversion left both copies.
+    return [...new Map([...legacy, ...native].filter(row => row.accountKey === accountKey).map(row => [row.id, row])).values()]
+  }
+
+  async change(upserts: ImportQueueRecord[], removals: string[]): Promise<void> {
+    if (upserts.some(row => row.accountKey !== this.accountKey)) throw new Error('导入队列账号不匹配')
+    const native = upserts.filter(row => row.source.kind === 'desktop')
+    const legacy = upserts.filter(row => row.source.kind !== 'desktop')
+    // Persist replacement grants before removing browser copies. A failed write retains the old source.
+    await this.bridge.change(this.accountKey, native, removals)
+    await this.browser.change(legacy, [...removals, ...native.map(row => row.id)])
+    if (legacy.length) await this.bridge.change(this.accountKey, [], legacy.map(row => row.id))
+  }
+}
+
 export function createImportJournal(accountKey: string): ImportJournal {
   const bridge = desktopImportBridge()
-  if (bridge) return { list: async () => await bridge.list(accountKey), change: async (upserts, removals) => await bridge.change(accountKey, upserts, removals) }
+  if (bridge) return new DesktopImportJournal(accountKey, bridge)
   return new IndexedImportJournal()
 }
 

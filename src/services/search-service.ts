@@ -36,6 +36,7 @@ function listValue(value: unknown): unknown[] { return Array.isArray(value) ? va
 
 export class SearchService {
   localDshQuery?: () => unknown
+  articleActionRef?: (raw: Record<string, unknown>, sourceRef: string, signal?: AbortSignal) => Promise<string>
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -238,6 +239,7 @@ export class SearchService {
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('../types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'
@@ -245,6 +247,10 @@ export class SearchService {
     sourceRef?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
+    if (options.articleScope !== undefined && (options.scene !== 'long_article'
+      || !['recent', 'shared_by_me', 'shared_with_me'].includes(options.articleScope))) {
+      throw new ArkmePluginError('long-article-scope-invalid', '长文分类无效', false, 400)
+    }
     const sceneKinds: Record<ArkmeSearchSceneKind, number> = {
       audio: 1,
       link: 2,
@@ -257,11 +263,14 @@ export class SearchService {
     }
     const session = await this.runtime.requireSession()
     const scope = await this.searchScope(options, session.userId)
-    const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
+    // Sharing rows were checked by Record for their exact owner+UID. The local
+    // visibility snapshot contains only this account's UIDs and cannot filter foreign originals.
+    const lockedRecordUids = options.articleScope && options.articleScope !== 'recent' ? new Set<string>() : await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/search/records/scene/query',
       {
         scene_kind: sceneKinds[options.scene],
+        ...(options.articleScope ? { article_scope: options.articleScope } : {}),
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
         ...(scope.search_scope === 'global' && options.sourceRef === undefined ? { search_scope: 'global' } : scope),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
@@ -270,7 +279,20 @@ export class SearchService {
       options.signal,
       { lane: 'interactive-read' },
     )
+    if (options.articleScope && options.articleScope !== 'recent' && data.applied_article_scope !== options.articleScope) {
+      throw new ArkmePluginError('long-article-sharing-unavailable', '服务端暂不支持此共享分类，请升级后重试', false, 501)
+    }
     const result = await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal, options.sourceRef)
+    if (options.articleScope && options.articleScope !== 'recent') {
+      result.appliedArticleScope = options.articleScope
+      for (const item of result.items) {
+        const raw = listValue(data.items).map(objectValue).find(row => {
+          const core = objectValue(row.record_core)
+          return stringValue(row.record_uid) === item.recordUid && recordOwnerId(core.owner_user_id) === item.recordOwnerUserId
+        })
+        if (raw && item.targetSource && this.articleActionRef) item.messageActionRef = await this.articleActionRef(raw, item.targetSource.sourceRef, options.signal)
+      }
+    }
     return options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
   }
 

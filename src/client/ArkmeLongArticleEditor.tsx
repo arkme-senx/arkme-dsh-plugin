@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { ArkmeArticleFormattingToolbar } from './ArkmeArticleFormattingToolbar.js'
+import { dictationAnchorExtension, documentDictationTarget, type DictationTarget } from './dictation-target.js'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Extension, Node, type Editor, type JSONContent } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -15,6 +17,8 @@ export interface ArkmeArticleEditorValue extends ArkmeMarkdownDraft {
   retainedFileRefs: string[]
 }
 interface Props {
+  dismissFormattingRef?: MutableRefObject<(() => boolean) | undefined> | undefined
+  dictationTargetRef?: MutableRefObject<(() => DictationTarget | undefined) | undefined> | undefined
   initialSource: string
   initialDocument?: JSONContent | undefined
   disabled: boolean
@@ -170,7 +174,7 @@ export function ArkmeLongArticleEditor(props: Props) {
   }))).current
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: [...extensions, Extension.create({
+    extensions: [dictationAnchorExtension, ...extensions, Extension.create({
       name: 'articleAnchorsAndLimit',
       addProseMirrorPlugins() { return [new Plugin({
         key: anchorKey,
@@ -227,6 +231,12 @@ export function ArkmeLongArticleEditor(props: Props) {
     onUpdate: publish,
   }, [])
   editorRef.current = editor
+  useEffect(() => {
+    const ref = props.dictationTargetRef
+    if (!ref) return
+    ref.current = () => editor && !editor.isDestroyed && editor.isEditable ? documentDictationTarget(editor) : undefined
+    return () => { ref.current = undefined }
+  }, [editor, props.dictationTargetRef])
   useEffect(() => { editor?.setEditable(!props.disabled) }, [editor, props.disabled])
   useEffect(() => {
     if (controller.current.signal.aborted) controller.current = new AbortController()
@@ -247,5 +257,6 @@ export function ArkmeLongArticleEditor(props: Props) {
   return <div className="arkme-markdown" style={{ fontSize: 17, lineHeight: '29px' }}>
     <style>{arkmeMarkdownStyles}</style>
     <EditorContent editor={editor} />
+    {editor && <ArkmeArticleFormattingToolbar editor={editor} disabled={props.disabled} dismissRef={props.dismissFormattingRef} onError={props.onError} />}
   </div>
 }

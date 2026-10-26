@@ -1,3 +1,7 @@
+import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
+import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
+import { invalidateMessageMarks } from './message-mark-invalidations.js'
+import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
 import { arkmeMessageSync } from './message-sync-store.js'
 import { callArkme } from './api.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
@@ -6,7 +10,7 @@ import { invalidateTeamMessages } from './team-messaging-events.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { publishMemberEventHint } from './member-event-hints.js'
 import { arkmeMemberEvents } from './member-event-cache.js'
 import { invalidateDirectMessageAdmission } from './direct-message-admission.js'
@@ -76,6 +80,23 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     void arkmeAuthStore.refresh().catch(() => undefined)
   }, [authRevision])
+
+  // Notification lifetime follows the account, not token refresh or transport
+  // reconnection. A routine auth revision must not dismiss an unread notice.
+  const teamNotifications = useRef<ReturnType<typeof createTeamMessageNotificationPresenter> | undefined>(undefined)
+  useEffect(() => {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+    const userId = auth.userId, environment = auth.environment
+    const presenter = createTeamMessageNotificationPresenter(() => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return current?.status === 'authenticated' && current.userId === userId && current.environment === environment
+    })
+    teamNotifications.current = presenter
+    return () => {
+      presenter.dispose()
+      if (teamNotifications.current === presenter) teamNotifications.current = undefined
+    }
+  }, [auth?.environment, auth?.status, auth?.userId])
 
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
@@ -235,7 +256,7 @@ export function useArkmeRealtimeClientEvents(
           }
           return
         }
-        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope)
+        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
           void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
@@ -263,6 +284,9 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
+          publishNativeAnnotationInvalidation(authenticatedAccountScope)
           void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
           officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
@@ -301,17 +325,25 @@ export function useArkmeRealtimeClientEvents(
           arkmeAttentionSummary.apply(update.summary)
           return
         }
+        if (update.type === 'team-message-notification') {
+          if (ownsNotifications) teamNotifications.current?.show(update.notification)
+          return
+        }
         if (update.type === 'message-notification') {
           if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
           return
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
+        if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
           if (update.projection === 'offline_context') {
             const active = arkmeUi.getSnapshot().selectedSource
             arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])
             return
           }
+          if (update.projection === 'record') invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
           if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection === 'topic-directory') {
@@ -338,6 +370,8 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'timeline-changed') {
+          invalidateMessageQuoteSources(update.sourceKey)
+          invalidateMessageMarks(true)
           arkmeChatTimelineDelta.applyTimelineChange(update)
           arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeCalendarInvalidations.publishAll()
@@ -348,6 +382,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'chat-policy-invalidated') {
+          invalidateMessageQuoteSources()
           arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()

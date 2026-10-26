@@ -4,6 +4,7 @@ import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { RecordingReadOwner, type RecordingReadView, type RecordingDayReadCursor, type RecordingOwnerFragment, type RecordingOwnerDayPage } from './recording-read-owner.js'
+import { createMessageCopyLink } from './message-copy-link-create.js'
 import type { ArkmeRecordingWindow } from '../types.js'
 import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
 import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
@@ -313,9 +314,27 @@ export class RecordingService {
     if (!uuid.test(input.requestId) || !uuid.test(input.recordUid) || !Number.isSafeInteger(input.sendAtMillis) || input.sendAtMillis <= 0 || input.targetSourceRef.trim() === '') {
       throw new ArkmePluginError('recording-forward-input-invalid', '录音转发参数无效', false, 400)
     }
-    if (input.itemRefs.length === 0 || input.itemRefs.length > RECORDING_FORWARD_MAX_SEGMENTS) throw new ArkmePluginError('recording-forward-selection-invalid', '请选择 1 至 150 个录音片段', false, 400)
+    const { selection, session } = await this.recordingCommandSelection(input.itemRefs)
+    return await this.forwardGateway.forward(selection, input, session, signal)
+  }
+
+  async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    const { selection, session } = await this.recordingCommandSelection(itemRefs)
+    const result = await createMessageCopyLink(this.runtime, [{
+      kind: 'audio_session', session_id: selection.sessionId,
+      selection: { kind: 'long_recording_segments', segments: selection.segments.map(item => ({
+        child_id: item.childId, asr_item_index: item.asrItemIndex, transcript_source: item.transcriptSource,
+      })) },
+    }], session, signal)
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-share-account-changed', '账号已切换，请重新选择录音', false, 409)
+    return result
+  }
+
+  private async recordingCommandSelection(itemRefs: readonly string[]) {
+    if (itemRefs.length === 0 || itemRefs.length > RECORDING_FORWARD_MAX_SEGMENTS) throw new ArkmePluginError('recording-forward-selection-invalid', '请选择 1 至 150 个录音片段', false, 400)
     const session = await this.runtime.requireSession()
-    const selected = await Promise.all(input.itemRefs.map(async ref => await this.openRecordingItemRef(ref)))
+    const selected = await Promise.all(itemRefs.map(async ref => await this.openRecordingItemRef(ref)))
     const first = selected[0]!
     if (selected.some(item => item.viewerUserId !== session.userId || item.sessionId !== first.sessionId || item.dateStamp !== first.dateStamp || item.transcriptSource !== first.transcriptSource)) {
       throw new ArkmePluginError('recording-forward-selection-invalid', '请选择同一次录音、同一转写来源的片段', false, 400)
@@ -330,7 +349,7 @@ export class RecordingService {
     // Re-reading Audio here would prevent confirming an already accepted send after source deletion.
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-forward-account-changed', '账号已切换，请重新选择录音', false, 409)
     selected.sort((left, right) => left.startAtMillis - right.startAtMillis || left.childId.localeCompare(right.childId) || left.asrItemIndex - right.asrItemIndex)
-    return await this.forwardGateway.forward({ sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) }, input, session, signal)
+    return { session, selection: { sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) } }
   }
 
   async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -1122,6 +1141,7 @@ export class RecordingService {
       identity: {
         userId: job.userId, fileName: job.fileName, fileSize: job.fileSize,
         sha256: job.sha256, startAtMillis: job.startAtMillis, belongUserId: job.belongUserId,
+        strategy: recordingStrategy(job.strategy),
       },
       task: toPublicRecordingImportJob(job, await this.recordingImportRef(job)),
     })))

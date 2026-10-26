@@ -269,6 +269,7 @@ export interface DshRemoteModelOption {
   model: string
   displayName: string
   description?: string
+  supportsImages?: boolean
   reasoningEfforts?: DshRemoteReasoningEffortOption[]
   defaultReasoningEffort?: string
 }
@@ -319,6 +320,7 @@ export type DshRemotePendingInteraction =
     }
 
 export interface DshRemoteHostFacade {
+  annotationSource?(sessionRef: string, seq: number, signal: AbortSignal): Promise<{ runtimeRef: string; hostGeneration: number; entry: import('./dsh-event-contract.js').DshRemoteHistoryEntry; canonical: string }>
   start(): Promise<void>
   stop(): Promise<void>
   getStatus(): DshRemoteStatus

@@ -1,7 +1,8 @@
 import { reactionNotifications } from './reaction-notifications.js'
 import { useVisibleReactionNotification } from './ArkmeReactionNotification.js'
-import { Toast, IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeReactionActorCard } from './ArkmeReactionActorCard.js'
+import { reactionLibrary as defaultReactionLibrary, type ReactionLibraryStore } from './reaction-library.js'
 import { ArkmeReactionPhrases } from './ArkmeReactionPhrases.js'
 import { arkmeDefaultEmojis } from './arkme-emoji.js'
 import { ReactionLabel, reactionLabelText, reactionPhraseStyle } from './ReactionLabel.js'
@@ -9,7 +10,7 @@ import { useState, useCallback, useSyncExternalStore, useRef, useLayoutEffect, u
 import { expressionIdentity, expressionLabel } from './reaction-expression.js'
 import type { ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionExpression } from '../reaction-contract.js'
 import { createPortal } from 'react-dom'
-import { reactionPreview, type ReactionPreviewTarget } from './reaction-preview-store.js'
+import { reactionPreview as defaultReactionPreview, type ReactionPreviewStore, type ReactionPreviewTarget } from './reaction-preview-store.js'
 import { arkmeTheme as c } from './arkme-theme.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { watchVisibleReactionTarget } from './reaction-visible-target.js'
@@ -19,11 +20,13 @@ const row: CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'cen
 
 export function reactionToolbarPosition(isMe: boolean, box: { left: number; right: number; bottom: number }, parent: { left: number; top: number }, edges: { left: number; right: number }, receipt?: { left: number; right: number; top: number }): CSSProperties {
   const receiptCenter = receipt ? (receipt.left + receipt.right) / 2 : 0
-  const aboveLeft = Math.min(receiptCenter - 13, box.left - 32)
-  if (isMe && receipt && aboveLeft >= edges.left) {
+  // Team messages expose incoming receipts too; mirror the group outgoing rule.
+  const aboveLeft = isMe ? Math.min(receiptCenter - 13, box.left - 32)
+    : Math.max(receiptCenter - 13, box.right + 6)
+  if (receipt && aboveLeft >= edges.left && aboveLeft + 26 <= edges.right) {
     return { left: aboveLeft - parent.left, top: receipt.top - parent.top - 32, paddingBottom: 6 }
   }
-  const beside = isMe ? box.left - 32 >= edges.left : box.right + 32 <= edges.right
+  const beside = !receipt && (isMe ? box.left - 32 >= edges.left : box.right + 32 <= edges.right)
   const left = beside ? (isMe ? box.left - parent.left - 32 : box.right - parent.left)
     : Math.max(0, (isMe ? box.left : box.right - 26) - parent.left)
   const top = box.bottom - parent.top - (beside ? 26 : 0)
@@ -32,10 +35,10 @@ export function reactionToolbarPosition(isMe: boolean, box: { left: number; righ
     paddingTop: beside ? 0 : 4 }
 }
 
-export function reactionPanelPosition(box: { left: number; top: number; bottom: number }, width: number, viewport: { width: number; height: number }): CSSProperties {
+export function reactionPanelPosition(box: { left: number; top: number; bottom: number }, width: number, viewport: { width: number; height: number }, preferredHeight = 180): CSSProperties {
   const above = Math.max(0, box.top - 16), below = Math.max(0, viewport.height - box.bottom - 16)
   const left = Math.max(8, Math.min(box.left, viewport.width - width - 8))
-  return above >= 180 || above >= below
+  return above >= preferredHeight || above >= below
     ? { left, bottom: Math.max(8, viewport.height - box.top + 8), maxHeight: above }
     : { left, top: Math.max(8, box.bottom + 8), maxHeight: below }
 }
@@ -49,7 +52,7 @@ export function ReactionAddIcon() {
   </svg>
 }
 
-export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean }) {
+export function ArkmeReactionPreview({ scope, target, children, isMe = false, openRequested = false, toggleRequested = false, onOpenHandled, standalone = false, enabled = true, store: reactionPreview = defaultReactionPreview, library = defaultReactionLibrary, triggerText, panelNote, readOnly: forcedReadOnly = false }: { scope: string; target: ReactionPreviewTarget; children?: ReactNode; isMe?: boolean; openRequested?: boolean; toggleRequested?: boolean; onOpenHandled?: () => void; standalone?: boolean; enabled?: boolean; store?: ReactionPreviewStore; library?: ReactionLibraryStore; triggerText?: string; panelNote?: string; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   const activeScope = reactionPreview.isScope(scope)
   const latestTarget = useRef(target)
@@ -65,6 +68,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
   useEffect(() => { setNotice(undefined) }, [scope, target.id])
   const anchor = useRef<HTMLButtonElement>(null)
   const message = useVisibleReactionNotification(scope, target.sourceKey, target.itemUid, reactionPreview.snapshot(target.id)?.groups.map(group => group.key) ?? [])
+  const activeAnchor = () => (!standalone ? message.current?.querySelector<HTMLButtonElement>('[data-arkme-reaction-toggle]') : undefined) ?? anchor.current
   const [toolbar, setToolbar] = useState<CSSProperties>({ ...(isMe ? { right: '100%' } : { left: '100%' }), bottom: 0 })
   const positionToolbar = useCallback(() => {
     const root = message.current
@@ -97,13 +101,14 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
   const panel = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<CSSProperties>({ left: 8, top: 8 })
   useLayoutEffect(() => {
-    if (!open || !anchor.current || !panel.current) return
+    const entry = activeAnchor()
+    if (!open || !entry || !panel.current) return
     // Keep this opening anchored to its initial position while reaction rows grow.
-    const box = anchor.current.getBoundingClientRect()
+    const box = entry.getBoundingClientRect()
     const reposition = () => {
       if (!panel.current) return
       const size = panel.current.getBoundingClientRect()
-      const next = reactionPanelPosition(box, size.width, { width: window.innerWidth, height: window.innerHeight })
+      const next = reactionPanelPosition(box, size.width, { width: window.innerWidth, height: window.innerHeight }, Math.max(180, size.height || 0))
       setPosition(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)
     }
     reposition()
@@ -129,8 +134,8 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     if (accepted) { setOpen(false) }
     return accepted
   }
-  const readOnly = reactionPreview.snapshot(target.id)?.private === true
-  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); anchor.current?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
+  const readOnly = forcedReadOnly || reactionPreview.snapshot(target.id)?.private === true
+  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); activeAnchor()?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div role="group" aria-label="全部表情" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, height: 206, minHeight: 38, flexShrink: 1, alignContent: 'start', scrollSnapType: 'y mandatory', overflowY: 'auto' }}>
         {arkmeDefaultEmojis.map(emoji => <button type="button" key={emoji.id} aria-label={emoji.label} title={emoji.label}
           disabled={reactionPreview.busy(target.id)} aria-pressed={selected.includes(emoji.token)} onClick={() => toggle(emoji.token)}
@@ -139,16 +144,17 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
         </button>)}
       </div>
       <div role="group" aria-label="短语" style={{ minHeight: 0, flexShrink: 1, maxHeight: '55%', overflowY: 'auto', marginTop: 8, paddingTop: 8, borderTop: `1px solid ${c.border}` }}>
-      <ArkmeReactionPhrases key={scope} scope={scope} selected={reactionPreview.isScope(scope) ? reactionPreview.snapshot(target.id)?.mine.selections.map(item => item.expression) ?? [] : []} onUse={toggle} onNotice={text => setNotice(current => ({ text, sequence: (current?.sequence ?? 0) + 1 }))} />
+      <ArkmeReactionPhrases key={scope} scope={scope} library={library} selected={reactionPreview.isScope(scope) ? reactionPreview.snapshot(target.id)?.mine.selections.map(item => item.expression) ?? [] : []} onUse={toggle} onNotice={text => setNotice(current => ({ text, sequence: (current?.sequence ?? 0) + 1 }))} />
       </div>
       {(status || reactionPreview.error(target.id)) && <div role="status" style={{ marginTop: 6, color: c.secondary }}>{status || reactionPreview.error(target.id)}</div>}
+      {panelNote && <p style={{ margin: '8px 0 0', color: c.tertiary, fontSize: 11, flexShrink: 0 }}>{panelNote}</p>}
     </section>
   return <div ref={message} data-arkme-reaction-preview data-arkme-reaction-ready={reactionPreview.snapshot(target.id) !== undefined || reactionPreview.error(target.id) !== undefined ? 'true' : 'false'} data-open={open} onMouseEnter={positionToolbar} onFocus={positionToolbar} style={{ position: 'relative', maxWidth: '100%', fontSize: 12 }}>
     {children}
     {enabled && <div className={standalone ? undefined : 'arkme-reaction-hover-toolbar'} style={standalone ? {} : { position: 'absolute', ...toolbar, zIndex: 5 }}>
-      <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, padding: 3, borderRadius: 6, color: c.secondary }}><ReactionAddIcon /></button>
+      <button ref={anchor} className={standalone ? undefined : 'arkme-reaction-hover-trigger'} type="button" title={standalone ? "表态" : undefined} aria-label={readOnly ? "已设为私密" : "表态"} disabled={readOnly} aria-expanded={open && !readOnly} onClick={() => { setStatus(''); setOpen(!open) }} style={{ ...button, display: 'flex', alignItems: 'center', justifyContent: 'center', width: triggerText ? undefined : standalone ? 32 : 26, height: triggerText ? 28 : standalone ? 32 : 26, padding: 3, gap: 5, borderRadius: 6, color: c.secondary }}><ReactionAddIcon />{triggerText && <span>{triggerText}</span>}</button>
     </div>}
-    {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutline16 />} onDone={() => setNotice(undefined)} />)}
+    {notice && (typeof document === 'undefined' ? <div role="status">{notice.text}</div> : <Toast key={notice.sequence} text={notice.text} anchor={message.current} icon={<IconCheckOutlineMedium />} onDone={() => setNotice(undefined)} />)}
     {overlay && (typeof document === 'undefined' ? overlay : createPortal(overlay, document.body))}
   </div>
 }
@@ -157,7 +163,7 @@ function warmActorAvatar(actor: ReactionActor) {
   if (actor.avatarRef) void arkmeAvatarImages.load(actor.avatarRef).catch(() => undefined)
 }
 
-export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我', actorGroupNickname, actorAvatarRef }: { scope: string; target: ReactionPreviewTarget; onAdd?: () => void; actorName?: string; actorGroupNickname?: string | undefined; actorAvatarRef?: string | undefined }) {
+export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我', actorGroupNickname, actorAvatarRef, store: reactionPreview = defaultReactionPreview, readOnly = false }: { scope: string; target: ReactionPreviewTarget; onAdd?: () => void; actorName?: string; actorGroupNickname?: string | undefined; actorAvatarRef?: string | undefined; store?: ReactionPreviewStore; readOnly?: boolean }) {
   useSyncExternalStore(reactionPreview.subscribe, reactionPreview.getSnapshot, reactionPreview.getSnapshot)
   useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   const highlight = reactionNotifications.highlights(scope, target.sourceKey, target.itemUid)
@@ -171,6 +177,12 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
   useEffect(() => { setGroupPage(undefined); return () => groupAbort.current?.abort() }, [scope, target.id])
   const currentGroupPage = groupScope.current === viewScope ? groupPage : undefined
   const groups = snapshot ? currentGroupPage?.items ?? snapshot.groups : []
+  const actorIdentity = (actor: ReactionActor): ReactionActor =>
+    actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我'
+      ? { ...actor, displayName: actorGroupNickname?.trim() || actorName,
+        ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
+        ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}) }
+      : target.resolveActor?.(actor) ?? actor
   const loadGroups = async () => {
     if (groupBusy) return
     const controller = new AbortController(); groupAbort.current = controller
@@ -220,7 +232,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
   if (!groups.length) return null
   return <div ref={selectionsRef} data-arkme-message-reactions style={{ ...row, width: 'max-content', maxWidth: '100%', gap: 4, marginTop: 8, fontSize: 12 }}>
     {groups.map(group => { const label = expressionLabel(group.expression), mine = snapshot?.mine.selections.some(item => item.key === group.key); const newActors = new Set(highlight?.rows.filter(notice => notice.selections.some(selection => selection.key === group.key)).map(notice => notice.actorUserId)); const newGroup = highlight?.expressionIdentity === expressionIdentity(group.expression) || newActors.size > 0 && newActors.size >= group.count; return <span key={`${group.key}:${highlight?.revision ?? 0}`} data-arkme-new-reaction={newGroup ? 'group' : undefined} className={newGroup ? 'arkme-new-reaction' : undefined} style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 5px', borderRadius: 6, minHeight: 28, boxSizing: 'border-box', maxWidth: '100%', flexShrink: 0, background: `color-mix(in srgb, ${c.secondary} 10%, transparent)` }}>
-      <button type="button" data-arkme-hover="none" disabled={snapshot?.private || reactionPreview.busy(target.id)} aria-busy={reactionPreview.busy(target.id)} aria-pressed={mine} aria-label={`${mine ? '取消我的' : '添加'}${reactionLabelText(label)}`}
+      <button type="button" data-arkme-hover="none" disabled={readOnly || snapshot?.private || reactionPreview.busy(target.id)} aria-busy={reactionPreview.busy(target.id)} aria-pressed={mine} aria-label={`${mine ? '取消我的' : '添加'}${reactionLabelText(label)}`}
         onClick={event => { event.stopPropagation(); void reactionPreview.toggle(scope, target, label, group.expression) }}
         style={{ ...button, border: 0, background: 'transparent', ...reactionPhraseStyle(label, false, group.expression.color), borderRadius: 3, padding: '1px 4px', overflowWrap: 'anywhere' }}>
         <ReactionLabel label={label} />
@@ -228,10 +240,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
       <span style={{ color: c.secondary, borderLeft: `1px solid ${c.border}`, marginLeft: 6, padding: '0 2px 0 7px', lineHeight: '16px' }}>
         {snapshot?.actors_visible ? <>
           {(group.actors?.length ? group.actors : mine ? [{ userId: Number(scope.split(':').at(-1)), displayName: '我' }] : []).map((actor, index) => {
-            const identity: ReactionActor = actor.userId === Number(scope.split(':').at(-1)) && actor.displayName === '我' ? { ...actor, displayName: actorGroupNickname?.trim() || actorName,
-              ...(actorGroupNickname ? { groupNickname: actorGroupNickname } : {}),
-              ...(actorAvatarRef ? { avatarRef: actorAvatarRef } : {}),
-            } : target.resolveActor?.(actor) ?? actor
+            const identity = actorIdentity(actor)
             const name = identity.displayName
             return <span key={actor.userId}>{index > 0 && '、'}<button type="button" aria-label={`查看${name}的资料`} data-arkme-new-reaction={!newGroup && newActors.has(actor.userId) ? 'actor' : undefined} className={!newGroup && newActors.has(actor.userId) ? 'arkme-new-reaction' : undefined}
               onClick={event => { event.stopPropagation(); setProfileActor(identity) }}
@@ -249,14 +258,14 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
     {groupError && <div role="alert">{groupError}</div>}
     {actorKey && snapshot?.actors_visible && actorScope.current === viewScope && <div role="region" aria-label="表态者" style={{ flexBasis: '100%', padding: 6, border: `1px solid ${c.border}`, borderRadius: 6 }}>
       <button type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }}>×</button>
-      {actors?.items.map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
+      {actors?.items.map(actorIdentity).map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
       {actorBusy && <span role="status">加载中…</span>}
       {actorError && <button type="button" style={button} onClick={() => void loadActors(actorKey)}>{actorError} · 重试</button>}
       {actors?.has_more && <button type="button" disabled={actorBusy} style={button} onClick={() => void loadActors(actorKey, true)}>更多</button>}
     </div>}
     {profileActor && snapshot?.actors_visible && <ArkmeReactionActorCard key={`${scope}:${profileActor.userId}`} scope={scope} actor={profileActor} onClose={() => setProfileActor(undefined)} />}
     {reactionPreview.error(target.id) && <div role="alert">{reactionPreview.error(target.id)}</div>}
-    {onAdd && !snapshot?.private && <button type="button" data-arkme-reaction-toggle aria-label="继续表态" onClick={event => { event.stopPropagation(); onAdd() }}
+    {onAdd && !readOnly && !snapshot?.private && <button type="button" data-arkme-reaction-toggle aria-label="继续表态" onClick={event => { event.stopPropagation(); onAdd() }}
       style={{ ...button, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, padding: 3, border: 0, borderRadius: 6, color: c.secondary, background: `color-mix(in srgb, ${c.secondary} 10%, transparent)` }}><ReactionAddIcon /></button>}
   </div>
 }

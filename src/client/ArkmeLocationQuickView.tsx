@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeSearchRecordItem } from '../types.js'
 import { locationSources, worldLocationViewport, type LocationMarkers, type LocationQuery, type LocationRecords, type LocationSource, type LocationViewport } from '../location-search.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { ArkmeLocationDateFilter } from './ArkmeLocationDateFilter.js'
 import { ArkmeLocationMapFrame } from './ArkmeLocationMapFrame.js'
 import { ArkmeDayLocationView } from './ArkmeDayLocationView.js'
 import type { LocationDateFilter } from './day-location-cache.js'
@@ -13,32 +14,32 @@ const emptyRecords: LocationRecords = { items: [], hasMore: false, nextOffset: 0
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason)
 
 export function ArkmeLocationQuickView({ onOpenRecord, initialDate, initialLocation }: { onOpenRecord(item: ArkmeSearchRecordItem): void; initialDate?: LocationDateFilter; initialLocation?: { latitude: number; longitude: number } }) {
+  const browser = useRef<HTMLDivElement>(null), focusDate = useRef(false)
   const [date, setDate] = useState(initialDate?.bucketDate ?? '')
   const timezone = initialDate?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const lastDate = useRef(initialDate?.bucketDate ?? '')
-  const changeDate = (value: string) => { if (value) lastDate.current = value; setDate(value) }
+  const changeDate = (value: string) => { focusDate.current = true; if (value) lastDate.current = value; setDate(value) }
+  useLayoutEffect(() => {
+    if (focusDate.current) { focusDate.current = false; browser.current?.querySelector<HTMLButtonElement>('.arkme-location-date-control>button')?.focus() }
+  }, [date])
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   useState(startLocationSearchCache)
   const hardRevision = useSyncExternalStore(cache.subscribe, cache.getHardRevision, cache.getHardRevision)
   if (!auth.auth || !['authenticated', 'binding-required'].includes(auth.auth.status)) return null
   const account = `${auth.auth.environment}:${auth.auth.userId}`
-  return <div className="arkme-location-browser">
+  const toolbar = <ArkmeLocationDateFilter date={date} lastDate={lastDate.current} onChange={changeDate}/>
+  return <div ref={browser} className="arkme-location-browser">
     <style>{css}</style>
-    <div className="arkme-location-date-toolbar">
-      <label>{tr('日期')} <input type="date" aria-label={tr('位置日期')} value={date} onChange={event => changeDate(event.target.value)} /></label>
-      {date ? <button type="button" onClick={() => changeDate('')}>{tr('查看所有位置')}</button> : <><span>{tr('全部日期')}</span>{lastDate.current && <button type="button" onClick={() => changeDate(lastDate.current)}>{tr('返回 {date}', { date: lastDate.current })}</button>}</>}
-      {date && <small>{tr('当前日期显示个人记录的设备位置')}</small>}
-    </div>
     {date ? <ArkmeDayLocationView key={`${account}:${hardRevision}:${date}:${timezone}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''}
-      date={{ bucketDate: date, timezone }} onOpenRecord={onOpenRecord} {...(initialLocation && date === initialDate?.bucketDate ? { initialLocation } : {})} />
-      : <LocationView key={`${account}:${hardRevision}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''} onOpenRecord={onOpenRecord} />}
+      date={{ bucketDate: date, timezone }} toolbar={toolbar} onOpenRecord={onOpenRecord} {...(initialLocation && date === initialDate?.bucketDate ? { initialLocation } : {})} />
+      : <LocationView key={`${account}:${hardRevision}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''} toolbar={toolbar} onOpenRecord={onOpenRecord} />}
   </div>
 }
 
-function LocationView({ account, browserAk, onOpenRecord }: { account: string; browserAk: string; onOpenRecord(item: ArkmeSearchRecordItem): void }) {
+function LocationView({ account, browserAk, toolbar, onOpenRecord }: { account: string; browserAk: string; toolbar: ReactNode; onOpenRecord(item: ArkmeSearchRecordItem): void }) {
   const saved = useRef(cache.getNavigation(account))
   const [viewport, setViewport] = useState(saved.current?.viewport ?? worldLocationViewport)
-  const [initialViewport, setInitialViewport] = useState(viewport)
+  const [initialViewport] = useState(viewport)
   const [sources, setSources] = useState<LocationSource[]>(saved.current?.sources ?? [...locationSources])
   const [snapshot, setSnapshot] = useState(() => {
     const data = cache.peek<LocationMarkers>(account, { mode: 'viewport', ...viewport })
@@ -63,18 +64,9 @@ function LocationView({ account, browserAk, onOpenRecord }: { account: string; b
     const cached = cache.peek<LocationMarkers>(account, query)
     if (cached) setSnapshot({ query: viewport, data: cached })
     setMapLoading(true); setMapError('')
-    void cache.load<LocationMarkers>(account, query, retry > 0).then(async data => {
+    void cache.load<LocationMarkers>(account, query, retry > 0).then(data => {
       if (!active) return
       setSnapshot({ query: viewport, data })
-      // An empty global projection needs only one readable anchor, not a whole page of details.
-      if (viewport.bounds.swLon === -180 && viewport.bounds.neLon === 180 && !data.markers.length) {
-        const anchor = await cache.load<LocationRecords>(account, { mode: 'list', limit: 1 })
-        if (!active || !anchor.items.length) return
-        const point = anchor.items[0]!, latitude = Math.max(-84.9, Math.min(84.9, point.latitude))
-        const local = { bounds: { swLat: latitude - .1, neLat: latitude + .1,
-          swLon: Math.max(-180, point.longitude - .1), neLon: Math.min(180, point.longitude + .1) }, zoom: 12 }
-        setInitialViewport(local); setViewport(local)
-      }
     }).catch(reason => { if (active) setMapError(message(reason)) }).finally(() => { if (active) setMapLoading(false) })
     return () => { active = false }
   }, [account, viewportKey, revision, retry])
@@ -83,7 +75,7 @@ function LocationView({ account, browserAk, onOpenRecord }: { account: string; b
     const sequence = ++request.current
     const previous = recordPage.current?.key === selectedKey ? recordPage.current.data : emptyRecords
     // The sheet initially shows only a few cards; avoid hydrating twenty bodies before the first one appears.
-    const query: LocationQuery = { mode: 'cluster', ...selected.query, clusterKeys: [selected.marker.key], offset: append ? previous.nextOffset : 0, limit: append ? 20 : 6 }
+    const query: LocationQuery = { mode: 'cluster', ...selected.query, clusterKeys: [selected.marker.clusterQuery?.key ?? selected.marker.key], offset: append ? previous.nextOffset : 0, limit: append ? 20 : 6 }
     const cached = cache.peek<LocationRecords>(account, query)
     if (!append && cached && previous.items.length === 0) {
       recordPage.current = { key: selectedKey, data: cached }; setPage(recordPage.current)
@@ -110,12 +102,16 @@ function LocationView({ account, browserAk, onOpenRecord }: { account: string; b
   const displayed = useMemo(() => records.items.filter(item => sources.includes(selected?.marker.source ?? item.source)), [records, sources, selected])
   const changeViewport = useCallback((query: LocationViewport) => setViewport(previous => JSON.stringify(previous) === JSON.stringify(query) ? previous : query), [])
   const closeRecords = () => { setSelected(undefined); scrollTop.current = 0 }
-  return <ArkmeLocationMapFrame account={account} browserAk={browserAk} markers={markers} initialViewport={initialViewport}
+  return <ArkmeLocationMapFrame toolbar={toolbar} account={account} browserAk={browserAk} markers={markers} initialViewport={initialViewport}
     sources={sources} onSourcesChange={next => { setSources(next); if (selected && !next.includes(selected.marker.source)) closeRecords() }}
     {...(selected ? { selectedKey: selected.marker.key, recordTitle: selected.marker.label, recordCount: selected.marker.count } : {})}
-    onViewport={changeViewport} onSelect={marker => { if (snapshot) { scrollTop.current = 0; setSelected({ marker, query: snapshot.query }) } }} onCloseRecords={closeRecords}
+    onViewport={changeViewport} onSelect={marker => {
+      if (!snapshot) return
+      const query = marker.clusterQuery ?? snapshot.query
+      scrollTop.current = 0; setSelected({ marker, query: { bounds: query.bounds, zoom: query.zoom } })
+    }} onCloseRecords={closeRecords}
     summary={<>{mapError ? <>{mapError} <button type="button" onClick={() => setRetry(n => n + 1)}>{tr('重试')}</button></>
-        : !snapshot && mapLoading ? tr('正在读取位置…') : sources.length === 0 ? tr('请选择位置来源') : markers.length === 0 ? tr('此范围暂无位置记录')
+        : mapLoading ? tr(snapshot ? '正在更新位置…' : '正在读取位置…') : sources.length === 0 ? tr('请选择位置来源') : markers.length === 0 ? tr('此范围暂无位置记录')
           : <>{tr('当前范围 {count} 个位置点', { count: String(markers.length) })}{snapshot?.data.truncated && ` · ${tr('请放大地图查看更多')}`}</>}</>}>
         <div className="arkme-location-record-list" ref={list} onScroll={event => { scrollTop.current = event.currentTarget.scrollTop; save() }}>
           {displayed.map(item => <button className="arkme-location-record" key={item.key} type="button" onClick={() => onOpenRecord(item.record)}>

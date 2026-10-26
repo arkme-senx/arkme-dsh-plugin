@@ -89,7 +89,7 @@ export const fileToolModules = [
   defineArkmeCoreToolModule({
     meta: { id: 'business.media.file-receive.v1', toolName: 'arkme_file_receive', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
     create: ports => defineTool({
-      name: 'arkme_file_receive', description: 'Receive an authorized original file into the account-local plugin cache, or inspect reception progress. original_ref must be returned by file search or conversation content, never a preview URL or guessed ID. Completion returns a local file reference, not a claim that a user-selected disk location was saved.',
+      name: 'arkme_file_receive', description: 'Receive an authorized original file into the account-local plugin cache, or inspect reception progress. original_ref must be returned by file search, conversation content, or the media.ref of current-version Team preflight, never a preview URL or guessed ID. Completion returns a local file reference, not a claim that a user-selected disk location was saved.',
       parameters: { original_ref: { type: 'string', required: true }, start: { type: 'boolean' } }, output: TEXT_OUTPUT,
       execute: async args => taggedJSON('Arkme 原文件接收', await ports.fileReceive(args.original_ref, args.start ?? false)),
     }),

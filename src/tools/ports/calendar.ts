@@ -10,6 +10,7 @@ export interface ArkmeCalendarToolPort {
   reconcileDayReview(input: unknown, signal?: AbortSignal): Promise<import('../../calendar-day-review.js').DayReviewState>
   resumeDayReview(input: unknown, signal?: AbortSignal): Promise<import('../../calendar-day-review.js').DayReviewState>
   dayReviewResult(input: unknown, signal?: AbortSignal): Promise<import('../../calendar-day-review.js').DayReviewResult>
+  dayReviewModels(input: unknown, signal?: AbortSignal): Promise<import('../../calendar-day-review.js').DayReviewModels>
   dayReviewPrompts(input: unknown, signal?: AbortSignal): Promise<import('../../calendar-day-review-prompts.js').ReviewPromptSupport>
   dayReviewEvidence(input: import('../../calendar-day-review.js').DayReviewEvidenceQuery, signal?: AbortSignal): Promise<import('../../calendar-day-review.js').DayReviewOriginalEvidence>
   calendarBuckets(options: {

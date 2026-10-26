@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
-import { IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearchOutlineMedium, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeForwardSearch } from '../src/client/ArkmeForwardSearch.js'
 
 let renderer: ReactTestRenderer | undefined
@@ -12,7 +12,7 @@ it('uses the native DSH input and icon without overriding their visual states', 
   const native = renderer!.root.findByType(Input)
   expect(native.props.className).toBe('arkme-forward-search')
   expect(native.props.style).toBeUndefined()
-  expect(renderer!.root.findAllByType(IconSearchOutline16)).toHaveLength(1)
+  expect(renderer!.root.findAllByType(IconSearchOutlineMedium)).toHaveLength(1)
   const input = renderer!.root.findByType('input')
   expect(input.props['aria-label']).toBe('搜索转发对象')
   expect(input.props.placeholder).toBe('搜索转发对象')
@@ -31,10 +31,13 @@ it('preserves controlled keyword changes and busy-state disabling', () => {
 })
 
 it('shares both forwarding surfaces, with theme-aware contrast and native borders/focus', () => {
-  for (const file of ['ArkmeSidebar', 'ArkmeMessageActions']) {
+  for (const file of ['ArkmeForwardTargetDialog', 'ArkmeMessageActions']) {
     const source = readFileSync(`src/client/${file}.tsx`, 'utf8')
     expect(source).toContain('<ArkmeForwardSearch')
     expect(source).not.toMatch(/<input[^>]*aria-label="搜索转发对象"/)
+  }
+  for (const file of ['ArkmeSidebar', 'TeamForwardDialog']) {
+    expect(readFileSync(`src/client/${file}.tsx`, 'utf8')).toContain('<ArkmeForwardTargetDialog')
   }
   const css = readFileSync('src/client/redesign/arkme-redesign.css', 'utf8')
   const declarations = css.match(/\.arkme-forward-search\s*\{([^}]+)\}/)![1]!

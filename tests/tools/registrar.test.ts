@@ -6,7 +6,7 @@ import type {
   ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment, StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
@@ -118,6 +118,39 @@ describe('registerArkmeTools', () => {
     await registration.dispose()
   })
 
+  it('discovers shared chats and requires human consent before publishing private history', async () => {
+    const ctx = await setup()
+    const externalChats = vi.fn(async () => ({items:[],hasMore:false}))
+    const registration = await mountArkmeTools(ctx, 'business', {...ports,externalChats} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{seq:0,type:'user/message',data:{content:[{type:'text',text:'共享这段私聊到团队'}],source:{kind:'user'}}}])
+    const agent = {id:SessionId('external-share'),session:{get events(){return events}}} as unknown as Agent
+    const signal = new AbortController().signal
+    const read = await ctx.tools.execute({callId:CallId('external-read'),name:'arkme_team_external_chats',arguments:{operation:'list',team_ref:'team-ref'},agent,signal})
+    expect(read.isError).toBe(false)
+    const base={name:'arkme_team_external_chat_share',arguments:{operation:'share',team_ref:'team-ref',source_ref:'source-ref'},agent,signal}
+    const prepared=await ctx.tools.execute({...base,callId:CallId('external-prepare')})
+    expect(JSON.stringify(prepared)).toContain('完整历史和后续消息')
+    expect(externalChats).toHaveBeenCalledTimes(1)
+    events.push({seq:1,type:'user/message',data:{content:[{type:'text',text:'确认共享'}],source:{kind:'user'}}})
+    const saved=await ctx.tools.execute({...base,callId:CallId('external-confirm')})
+    expect(saved.isError).toBe(false)
+    expect(externalChats).toHaveBeenLastCalledWith('share',expect.objectContaining({teamRef:'team-ref',sourceRef:'source-ref'}),expect.any(AbortSignal))
+    await registration.dispose()
+  })
+  it('preserves shared message direction through the registered read tool', async () => {
+    const ctx = await setup()
+    const externalChats = vi.fn(async () => ({items:[{itemUid:'opaque-message',senderName:'用户',senderSide:'sharer',isMe:false,textContent:'共享正文'}],hasMore:false,beforeSeq:1,mediaUrls:{}}))
+    const registration = await mountArkmeTools(ctx, 'business', {...ports,externalChats} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([])
+    const agent = {id:SessionId('external-direction'),session:{get events(){return events}}} as unknown as Agent
+    const signal = new AbortController().signal
+    try {
+      const result = await ctx.tools.execute({callId:CallId('external-page'),name:'arkme_team_external_chats',arguments:{operation:'page',share_ref:'opaque-share'},agent,signal})
+      expect(result.isError).toBe(false)
+      expect(JSON.stringify(result)).toContain('sharer')
+      expect(externalChats).toHaveBeenCalledWith('page',expect.objectContaining({shareRef:'opaque-share'}),expect.any(AbortSignal))
+    } finally {await registration.dispose()}
+  })
   it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
     const ctx = await setup()
     const reactions = vi.fn(async () => ({ revision: 0, items: [] }))
@@ -203,11 +236,19 @@ describe('registerArkmeTools', () => {
 
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
+      'arkme_realtime_dictation',
+      'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
-      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update',
+      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send',
+      'arkme_team_notification_conversations',
+      'arkme_team_notification_policy',
+      'arkme_team_notification_policy_set',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_device_lock_status',
+      'arkme_device_lock',
+      'arkme_device_unlock_request',
       'arkme_ai_points',
       'arkme_ai_points_consumption',
       'arkme_automatic_ai_settings', 'arkme_disable_automatic_ai',
@@ -220,7 +261,10 @@ describe('registerArkmeTools', () => {
       'arkme_team_join',
       'arkme_group_create',
       'arkme_group_rename',
+      'arkme_arko_lifecycle', 'arkme_arko_change_lifecycle',
+      'arkme_arko_models','arkme_arko_pending',
       'arkme_arko_profile',
+      'arkme_arko_history',
       'arkme_arko_session',
       'arkme_arko_ask',
       'arkme_arko_run_status',
@@ -255,6 +299,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
+      'arkme_relation_pages',
       'arkme_recording_strategies', 'arkme_recording_strategy_start',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
@@ -290,12 +335,15 @@ describe('registerArkmeTools', () => {
       'arkme_group_self_nickname_set',
       'arkme_common_groups',
       'arkme_source_read',
+      'arkme_analytics_read', 'arkme_conversation_words_generate',
       'arkme_copy_link_extend',
+      'arkme_articles_list',
       'arkme_source_members',
       'arkme_source_members_page',
       'arkme_source_members_presentation',
       'arkme_source_members_cached',
       'arkme_source_member_records',
+      'arkme_person_records',
       'arkme_message_read_statuses',
       'arkme_message_read_members',
       'arkme_conversation_mark_read',
@@ -311,6 +359,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_ai_polish_manage',
       'arkme_favorite_stickers_list',
       'arkme_reactions_read', 'arkme_reactions_write',
+      'arkme_message_marks_read', 'arkme_message_mark', 'arkme_message_quote_reply',
       'arkme_favorite_sticker_add',
       'arkme_favorite_sticker_send',
       'arkme_favorite_sticker_manage',

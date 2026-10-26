@@ -697,3 +697,71 @@ it('official hints refresh only the official owner and reconnect reconciles it e
     expect(invalidate).toHaveBeenCalledWith('test:42')
   } finally { await act(async () => renderer.unmount()) }
 })
+
+it('mark hints refresh only visible marks, preserving bodies, quote sources and directory', async () => {
+  const { subscribeMessageMarkInvalidations } = await import('../src/client/message-mark-invalidations.js')
+  const { subscribeMessageQuoteInvalidations } = await import('../src/client/message-quote-invalidations.js')
+  const marks = vi.fn(), quotes = vi.fn()
+  const stopMarks = subscribeMessageMarkInvalidations(marks)
+  const stopQuotes = subscribeMessageQuoteInvalidations(quotes)
+  let socket!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  class FakeWebSocket { onopen = null; onmessage = null; constructor() { socket = this }; close() {} }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  const read = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  const records = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
+  const timeline = vi.spyOn(arkmeChatTimelineDelta, 'invalidateWindows')
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    read.mockClear(); records.mockClear(); timeline.mockClear(); marks.mockClear(); quotes.mockClear()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'projection-invalidated', projection: 'message_annotations', revision: 1 }) } as MessageEvent<string>) })
+    expect(marks).toHaveBeenCalledExactlyOnceWith(false)
+    expect(quotes).not.toHaveBeenCalled()
+    expect(records).not.toHaveBeenCalled()
+    expect(timeline).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
+  } finally {
+    stopMarks(); stopQuotes()
+    if (renderer !== undefined) await act(async () => renderer.unmount())
+  }
+})
+
+it('retains Team notices across auth refresh and closes them only when the account retires', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  const close = vi.fn()
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal('window', Object.assign(new EventTarget(), { focus: vi.fn() }))
+  vi.stubGlobal('Notification', class { static permission = 'granted'; close = close })
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  const auth: ArkmeAuthSnapshot = { status: 'authenticated', userId: 42, environment: 'test' }
+  arkmeAuthStore.setAuth(auth)
+  function Harness({ revision, account = auth }: { revision: number; account?: ArkmeAuthSnapshot }) {
+    useArkmeRealtimeClientEvents(account, revision, false)
+    return null
+  }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness, { revision: 1 })) })
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'team-message-notification', revision: 1,
+      notification: { eventUid: 'team-event', sourceRef: 'team-ref', sourceKey: 'team-key', sourceKind: 'team_conversation',
+        title: '团队', body: '消息', eventAtMillis: Date.now(), expiresAtMillis: Date.now()+300000 } }) } as MessageEvent<string>) })
+    expect(close).not.toHaveBeenCalled()
+    await act(async () => { renderer.update(createElement(Harness, { revision: 2 })) })
+    expect(close).not.toHaveBeenCalled()
+    const next: ArkmeAuthSnapshot = { ...auth, userId: 43 }
+    arkmeAuthStore.setAuth(next)
+    await act(async () => { renderer.update(createElement(Harness, { revision: 3, account: next })) })
+    expect(close).toHaveBeenCalledOnce()
+  } finally {
+    await act(async () => renderer?.unmount())
+    arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
+  }
+})

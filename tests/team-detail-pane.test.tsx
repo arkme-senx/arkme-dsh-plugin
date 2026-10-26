@@ -36,6 +36,7 @@ function page(teamRef: string, name: string, overrides: Partial<TeamMembers> = {
       identityState: 'ready',
       role: 'owner',
       joinedAtMillis: 1,
+      codexSync: { state: 'enabled', hasConversations: true, canViewConversations: true },
     }],
     totalCount: 1,
     hasMore: false,
@@ -186,6 +187,14 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findByProps({ 'aria-label': '2 位成员' })).toBeDefined()
   })
 
+  it.each(['owner', 'admin', 'member'] as const)('offers the add-members picker only to managers: %s', async role => {
+    const teamPage = page(teamRefA, '团队 A')
+    teamPage.team.currentUserRole = role
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(renderer!.root.findAllByType('button').some(node => text(node) === '＋ 添加成员')).toBe(role !== 'member')
+  })
+
   it('does not offer the owner a leave action', async () => {
     const teamPage = page(teamRefA, '团队 A')
     teamPage.team.currentUserRole = 'owner'
@@ -273,6 +282,67 @@ describe('TeamDetailPane', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('team.resolve', expect.anything(), expect.any(AbortSignal))
   })
 
+  it('shows only explicitly available conversation entries and distinguishes missing from negative evidence', async () => {
+    const data = page(teamRefA, '团队 A')
+    const states: Array<TeamMembers['items'][number]['codexSync']> = [
+      undefined, { state: 'not_connected', hasConversations: false, canViewConversations: false },
+      { state: 'enabled', hasConversations: false, canViewConversations: true },
+      { state: 'paused', hasConversations: true, canViewConversations: true },
+      { state: 'enabled', hasConversations: true, canViewConversations: false },
+    ]
+    const { codexSync: _sync, ...member } = data.items[0]!
+    data.items = states.map((sync, index) => ({ ...member, key: `member-${index}`, displayName: `成员${index}`,
+      ...(sync ? { codexSync: sync } : {}),
+    }))
+    mocks.callArkme.mockResolvedValue(data)
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(text(renderer!.root)).toContain('同步状态暂不可用')
+    expect(text(renderer!.root)).toContain('未开通同步')
+    expect(text(renderer!.root)).toContain('已开通·暂无对话')
+    expect(text(renderer!.root)).toContain('已暂停同步')
+    expect(text(renderer!.root)).toContain('暂无对话查看权限')
+    expect(renderer!.root.findAllByProps({ className: 'arkme-team-member-conversations' }).map(b => b.props['aria-label']))
+      .toEqual(['查看 成员2 的 Codex 对话', '查看 成员3 的 Codex 对话'])
+    expect(mocks.callArkme).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a later member page in place without dropping previously loaded members', async () => {
+    const first = page(teamRefA, '团队 A', { hasMore: true, nextPageCursor: 'next', totalCount: 2 })
+    const second = page(teamRefA, '团队 A')
+    second.items[0] = { ...second.items[0]!, key: 'second', displayName: '第二位成员', codexSync: { state: 'unavailable', reason: 'failed' } }
+    const recovery = deferred<TeamMembers>()
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (_operation, params) => !params.pageCursor ? first : ++reads === 1 ? second : recovery.promise)
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { button(renderer!, '加载更多成员').props.onClick(); await tick() })
+    const list = renderer!.root.findByProps({ className: 'arkme-team-member-list' })
+    await act(async () => { button(renderer!, '重试').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('正在获取同步状态…')
+    expect(mocks.callArkme).toHaveBeenLastCalledWith('team.app.members', { teamRef: teamRefA, limit: 50, avatarMode: 'deferred', pageCursor: 'next' }, expect.any(AbortSignal))
+    await act(async () => {
+      recovery.resolve({ ...second, items: [{ ...second.items[0]!, codexSync: { state: 'enabled', hasConversations: false, canViewConversations: true } }] }); await tick()
+    })
+    expect(renderer!.root.findByProps({ className: 'arkme-team-member-list' })).toBe(list)
+    expect(renderer!.root.findAllByProps({ role: 'listitem' })).toHaveLength(2)
+    expect(text(renderer!.root)).toContain('已开通·暂无对话')
+    expect(text(renderer!.root)).not.toContain('状态获取失败')
+  })
+
+  it('does not apply an in-flight sync retry to a different account', async () => {
+    const data = page(teamRefA, '团队 A'), later = deferred<TeamMembers>()
+    data.items[0]!.codexSync = { state: 'unavailable', reason: 'failed' }
+    let reads = 0
+    mocks.callArkme.mockImplementation(async () => ++reads === 2 ? later.promise : data)
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    await act(async () => { button(renderer!, '重试').props.onClick(); await tick() })
+    const signal = mocks.callArkme.mock.calls[1]![2] as AbortSignal
+    await act(async () => { renderer!.update(<TeamDetailPane accountKey="account-b" teamRef={teamRefA} />); await tick() })
+    await act(async () => { later.resolve(page(teamRefA, '团队 A')); await tick() })
+    expect(signal.aborted).toBe(true)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '查看 团队 A成员 的 Codex 对话' })).toHaveLength(0)
+    expect(text(renderer!.root)).toContain('状态获取失败')
+  })
+
   it('opens the legacy management route as a dialog above the retained member list', async () => {
     mockCodex()
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} initialView="activity"/>);await tick()})
@@ -321,12 +391,28 @@ describe('TeamDetailPane', () => {
     expect(renderer!.root.findAllByProps({ role:'dialog' })).toHaveLength(0)
   })
 
+  it('opens internal group creation for this team only on demand', async () => {
+    const current = page(teamRefA, '团队 A')
+    current.team.currentUserRole = 'owner'
+    mocks.callArkme.mockImplementation(async operation => operation === 'team.app.members' ? current
+      : operation === 'team.app.teams' ? [current.team] : { state: 'backend_pending' })
+    await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'team.app.teams')).toBe(false)
+    await act(async () => { button(renderer!, '团队内部群›').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('创建团队内部群')
+    expect(renderer!.root.findByType('input').props.value).toBe('团队 A内部群')
+    await act(async () => { button(renderer!, '检查创建条件').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('尚未创建群聊')
+    expect(mocks.callArkme.mock.calls.find(([op]) => op === 'team.app.internal-group.prepare')?.[1])
+      .toMatchObject({ mode: 'create', teamRef: teamRefA, expectedAccountKey: 'account-a' })
+  })
+
   it('collects the channel actions under the feature to the right of Codex, loading only on demand', async () => {
     mockCodex()
     await act(async()=>{renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA}/>);await tick()})
     const members=renderer!.root.findByProps({className:'arkme-team-member-list'})
     const features=renderer!.root.findByProps({className:'arkme-team-feature-list'})
-    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›'])
+    expect(features.findAllByType('button').map(text)).toEqual(['Codex 同步›','团队消息通道›','团队内部群›','团队的世界›','对外私聊›'])
     expect(text(renderer!.root)).not.toContain('查看团队对话')
     expect(text(renderer!.root)).not.toContain('接收外部消息')
     expect(mocks.callArkme.mock.calls.map(call=>call[0])).toEqual(['team.app.members'])

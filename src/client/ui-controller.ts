@@ -1,4 +1,5 @@
 import type { TeamChannel, TeamConversation } from '../team-app-contract.js'
+import type { TeamWorldTarget } from '../team-world-contract.js'
 import type { ExploreModule } from '../explore-contract.js'
 import type { TeamMessageIntent } from './team-messaging-events.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingTarget } from '../types.js'
@@ -22,6 +23,8 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
     && left.isMuted === right.isMuted && left.isPinned === right.isPinned
     && left.chatPolicyUpdatedAtMillis === right.chatPolicyUpdatedAtMillis
     && left.chatNotificationPolicyUpdatedAtMillis === right.chatNotificationPolicyUpdatedAtMillis
+    && left.latestActivityAtMillis === right.latestActivityAtMillis && left.latestActivityKind === right.latestActivityKind
+    && left.latestPreviewUpdatedAtMillis === right.latestPreviewUpdatedAtMillis
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
@@ -43,6 +46,7 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
 }
 
 export interface ArkmeUiState {
+  composerFocusRevision?: number
   authRevision: number
   chatRevision: number
   recordRevision: number
@@ -61,7 +65,7 @@ export interface ArkmeUiState {
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
-  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; transientHighlight?: boolean; openDetail?: boolean }
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; systemRef?: string; transientHighlight?: boolean; openDetail?: boolean }
   recordingTarget?: ArkmeRecordingTarget
   recordingReturnDateStamp?: number
   searchTarget?: { revision: number; query: string }
@@ -69,8 +73,10 @@ export interface ArkmeUiState {
   extensionShareAction?: ArkmeExtensionShareAction
   extensionDetailId?: string
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
+  locationOpen?: boolean
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldViewTarget
+  worldTeamTarget?: TeamWorldTarget
   worldInteractionRef?: string
   worldInitialScope?: 'all' | 'mine'
   worldNavigationRevision?: number
@@ -156,13 +162,13 @@ export class ArkmeUiController {
     this.settingsOpener?.(section)
   }
 
-  focusSendToSelf(): void {
+  focusSendToSelf(focusComposer = false): void {
     this.leaveContacts()
     this.lastSelfSource = undefined
     this.lastConversationDestination = { kind: 'send_to_self' }
     const { selectedSource: _selectedSource, selectedBot: _selectedBot, conversationTarget: _conversationTarget,
       calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'source' })
+    this.publish({ ...rest, mode: 'source', ...(focusComposer ? { composerFocusRevision: (this.state.composerFocusRevision ?? 0) + 1 } : {}) })
   }
 
   resumeSendToSelf(): void {
@@ -180,6 +186,7 @@ export class ArkmeUiController {
 
   authChanged(authenticated = false, resetSelection = false): void {
     this.leaveContacts()
+    if (!authenticated || resetSelection) this.closeLocation()
     if (authenticated) {
       if (resetSelection) {
         this.lastConversationDestination = undefined
@@ -276,7 +283,7 @@ export class ArkmeUiController {
 
   showWorld(scope: 'all' | 'mine' = 'all'): void {
     this.leaveContacts()
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, worldTeamTarget: _team, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'world', worldInitialScope: scope, worldNavigationRevision: (this.state.worldNavigationRevision ?? 0) + 1 })
   }
 
@@ -290,7 +297,7 @@ export class ArkmeUiController {
     if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw new TypeError('世界用户 ID 必须是正整数')
     const displayName = target.displayName.replace(/\s+/g, ' ').trim()
     if (displayName === '') throw new TypeError('世界用户名不能为空')
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTeamTarget: _team, worldInteractionRef: _worldInteractionRef, productMode: _productMode, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'world',
@@ -303,7 +310,19 @@ export class ArkmeUiController {
     this.showUserWorld(target)
   }
 
+  showTeamWorld(target: TeamWorldTarget): void {
+    const jotmoId = target.jotmoId.trim(), name = target.name.trim()
+    if (!jotmoId || jotmoId.length > 128 || !name) throw new TypeError('团队世界身份无效')
+    this.showWorld()
+    this.publish({ ...this.state, worldTeamTarget: { ...target, jotmoId, name } })
+  }
+
   backFromWorld(): void {
+    if (this.state.mode === 'world' && this.state.worldTeamTarget?.returnTeamRef) {
+      arkmeContactsTab.select({ kind: 'team', teamRef: this.state.worldTeamTarget.returnTeamRef })
+      this.showContacts()
+      return
+    }
     const target = this.state.worldTarget
     if (this.state.mode === 'world' && target !== undefined && 'contactRef' in target) {
       arkmeContactsTab.select({ kind: 'contact', contactRef: target.contactRef })
@@ -323,6 +342,13 @@ export class ArkmeUiController {
     this.leaveContacts()
     const { productMode: _product, ...rest } = this.state
     this.publish({ ...rest, calendarOpen: true, calendarInitialDate: date })
+  }
+
+  openLocation(): void { this.publish({ ...this.state, locationOpen: true }) }
+
+  closeLocation(): void {
+    const { locationOpen: _locationOpen, ...rest } = this.state
+    this.publish(rest)
   }
 
   showExplore(module: ExploreModule): void {
@@ -587,7 +613,7 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
-  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false, contextRef?: string): void {
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false, contextRef?: string, systemRef?: string): void {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
@@ -605,6 +631,7 @@ export class ArkmeUiController {
         itemUid: normalizedItemUid,
         ...(momentId ? { momentId } : {}),
         ...(contextRef ? { contextRef } : {}),
+        ...(systemRef ? { systemRef } : {}),
         sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
         ...(recordOwnerId(recordOwnerUserId) !== 0
           ? { recordOwnerUserId: recordOwnerId(recordOwnerUserId) }
@@ -622,7 +649,7 @@ export class ArkmeUiController {
   private publish(next: ArkmeUiState): void {
     if (next.mode !== 'team') { const { teamIntent: _intent, teamDirectory: _directory, ...rest } = next; next = rest }
     if (next.mode !== 'world') {
-      const { worldInitialScope: _scope, worldNavigationRevision: _revision, ...rest } = next
+      const { worldInitialScope: _scope, worldNavigationRevision: _revision, worldTeamTarget: _team, ...rest } = next
       next = rest
     }
     const sameView = next.authRevision === this.state.authRevision
@@ -634,6 +661,7 @@ export class ArkmeUiController {
       && next.teamIntent === this.state.teamIntent
       && next.teamDirectory === this.state.teamDirectory
       && next.productMode === this.state.productMode
+      && next.locationOpen === this.state.locationOpen
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
       && next.conversationUnreadJumpRevision === this.state.conversationUnreadJumpRevision
@@ -655,6 +683,7 @@ export class ArkmeUiController {
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && next.webLoginDialogOpen === this.state.webLoginDialogOpen
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
+      && JSON.stringify(next.worldTeamTarget) === JSON.stringify(this.state.worldTeamTarget)
       && next.worldInteractionRef === this.state.worldInteractionRef
       && next.worldInitialScope === this.state.worldInitialScope
       && next.worldNavigationRevision === this.state.worldNavigationRevision

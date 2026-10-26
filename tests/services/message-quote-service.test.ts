@@ -46,7 +46,7 @@ describe('quote reply owner contract', () => {
   it('projects inaccessible and malformed snapshots without exposing the quoted text', () => {
     const { service } = fixture()
     const project = (service as unknown as { timelineExtensionProjection(v: unknown, userId: number, profiles: Map<string, unknown>): unknown }).timelineExtensionProjection.bind(service)
-    const base = { extension_edge: { parent_record_uid: 'parent', parent_record_owner_user_id: 11, quote_reply: quote, quote_reply_state: 'unavailable' } }
+    const base = { extension_edge: { parent_record_uid: 'parent', parent_record_owner_user_id: 11, accepted: true, quote_reply: quote, quote_reply_state: 'unavailable' } }
     expect(project(base, 42, new Map())).toMatchObject({ extensionParent: { quoteState: 'unavailable', textContent: '' } })
     expect(JSON.stringify(project(base, 42, new Map()))).not.toContain('检查通知')
   })
@@ -62,14 +62,14 @@ describe('quote reply owner contract', () => {
     })
     post.mockImplementation(async (...args: unknown[]) => args[0] === '/api/v1/chats/extensions/capabilities'
       ? { quote_reply: { protocol_version: 1, enabled: true, projection: 'arkme-text-v1', max_quote_length: 2000 } }
-      : { child_record_uid: recordUid, seq: 8, ...(echo ? { quote_reply: quote } : {}) })
+      : { child_record_uid: recordUid, seq: 8, ...(echo ? { accepted: true, quote_reply: quote } : {}) })
     const send = service.extendSourceMessage('source', 'action', '回复正文', recordUid, [], { quote, relationUid })
     if (echo) await expect(send).resolves.toMatchObject({ recordUid, localState: 'synced' })
     else await expect(send).rejects.toMatchObject({ code: 'message-quote-receipt-missing', retryable: true })
     expect(post).toHaveBeenCalledWith('/api/v1/chats/extensions/children/create', expect.objectContaining({
       child_record_uid: recordUid, child_rel_uid: relationUid, quote_reply: quote,
       quote_reply_source: { relation_uid: 'original-relation', sequence: 7 },
-    }), { userId: 42 }, undefined)
+    }), { userId: 42 }, undefined, { trackWriteOutcome: true })
   })
 })
 it.each(['send_to_self','default_category','topic'])('checks personal capabilities for %s rather than chat capabilities', async kind => {
@@ -89,19 +89,19 @@ it.each([true,false])('requires a personal record create quote receipt (echo=%s)
   const {RecordService}=await import('../../src/services/record-service.js')
   const service=Object.create(RecordService.prototype) as InstanceType<typeof RecordService>
   const recordUid='11111111-1111-4111-8111-111111111111'
-  const create=vi.fn(async()=>({record_uid:recordUid,parent_record_uid:'parent',edge_uid:'edge',status:1,...(echo?{quote_reply:quote}:{})}))
+  const create=vi.fn(async()=>({record_uid:recordUid,parent_record_uid:'parent',edge_uid:'edge',status:1,...(echo?{accepted:true,quote_reply:quote}:{})}))
   Object.assign(service,{runtime:{config:{maxTextLength:10000},requireSession:async()=>({userId:42})},createPersonalRecord:create,syncCreatedRecordTags:vi.fn()})
   const writing=service.createExtensionForConversation('parent',recordUid,'正文',[],undefined,quote)
   if(echo)await expect(writing).resolves.toMatchObject({recordUid,localState:'synced'})
   else await expect(writing).rejects.toMatchObject({code:'message-quote-receipt-missing'})
-  expect(create).toHaveBeenCalledWith('/api/v1/records/extensions/create',expect.objectContaining({quote_reply:quote,parent_record_uid:'parent'}),{userId:42})
+  expect(create).toHaveBeenCalledWith('/api/v1/records/extensions/create',expect.objectContaining({quote_reply:quote,parent_record_uid:'parent'}),{userId:42},undefined,{trackWriteOutcome:true})
 })
 it('hides inaccessible personal quote snapshots even when an old parent preview is present',async()=>{
   const {RecordService}=await import('../../src/services/record-service.js')
   const service=Object.create(RecordService.prototype) as InstanceType<typeof RecordService>
   const project=(service as unknown as {recordExtensionProjection(v:unknown,userId:number):unknown}).recordExtensionProjection.bind(service)
   Object.assign(service,{media:{richContentBlocks:vi.fn(()=>[{secret:true}])}})
-  const value=project({parent_record_uid:'parent',extension_edge:{quote_reply:quote,quote_reply_state:'unavailable'},extension_parent_preview:{record:{record_uid:'parent',text_content:'不应显示的旧内容'}}},42)
+  const value=project({parent_record_uid:'parent',extension_edge:{accepted:true,quote_reply:quote,quote_reply_state:'unavailable'},extension_parent_preview:{record:{record_uid:'parent',text_content:'不应显示的旧内容'}}},42)
   expect(value).toMatchObject({extensionParent:{quoteState:'unavailable',textContent:'',contentBlocks:[]}})
   expect(JSON.stringify(value)).not.toContain('检查通知');expect(JSON.stringify(value)).not.toContain('旧内容')
 })

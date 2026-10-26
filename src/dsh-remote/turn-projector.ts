@@ -259,6 +259,7 @@ export function projectDshHistoryNodes(entries: DshRemoteHistoryEntry[]): DshRem
           data: {
             status: data.error === null || data.error === undefined ? 'completed' : 'failed',
             ...(previous?.data.call !== undefined ? { call: previous.data.call } : {}),
+            ...(previous?.data.dispatches !== undefined ? { dispatches: previous.data.dispatches } : {}),
             result: data,
             ...(previous?.data.callView !== undefined ? { callView: previous.data.callView } : {}),
             ...(entry.view?.for === 'result' ? { resultView: entry.view.view } : {}),
@@ -267,6 +268,8 @@ export function projectDshHistoryNodes(entries: DshRemoteHistoryEntry[]): DshRem
         })
         break
       }
+      case 'tool/ptc-dispatch-start':
+      case 'tool/ptc-dispatch':
       case 'tool/code-dispatch-start':
       case 'tool/code-dispatch': {
         const root = String(data.rootCallId ?? '')

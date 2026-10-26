@@ -1,3 +1,6 @@
+import { openLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
+import { selectedTextForwardContent } from '../src/client/selected-text-forward.js'
+import { followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
 import { mentionBotCache } from '../src/client/mention-bot-cache.js'
 vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/recordings/recording-import-journal.js')>(),
@@ -28,6 +31,11 @@ import type {
   ArkmeSourceSendResult,
   ArkmeTimelineItem,
 } from '../src/types.js'
+
+// Shared shells expose consumer props and the computed host style separately.
+function renderedComposerStyle(node: import('react-test-renderer').ReactTestInstance) {
+  return node.findAll(child => child.type === 'div' && child.props['data-arkme-primary-composer'] === 'true')[0]!.props.style
+}
 
 function unifiedFixture(source: ArkmeSourceItem, items: ArkmeTimelineItem[], moments: import('../src/types.js').ArkmeInterwovenMention[] = [], hasMore = false, cursor?: { beforeSequence: number }) {
   const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: [
@@ -939,7 +947,7 @@ describe('conversation send directory projection', () => {
     const body = await mountBottomControl()
     const readCount = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
     const button = renderer!.root.findByProps({ 'aria-label': '回到底部' })
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(body.scrollTop).toBe(900)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readCount)
     expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
@@ -1121,6 +1129,36 @@ describe('conversation send directory projection', () => {
     expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
     expect(body.scrollTop).toBe(2800)
     expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
+  })
+
+  it.each(['cached', 'around'] as const)('positions a %s system event before releasing its virtual anchor', async mode => {
+    const page = unifiedFixture(target, [])
+    page.unified.events.push({ kind: 'notice', eventId: 'system-event', source: 'group_metadata',
+      occurredAtMillis: 50, orderTie: 'system', contentStatus: 'available', text: '群聊已创建' })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline'
+      ? Promise.resolve(mode === 'cached' || args[0]?.cursor?.unified?.mode === 'around' ? page : unifiedFixture(target, [])) : baseCall(operation, ...args))
+    const body = { scrollTop: 0, scrollHeight: 5000, clientHeight: 600,
+      ownerDocument: { defaultView: { requestAnimationFrame: () => 1, cancelAnimationFrame: () => {}, performance: { now: () => 0 } } },
+      style: { getPropertyValue: () => '', getPropertyPriority: () => '', setProperty: () => {}, removeProperty: () => {} },
+      addEventListener: () => {}, removeEventListener: () => {},
+      scrollTo: vi.fn(({ top, behavior }: { top: number; behavior: string }) => { if (behavior === 'auto') body.scrollTop = top }),
+      getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
+      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'system-event' },
+        getBoundingClientRect: () => ({ top: 3000 - body.scrollTop, bottom: 3200 - body.scrollTop, height: 200 }) }],
+    }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
+    body.scrollTop = 0
+    followConversationBottom(body as unknown as HTMLElement)
+    expect(isConversationFollowing(body as unknown as HTMLElement)).toBe(true)
+    await act(async () => { arkmeUi.showConversationTarget(target, 'system-event', 50, undefined, undefined, false, false, undefined, 'opaque-system') })
+    expect(body.scrollTo).toHaveBeenCalledWith({ top: 2800, behavior: 'auto' })
+    expect(body.scrollTop).toBe(2800)
+    expect(isConversationFollowing(body as unknown as HTMLElement)).toBe(false)
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
+    if (mode === 'around') expect(mocks.callArkme.mock.calls.some(([op, params]) => op === 'source.timeline' && params.cursor?.unified?.systemRef === 'opaque-system')).toBe(true)
   })
 
   it('lets a newer locate of an already loaded message supersede a pending return', async () => {
@@ -1312,7 +1350,7 @@ describe('conversation send directory projection', () => {
     expect(targetPreview.findAllByProps({ 'data-arkme-rich-emoji': 'angry_face' })).toHaveLength(1)
     expect(targetPreview.findAllByType('a')).toHaveLength(0)
     const composerSurface = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
-    expect(composerSurface.props.style).toMatchObject({ borderRadius: '0 0 15px 15px' })
+    expect(renderedComposerStyle(composerSurface)).toMatchObject({ borderRadius: '0 0 15px 15px' })
     expect(composerSurface.findByType(ArkmeRichComposerInput).props.value).toBe('本机重新编辑草稿')
     expect(composerSurface.findByProps({ 'aria-label': '保存重新编辑' })).toBeDefined()
     expect(arkmeComposerDraftStore.get(normalDraftKey).text).toBe('未发送的普通消息')
@@ -1940,6 +1978,7 @@ describe('conversation send directory projection', () => {
       cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
       if (operation === 'sources.self-target') return sendToSelf
+      if (operation === 'team.app.group.context') return { state: 'backend_pending', membershipPolicy: 'unknown', teams: [] }
       if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
       if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
@@ -3248,6 +3287,30 @@ describe('conversation send directory projection', () => {
     }
   })
 
+  it('opens selected text with no selected recipients and keeps preview/comment while choosing destinations', async () => {
+    const doc = { body: {}, querySelectorAll: () => [], addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('document', doc); Object.assign(window, { document: doc })
+    await act(async () => { renderer = create(<ArkmeSurface active={false} productChrome={false} productNavigation={false} />) })
+    const content = selectedTextForwardContent('prod:42', { version: 1, sourceLabel: '群聊 · 产品', senderName: '同事', sourceAtMillis: 1000, text: '只转发这一段' })
+    let result!: Promise<NativeForwardResult>
+    const controller = new AbortController()
+    await act(async () => { result = openLocalSnapshotForward(content, controller.signal) })
+    const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+    expect(dialog.findAll(node => node.type === 'button' && node.props['aria-pressed'] === true)).toHaveLength(0)
+    expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(true)
+    expect(dialog.findByType('blockquote').children).toEqual(['只转发这一段'])
+    const targets = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')
+    expect(renderedText(targets[0]!)).toContain('发给自己')
+    act(() => dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '自己的想法' } }))
+    await act(async () => { targets[0]!.props.onClick(); targets[1]!.props.onClick() })
+    expect(dialog.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('自己的想法')
+    expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(false)
+    expect(dialog.findByType('blockquote').children).toEqual(['只转发这一段'])
+    await act(async () => controller.abort())
+    await expect(result).resolves.toEqual({ completed: false })
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'selected-text.forward')).toBe(false)
+  })
+
   it('opens DSH content in the original Arkme picker while its conversation surface is inactive', async () => {
     const caller = {} as Window
     const doc = { body: {}, querySelectorAll: () => [{ contentWindow: caller }], addEventListener: vi.fn(), removeEventListener: vi.fn() }
@@ -3696,7 +3759,7 @@ describe('conversation send directory projection', () => {
     const button = menu.findByProps({ 'aria-label': '指定主题' })
     expect(button.props.disabled).toBe(true)
     // Also guard the handler, so stale/synthetic invocations cannot bypass the capability.
-    await act(async () => { button.props.onClick() })
+    await act(async () => { button.props.onClick({ currentTarget: {} }) })
     expect(renderer!.root.findAllByType(ArkmeRecordTopicAssignmentDialog)).toHaveLength(0)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.record-topic.assign')).toHaveLength(0)
   })
@@ -7073,7 +7136,7 @@ describe('conversation send directory projection', () => {
     expect(composerSurface.parent).toBe(previewComponent.parent)
     expect(previewComponent.parent!.children.indexOf(composerSurface))
       .toBe(previewComponent.parent!.children.indexOf(previewComponent) + 1)
-    expect(composerSurface.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerSurface)).toMatchObject({
       borderRadius: '0 0 15px 15px',
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',
     })
@@ -9262,7 +9325,9 @@ describe('conversation send directory projection', () => {
     const sendArea = send.parent!
     expect(tools.findAllByProps({ 'data-arkme-composer-footer': 'hint' })).toHaveLength(0)
     expect(sendArea.children.at(-1)).toBe(send)
-    expect(sendArea.children).toHaveLength(selected.kind === 'private_chat' || selected.kind === 'group_chat' ? 1 : 2)
+    // A team identity provider may mount but render nothing for a user without a team.
+    // Count visible controls rather than composite React instances that occupy no space.
+    expect(sendArea.findAll(node => node.type === 'button')).toHaveLength(selected.kind === 'private_chat' || selected.kind === 'group_chat' ? 1 : 2)
     expect(sendArea.findByProps({ role: 'tooltip' }).children.join('')).toBe('Enter发送 / Shift+Enter换行')
     expect(sendArea.findAllByProps({ 'aria-label': '发送消息' }).length).toBeGreaterThan(0)
 
@@ -9325,7 +9390,7 @@ describe('conversation send directory projection', () => {
     let composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
     let sendButton = renderer!.root.findByProps({ 'aria-label': '发送消息' })
 
-    expect(composerShell.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerShell)).toMatchObject({
       background: 'var(--arkme-primary-composer-idle, #f6f6f6)',
       boxShadow: 'none',
     })
@@ -9339,7 +9404,7 @@ describe('conversation send directory projection', () => {
     expect(destinationHint().props['aria-hidden']).toBe(true)
     expect(composerShell.findAllByProps({ 'data-arkme-composer-destination-hint': 'true' })).toHaveLength(0)
     expect(destinationHint().parent!.parent!.parent).toBe(composerShell.parent)
-    expect(composerShell.props.style.borderColor).toBe('transparent')
+    expect(renderedComposerStyle(composerShell).borderColor).toBe('transparent')
     expect(sendButton.props.disabled).toBe(true)
     expect(sendButton.props.style).toMatchObject({
       width: 36,
@@ -9351,20 +9416,20 @@ describe('conversation send directory projection', () => {
 
     act(() => { composer.props.onFocus() })
     composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
-    expect(composerShell.props.style).toMatchObject({
+    expect(renderedComposerStyle(composerShell)).toMatchObject({
       background: 'var(--arkme-primary-composer-focused, #ffffff)',
       boxShadow: 'none',
     })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('true')
     expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 1 })
     expect(destinationHint().props['aria-hidden']).toBe(false)
-    expect(composerShell.props.style.borderColor).not.toBe('transparent')
+    expect(renderedComposerStyle(composerShell).borderColor).not.toBe('transparent')
 
     act(() => { composer.props.onBlur() })
     composerShell = renderer!.root.findByProps({ className: 'arkme-conversation-composer-inner' })
     expect(composerShell.props['data-arkme-composer-focused']).toBe('false')
     expect(destinationHint().props.style).toMatchObject({ height: 30, opacity: 0 })
-    expect(composerShell.props.style.background).toBe('var(--arkme-primary-composer-idle, #f6f6f6)')
+    expect(renderedComposerStyle(composerShell).background).toBe('var(--arkme-primary-composer-idle, #f6f6f6)')
 
     await act(async () => {
       composer.props.onTextChange('继续输入')

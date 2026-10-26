@@ -50,9 +50,10 @@ function fixture() {
       ...(offset + page.length < selected.length ? { next_page_cursor: String(offset + page.length) } : {}),
     }
   })
-  const runtime = { subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
+  const chatPost = vi.fn(async () => ({ sid: 'abcdefghijklmnop', url: 'https://jotmo.com/s/abcdefghijklmnop' }))
+  const runtime = { authenticatedChatPost: chatPost, subscribeAccountScope: () => () => {}, config: { maxTextLength: 20000 }, requireSession, authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
   const service = new RecordingService(runtime, { media, forwardGateway: { forward, supportsRecordTargets: async () => true } } as unknown as RecordingServiceDependencies)
-  return { data, forward, service, requireSession, post, media }
+  return { data, forward, service, requireSession, post, chatPost, media }
 
 }
 
@@ -224,5 +225,72 @@ describe('recording destination owner contracts', () => {
     const { result, record } = gateway('topic')
     record.mockResolvedValueOnce({ supported: true, protocol_version: 1, max_segments: 150 }).mockResolvedValueOnce({ record: { uid: command.recordUid } } as never)
     await expect(result.forward(selection, command, session)).rejects.toMatchObject({ code: 'recording-forward-unconfirmed' })
+  })
+})
+
+
+describe('recording copy-link common pipeline', () => {
+  it('creates only selected chronological system/doubao selectors, never local text', async () => {
+    const { service, chatPost } = fixture()
+    const view = await service.recordingComparison(date)
+    const signal = new AbortController().signal
+    await service.copyRecordingLink(view.system.items.map(item => item.itemRef).reverse(), signal)
+    expect(chatPost).toHaveBeenCalledWith('/api/v1/chats/messages/copy-link/get-or-create', { sources: [{
+      kind: 'audio_session', session_id: '100000000000000000000001', selection: { kind: 'long_recording_segments', segments: [
+        { child_id: '200000000000000000000001', asr_item_index: 0, transcript_source: 'system' },
+        { child_id: '200000000000000000000001', asr_item_index: 1, transcript_source: 'system' },
+      ] },
+    }] }, session, signal)
+    expect(JSON.stringify(chatPost.mock.calls)).not.toContain('系统第一段')
+    await service.copyRecordingLink([view.doubao.items[0]!.itemRef])
+    expect(chatPost.mock.calls.at(-1)?.[1]).toMatchObject({ sources: [{ selection: { segments: [{ transcript_source: 'doubao' }] } }] })
+  })
+
+  it.each(['empty', 'duplicate', 'mixed-source', 'mixed-session', 'account', 'tampered', 'limit'] as const)('does not create shares for %s', async kind => {
+    const { service, data, chatPost, requireSession } = fixture()
+    data.session_ls.push({ ...data.session_ls[0]!, id: '100000000000000000000002', start_at: date + 30_000, end_at: date + 50_000 })
+    data.child_ls.push({ ...data.child_ls[0]!, id: '200000000000000000000002', session_id: '100000000000000000000002' })
+    const view = await service.recordingComparison(date)
+    let refs = [view.system.items[0]!.itemRef]
+    if (kind === 'empty') refs = []
+    if (kind === 'duplicate') refs.push(refs[0]!)
+    if (kind === 'mixed-source') refs.push(view.doubao.items[0]!.itemRef)
+    if (kind === 'mixed-session') refs.push(view.system.items.at(-1)!.itemRef)
+    if (kind === 'account') requireSession.mockResolvedValue({ ...session, userId: 43 })
+    if (kind === 'tampered') refs[0] += 'broken'
+    if (kind === 'limit') refs = Array(151).fill(refs[0])
+    await expect(service.copyRecordingLink(refs)).rejects.toThrow()
+    expect(chatPost).not.toHaveBeenCalled()
+  })
+
+  it('preserves owner audit and permission failures without falling back to a raw audio URL', async () => {
+    const { service, chatPost } = fixture()
+    const view = await service.recordingComparison(date)
+    chatPost.mockRejectedValue(new Error('内容审核未通过'))
+    await expect(service.copyRecordingLink([view.system.items[0]!.itemRef])).rejects.toThrow('内容审核未通过')
+    expect(chatPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts 150 sealed selectors over HTTP and requires a trusted Origin', async () => {
+    const { service, data, chatPost } = fixture()
+    data.child_ls[0]!.asr = Array.from({ length: 150 }, (_, n) => ({ s: n * 100, e: n * 100 + 100, n: 1, t: String(n) }))
+    const view = await service.recordingComparison(date)
+    view.system = await readCompleteRecordingTranscript(view.system, cursor => service.recordingTranscriptPage(date, { cursor }))
+    expect(view.system.items).toHaveLength(150)
+    const body = JSON.stringify({ operation: 'recordings.copy-link', params: { itemRefs: view.system.items.map(item => item.itemRef) } })
+    const server = createServer(createArkmeHostApi({ copyRecordingLink: service.copyRecordingLink.bind(service) } as unknown as ArkmeService, { expectedPort: 3080, allowNonLoopback: false }))
+    server.listen(0, '127.0.0.1'); await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('missing address')
+    try {
+      const url = `http://127.0.0.1:${address.port}/arkme-self/api`
+      const denied = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      expect(denied.status).toBe(403); expect(chatPost).not.toHaveBeenCalled()
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:3080' }, body })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ ok: true, value: { sid: 'abcdefghijklmnop' } })
+      expect(chatPost.mock.calls[0]?.[1]).toMatchObject({ sources: [{ selection: { segments: expect.any(Array) } }] })
+      expect((chatPost.mock.calls[0]?.[1] as any).sources[0].selection.segments).toHaveLength(150)
+    } finally { server.close(); await once(server, 'close') }
   })
 })

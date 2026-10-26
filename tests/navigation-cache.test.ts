@@ -17,6 +17,15 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme navigation cache', () => {
+  it('restores activity freshness together with the preview without account crossover', () => {
+    const storage = new MemoryStorage()
+    writeNavigationCache({ version: 1, userId: 42, directory: 'root', updatedAtMillis: 1,
+      sources: { root: [{ sourceRef: 'group', kind: 'group_chat', displayName: '群', activeAtMillis: 200, unreadCount: 0,
+        latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' }] } }, storage)
+    expect(readNavigationCache(42, storage)?.sources.root?.[0]).toMatchObject({ latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' })
+    expect(readNavigationCache(43, storage)).toBeUndefined()
+  })
+
   it('restores persisted custom topic ranks and rejects malformed ranks', () => {
     const storage = new MemoryStorage()
     writeNavigationCache({

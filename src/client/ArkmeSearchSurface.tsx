@@ -1,5 +1,3 @@
-import { ArkmeLocationQuickView } from './ArkmeLocationQuickView.js'
-import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -101,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 import { ArkmeFileQuickView } from './ArkmeFileQuickView.js'
-import { ArkmeLongArticleQuickView } from './ArkmeLongArticleQuickView.js'
+import { ArkmeLongArticleLibraryDialog } from './ArkmeLongArticleLibraryDialog.js'
 import { ArkmeLinkQuickView } from './ArkmeLinkQuickView.js'
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
@@ -113,9 +111,8 @@ const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = 
   { key: 'link', get label() { return tr("外部链接") }, get tabLabel() { return tr("外部链接") } },
   { key: 'file', get label() { return tr("文件") }, get tabLabel() { return tr("文件") } },
   { key: 'long_article', get label() { return tr("长文") }, get tabLabel() { return tr("长文") } },
-  { key: 'location', get label() { return tr('位置') }, get tabLabel() { return tr('位置') } },
 ]
-type QuickKey = 'location' | 'image' | 'ai_video' | 'audio' | 'link' | 'file' | 'long_article'
+type QuickKey = 'image' | 'ai_video' | 'audio' | 'link' | 'file' | 'long_article'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
 type SearchResultTab = 'records' | 'topics' | 'recordings'
 
@@ -276,6 +273,8 @@ function ArkmeSearchSurfaceBody({
   const [selectedDshSessionId, setSelectedDshSessionId] = useState('')
   const [sourceRecords, setSourceRecords] = useState<ArkmeSearchRecordItem[]>([])
   const [quick, setQuick] = useState<QuickKey>()
+  const [longArticlesOpen, setLongArticlesOpen] = useState(false)
+  const articleOpener = useRef<HTMLElement | null>(null)
   const [images, setImages] = useState<ArkmeImageSearchItem[]>()
   const [imageCursor, setImageCursor] = useState('')
   const [imageHasMore, setImageHasMore] = useState(false)
@@ -501,7 +500,7 @@ function ArkmeSearchSurfaceBody({
   }
 
   useEffect(() => {
-    if (quickRef.current === 'location' || quickRef.current === 'file' || quickRef.current === 'long_article' || quickRef.current === 'link') return
+    if (quickRef.current === 'file' || quickRef.current === 'long_article' || quickRef.current === 'link') return
     if (query.trim() === '') { resetResults(); return }
     if (arkmeHashTagSearchKey(query) !== undefined) { void runSearch(query); return }
     const timer = window.setTimeout(() => { void runSearch(query) }, 300)
@@ -509,6 +508,10 @@ function ArkmeSearchSurfaceBody({
   }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    if (value === 'long_article') {
+      if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) articleOpener.current = document.activeElement
+      setLongArticlesOpen(true); return
+    }
     searchAbort.current?.abort()
     searchAbort.current = undefined
     quickRequestAbort.current?.abort()
@@ -517,7 +520,7 @@ function ArkmeSearchSurfaceBody({
     const id = ++requestId.current
     quickRef.current = value
     setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
-    if (value === 'location' || value === 'file' || value === 'long_article' || value === 'link' || hasCachedPage) { setLoading(false); return }
+    if (value === 'file' || value === 'link' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20_000)
@@ -750,7 +753,7 @@ function ArkmeSearchSurfaceBody({
     </div>
   </>
 
-  return <div style={{ ...(variant === 'dialog' ? styles.dialogShell : styles.shell), position: 'relative' }}>
+  return <div style={{ ...(variant === 'dialog' ? styles.dialogShell : styles.shell), position: 'relative' }} {...(longArticlesOpen ? { inert: '', 'aria-hidden': true } : {})}>
     {variant === 'page' && <header style={styles.hero}>
       <h1 style={styles.heroTitle}>{tr("一句话，找到所有内容")}</h1>
     </header>}
@@ -770,14 +773,14 @@ function ArkmeSearchSurfaceBody({
         </section>}
         <section style={styles.section} aria-label={tr("快速查找")}>
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>{tr("快速查找")}</h3><span style={styles.quickHint}>{tr("按内容类型浏览")}</span></div>
-          <div style={styles.quickChips}>{quickEntries.map(entry => <button data-arkme-feedback="neutral" key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'location' ? <MapPin size={18} aria-hidden /> : entry.key === 'link' ? <LinkIcon size={18} aria-hidden /> : entry.key === 'long_article' ? <Article size={18} aria-hidden /> : entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
+          <div style={styles.quickChips}>{quickEntries.map(entry => <button data-arkme-feedback="neutral" key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'link' ? <LinkIcon size={18} aria-hidden /> : entry.key === 'long_article' ? <Article size={18} aria-hidden /> : entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
         </section>
       </div> : searchResults}
     </div> : <div style={{ ...styles.quickShell, ...(variant === 'dialog' ? styles.column : {}) }}>
       <header style={styles.quickHeader}>
         <div style={styles.quickTopRow}>
           <button data-arkme-feedback="neutral" type="button" aria-label={tr("返回搜索")} title={tr("返回搜索")} style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button>
-          {quick === 'location' || quick === 'long_article' || quick === 'link' ? <h2 style={{ ...styles.sectionTitle, flex: 1 }}>{quick === 'location' ? tr('位置') : quick === 'link' ? tr("外部链接") : tr("长文")}</h2> : <div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder={tr("搜索快记")} aria-label={tr("搜索快记")} onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label={tr("清空搜索")} style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>}
+          {quick === 'long_article' || quick === 'link' ? <h2 style={{ ...styles.sectionTitle, flex: 1 }}>{quick === 'link' ? tr("外部链接") : tr("长文")}</h2> : <div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder={tr("搜索快记")} aria-label={tr("搜索快记")} onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label={tr("清空搜索")} style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>}
           {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭全局搜索")} style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
         </div>
         <div style={styles.tabs}>{hasQuery
@@ -788,8 +791,9 @@ function ArkmeSearchSurfaceBody({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}), ...(quick === 'location' ? { paddingBottom: 0, minHeight: 0, flex: 1, overflow: 'hidden' } : {}) }}>{quick === 'location' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLocationQuickView onOpenRecord={item => { void openRecord(item) }} /></> : quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'long_article' ? <ArkmeLongArticleQuickView {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
     </div>}
+    {longArticlesOpen && <ArkmeLongArticleLibraryDialog returnFocusRef={articleOpener} onClose={() => setLongArticlesOpen(false)} />}
     {personalDetail !== undefined && (personalDetail.value !== undefined
       ? <ArkmeTimelineDetailDrawer item={personalDetail.value} canExtend={false}
         sourceBadge={personalDetail.source.sourceKind === 4
@@ -809,7 +813,7 @@ export function ArkmeGlobalSearchDialog({
 }: Required<Pick<ArkmeSearchSurfaceProps, 'onClose'>> & Omit<ArkmeSearchSurfaceProps, 'variant' | 'onClose'>) {
   useArkmeLocale()
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && document.querySelector('[data-arkme-note-detail]') === null) onClose() }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && document.querySelector('[data-arkme-note-detail],[data-arkme-long-article-library]') === null) onClose() }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [onClose])

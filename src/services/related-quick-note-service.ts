@@ -336,6 +336,7 @@ export class RelatedQuickNoteService {
       ...(mediaUnavailable ? { mediaUnavailable: true } : {}),
       isMe: reference.recordOwnerUserId === session.userId,
     })
+    if (detail.forwardRecords !== undefined) await this.record.hydrateForwardAvatars(raw, session.userId, detail)
     if (detail.itemUid !== reference.recordUid) {
       throw new ArkmePluginError(
         'related-quick-note-detail-contract-invalid',

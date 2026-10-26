@@ -1,3 +1,5 @@
+import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './message-marks-quotes.js'
+import { nativeAnnotationTools } from './native-annotations.js'
 import { messageSyncToolModules } from './message-sync.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
 import { archiveToolModules } from './archive.js'
@@ -5,7 +7,7 @@ import { memberPageToolModules } from './member-pages.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
 import { topicHomeVisibilityToolModule } from './topic-home-visibility.js'
-import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
+import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
 import { groupAiPolishToolModule } from './group-ai-polish.js'
 import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './favorite-stickers.js'
 import { readReactionsToolModule, writeReactionsToolModule } from './reactions.js'
@@ -22,6 +24,7 @@ import { startCallToolModule } from './start-call.js'
 import { conversationMarkReadToolModule, unreadConversationsToolModule } from './unread.js'
 
 export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
+  ...nativeAnnotationTools,
   ...messageSyncToolModules,
   listSourcesToolModule,
   topicHomeVisibilityToolModule,
@@ -33,6 +36,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   sourceMembersToolModule,
   ...memberPageToolModules,
   sourceMemberRecordsToolModule,
+  personRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
@@ -42,6 +46,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   ...userBanToolModules,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
   addFavoriteStickerToolModule,

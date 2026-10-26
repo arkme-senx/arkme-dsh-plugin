@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-import { act, createElement, type ComponentType } from 'react'
+import { act, createElement, useSyncExternalStore, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AccountSessionBrowser, reconcileAccountSessions, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
 import type { DshAccountSession } from '../src/dsh-remote/account-session-types.js'
-import { openNativeAccountSession } from '../src/client/harness-native-navigation.js'
+import { HARNESS_HISTORY_PREVIEW, openNativeAccountSession } from '../src/client/harness-native-navigation.js'
 import { callArkme } from '../src/sdk/index.js'
 import { HARNESS_MENU_OPEN } from '../src/client/harness-session-menu-bridge.js'
 import type { HarnessNativeWindow } from '../src/harness-native-transport-script.js'
 vi.mock('../src/sdk/index.js', () => ({ callArkme: vi.fn() }))
-vi.mock('../src/client/harness-native-navigation.js', () => ({ openNativeAccountSession: vi.fn() }))
+vi.mock('../src/client/harness-native-navigation.js', async importOriginal => ({ ...await importOriginal<typeof import('../src/client/harness-native-navigation.js')>(), openNativeAccountSession: vi.fn() }))
 const row = (overrides: Partial<DshAccountSession> = {}): DshAccountSession => ({ runtimeRef: 'windows', sessionRef: 'same', workspaceRef: 'workspace', workspaceName: 'repo', title: 'Windows 对话', updatedAt: 20, capabilities: [], running: false, blank: false, archived: false, origin: '', desktopName: 'Windows', sameDesktop: false, runtimeName: 'web', presence: 'online', local: false, ...overrides })
 const local = { current: 'same', ids: ['same'], byId: { same: { id: 'same', displayTitle: '本机', title: '本机', blank: false, running: true, updatedAt: 10 } }, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined }
 const ws = { items: [{ workspaceId: 'workspace', path: '/repo', title: 'repo', sessionIds: ['same'], createdAt: 1 }], archivedSessionIds: [], phase: 'ready', state: 'idle', error: null }
@@ -104,6 +104,16 @@ it('separates identical ids from different hosts without changing the native loc
   expect(value.current).toBe(accountSessionKey(row()))
   expect(local).toEqual(before)
 })
+it('projects native mainView selection without mutating the executable local owner', () => {
+  const native = { ...local, byId: { same: { ...local.byId.same, retainedBy: { mainView: 1, other: 2 } } } }
+  const before = structuredClone(native)
+  const projected = projectAccountSessions(native as never, [row()], row())
+  expect(projected.byId[accountSessionKey(row()) as never]!.retainedBy.mainView).toBe(1)
+  expect(projected.byId.same!.retainedBy.mainView).toBe(0)
+  expect(projected.byId.same!.retainedBy.other).toBe(2)
+  expect(native).toEqual(before)
+  expect(projectAccountSessions(native as never, [row()]).byId.same!.retainedBy.mainView).toBe(1)
+})
 it('adds computer prefixes only for workspace name collisions and preserves each membership', () => {
   const rows = [row(), row({ local: true, runtimeRef: 'mac', desktopName: 'Mac' })]
   expect(projectAccountWorkspaces(ws, rows).items.map(item => item.title)).toEqual(['Mac · repo', 'Windows · repo'])
@@ -139,6 +149,34 @@ it('reuses the native component, view store and picker through owned child decla
   expect(native.component).toBe(component)
   stop(); expect(registrations.every(item => item.disposed)).toBe(true); expect(listeners.size).toBe(0)
 })
+it('preserves the 0.2 row action and hover children through separately owned seats', () => {
+  const picker = () => null, action = () => null, hover = () => null
+  const native = { component: () => null, store: {}, inject: () => ({}), options: {}, children: {
+    'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
+    'sidebar.workspaces.session.menu.item': { kind: 'list', scope: 'root', inject: { hooks: {} } },
+    'sidebar.session.row.hover': { kind: 'list', scope: 'root' },
+  } }
+  const rows = new Map<string, any[]>([
+    ['sidebar.workspaces.directoryFlow', [{ component: picker, options: {} }]],
+    ['sidebar.workspaces.session.menu.item', [{ component: action, options: { id: 'archive', order: 400 } }]],
+    ['sidebar.session.row.hover', [{ component: hover, options: { id: 'location' } }]],
+  ])
+  const registrations: any[] = [], listeners = new Map<string, () => void>()
+  const slots = { entries: () => [native], entriesOfSlot: (name: string) => rows.get(name) ?? [],
+    subscribe: (name: string, fn: () => void) => { listeners.set(name, fn); return () => { listeners.delete(name) } },
+    register: (options: any, component: any) => { const item = { options, component, disposed: false }; registrations.push(item); return () => { item.disposed = true } },
+  }
+  const stop = installHarnessAccountSessions({ slots } as never, document.body)
+  expect(registrations).toHaveLength(4)
+  expect(registrations[0].options.children['arkme.accountSessions.native.sidebar.workspaces.session.menu.item']).toMatchObject({ kind: 'list', scope: 'root' })
+  expect(registrations[2]).toMatchObject({ component: action, options: { name: 'arkme.accountSessions.native.sidebar.workspaces.session.menu.item', id: 'archive', order: 400 } })
+  rows.set('sidebar.session.row.hover', [])
+  listeners.get('sidebar.session.row.hover')!()
+  expect(registrations[3].disposed).toBe(true)
+  stop()
+  expect(registrations.every(item => item.disposed)).toBe(true)
+  expect(listeners.size).toBe(0)
+})
 it('falls back to the unchanged native list when the registered UI face is unsupported', () => {
   const register = vi.fn()
   const stop = installHarnessAccountSessions({ slots: { entries: () => [{ component: () => null, options: {} }], subscribe: () => () => {}, register } } as never, document.body)
@@ -156,8 +194,10 @@ it('keeps remote navigation out of native open, retains last good rows after fai
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
   await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, useStore: (select: any) => select({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (select: any) => select(local), useWorkspaces: (select: any) => select(ws), startSession: vi.fn() })))
   expect(container.textContent).toContain('Windows 对话')
+  const preview = vi.fn(); document.addEventListener(HARNESS_HISTORY_PREVIEW, preview); cleanups.push(() => document.removeEventListener(HARNESS_HISTORY_PREVIEW, preview))
   act(() => props.open(accountSessionKey(row())))
-  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).toHaveBeenCalledWith(row(), undefined)
+  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).not.toHaveBeenCalled()
+  expect(preview).toHaveBeenCalledWith(expect.objectContaining({ detail: { session: row(), accountId: '3016', accountScope: '' } }))
   act(() => props.open('same')); expect(open).toHaveBeenCalledWith('same')
   vi.mocked(callArkme).mockRejectedValue(new Error('offline'))
   await act(async () => window.dispatchEvent(new Event('focus')))
@@ -225,7 +265,7 @@ it('preloads the account catalog before the native menu mounts and retains it ac
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
   const Native = (p: Record<string, any>) => createElement('div', null, p.useSessions((state: any) => state.ids.map((id: string) => state.byId[id].displayTitle).join(',')))
-  const element = createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open: vi.fn(), useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => s(local), useWorkspaces: (s: any) => s(ws) })
+  const element = createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open: vi.fn(), useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => useSyncExternalStore(() => () => {}, () => s(local)), useWorkspaces: (s: any) => s(ws) })
   act(() => root.render(element))
   expect(container.textContent).toContain('Windows 对话')
   act(() => root.render(null))
@@ -249,4 +289,26 @@ it('removes expired proof and removed optional revision fields instead of retain
  expect(updated[0]).toBe(withoutProof); expect(updated[0]?.coveredLocalHistory).toBeUndefined()
  const legacy = row()
  expect(reconcileAccountSessions(updated, [legacy])[0]).toBe(legacy)
+})
+
+it('keeps native local execution and actions, but previews injected foreign rows and blocks their mutations', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const surface = document.createElement('section'); surface.dataset.arkmeAccountId = '3016'; document.body.append(surface)
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
+  const foreign = row({ sameDesktop: true, desktopName: '本机同名电脑' }), id = accountSessionKey(foreign)
+  const nativeState = { ...local, ids: [...local.ids, id], byId: { ...local.byId, [id]: { ...local.byId.same, id } } }
+  const preview = vi.fn(); document.addEventListener(HARNESS_HISTORY_PREVIEW, preview); cleanups.push(() => document.removeEventListener(HARNESS_HISTORY_PREVIEW, preview))
+  const open = vi.fn(), rename = vi.fn(), archive = vi.fn(), fork = vi.fn(), start = vi.fn()
+  let props: any
+  const Native = (p: any) => { props = p; return null }
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [foreign] })
+  await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, renameSession: rename, archiveSession: archive, forkSession: fork, startSession: start, useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => s(nativeState), useWorkspaces: (s: any) => s(ws) })))
+  await act(async () => { props.open(id); await props.renameSession(id, '改名'); await props.archiveSession(id); props.forkSession(id); props.startSession('arkme:windows:workspace') })
+  expect(preview).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ session: foreign }) }))
+  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).not.toHaveBeenCalled()
+  expect(callArkme).not.toHaveBeenCalledWith('remote.session.command', expect.anything(), expect.anything())
+  expect(rename).not.toHaveBeenCalled(); expect(archive).not.toHaveBeenCalled(); expect(fork).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled()
+  await act(async () => { props.open('same'); await props.renameSession('same', '本机改名'); await props.archiveSession('same'); props.forkSession('same'); props.startSession('workspace') })
+  expect(open).toHaveBeenCalledWith('same'); expect(rename).toHaveBeenCalledWith('same', '本机改名'); expect(archive).toHaveBeenCalledWith('same'); expect(fork).toHaveBeenCalledWith('same'); expect(start).toHaveBeenCalledWith('workspace')
 })

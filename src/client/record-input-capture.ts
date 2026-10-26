@@ -1,3 +1,4 @@
+import { dictationActive, subscribeDictationActivity } from './dictation-activity.js'
 import type { ArkmeRecordCaptureContext, ArkmeSourceItem } from '../types.js'
 
 const BACKGROUND_SOUND_ENABLED_PREFIX = 'arkme.record-capture.background-sound.enabled.'
@@ -367,9 +368,11 @@ export async function arkmeMicrophonePermissionState(
   }
   try {
     const result = await source.permissions.query({ name: 'microphone' as PermissionName })
-    lastMicrophonePermission = result.state
-    setStoredExplicitMicrophoneGrant(grantScope, result.state === 'granted')
-    return lastMicrophonePermission
+    // Electron's browser grant can precede OS consent; only explicit capture confirms device access.
+    lastMicrophonePermission = result.state === 'granted' && !arkmeMicrophoneCaptureReady(grantScope)
+      ? 'prompt' : result.state
+    if (result.state !== 'granted') setStoredExplicitMicrophoneGrant(grantScope, false)
+    return result.state
   } catch {
     return arkmeMicrophoneCaptureReady(grantScope) ? 'granted' : 'prompt'
   }
@@ -940,6 +943,7 @@ export class ArkmeRecordInputCaptureOwner {
   private readonly evictedDraftKeys = new Set<string>()
   private readonly waveformSnapshots = new Map<string, ArkmeRecordInputWaveformSnapshot>()
   private readonly waveformListeners = new Map<string, Set<() => void>>()
+  private unsubscribeDictation: () => void = () => undefined
   private unsubscribePreference: () => void = () => undefined
   private unsubscribeRecorderFailure: () => void = () => undefined
   private activeDraftKey: string | undefined
@@ -984,6 +988,10 @@ export class ArkmeRecordInputCaptureOwner {
     if (this.disposed || this.activated) return
     this.activated = true
     this.activationRevision += 1
+    this.unsubscribeDictation = subscribeDictationActivity(async () => {
+      for (const state of this.sessions.values()) this.reconcile(state)
+      await this.lifecycle
+    })
     this.unsubscribePreference = this.preferenceSubscriber(() => { this.reconcileCaptureGate() })
     this.unsubscribeRecorderFailure = this.recorder.subscribeFailure?.(failure => {
       this.handleRecorderFailure(failure)
@@ -996,6 +1004,7 @@ export class ArkmeRecordInputCaptureOwner {
   deactivate(): void {
     if (this.disposed || !this.activated) return
     this.activated = false
+    this.unsubscribeDictation()
     this.unsubscribePreference()
     this.unsubscribePreference = () => undefined
     this.unsubscribeRecorderFailure()
@@ -1236,6 +1245,7 @@ export class ArkmeRecordInputCaptureOwner {
     this.contextSample = undefined
     this.activationRevision += 1
     this.activated = false
+    this.unsubscribeDictation()
     this.unsubscribePreference()
     this.unsubscribeRecorderFailure()
     for (const state of this.sessions.values()) {
@@ -1349,7 +1359,7 @@ export class ArkmeRecordInputCaptureOwner {
 
   private shouldRecord(state: DraftCaptureState): boolean {
     return !this.disposed && (state.finalizingSubmission || (state.isActive && this.activeDraftKey === state.draftKey))
-      && state.hasUserContent && this.readEnabled() && this.readMicrophoneReady()
+      && !dictationActive() && state.hasUserContent && this.readEnabled() && this.readMicrophoneReady()
   }
 
   private captureGateOpen(): boolean {

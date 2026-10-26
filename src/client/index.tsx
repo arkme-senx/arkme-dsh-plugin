@@ -7,10 +7,11 @@ import { registerConversationWindowRoot } from './conversation-window-root.js'
 import { conversationWindowRequested } from './conversation-window.js'
 import { bindConversationWindows } from './conversation-window-sync.js'
 import { createRoot } from 'react-dom/client'
-import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
+import { registerLongArticleWindowRoot } from './long-article-window-root.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import { AppMigrationDialog } from './AppMigrationDialog.js'
 import { ArkmeSocialBindingDialog } from './ArkmeSocialBindingDialog.js'
 import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
@@ -155,16 +156,7 @@ export function apply(ctx: ClientContext): void {
 
   if (longArticleWindowRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
-    ctx.effect(() => {
-      const disposeStyles = installArkmeRedesignStyles()
-      const host = document.createElement('div')
-      host.dataset.arkmeOwned = 'long-article-window'
-      Object.assign(host.style, { position: 'fixed', inset: '0', zIndex: '2147483000' })
-      document.body.append(host)
-      const root = createRoot(host)
-      root.render(<ArkmeLongArticleWindow />)
-      return () => { root.unmount(); host.remove(); disposeStyles() }
-    }, 'dsh-arkme: independent article editor')
+    registerLongArticleWindowRoot(ctx)
     return
   }
 
@@ -304,6 +296,13 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('arkme.topic.actions', () => ctx.slots.register({ name: 'arkme.topic.actions', priority: 100 }, props => props.renderDefault()))
   ctx.slots.inject('arkme.send-to-self.entry', () => ctx.slots.register({ name: 'arkme.send-to-self.entry', priority: 100 }, props => props.renderEntry()))
 
+  // 0.2's account plugin replaces the settings launcher with an account menu.
+  // Use the public owner callback to preserve Arkme's direct dialog entry.
+  ctx.slots.inject('settings.launcher', () => ctx.slots.register({
+    name: 'settings.launcher', priority: -100,
+  }, props => <button type="button" aria-label="设置" aria-haspopup="dialog"
+    aria-expanded={props.settingsOpen} onClick={props.openSettings} />))
+
   ctx.effect(() => {
     let disposeSidebar: (() => void) | undefined
     let settingsTimer: number | undefined
@@ -410,21 +409,20 @@ export function apply(ctx: ClientContext): void {
   )
 
   ctx.effect(() => {
-    const disposeConversations = ['conversation', 'main.conversation'].map(name =>
-      ctx.slots.inject(name as 'conversation', () => ctx.slots.register({
-        name: name as 'conversation',
-        priority: -100,
-        locale: ARKME_LOGIN_LOCALE_NAMESPACE,
-        inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
-      }, ArkmePersistentWorkspace)),
-    )
-    const disposeDetails = ctx.slots.inject('details', () => ctx.slots.register({
-      name: 'details',
+    const disposeConversation = ctx.slots.inject('main', () => ctx.slots.register({
+      name: 'main',
+      key: 'conversation',
+      priority: -100,
+      locale: ARKME_LOGIN_LOCALE_NAMESPACE,
+      inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
+    }, ArkmePersistentWorkspace))
+    const disposeDetails = ctx.slots.inject('rightbar', () => ctx.slots.register({
+      name: 'rightbar',
       priority: -100,
       inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
     }, ArkmePersistentDetails))
     return () => {
-      disposeConversations.forEach(dispose => { dispose() })
+      disposeConversation()
       disposeDetails()
     }
   }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')

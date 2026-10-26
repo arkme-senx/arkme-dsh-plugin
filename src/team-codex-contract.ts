@@ -1,6 +1,6 @@
 import type { ArkmeTeamMember } from './types.js'
 
-/** Versioned, local-only events. No credentials, transcripts, tool results or private reasoning. */
+/** Versioned, local-only events. No credentials, raw tool results or private reasoning. */
 export type TeamCodexEventKind = 'UserPromptSubmit' | 'Stop' | 'Interrupt'
 export type TeamCodexConnectionStatus = 'pending' | 'active' | 'paused' | 'disconnected' | 'expired'
 /** Navigation hint only. It grants neither cloud access nor upload permission. */
@@ -50,6 +50,8 @@ export interface TeamCodexTask {
   excluded?: boolean
   projectExcluded?: boolean
   queue?: TeamCodexQueueSnapshot
+  /** Set only after checking the cloud contract and row ownership; never authorizes dispatch. */
+  queueCloud?: 'ready' | 'unsupported' | 'unavailable' | 'private'
   currentInput?: { turnId: string; text: string; at: number }
   /** Local, account-checked source evidence. Absence does not mean another physical computer. */
   captureHealth?: { status: 'online' | 'buffering' | 'offline' | 'paused'; checkedAt: number; lastReceivedAt: number }
@@ -64,7 +66,7 @@ export interface TeamCodexInstallation {
 }
 export interface TeamCodexState {
   localOnly: boolean
-  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string }
+  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string; reviewingTasks?: number }
   self: ArkmeTeamMember | null
   tasks: TeamCodexTask[]
   installations: TeamCodexInstallation[]
@@ -80,6 +82,17 @@ export interface TeamCodexInvitation {
     cloudUpload: 'enabled' | 'disabled' | 'unsupported' | 'unavailable'
   }
 }
+/** Source-reported turn lifecycle, never derived from transport timestamps. */
+export interface TeamCodexTurnTiming {
+  startedAt: number
+  completedAt?: number
+  durationMs?: number
+  state: 'working' | 'finished' | 'interrupted'
+  observedAt: number
+  /** Explicit source liveness at observedAt; absent on older cloud contracts. */
+  live?: boolean
+}
+export interface TeamCodexProgress { id:string; text:string; at:number; truncated:boolean }
 export interface TeamCodexEvent {
   eventId?: string
   version?: number
@@ -89,6 +102,11 @@ export interface TeamCodexEvent {
   text: string
   at: number
   truncated: boolean
+  /** Owner-local public progress; excluded from the cloud transport until its protocol supports it. */
+  localProgress?: TeamCodexProgress[]
+  timing?: TeamCodexTurnTiming
+  /** Host-local, owner-only references. Never serialized into the team cloud journal. */
+  privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'unavailable' }[]
 }
 export interface TeamCodexEventPage {
   items: TeamCodexEvent[]

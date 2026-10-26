@@ -99,6 +99,8 @@ describe('ArkmeCallSurface interactions', () => {
     await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })
     await act(async () => { buttonByText(renderer, 'Selected').props.onClick(); await tick() })
     const detailNode = renderer.root.findByProps({ 'data-arkme-call-detail-content': 'true' })
+    expect(renderer.root.findAllByProps({ 'aria-label': '分享' })).toHaveLength(1)
+    expect(detailNode.findAllByProps({ 'aria-label': '分享' })).toHaveLength(0)
     await act(async () => { renderer.root.findByProps({ 'aria-label': '通话记录列表' }).props.onScroll({ currentTarget: { scrollHeight: 1000, scrollTop: 750, clientHeight: 200 } }); await tick() })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'calls.history.detail')).toHaveLength(1)
     const search = () => renderer.root.findByProps({ 'aria-label': '搜索通话记录' })

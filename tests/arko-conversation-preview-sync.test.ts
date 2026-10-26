@@ -1,3 +1,5 @@
+import { callArkme } from '../src/client/api.js'
+vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmeArkoConversationPreviewSync,
@@ -89,4 +91,19 @@ describe('Arko conversation preview sync', () => {
 
     expect(store.getSnapshot()).toEqual({ revision: 2, userId: 2002 })
   })
+})
+
+
+it('refreshes lifecycle even when the independent history preview fails', async () => {
+  vi.mocked(callArkme).mockImplementation(async operation => {
+    if (operation === 'arko.history') throw new Error('preview unavailable')
+    if (operation === 'arko.lifecycle.query') return { revision: 71, items: [] } as never
+    throw new Error(operation)
+  })
+  const sync = new ArkmeArkoConversationPreviewSync(new ArkmeArkoConversationPreviewStore(), undefined, 15_000, new FakeVisibilityTarget())
+  const stop = sync.start(7)
+  try {
+    await sync.refresh()
+    expect(callArkme).toHaveBeenCalledWith('arko.lifecycle.query', { messageRefs: [] }, expect.any(AbortSignal))
+  } finally { stop(); vi.mocked(callArkme).mockReset() }
 })

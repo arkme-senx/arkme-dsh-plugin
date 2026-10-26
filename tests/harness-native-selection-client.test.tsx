@@ -15,15 +15,16 @@ const disposals: Array<() => Promise<void>> = []
 beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); api.call.mockReset() })
 afterEach(async () => { for (const dispose of disposals.splice(0)) await dispose(); document.body.replaceChildren(); delete (window as NativeForwardWindow)[NATIVE_FORWARD_ENTRY]; delete (window as NativeCopyLinkWindow)[NATIVE_COPY_LINK_ENTRY]; vi.unstubAllGlobals() })
 
-async function setup() {
+async function setup(modern = true) {
   const surface = document.createElement('section')
   surface.dataset.arkmeOwned = 'deepseek-harness-surface'; surface.dataset.arkmeVisible = 'true'
   const frame = document.createElement('iframe'); surface.append(frame); document.body.append(surface)
   const doc = frame.contentDocument!; const win = doc.defaultView!
   const callbacks = new Set<() => void>()
   let node: { anchorSeq?: number; key: string; target: string; kind: string; visibility: string; data: { time?: number; content?: Array<{ type: string; text?: string }>; status?: string; blocks?: Array<{ kind: string; text: string }> } } = { key: 'user:opaque', target: 'chat', kind: 'user', visibility: 'visible', data: {} }
+  const extraNodes = new Map<string, typeof node>()
   const chat = { order: [node.key], nodes: {
-    get: (key: string) => key === node.key ? node : undefined,
+    get: (key: string) => key === node.key ? node : extraNodes.get(key),
     source: () => ({ subscribe: (cb: () => void) => { callbacks.add(cb); return () => { callbacks.delete(cb) } } }),
   } }
   const subscribe = () => () => {}
@@ -46,6 +47,11 @@ async function setup() {
   const flush = async () => { await act(async () => { ioInstances.forEach(io => io.flush()); const work = rafs; rafs = new Map(); work.forEach(cb => cb(0)) }) }
   doc.body.innerHTML = '<div id="header"></div><div id="scroll" style="overflow-y:auto"><div data-chat-flow><div data-chat-anchor-key="user:opaque" data-chat-flow-kind="user">Original message <button>Copy code</button></div></div></div>'
   const viewport = doc.querySelector<HTMLElement>('#scroll')!; const flow = doc.querySelector<HTMLElement>('[data-chat-flow]')!; const row = doc.querySelector<HTMLElement>('[data-chat-anchor-key]')!
+  if (modern) {
+    row.dataset.chatNodeKey = 'user:opaque'
+    // rc.2 keeps reasoning/tool flows nested below the outer conversation.
+    flow.insertAdjacentHTML('beforeend', '<div data-step-process><div data-step-process-body><div data-chat-flow data-step-process-content><div data-chat-anchor-key="process" data-chat-flow-kind="tool-call">Tool output</div></div></div></div>')
+  }
   let left = 80; let top = 100
   const rect = (x: number, y: number, width: number, height: number): DOMRect => ({ x, y, left: x, top: y, width, height, right: x + width, bottom: y + height, toJSON() {} })
   viewport.getBoundingClientRect = () => rect(0, 60, 800, 500)
@@ -62,15 +68,15 @@ async function setup() {
     await click('[role="menuitem"]'); await flush()
   }
   const enterEmpty = async () => { await enter(); if (doc.querySelector('[role="checkbox"]')) await click('[role="checkbox"]') }
-  return { enter, enterEmpty, doc, win, flow, row, viewport, surface, flush, click, render, callbacks, resizeDisconnect, move: (x: number, y: number) => { left = x; top = y }, changeKind: (kind: string) => { node = { ...node, kind }; callbacks.forEach(cb => cb()) },
+  return { enter, enterEmpty, doc, win, flow, row, viewport, surface, flush, click, render, callbacks, extraNodes, resizeDisconnect, move: (x: number, y: number) => { left = x; top = y }, changeKind: (kind: string) => { node = { ...node, kind }; callbacks.forEach(cb => cb()) },
     setNode: (next: typeof node) => { node = next; callbacks.forEach(cb => cb()) },
     breakNodeSource: () => { chat.nodes.source = () => { throw new Error('source unavailable') } },
     changeView: (view: string) => { if (view === 'chat') viewport.append(flow); else flow.remove() },
   }
 }
 
-it('enters from a message context menu and selects that message', async () => {
-  const s = await setup()
+it.each([false, true])('enters from a message context menu and selects that message (nested flows: %s)', async modern => {
+  const s = await setup(modern)
   expect(s.doc.querySelector('[data-arkme-native-selection="header"] button')).toBeNull()
   const event = new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 120 })
   await act(async () => s.row.dispatchEvent(event))
@@ -91,6 +97,12 @@ it('overlays the Arkme action bar on the mounted composer, keeps zero selection,
   await s.enter()
   const bar = s.doc.querySelector('[data-arkme-native-selection="actions"]')!
   expect(bar?.parentElement).toBe(dock)
+  expect(bar.textContent).toContain('已选 1 条')
+  expect(bar.querySelector('[data-arkme-native-selection="summary"]')).not.toBeNull()
+  expect(s.doc.querySelector('#header')!.textContent).not.toContain('已选')
+  expect(s.doc.querySelector('#header')!.querySelector('button')).toBeNull()
+  expect(s.doc.querySelectorAll('[aria-label="退出多选"]')).toHaveLength(1)
+  expect((bar as HTMLElement).style.flexWrap).toBe('wrap')
   const buttons = [...bar.querySelectorAll('button')]
   expect(buttons.map(button => button.textContent)).toEqual(['复制文本', '复制链接', '转发', '退出多选'])
   expect(buttons[1]!.disabled).toBe(false)
@@ -143,7 +155,7 @@ it('highlights only selected message keys and removes styling on cancellation an
   expect(s.doc.querySelector('[role="checkbox"]')).not.toBeNull()
   await s.click('[role="checkbox"]')
   expect(style()?.textContent).toContain('background:')
-  await s.click('[data-arkme-native-selection="header"] button')
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   expect(style()).toBeNull()
   expect(s.row.outerHTML).toBe(original)
 })
@@ -164,6 +176,7 @@ it.each(['account', 'hidden', 'pagehide', 'view', 'session', 'source-failure'])(
     if (reason === 'source-failure') {
       s.breakNodeSource()
       s.row.dataset.chatAnchorKey = 'replacement'
+      s.row.dataset.chatNodeKey = 'replacement'
     }
   })
   await s.flush()
@@ -228,7 +241,7 @@ it('reuses Arkme checkboxes, preserves native clicks, and clears on session swit
   expect(down.defaultPrevented).toBe(false)
 })
 
-it('rejects stale click positions, pauses for narrow space, and retains the selected key', async () => {
+it('rejects stale click positions and keeps narrow controls clickable across resize and scroll', async () => {
   const s = await setup()
   await s.enterEmpty(); await s.flush()
   s.move(80, 160)
@@ -237,11 +250,20 @@ it('rejects stale click positions, pauses for narrow space, and retains the sele
   await s.flush(); await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 1 条')
   s.move(32, 160); s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
-  expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
-  expect(s.doc.body.textContent).toContain('请扩大窗口')
+  expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
+  const inset = s.doc.querySelector<HTMLElement>('[data-arkme-selection-placement="inside"]')!
+  expect(inset.style.background).not.toBe('')
+  expect(inset.querySelector<HTMLElement>('button')?.style.width).toBe('32px')
+  expect(s.doc.body.textContent).not.toContain('请扩大窗口')
+  expect(s.doc.body.textContent).toContain('已选 1 条')
+  await s.click('[role="checkbox"]')
+  expect(s.doc.body.textContent).toContain('已选 0 条')
+  s.move(0, 200); s.viewport.dispatchEvent(new s.win.Event('scroll')); await s.flush()
+  await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 1 条')
   s.move(80, 160); s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
+  expect(s.doc.querySelector('[data-arkme-selection-placement="inside"]')).toBeNull()
   await act(async () => { s.surface.dataset.arkmeVisible = 'false' })
   expect(s.doc.querySelector('[data-arkme-native-selection="controls"]')).toBeNull()
   expect(s.callbacks.size).toBe(0)
@@ -255,7 +277,7 @@ it('keeps zero selection active and isolates missing native DOM', async () => {
   await s.enterEmpty(); await s.flush()
   await s.click('[role="checkbox"]'); await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 0 条')
-  await s.click('[data-arkme-native-selection="header"] button')
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   s.flow.removeAttribute('data-chat-flow')
   await act(async () => s.row.dispatchEvent(new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
   expect(document.querySelector('[role="menu"]')).toBeNull()
@@ -392,13 +414,13 @@ it('disables ambiguous duplicate anchors instead of selecting the wrong row', as
 })
 
 
-it('reports unavailable gutter space when native controls cover every safe seat', async () => {
+it('does not cover native controls and restores selection when the obstruction is gone', async () => {
   const s = await setup()
   const handle = s.doc.createElement('div'); s.doc.body.append(handle)
   s.doc.elementsFromPoint = () => [handle, s.viewport]
   await s.enterEmpty(); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
-  expect(s.doc.body.textContent).toContain('请扩大窗口')
+  expect(s.doc.body.textContent).not.toContain('请扩大窗口')
   s.doc.elementsFromPoint = () => [s.viewport]
   s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')).not.toBeNull()
@@ -462,7 +484,7 @@ it('does not revive controls from queued layout work after exit', async () => {
   const s = await setup(); await s.enter()
   s.move(80, 150)
   await act(async () => s.viewport.dispatchEvent(new s.win.Event('scroll')))
-  await s.click('[data-arkme-native-selection="header"] button')
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   await s.flush()
   expect(s.doc.querySelector('[data-arkme-native-selection="controls"]')).toBeNull()
   expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
@@ -472,12 +494,18 @@ it('does not revive controls from queued layout work after exit', async () => {
   expect(down.defaultPrevented).toBe(false)
 })
 
-it('keeps header exit available without hiding an unrecognized composer', async () => {
+it('keeps count and exit at the viewport bottom without hiding an unrecognized composer', async () => {
   const s = await setup()
   const dock = s.doc.createElement('div'); dock.dataset.slot = 'conversation.input.dock'; s.doc.body.append(dock)
   await s.enter()
-  expect(s.doc.querySelector('[data-arkme-native-selection="actions"]')).toBeNull()
-  await s.click('[data-arkme-native-selection="header"] button')
+  const bar = s.doc.querySelector<HTMLElement>('[data-arkme-native-selection="actions"]')!
+  expect(bar.parentElement).toBe(s.doc.body)
+  expect(bar.style.position).toBe('fixed')
+  expect(bar.style.bottom).toBe(`${s.win.innerHeight - 560}px`)
+  expect(bar.textContent).toContain('已选 1 条')
+  expect(dock.children.length).toBe(0)
+  expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
 })
 
@@ -507,7 +535,7 @@ it('toggles selection from body and row whitespace only while selection is activ
   expect(s.doc.body.textContent).toContain('已选 1 条')
   await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 0 条')
-  await s.click('[data-arkme-native-selection="header"] button')
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   await act(async () => body.click())
   expect(s.doc.querySelector('[data-arkme-native-selection="header"]')).toBeNull()
 })
@@ -552,7 +580,7 @@ it('selects expanded gutter space and prevents text selection only within select
   const outsideDown = new s.win.MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 20, clientY: 400 })
   await act(async () => s.viewport.dispatchEvent(outsideDown))
   expect(outsideDown.defaultPrevented).toBe(false)
-  await s.click('[data-arkme-native-selection="header"] button')
+  await s.click('[data-arkme-native-selection="actions"] [aria-label="退出多选"]')
   const restored = new s.win.MouseEvent('mousedown', { bubbles: true, cancelable: true })
   await act(async () => s.row.dispatchEvent(restored))
   expect(restored.defaultPrevented).toBe(false)
@@ -709,4 +737,52 @@ it('copies through the outer Arkme entry, retains selection and aborts when the 
   expect(signal.aborted).toBe(true)
   await act(async () => finish())
   expect(s.doc.body.textContent).not.toContain('复制链接成功')
+})
+
+
+it('selects only the response seat of a split assistant and survives async process flows', async () => {
+  const s = await setup()
+  const answer = s.doc.createElement('div')
+  Object.assign(answer.dataset, { chatAnchorKey: 'assistant:1', chatNodeKey: 'assistant:1', chatFlowKind: 'assistant-step', chatGroupPart: 'response' })
+  answer.textContent = 'Final answer'
+  answer.getBoundingClientRect = () => ({ ...s.row.getBoundingClientRect(), y: 240, top: 240, bottom: 330 })
+  const reasoning = answer.cloneNode(true) as HTMLElement
+  reasoning.dataset.chatGroupPart = 'reasoning'
+  reasoning.dataset.chatAnchorKey = JSON.stringify(['assistant:1', 'reasoning'])
+  reasoning.getBoundingClientRect = answer.getBoundingClientRect
+  s.extraNodes.set('assistant:1', { key: 'assistant:1', anchorSeq: 2, target: 'chat', kind: 'assistant-step', visibility: 'visible', data: { status: 'settled', blocks: [{ kind: 'text', text: 'Final answer' }] } })
+  s.flow.append(answer, reasoning)
+  // Even when visible in expanded mode, reasoning must not select its response.
+  const event = new s.win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+  await act(async () => reasoning.dispatchEvent(event))
+  expect(event.defaultPrevented).toBe(false)
+  expect(document.querySelector('[role="menu"]')).toBeNull()
+  await s.enter()
+  expect(s.doc.querySelectorAll('[role="checkbox"]')).toHaveLength(2)
+  await s.click('[data-arkme-native-selection-key="assistant:1"] [role="checkbox"]')
+  expect(s.doc.body.textContent).toContain('已选 2 条')
+  const style = s.doc.querySelector<HTMLStyleElement>('[data-arkme-native-selection="highlight"]')!
+  const selector = (style.sheet!.cssRules[0] as CSSStyleRule).selectorText
+  expect(answer.matches(selector)).toBe(true)
+  expect(reasoning.matches(selector)).toBe(false)
+  // The painter adds ::before to each selector. Commas inside :not() would
+  // corrupt that rule even though its plain message selector still matches.
+  const paint = (style.sheet!.cssRules[1] as CSSStyleRule).selectorText
+  expect(answer.matches(paint.replaceAll('::before', ''))).toBe(true)
+  for (const rule of paint.split(',')) expect(rule).not.toMatch(/::before.+::before/)
+  await act(async () => s.flow.insertAdjacentHTML('beforeend', '<div data-step-process><div data-chat-flow><div data-chat-anchor-key="assistant:1" data-chat-node-key="assistant:1" data-chat-flow-kind="assistant-step" data-chat-group-part="response">Process-only copy</div></div></div>'))
+  await s.flush()
+  expect(s.doc.querySelectorAll('[role="checkbox"]')).toHaveLength(2)
+  expect(s.doc.body.textContent).toContain('已选 2 条')
+  expect(s.doc.body.textContent).not.toContain('多选暂不可用')
+  expect(s.flow.querySelector('[data-step-process] [data-chat-node-key="assistant:1"]')!.matches(selector)).toBe(false)
+})
+
+it('removes a response control when upstream hides its process member, then restores it', async () => {
+  const s = await setup()
+  await s.enter()
+  await act(async () => { s.row.dataset.turnProcessHidden = 'true' }); await s.flush()
+  expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
+  await act(async () => { delete s.row.dataset.turnProcessHidden }); await s.flush()
+  expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
 })

@@ -28,6 +28,7 @@ import { callArkme, lookupArkmeRecordingImport, uploadArkmeRecording, type Recor
 import { arkmeTheme } from '../arkme-theme.js'
 import { registerNativeRecordingFile, type ArkmeRecordingSelection } from './recording-import-selection.js'
 import { createImportJournal, desktopImportBridge, ImportFileAccessError, importFilePlaceholder, ownImportQueue, resolveImportFile, type ImportJournal, type ImportQueueRecord, type ImportFileSource, type RecordingFileHandle } from './recording-import-journal.js'
+import { RecordingFilePicker, recordingPickerStack } from './recording-file-picker.js'
 import { RecordingImportPreparationQueue } from './recording-import-preparation.js'
 
 type Ownership = 'self' | 'other'
@@ -671,6 +672,20 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 }>(function ArkmeRecordingImportDialog({ importPath, defaultStartAtMillis, currentUserId, accountKey = `prod:${currentUserId}`, journal, foreground = true, onAccepted, onStatusChange }, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pickerRef = useRef<RecordingFilePicker>()
+  pickerRef.current ??= new RecordingFilePicker(() => ({
+    dialogOpen: dialogRef.current?.open ?? false,
+    focused: typeof document !== 'undefined' ? document.hasFocus() : undefined,
+    visibility: typeof document !== 'undefined' ? document.visibilityState : undefined,
+    userActivation: typeof navigator !== 'undefined' ? navigator.userActivation?.isActive : undefined,
+  }))
+  const [pickerToast, setPickerToast] = useState<{ message: string }>()
+  useEffect(() => {
+    if (!pickerToast) return
+    const timer = setTimeout(() => { setPickerToast(undefined) }, 6_000)
+    return () => { clearTimeout(timer) }
+  }, [pickerToast])
+  useEffect(() => () => { pickerRef.current?.interrupt('component-unmount') }, [])
   const journalRef = useRef<ImportJournal>()
   const journalTail = useRef<Promise<void>>(Promise.resolve())
   const journalRevision = useRef(0)
@@ -837,6 +852,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   }
 
   const open = () => {
+    pickerRef.current?.event('dialog-open-requested', { stack: recordingPickerStack() })
     setError('')
     setQueueRequested(true)
     setDialogOpen(true)
@@ -846,6 +862,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     setDialogEpoch(value => value + 1)
   }
   const close = (showFeedback = false) => {
+    pickerRef.current?.interrupt('dialog-close-requested')
+    pickerRef.current?.event('dialog-close-requested', { stack: recordingPickerStack() })
     if (showFeedback && dialogRef.current?.open && foreground && importInProgress && !backgroundNoticeShownRef.current) {
       backgroundNoticeShownRef.current = true
       setBackgroundNoticeVisible(true)
@@ -1075,28 +1093,63 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     }).catch(() => undefined)
   }
 
-  const chooseFiles = async () => {
+  const chooseFiles = async (trigger: { type: string; trusted: boolean; detail?: number } = { type: 'unknown', trusted: false }) => {
+    const diagnostic = pickerRef.current!
+    diagnostic.event('trigger', { queueOwner: queueOwner.current, pending, trigger })
     if (!queueOwner.current || pending) return
-    try {
-      const native = desktopImportBridge()
+    const native = desktopImportBridge()
+    const picker = (window as unknown as { showOpenFilePicker?: (options: unknown) => Promise<RecordingFileHandle[]> }).showOpenFilePicker
+    const result = await diagnostic.run(native ? 'desktop' : picker ? 'browser' : 'input', async () => {
+      const sources = new Map<File, ImportFileSource>()
+      let files: File[]
       if (native) {
         const selected = await native.pick()
-        const sources = new Map<File, ImportFileSource>()
-        const files = selected.map(item => {
+        files = selected.map(item => {
           const file = importFilePlaceholder({ fileName: item.name, fileSize: item.size, lastModified: item.lastModified, mimeType: '' })
           sources.set(file, { kind: 'desktop', token: item.token })
           return file
         })
-        addFiles(files, sources)
+      } else if (picker) {
+        const handles = await picker.call(window, { multiple: true, types: [{ description: '录音', accept: { 'audio/*': ['.wav', '.mp3', '.m4a'] } }] })
+        files = handles.map(handle => {
+          const file = importFilePlaceholder({ fileName: handle.name, fileSize: 0, lastModified: 0, mimeType: '' })
+          sources.set(file, { kind: 'handle', handle })
+          return file
+        })
       } else {
-        const picker = (window as unknown as { showOpenFilePicker?: (options: unknown) => Promise<RecordingFileHandle[]> }).showOpenFilePicker
-        if (!picker) { fileInputRef.current?.click(); return }
-        const handles = await picker({ multiple: true, types: [{ description: '录音', accept: { 'audio/*': ['.wav', '.mp3', '.m4a'] } }] })
-        const sources = new Map<File, ImportFileSource>()
-        const files = handles.map(handle => { const file = importFilePlaceholder({ fileName: handle.name, fileSize: 0, lastModified: 0, mimeType: '' }); sources.set(file, { kind: 'handle', handle }); return file })
-        addFiles(files, sources)
+        const input = fileInputRef.current
+        if (!input) throw new Error('文件选择入口不可用')
+        await new Promise<void>((resolve, reject) => {
+          const signal = lifecycleAbortRef.current?.signal
+          const cleanup = () => {
+            input.removeEventListener('change', settle)
+            input.removeEventListener('cancel', settle)
+            signal?.removeEventListener('abort', abort)
+          }
+          const abort = () => { cleanup(); reject(new DOMException('Picker owner disposed', 'AbortError')) }
+          const settle = (event: Event) => {
+            cleanup()
+            diagnostic.event(`input-${event.type}`)
+            resolve()
+          }
+          if (signal?.aborted) { abort(); return }
+          signal?.addEventListener('abort', abort, { once: true })
+          input.addEventListener('change', settle)
+          input.addEventListener('cancel', settle)
+          try { input.click() } catch (error) {
+            cleanup()
+            reject(error)
+          }
+        })
+        return
       }
-    } catch (reason) { if (!(reason instanceof Error && reason.name === 'AbortError')) setError(reason instanceof Error ? reason.message : '无法选择文件') }
+      diagnostic.event('files-selected', { count: files.length })
+      if (inspectionActiveRef.current) addFiles(files, sources)
+    })
+    if (result.status === 'error' && inspectionActiveRef.current) {
+      setError(result.message)
+      setPickerToast({ message: result.message })
+    }
   }
   const receiveFiles = async (files: File[], handles: Array<Promise<RecordingFileHandle | null>> = []) => {
     if (!queueOwner.current || pending) return
@@ -1614,7 +1667,19 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       ? '音频会继续上传，点击「音频上传中」查看进度'
       : '音频会继续导入，点击「正在完成导入」查看进度'}</div>}
     <style>{'@keyframes arkme-recording-history-spin{to{transform:rotate(360deg)}}'}</style>
-    <dialog ref={dialogRef} style={styles.dialog} aria-label={tr("上传文件")} tabIndex={-1} onCancel={event => {
+    <dialog ref={dialogRef} style={styles.dialog} aria-label={tr("上传文件")} tabIndex={-1}
+      onPointerDownCapture={event => { pickerRef.current?.event('dialog-pointer-down', {
+        trusted: event.isTrusted, button: event.button,
+        targetTag: (event.target as Element).tagName,
+        backdrop: event.target === event.currentTarget,
+      }) }}
+      onClickCapture={event => { pickerRef.current?.event('dialog-click', {
+        trusted: event.isTrusted, detail: event.detail,
+        targetTag: (event.target as Element).tagName,
+        backdrop: event.target === event.currentTarget,
+      }) }}
+      onClose={() => { pickerRef.current?.event('dialog-closed') }} onCancel={event => {
+      pickerRef.current?.event('dialog-cancel', { trusted: event.isTrusted })
       event.preventDefault()
       if (processingDetails !== undefined) { setProcessingDetails(undefined); return }
       if (jobDeletion !== undefined) { setJobDeletion(undefined); return }
@@ -1623,12 +1688,13 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       if (history !== undefined) { setHistory(undefined); return }
       close(true)
     }} onClick={event => { if (event.target === event.currentTarget) close(true) }}>
+      {pickerToast && <div role="alert" data-arkme-recording-picker-toast style={{ ...styles.backgroundNotice, bottom: 24 }}>{tr(pickerToast.message)}</div>}
       {history === undefined ? <><header style={styles.header}><h2 style={styles.title}>{tr("上传文件")}</h2><span style={styles.footerActions}><button data-arkme-feedback="neutral" type="button" style={styles.historyButton} onClick={openHistory}>{tr("已完成")}<CaretRight size={8} aria-hidden /></button><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭上传文件")} style={styles.iconButton} onClick={() => { close(true) }}><X size={16} aria-hidden /></button></span></header>
       <div style={styles.body}>
         <>
           {queueNotice && <div role="status" style={{ padding: '0 24px 8px', color: desktop.secondary, fontSize: 12 }}>{queueNotice}</div>}
           <input ref={fileInputRef} hidden multiple disabled={fileSelectionDisabled} aria-label={tr("选择录音文件")} type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { if (!fileSelectionDisabled && event.target.files !== null) void receiveFiles([...event.target.files]); event.target.value = '' }} />
-          <div style={{ ...styles.dropzone, ...(fileSelectionDisabled ? { opacity: .55, cursor: 'default' } : {}) }} role="button" aria-disabled={fileSelectionDisabled} tabIndex={fileSelectionDisabled ? -1 : 0} onClick={() => { if (!fileSelectionDisabled) void chooseFiles() }} onKeyDown={event => { if (!fileSelectionDisabled && (event.key === 'Enter' || event.key === ' ')) void chooseFiles() }} onDragEnter={event => { event.preventDefault(); if (!fileSelectionDisabled) setDragging(true) }} onDragOver={event => { event.preventDefault() }} onDragLeave={() => { setDragging(false) }} onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (!fileSelectionDisabled) { const items = [...event.dataTransfer.items].filter(item => item.kind === 'file'); const handles = items.map(item => (item as unknown as { getAsFileSystemHandle?: () => Promise<RecordingFileHandle | null> }).getAsFileSystemHandle?.() ?? Promise.resolve(null)); void receiveFiles([...event.dataTransfer.files], handles) } }}><span style={styles.dropCopy}><UploadSimple size={18} aria-hidden /><span>{tr("点击、拖拽上传音频文件（支持多选）")}</span><small style={styles.hint}>{tr("支持 WAV、MP3、M4A 格式")}</small></span>{dragging && <span style={styles.dragOverlay}>{tr("松开上传至 Arkme")}</span>}</div>
+          <div style={{ ...styles.dropzone, ...(fileSelectionDisabled ? { opacity: .55, cursor: 'default' } : {}) }} role="button" aria-disabled={fileSelectionDisabled} tabIndex={fileSelectionDisabled ? -1 : 0} onClick={event => { if (!fileSelectionDisabled) void chooseFiles({ type: event.type, trusted: event.isTrusted, detail: event.detail }) }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!fileSelectionDisabled && !event.repeat) void chooseFiles({ type: event.type, trusted: event.isTrusted }) } }} onDragEnter={event => { event.preventDefault(); if (!fileSelectionDisabled) setDragging(true) }} onDragOver={event => { event.preventDefault() }} onDragLeave={() => { setDragging(false) }} onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (!fileSelectionDisabled) { const items = [...event.dataTransfer.items].filter(item => item.kind === 'file'); const handles = items.map(item => (item as unknown as { getAsFileSystemHandle?: () => Promise<RecordingFileHandle | null> }).getAsFileSystemHandle?.() ?? Promise.resolve(null)); void receiveFiles([...event.dataTransfer.files], handles) } }}><span style={styles.dropCopy}><UploadSimple size={18} aria-hidden /><span>{tr("点击、拖拽上传音频文件（支持多选）")}</span><small style={styles.hint}>{tr("支持 WAV、MP3、M4A 格式")}</small></span>{dragging && <span style={styles.dragOverlay}>{tr("松开上传至 Arkme")}</span>}</div>
           {(rows.length > 0 || visibleJobs.length > 0) && <div style={styles.tableViewport}><div style={styles.table} role="table" aria-label={tr("待导入录音")}><div style={styles.tableHeader} role="row"><span /><span>{tr("文件名称")}</span><span style={styles.cellCenter}>{tr("录音时长")}</span><span style={styles.cellCenter}>{tr("文件大小")}</span><span style={styles.cellCenter} title={tr("我的数据写入时间轴，他人仅保存")}>{tr("数据归属")}</span><span style={styles.cellCenter}>{tr("上传状态")}</span><span style={styles.cellCenter}>{tr("处理耗时")}</span><span /></div><div style={styles.rowList} role="rowgroup" aria-label={tr("录音文件列表")}>{rows.map(row => {
             const start = new Date(row.startAt).getTime(); const duration = row.selection?.ok === true ? row.selection.durationMillis ?? 0 : 0
             const timeError = row.selection?.ok === true ? recordingImportEndTimeError(start, duration) : ''

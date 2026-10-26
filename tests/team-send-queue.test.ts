@@ -68,6 +68,28 @@ async function fixture() {
   }
 }
 
+it('persists an immutable quote through upload, lost ACK, restart and stable retries',async()=>{
+  const f=await fixture(),file=await f.stage(),reply={messageRef:'42:conversation:reply:parent#original',messageKey:'42:conversation:reply:parent',version:7,text:'😀',senderName:'成员',quote:{version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:7,start:1,end:3,text:'😀',prefix:'中',suffix:'文'}}
+  const command=input({fileRefs:[file.fileRef],reply:structuredClone(reply)})
+  f.setOnline(false);await f.queue.enqueue(command)
+  command.reply!.text='mutated after enqueue';command.reply!.quote!.text='坏'
+  f.restart();f.setOnline(true);f.loseAck();await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  f.restart();vi.setSystemTime(Date.now()+10_000);await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends=f.execute.mock.calls.filter(([operation])=>operation==='team.app.send')
+  expect(sends.length).toBeGreaterThanOrEqual(2)
+  for(const [,body] of sends)expect(body).toMatchObject({clientUid:command.clientUid,replyToRef:reply.messageRef,replyRecordVersion:7,quote:reply.quote})
+  const tasks=await f.queue.list(command.conversationRef);expect(tasks[0]).toMatchObject({state:'sent',reply})
+  await expect(f.queue.enqueue({...command,reply:{...reply,version:8,quote:{...reply.quote,recordVersion:8}}})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+})
+
+it('rejects mismatched selection versions before durable admission',async()=>{
+  const f=await fixture()
+  await expect(f.queue.enqueue(input({reply:{messageRef:'source',messageKey:'key',version:1,text:'a',senderName:'',quote:{version:1,projection:'arkme-text-v1',sourceDigest:'a'.repeat(64),recordVersion:2,start:0,end:1,text:'a',prefix:'',suffix:''}}}))).rejects.toMatchObject({code:'team-invalid_request'})
+  expect(await f.files.teamSends(42)).toEqual([])
+})
+
 describe('Team delivery with the shared FileTransfers owner', () => {
   it('a slow upload does not delay consecutive text sends in another conversation',async()=>{
     const f=await fixture(),file=await f.stage()
@@ -396,19 +418,31 @@ describe('Team delivery with the shared FileTransfers owner', () => {
 
 it('persists reply identity through restart and retries without dropping or changing the parent', async () => {
   const f = await fixture(); f.setOnline(false)
-  const request = input({replyToRef:'42:conversation:reply:parent#old'})
+  const request = input({reply:{messageRef:'42:conversation:reply:parent#old',messageKey:'42:conversation:reply:parent',version:3,text:'问题',senderName:'同事'}})
   await f.queue.enqueue(request)
   f.restart()
   const restored = (await f.queue.list(request.conversationRef))[0]!
-  expect(restored.replyToRef).toBe(request.replyToRef)
-  expect(restored.replyToKey).toBe('42:conversation:reply:parent')
-  await f.queue.enqueue({...request,replyToRef:'42:conversation:reply:parent#rotated'})
-  await expect(f.queue.enqueue({...request,replyToRef:'42:conversation:reply:other'})).rejects.toMatchObject({code:'team-idempotency_conflict'})
-  await expect(f.queue.enqueue({...request,clientUid:randomUUID(),replyToRef:'42:another:reply:parent'})).rejects.toMatchObject({code:'team-invalid_request'})
+  expect(restored.reply?.messageRef).toBe(request.reply!.messageRef)
+  expect(restored.reply?.messageKey).toBe('42:conversation:reply:parent')
+  await f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:parent#rotated'}})
+  await expect(f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:other',messageKey:'42:conversation:reply:other'}})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+  await expect(f.queue.enqueue({...request,clientUid:randomUUID(),reply:{...request.reply!,messageRef:'42:another:reply:parent'}})).rejects.toMatchObject({code:'team-invalid_request'})
   f.setOnline(true); f.loseAck(); await f.queue.recover()
   await vi.advanceTimersByTimeAsync(60_000); await f.queue.recover()
   expect(f.published.size).toBe(1)
   const sends = f.execute.mock.calls.filter(([op])=>op==='team.app.send')
   expect(sends.length).toBeGreaterThan(0)
-  for (const [,command] of sends) expect(command).toMatchObject({clientUid:request.clientUid,replyToRef:request.replyToRef})
+  for (const [,command] of sends) expect(command).toMatchObject({clientUid:request.clientUid,replyToRef:request.reply!.messageRef,replyRecordVersion:3})
+})
+
+it('derives the reply identity on the Host for Tools and reuses it after an unknown response',async()=>{
+ const f=await fixture();f.setOnline(false)
+ const request=input({reply:{messageRef:'42:conversation:reply:parent#old',messageKey:'',version:3,text:'',senderName:''}})
+ const accepted=await f.queue.enqueue(request)
+ expect(accepted.reply?.messageKey).toBe('42:conversation:reply:parent')
+ expect(request.reply?.messageKey).toBe('')
+ f.restart()
+ const replay=await f.queue.enqueue({...request,reply:{...request.reply!,messageRef:'42:conversation:reply:parent#new'}})
+ expect(replay.taskRef).toBe(accepted.taskRef)
+ expect(replay.reply?.messageRef).toBe(request.reply!.messageRef)
 })

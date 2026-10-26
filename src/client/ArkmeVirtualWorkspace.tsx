@@ -1,3 +1,4 @@
+import { localDirectoryPreferences, useDirectoryPreferenceError } from './local-directory-preferences.js'
 import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
 import { ArkmeDraftPreviewText, useSelfConversationDraftPreview, useConversationDraftPresentation } from './ArkmeConversationDraftPreview.js'
 import { arkmeComposerDraftStore } from './composer-draft-store.js'
@@ -20,6 +21,7 @@ import type { ArkmeArchiveState } from '../archive-contract.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useHarnessActivity } from './use-harness-activity.js'
 import { useCodexEntryAvailability } from './redesign/contacts/use-codex-entry-availability.js'
+import { CodexActivityPreview } from './redesign/contacts/CodexActivityPreview.js'
 import { watchHarnessSessionHover } from './harness-session-hover.js'
 import { nextArkmeUnreadConversation } from '../conversation-attention.js'
 import { ArkmeDirectoryWindow } from './ArkmeDirectoryWindow.js'
@@ -251,7 +253,6 @@ const styles: Record<string, CSSProperties> = {
     flex: '1 0 auto', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     fontSize: 13, lineHeight: '18px', fontWeight: 600,
   },
-  muteIcon: { flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
   mentionPreviewPrefix: { color: colors.mention, fontWeight: 600 },
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
@@ -618,7 +619,8 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
   // This row identifies the conversation product; the centered header selector
   // owns the current task name. Task updates must never rename the directory row.
   const heading = HARNESS_CONVERSATION_NAME
-  const idleHint = '你的 DeepSeek 智能助手'
+  const recentTitle = total === 0 ? activity?.recent?.title.trim() : undefined
+  const idleHint = recentTitle || '你的 DeepSeek 智能助手'
   return <button
     ref={rowRef}
     type="button"
@@ -627,7 +629,7 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
     onContextMenu={onContextMenu}
     role="treeitem"
     aria-selected={selected}
-    aria-label={[heading, summary].filter(Boolean).join('，')}
+    aria-label={[heading, summary || recentTitle].filter(Boolean).join('，')}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
@@ -642,7 +644,7 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
         ? <span data-arkme-harness-summary>{statuses.map(status => <span key={status.kind} data-arkme-harness-status={status.kind}>
           <i aria-hidden />{status.items.length} {status.label}
         </span>)}</span>
-        : <span data-arkme-harness-destination style={styles.preview}>{idleHint}</span>}
+        : <span data-arkme-harness-destination title={idleHint} style={styles.preview}>{idleHint}</span>}
       </span>
     </span>
   </button>
@@ -1058,6 +1060,7 @@ export function ArkmeNavigation({
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
+  const localPreferenceError = useDirectoryPreferenceError(currentAccountKey ?? '')
   const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
   const officialMembership = useSyncExternalStore(subscribeOfficialTeamMembership, () => readOfficialTeamMembership(currentAccountKey ?? ''), () => readOfficialTeamMembership(currentAccountKey ?? ''))
   const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
@@ -2226,6 +2229,7 @@ export function ArkmeNavigation({
         <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
       </button>
       {active && authenticated && <ArkmeQuickAddButton
+        longArticleAccountKey={currentAccountKey}
         recordingAccountKey={currentAccountKey}
         onNewDshSession={showHarnessEntry ? () => startEmbeddedHarnessSession(() => {
           activateNativeEntry()
@@ -2298,7 +2302,7 @@ export function ArkmeNavigation({
           <span style={styles.avatar} aria-hidden><span className="arkme-codex-glyph">&gt;_</span></span>
           <span data-arkme-conversation-content style={styles.chatContent}>
             <span style={styles.chatTop}><span style={styles.chatName}>Codex</span></span>
-            <span style={styles.chatBottom}><span style={styles.preview}>{tr('我的任务与对话')}</span></span>
+            <span style={styles.chatBottom}><CodexActivityPreview accountKey={currentAccountKey} userId={auth?.userId} active={active}/></span>
           </span>
         </button>}
         {authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow
@@ -2395,6 +2399,7 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {localPreferenceError && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{localPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) void localDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) }}>{tr('刷新核对')}</button></div>}
     {builtinActions.overlays}
     {active && chatPreview !== undefined && previewSource !== undefined && <ArkmeChatPreviewDialog
       key={`${chatPreview.accountKey}:${chatPreview.sourceKey}`}
