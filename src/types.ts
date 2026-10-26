@@ -1484,6 +1484,8 @@ export interface ArkmeProviderCapabilities {
   environment: ArkmeEnvironment
   features: {
     authStatus: true
+    /** Interactive preset-account login; passwords must never enter model tools. */
+    passwordLogin?: true
     cachedSnapshot: true
     remoteRefresh: true
     search: true
@@ -4197,6 +4199,7 @@ export type ArkmePluginOperation =
   | 'auth.app.poll'
   | 'auth.app.cancel'
   | 'auth.test.login'
+  | 'auth.password.login'
   | 'auth.email.send'
   | 'auth.email.bind'
   | 'auth.phone.send'

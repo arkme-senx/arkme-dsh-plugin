@@ -20,6 +20,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     submitBusy={false}
     error=""
     phone=""
+    passwordLogin={{ account: '', password: '', onAccountChange() {}, onPasswordChange() {}, onSubmit() {} }}
     smsCode=""
     smsCountdown={0}
     testLoginEnabled={false}
@@ -48,6 +49,27 @@ function darkLoginCss(patch: Partial<ArkmeLoginProps> = {}): string {
 }
 
 describe('ArkmeLogin', () => {
+  it('keeps the password entry below phone sign-in, away from QR and required binding', () => {
+    const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '')
+    const phone = text(renderLogin({ mode: 'phone' }))
+    expect(phone).toContain('账号密码登录')
+    expect(phone.lastIndexOf('登录')).toBeGreaterThan(phone.indexOf('验证码'))
+    expect(text(renderLogin())).not.toContain('账号密码登录')
+    expect(text(renderLogin({ mode: 'phone', phoneBindingRequired: true }))).not.toContain('账号密码登录')
+  })
+
+  it('uses the existing login area for password input, back action and loading state', () => {
+    const html = renderLogin({ mode: 'password', busy: true, submitBusy: true })
+    expect(html).toContain('type="password"')
+    expect(html).toContain('autoComplete="current-password"')
+    expect(html).toContain('返回手机号登录')
+    expect(html).toContain('正在登录…')
+    expect(html).toContain('aria-label="显示密码"')
+    expect(html).toContain('aria-busy="true"')
+    expect(html).not.toContain('role="tablist"')
+    expect(html).not.toContain('获取验证码')
+  })
+
   it('uses the navigation brand assets instead of typeset text in the headline', () => {
     const html = renderLogin()
     const headline = (html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1] ?? '').replaceAll('&quot;', '"')
@@ -150,6 +172,7 @@ describe('ArkmeLogin', () => {
       submitBusy={false}
       error=""
       phone=""
+      passwordLogin={{ account: '', password: '', onAccountChange() {}, onPasswordChange() {}, onSubmit() {} }}
       smsCode=""
       smsCountdown={0}
       testLoginEnabled={false}
