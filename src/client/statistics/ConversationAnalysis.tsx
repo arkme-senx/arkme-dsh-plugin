@@ -178,8 +178,8 @@ function ConversationWordsMessages({ query, resultId, word, source, onBack, onCl
     if (!message.sourceRef) return
     sourceController.current?.abort(); const c = new AbortController(); sourceController.current = c; setOpening(message.key); setSourceError('')
     try {
-      const target = await withArkmeReadDeadline(signal => callArkme<{ messageUid: string; sendAtMillis: number }>('chat.word-frequency.source', { ...query, resultId, messageSourceRef: message.sourceRef }, signal), c.signal)
-      if (!c.signal.aborted) { onClose(); arkmeUi.showConversationTarget(source, target.messageUid, target.sendAtMillis) }
+      const target = await withArkmeReadDeadline(signal => callArkme<{ messageUid: string; sendAtMillis: number; recordOwnerUserId: import('../../record-owner-id.js').RecordOwnerId }>('chat.word-frequency.source', { ...query, resultId, messageSourceRef: message.sourceRef }, signal), c.signal)
+      if (!c.signal.aborted) { onClose(); arkmeUi.showConversationTarget(source, target.messageUid, target.sendAtMillis, target.recordOwnerUserId) }
     } catch (e) { if (!c.signal.aborted) setSourceError(e instanceof Error ? e.message : tr('原消息不可定位')) }
     finally { if (!c.signal.aborted) setOpening('') }
   }

@@ -17,6 +17,8 @@ export interface ArkmeConversationToolPort {
   captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number): Promise<import('../../message-quote.js').ArkmeMessageQuote>
   extendSourceMessage(sourceRef: string, actionRef: string, text: string, recordUid: string, fileRefs?: readonly string[], options?: { relationUid?: string; quote?: import('../../message-quote.js').ArkmeMessageQuote; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSourceMessageExtendResult>
 
+  analyticsRead(input: import('../../analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown>
+  conversationWordsCreate(input: import('../../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../../conversation-word-frequency.js').ConversationWordsState>
   nativeAnnotations(request: import('../../native-annotations.js').NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown>
   messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>

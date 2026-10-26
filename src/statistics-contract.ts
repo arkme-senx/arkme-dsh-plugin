@@ -23,6 +23,8 @@ export interface StatisticsDetail {
   keywords: StatisticsKeyword[] | null
 }
 export interface StatisticsKeyword {
+  keywordId?: string
+  snapshotId?: string
   text: string
   /** Occurrences in the corpus; never substitute the number of matching records. */
   occurrenceCount: number | null
