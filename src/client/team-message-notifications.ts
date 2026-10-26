@@ -16,6 +16,7 @@ interface Ports {
 export class TeamMessageNotificationPresenter {
   private readonly notices = new Map<string, { expires: number; close(): void }>()
   private readonly controller = new AbortController()
+  private opening: AbortController | undefined
   constructor(private readonly ports: Ports) {}
 
   show(notice: Notice): void {
@@ -26,9 +27,14 @@ export class TeamMessageNotificationPresenter {
     if (this.notices.has(notice.eventUid)) return
     const close = this.ports.show(notice.title, notice.body, `arkme-team-message-${notice.eventUid}`, () => {
       if (!this.ports.current() || this.controller.signal.aborted) return
-      void this.ports.resolve(notice.sourceRef, this.controller.signal).then(conversation => {
-        if (!this.controller.signal.aborted && this.ports.current()) this.ports.open(conversation)
+      this.opening?.abort()
+      const request = new AbortController()
+      this.opening = request
+      const signal = AbortSignal.any([request.signal, this.controller.signal, AbortSignal.timeout(10000)])
+      void this.ports.resolve(notice.sourceRef, signal).then(conversation => {
+        if (!signal.aborted && this.opening === request && this.ports.current()) this.ports.open(conversation)
       }).catch(() => { /* Current access/network failure cannot open stale content. */ })
+        .finally(() => { if (this.opening === request) this.opening = undefined })
     })
     if (!close) return
     this.notices.set(notice.eventUid, { expires: notice.expiresAtMillis, close })
@@ -41,6 +47,7 @@ export class TeamMessageNotificationPresenter {
 
   dispose(): void {
     this.controller.abort()
+    this.opening?.abort()
     for (const entry of this.notices.values()) entry.close()
     this.notices.clear()
   }

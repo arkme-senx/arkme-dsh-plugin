@@ -42,3 +42,25 @@ it('uses the existing browser API even when an unchanged Chat-only shell bridge 
   await vi.waitFor(()=>expect(callArkme).toHaveBeenCalledWith('team.app.notification.open',{notificationRef:'sealed-team'},expect.any(AbortSignal)))
   presenter.dispose()
 })
+
+it('the last clicked notification wins when an earlier authorization completes late', async () => {
+  const clicks: Array<() => void> = []
+  let first!: (value: never) => void
+  const open = vi.fn()
+  const presenter = new TeamMessageNotificationPresenter({
+    current: () => true,
+    resolve: vi.fn((ref: string) => ref === 'first'
+      ? new Promise<never>(resolve => { first = resolve })
+      : Promise.resolve({key:'second'} as never)),
+    open,
+    show: (_title,_body,_tag,activate) => { clicks.push(activate); return () => {} },
+  })
+  presenter.show({...notice,eventUid:'first',sourceRef:'first'})
+  presenter.show({...notice,eventUid:'second',sourceRef:'second'})
+  clicks[0]!(); clicks[1]!()
+  await vi.waitFor(()=>expect(open).toHaveBeenCalledWith({key:'second'}))
+  first({key:'first'} as never)
+  await Promise.resolve()
+  expect(open.mock.calls.map(([value])=>value.key)).toEqual(['second'])
+  presenter.dispose()
+})

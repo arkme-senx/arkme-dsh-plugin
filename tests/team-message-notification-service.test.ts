@@ -26,9 +26,8 @@ it('one logical event publishes one plugin-owned Team presentation',async()=>{
  expect(f.ports.publish.mock.calls[0]![0]).toEqual(resolved)
  f.service.accept(f.notice);await vi.advanceTimersByTimeAsync(1);expect(f.ports.publish).toHaveBeenCalledOnce()
 })
-for(const reason of ['reconnect','expired','account','aborted','muted'])it(`${reason} cannot alert`,async()=>{
+for(const reason of ['expired','account','aborted','muted'])it(`${reason} cannot alert`,async()=>{
  const f=setup()
- if(reason==='reconnect')f.notice.connectionStartedAtMillis=start+1
  if(reason==='expired')vi.setSystemTime(start+300001)
  if(reason==='account')f.ports.session.mockResolvedValue({...session,userId:8})
  if(reason==='aborted')f.signal.abort()
@@ -47,4 +46,20 @@ it('account swap while resolving discards the old content',async()=>{
 it('disposing during an authority request cannot publish late content',async()=>{
  const f=setup();f.ports.resolve.mockImplementation(async()=>{f.service.dispose();return resolved})
  f.service.accept(f.notice);await vi.advanceTimersByTimeAsync(1);expect(f.ports.publish).not.toHaveBeenCalled()
+})
+
+it('accepts an IM-qualified publication when the local connection clock is ahead',async()=>{
+ const f=setup()
+ f.notice.connectionStartedAtMillis=start+500
+ f.service.accept(f.notice)
+ await vi.advanceTimersByTimeAsync(1)
+ expect(f.ports.publish).toHaveBeenCalledOnce()
+})
+it('accepts an authorized publication when the device clock trails the server slightly',async()=>{
+ const f=setup(),at=start+2000
+ f.notice.teamPublication={...publication,publishedAt:at,expiresAt:at+3600000}
+ f.ports.resolve.mockResolvedValue({...resolved,eventAtMillis:at,expiresAtMillis:at+300000})
+ f.service.accept(f.notice)
+ await vi.advanceTimersByTimeAsync(1)
+ expect(f.ports.publish).toHaveBeenCalledOnce()
 })

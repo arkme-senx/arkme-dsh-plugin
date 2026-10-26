@@ -17,9 +17,10 @@ export class TeamMessageNotificationService {
   private stopped=false
   constructor(private readonly ports:Ports, private readonly now=Date.now) {}
   accept(notice:ArkmeChatRealtimeNotice):void {
+    // IM owns the server-clock connection anchor. Comparing its publication
+    // timestamp with this device's connection time drops valid fresh messages.
     const h=notice.teamPublication, signal=notice.connectionSignal, userId=notice.connectionUserId
-    if(this.stopped||!h||!signal||!userId||signal.aborted||h.publishedAt< (notice.connectionStartedAtMillis??0) ||
-       h.publishedAt>this.now()||h.publishedAt+300000<=this.now())return
+    if(this.stopped||!h||!signal||!userId||signal.aborted||h.publishedAt+300000<=this.now())return
     for(const [key,expiry] of this.remembered)if(expiry<=this.now())this.remembered.delete(key)
     const key=`${userId}:${h.eventUid}`
     if(this.remembered.has(key)||this.pending.has(key)||this.pending.size>=64||this.remembered.size>=2048)return
