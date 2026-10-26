@@ -1,5 +1,19 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "共享到团队": "Share with teams",
+  "团队成员可只读查看全部历史和新消息。": "Team members can read the full history and new messages.",
+  "已共享到 {count} 个团队": "Shared with {count} teams",
+  "共享设置已更新": "Sharing settings updated",
+  "确认共享": "Confirm sharing",
+  "保存更改": "Save changes",
+  "正在加载团队…": "Loading teams…",
+  "你尚未加入团队": "You have not joined a team yet",
+  "已共享": "Shared",
+  "待共享": "To share",
+  "待取消": "To remove",
+  "未共享": "Not shared",
+  "部分更改已保存，请重试未成功的团队。": "Some changes were saved. Retry the teams that failed.",
+  "未能保存更改，请重试。": "Could not save changes. Please retry.",
   "正在读取原内容…": "Loading original content…",
   "暂不支持公开，请移除此附件后继续。": "Not supported for public posts. Remove this attachment to continue.",
 
