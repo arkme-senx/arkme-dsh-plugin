@@ -7155,7 +7155,6 @@ export class ChatService {
       text: reference.textContent,
       text_format: reference.textFormat ?? 'plain',
       template_kind: reference.templateKind,
-      display_kind: reference.displayKind,
       image_count: reference.imageCount,
       voice_count: reference.voiceCount,
       file_count: reference.fileCount,

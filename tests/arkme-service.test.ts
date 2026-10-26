@@ -13,6 +13,7 @@ import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { MediaService } from '../src/services/media-service.js'
 import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
+import { assertRecordForwardInput } from './fixtures/record-forward-input.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary, ArkmeSourceItem,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -5923,6 +5924,7 @@ describe('ArkmeService', () => {
     let version = 1
     let title = '初始标题'
     let textContent = '初始正文'
+    let textFormat: 'plain' | 'markdown' = 'plain'
     let editDurationMillis = 0
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
@@ -5934,10 +5936,13 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
-      if (url.endsWith('/api/v1/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      if (url.endsWith('/api/v1/records/create')) {
+        assertRecordForwardInput(body)
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
       if (url.endsWith('/api/v1/records/detail')) return json({ code: 0, data: { record_core: {
         record_uid: 'article-1', owner_user_id: 10001, creator_user_id: 10001,
-        template_kind: 1, display_kind: 1, title, text_content: textContent,
+        template_kind: 1, display_kind: 1, title, text_content: textContent, text_format: textFormat,
         record_duration_millis: 3200, edit_duration_millis: editDurationMillis,
         send_at: 100, update_at: 200, status: 1, version,
       } } })
@@ -5991,12 +5996,14 @@ describe('ArkmeService', () => {
       record_uid: 'article-1', template_kind: 1, version: 1,
       record_duration_millis: 3200, edit_duration_millis: 1400,
     })
-    textContent = '完整长文'.repeat(7500)
+    textFormat = 'markdown'
+    textContent = '# 完整长文\n' + '**正文**'.repeat(5000)
     const completeArticle = await service.longArticleDetail(source.sourceRef, 'article-1')
     await service.forwardSourceMessages(source.sourceRef, [completeArticle.actionItem!.messageActionRef!], { recordUid: 'forwarded-article', relationUid: 'forwarded-relation' })
     const forwardBody = calls.filter(call => call.url.endsWith('/api/v1/records/create')).at(-1)!.body
-    const payload = forwardBody.content_payload as { forward_records: { items: Array<{ text: string; display_kind: number }> } }
-    expect(payload.forward_records.items[0]).toMatchObject({ text: textContent, display_kind: 1 })
+    const payload = forwardBody.content_payload as { forward_records: { items: Array<Record<string, unknown>> } }
+    expect(payload.forward_records.items[0]).toMatchObject({ text: textContent, text_format: 'markdown', template_kind: 1 })
+    expect(payload.forward_records.items[0]).not.toHaveProperty('display_kind')
   })
 
   it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {
