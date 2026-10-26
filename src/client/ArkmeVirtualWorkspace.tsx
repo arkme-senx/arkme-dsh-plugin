@@ -620,7 +620,8 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
   // This row identifies the conversation product; the centered header selector
   // owns the current task name. Task updates must never rename the directory row.
   const heading = HARNESS_CONVERSATION_NAME
-  const idleHint = '你的 DeepSeek 智能助手'
+  const recentTitle = total === 0 ? activity?.recent?.title.trim() : undefined
+  const idleHint = recentTitle || '你的 DeepSeek 智能助手'
   return <button
     ref={rowRef}
     type="button"
@@ -629,7 +630,7 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
     onContextMenu={onContextMenu}
     role="treeitem"
     aria-selected={selected}
-    aria-label={[heading, summary].filter(Boolean).join('，')}
+    aria-label={[heading, summary || recentTitle].filter(Boolean).join('，')}
     style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
     onClick={onClick}
   >
@@ -644,7 +645,7 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
         ? <span data-arkme-harness-summary>{statuses.map(status => <span key={status.kind} data-arkme-harness-status={status.kind}>
           <i aria-hidden />{status.items.length} {status.label}
         </span>)}</span>
-        : <span data-arkme-harness-destination style={styles.preview}>{idleHint}</span>}
+        : <span data-arkme-harness-destination title={idleHint} style={styles.preview}>{idleHint}</span>}
       </span>
     </span>
   </button>

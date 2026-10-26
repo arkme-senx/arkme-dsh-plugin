@@ -6,6 +6,8 @@ export interface HarnessActivity {
   scope: string
   /** The native selection is also the destination of the Arkme entry. Null means a new conversation. */
   current?: HarnessActivityItem | null
+  /** Latest real root conversation by native activity time, independent of selection. */
+  recent?: HarnessActivityItem
   running: HarnessActivityItem[]
   unread: HarnessActivityItem[]
   pending: HarnessActivityItem[]
@@ -13,6 +15,7 @@ export interface HarnessActivity {
 export interface ActivitySession {
   id: string; displayTitle: string; running: boolean
   origin?: string; parentId?: string; blank?: boolean; completed?: boolean; pendingInteraction?: string
+  updatedAt?: number
 }
 export interface ActivityList {
   phase: string; ids: readonly string[]; byId: Readonly<Record<string, ActivitySession>>; current?: string | undefined
@@ -45,11 +48,16 @@ export class HarnessActivityTracker {
     else if (list.current === undefined) result.current = null
     const hidden = new Set(archived)
     const groups = new Map<string, { item: HarnessActivityItem; running: boolean; pending: boolean; completed: boolean }>()
+    let recent: ActivitySession | undefined
+    const activityTime = (session: ActivitySession) => typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : -Infinity
     for (const id of list.ids) {
       const session = list.byId[id]
       if (!session || session.origin === 'subagent' || hidden.has(id) || session.blank) continue
       groups.set(id, { item: { id, title: session.displayTitle || '未命名对话' }, running: false, pending: false, completed: session.completed === true })
+      // Equal or unavailable timestamps keep the official catalog's existing order.
+      if (!recent || activityTime(session) > activityTime(recent)) recent = session
     }
+    if (recent) result.recent = { id: recent.id, title: recent.displayTitle || '未命名对话' }
     for (const session of Object.values(list.byId)) {
       let root: ActivitySession | undefined = session
       const seen = new Set<string>()
@@ -92,6 +100,7 @@ export function parseHarnessActivity(raw: string | null, scope: string | undefin
     const record = value as Record<string, unknown>
     const isItem = (item: unknown): item is HarnessActivityItem => typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'string' && 'title' in item && typeof item.title === 'string'
     if (record.current !== undefined && record.current !== null && !isItem(record.current)) return
+    if (record.recent !== undefined && !isItem(record.recent)) return
     for (const key of ['running', 'unread', 'pending']) {
       const items = record[key]
       if (!Array.isArray(items) || !items.every(isItem)) return

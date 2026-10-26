@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DeepSeekHarnessRow } from '../src/client/ArkmeVirtualWorkspace.js'
-import { HARNESS_ACTIVITY_ATTRIBUTE } from '../src/client/harness-activity.js'
+import { HARNESS_ACTIVITY_ATTRIBUTE, HARNESS_ACTIVITY_EVENT } from '../src/client/harness-activity.js'
 
 let host: HTMLDivElement
 let root: Root
@@ -11,6 +11,7 @@ let surface: HTMLElement
 
 const activity = (value: Record<string, unknown>) => {
   surface.setAttribute(HARNESS_ACTIVITY_ATTRIBUTE, JSON.stringify({ scope: 'acct-1', running: [], unread: [], pending: [], ...value }))
+  document.dispatchEvent(new Event(HARNESS_ACTIVITY_EVENT))
 }
 const line = (selector: string) => host.querySelector(selector)?.textContent ?? ''
 const row = () => host.querySelector('button')!
@@ -77,4 +78,22 @@ it('keeps the product name for a blank harness session and after session changes
   expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
   await act(async () => activity({ current: { id: 's2', title: '新任务' } }))
   expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+})
+
+it('shows the latest conversation title only when idle and fully read, and updates without changing selection', async () => {
+  activity({ current: { id: 'old', title: '当前看的旧会话' }, recent: { id: 'recent', title: '最新对话标题' } })
+  await render()
+  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-destination]')).toBe('最新对话标题')
+  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness，最新对话标题')
+  expect(host.querySelector('[data-arkme-harness-destination]')?.getAttribute('title')).toBe('最新对话标题')
+  await act(async () => activity({ current: { id: 'old', title: '另一个旧会话' }, recent: { id: 'recent', title: '最近对话已改名' } }))
+  expect(line('[data-arkme-harness-destination]')).toBe('最近对话已改名')
+})
+
+it.each(['running', 'pending', 'unread'])('preserves %s attention ahead of the idle title', async kind => {
+  activity({ recent: { id: 'recent', title: '最近对话' }, [kind]: [{ id: 'active', title: '需要关注的任务' }] })
+  await render()
+  expect(line('[data-arkme-harness-destination]')).not.toBe('最近对话')
+  expect(host.querySelector('[data-arkme-harness-badge]')?.textContent).toBe('1')
 })
