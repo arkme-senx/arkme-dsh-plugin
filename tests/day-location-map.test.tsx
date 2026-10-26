@@ -146,3 +146,16 @@ it('opens all-date locations directly and retains the mounted map and record she
     expect(view.close).toHaveBeenCalledOnce()
   } finally { await view.dispose() }
 })
+
+it('passes the selected date and timezone to a native location window without creating a page overlay', async () => {
+  const open = vi.fn(async () => true)
+  vi.stubGlobal('arkmeLongArticle', { version: 3, open, account: async () => true })
+  const mount = document.createElement('div'); document.body.append(mount)
+  const root = createRoot(mount), close = vi.fn()
+  try {
+    await act(async () => root.render(<ArkmeDayLocationMap query={query} onClose={close} />))
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ surface: 'location', location: { initialDate: { bucketDate: query.bucketDate, timezone: query.timezone } } }))
+    expect(close).toHaveBeenCalledOnce()
+    expect(document.querySelector('.arkme-day-map-dialog')).toBeNull()
+  } finally { await act(async () => root.unmount()); mount.remove() }
+})
