@@ -52,6 +52,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeWechatToolPort,
   ArkmeUserBanToolPort,
   ArkmeVoiceprintToolPort {
+  externalChats(operation: import('../../team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown>
   relationPage(query:Omit<ExploreQuery,'module'>,signal?:AbortSignal):Promise<ExplorePage>
   relationRecords(query:{ref:string;cursor?:string},signal?:AbortSignal):Promise<ExploreDetail>
 }

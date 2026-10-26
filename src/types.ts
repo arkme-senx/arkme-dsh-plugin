@@ -200,6 +200,7 @@ export type ArkmeTeamJoinRejectReason = 'team_not_found'
 export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
 
 export interface ArkmeTeam {
+  key?: string
   profileRevision?: number
   canEditProfile?: boolean
   avatar?: ArkmeTeamAvatar
@@ -1513,6 +1514,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamProfiles?: true
+    teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
     dshAccountSessions?: true
@@ -4220,6 +4222,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.external'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
