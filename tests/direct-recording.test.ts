@@ -124,17 +124,17 @@ describe('direct microphone recording lifecycle', () => {
     h.store.confirmSubmittedCoverage(account.key, [])
     expect(h.store.getSnapshot().submitted).toHaveLength(0)
   })
-  it('retains a failed upload and retries the exact same name/time/owner without recapturing', async () => {
+  it('retains a failed upload and retries the exact same name/time/owner/strategy without recapturing', async () => {
     const h = await setup(); h.upload.mockRejectedValueOnce(new Error('网络离线'))
-    await h.store.start(); h.chunk(); await h.store.stop()
+    await h.store.start('baseline-sd-asr/20261026'); h.chunk(); await h.store.stop()
     expect(h.store.getSnapshot().error).toContain('录音仍保留在本机')
     const record = h.store.getSnapshot().pending[0]!
     const file = await h.store.download(record.id); expect(file?.size).toBe(32044)
     await h.store.upload(record.id)
     expect(h.upload.mock.calls[0]![1].name).toBe(h.upload.mock.calls[1]![1].name)
     expect(h.upload.mock.calls.map(call => call[4])).toEqual([
-      expect.objectContaining({ recordingKind: 1 }),
-      expect.objectContaining({ recordingKind: 1 }),
+      expect.objectContaining({ recordingKind: 1, strategy: 'baseline-sd-asr/20261026' }),
+      expect.objectContaining({ recordingKind: 1, strategy: 'baseline-sd-asr/20261026' }),
     ])
     expect(h.capture).toHaveBeenCalledOnce(); expect(h.journal.records.size).toBe(0)
   })

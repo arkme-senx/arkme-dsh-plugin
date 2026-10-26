@@ -255,6 +255,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
+      'arkme_recording_strategies', 'arkme_recording_strategy_start',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',

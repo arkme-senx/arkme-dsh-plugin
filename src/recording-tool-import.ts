@@ -61,6 +61,7 @@ export async function importStagedRecording(
       startAtMillis: input.startAtMillis,
       belongUserId: input.ownership === 'self' ? expectedUserId : 0,
       recordingKind: 3,
+      ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
     }, expectedUserId, signal)
     accepted = true
     return job

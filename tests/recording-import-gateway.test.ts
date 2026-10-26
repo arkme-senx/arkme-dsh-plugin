@@ -1139,18 +1139,19 @@ it('replays new batch creation without a filename scan after an unknown result',
   const runtime = {
     async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
     async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      if (path.endsWith('/strategies')) return [{id:'baseline-sd-asr/20261026'}]
       posts.push({ path, body })
       if (path.endsWith('/new-session')) return { session_id: 'session-1' }
       throw new Error(`unexpected request ${path}`)
     },
   } as unknown as ServiceRuntime
-  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
+  const input = job({ strategy: 'baseline-sd-asr/20261026', createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
   const gateway = new AudioRecordingImportGateway(runtime)
   await gateway.ensureSession(input); await gateway.ensureSession(input)
   expect(posts).toHaveLength(2)
   expect(posts[0]).toEqual(posts[1])
   expect(posts[0]!.path).toBe('/api/v1/audio/import-batches/new-session')
-  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
+  expect(posts[0]!.body).toMatchObject({ strategy: input.strategy, create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
 })
 
 it('never retries a batch admission as an ordinary upload when the backend route disappears', async () => {
@@ -1215,4 +1216,12 @@ describe('owner scan continuation', () => {
     await expect(f.read(100)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
     expect(f.offsets()).toEqual([0, 100])
   })
+})
+
+it('does not silently create the default when an older Audio lacks the selected strategy',async()=>{
+ const post=vi.fn(async()=>[])
+ const runtime={requireSession:async()=>({userId:42}),authenticatedAudioPost:post} as unknown as ServiceRuntime
+ const input=job({strategy:'baseline-sd-asr/20261026',createRequestUID:'0199f000-1234-7123-8123-0123456789ab'})
+ await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toMatchObject({code:'recording-strategy-unavailable'})
+ expect(post.mock.calls).toHaveLength(1)
 })

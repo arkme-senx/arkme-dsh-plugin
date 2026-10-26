@@ -29,6 +29,7 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
       action: { type: 'string', enum: ['upload', 'status', 'retry'], required: true },
       file_ref: { type: 'string', description: 'Upload only: unchanged authorized local file reference.' },
       start_at_millis: { type: 'integer', description: 'Upload only: actual recording start instant in Unix milliseconds, not the upload time.' },
+      strategy: { type: 'string', enum: ['system-sd-asr/v1', 'baseline-sd-asr/20261026'], description: 'Initial official transcription strategy; omitted uses current.' },
       ownership: { type: 'string', enum: ['self', 'other'], description: 'Upload only: self (default) or other (unbound recording ownership).' },
       import_ref: { type: 'string', description: 'Status/retry only: unchanged import_ref returned by this tool.' },
       revision: { type: 'integer', description: 'Retry only: latest revision from status, at least 1.' },
@@ -47,6 +48,7 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
         }
         return importResult(await ports.importRecordingFile({
           fileRef: args.file_ref, startAtMillis: args.start_at_millis!, ownership: args.ownership ?? 'self',
+          ...(args.strategy === undefined ? {} : { strategy: args.strategy }),
         }, exec.signal))
       }
       if ((args.action !== 'status' && args.action !== 'retry')

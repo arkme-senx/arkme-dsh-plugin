@@ -3,7 +3,7 @@ import { ArkmePluginError } from './services/service.js'
 /** Private owner identity. Browser/SDK consumers receive an opaque media ref. */
 export interface RecordingPlaybackRef {
   child_id: string
-  source: 'primary' | 'enhanced'
+  source: 'primary' | 'enhanced' | 'comparison'
   ordinal: number
   audio_revision: string
 }
@@ -11,7 +11,7 @@ export interface RecordingPlaybackRef {
 /** A transcript location, resolved by Audio when playback is requested. */
 export interface RecordingPlaybackLocator {
   child_id: string
-  source: 'primary' | 'enhanced'
+  source: 'primary' | 'enhanced' | 'comparison'
   ordinal: number
 }
 
@@ -20,7 +20,7 @@ export function recordingPlaybackLocator(value: unknown): RecordingPlaybackLocat
   const raw = value as Partial<RecordingPlaybackLocator>
   if (typeof raw !== 'object' || Array.isArray(raw)
     || typeof raw.child_id !== 'string' || !/^[a-f0-9]{24}$/.test(raw.child_id) || /^0{24}$/.test(raw.child_id)
-    || (raw.source !== 'primary' && raw.source !== 'enhanced')
+    || (raw.source !== 'primary' && raw.source !== 'enhanced' && raw.source !== 'comparison')
     || !Number.isSafeInteger(raw.ordinal) || raw.ordinal! < 0 || raw.ordinal! > 2_147_483_647) {
     throw new ArkmePluginError('recording-media-invalid', '录音媒体定位无效，请刷新后重试', false, 502)
   }
@@ -36,7 +36,7 @@ export function recordingPlaybackRef(value: unknown): RecordingPlaybackRef | und
   const raw = value as Partial<RecordingPlaybackRef>
   if (typeof raw !== 'object' || Array.isArray(raw)
     || typeof raw.child_id !== 'string' || !/^[a-f0-9]{24}$/.test(raw.child_id) || /^0{24}$/.test(raw.child_id)
-    || (raw.source !== 'primary' && raw.source !== 'enhanced')
+    || (raw.source !== 'primary' && raw.source !== 'enhanced' && raw.source !== 'comparison')
     || !Number.isSafeInteger(raw.ordinal) || raw.ordinal! < 0 || raw.ordinal! > 2_147_483_647
     || typeof raw.audio_revision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.audio_revision)) {
     throw new ArkmePluginError('recording-media-invalid', '录音媒体引用无效，请刷新后重试', false, 502)

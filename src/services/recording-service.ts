@@ -1,3 +1,5 @@
+import { RecordingStrategyService } from './recording-strategy-service.js'
+import { recordingStrategy } from '../recording-strategy-contract.js'
 import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
@@ -329,6 +331,27 @@ export class RecordingService {
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-forward-account-changed', '账号已切换，请重新选择录音', false, 409)
     selected.sort((left, right) => left.startAtMillis - right.startAtMillis || left.childId.localeCompare(right.childId) || left.asrItemIndex - right.asrItemIndex)
     return await this.forwardGateway.forward({ sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) }, input, session, signal)
+  }
+
+  async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    this.assertWorkbenchEnabled()
+    if (input.action === 'sources' && typeof input.importRef === 'string') {
+      if (input.sessionRef !== undefined) throw new ArkmePluginError('recording-strategy-invalid', '请提供一个录音引用', false, 400)
+      const { userId, jobId } = await this.openRecordingImportRef(input.importRef)
+      const job = await this.runtime.stateStore.getRecordingImportJob(userId, jobId)
+      if (!job?.sessionId) throw new ArkmePluginError('recording-strategy-pending', '录音尚未上传完成', true, 409)
+      input = { ...input, sessionRef: await this.recordingImportSessionRef({ sessionId: job.sessionId }, userId) }
+    }
+    const prefix = 'arkme-recording-strategy-v1'
+    return new RecordingStrategyService(this.runtime, {
+      openSession: ref => this.openRecordingImportSessionRef(ref),
+      open: ref => this.openRecordingRef(prefix, ref),
+      seal: async payload => this.sealRecordingRefWithKey(prefix, payload, await this.recordingRefKey(prefix)),
+      playback: async (viewerUserId, locator, signal) => {
+        if (!this.media) throw new ArkmePluginError('recording-playback-unavailable', '录音播放当前不可用', true, 503)
+        return this.media.issueRecordingPlaybackMediaRef({ viewerUserId, locator }, signal)
+      },
+    }).request(input, signal)
   }
 
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> {
@@ -1125,6 +1148,7 @@ export class RecordingService {
       sha256: string
       startAtMillis: number
       belongUserId: number
+      strategy?: string
       recordingKind?: 0 | 1 | 3
     },
     expectedUserId: number,
@@ -1144,7 +1168,9 @@ export class RecordingService {
     if (belongUserId !== 0 && belongUserId !== session.userId) {
       throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false)
     }
+    const selectedStrategy = recordingStrategy(metadata.strategy)
     const identity = {
+      strategy: selectedStrategy,
       userId: session.userId,
       fileName: metadata.fileName,
       fileSize: metadata.fileSize,
@@ -1201,6 +1227,7 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
       recordingKind,
+      ...(metadata.strategy === undefined ? {} : { strategy: selectedStrategy }),
       sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,
@@ -1847,6 +1874,7 @@ export class RecordingService {
   }
 
   private ownerTranscriptItem(item: RecordingOwnerFragment, viewerUserId: number, profiles: Map<number, { displayName: string; avatarRef?: string }>): ArkmeRecordingPrivateTranscriptItem {
+    if (item.locator.source === 'comparison') throw new ArkmePluginError('recording-source-invalid', '对比结果不属于正式正文', false, 502)
     const identity = item.speakerEdit?.partitionId ? `partition:${item.speakerEdit.partitionId}` : item.speaker.reference || `unknown:${item.recordingId}:${item.locator.child_id}:${item.locator.source}:${String(item.locator.ordinal)}`
     const color = createHash('sha256').update(identity).digest().readUInt32BE(0)
     const profile = item.speaker.userId === undefined ? undefined : profiles.get(item.speaker.userId)
@@ -1859,7 +1887,7 @@ export class RecordingService {
       ...(profile?.avatarRef === undefined ? {} : { speakerAvatarRef: profile.avatarRef }),
       isSelf: item.speaker.userId === viewerUserId, isBackground: item.isBackground,
       speakerReference: item.speaker.reference, speakerIdentity: identity,
-      readView: { recording_uid: item.recordingId, revision: item.revision, source: item.locator.source },
+      readView: { recording_uid: item.recordingId, revision: item.revision, source: item.locator.source === 'primary' ? 'primary' : 'enhanced' },
       sourceSpeakerNumber: item.speakerEdit?.sourceNumber ?? -1, assignmentSpeakerNumber: item.speakerEdit?.assignmentNumber ?? -1,
       formalSpeakerId: item.speakerEdit?.formalSpeakerId ?? '', childAsrItemStartAt: item.speakerEdit?.start ?? 0, childAsrItemEndAt: item.speakerEdit?.end ?? 0,
       ...(item.speakerEdit === undefined ? {} : { speakerRevision: item.speakerEdit.revision }),

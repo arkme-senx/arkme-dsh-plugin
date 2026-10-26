@@ -1,3 +1,4 @@
+import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { tr } from '../locale.js'
 import type { ArkmeMembership } from '../../types.js'
 import { recordingCoverageContains } from '../../recording-coverage.js'
@@ -112,7 +113,7 @@ export class DirectRecordingStore {
       if (this.valid(generation)) { this.storageReady = true; this.publish({ pending }) }
     } catch { if (this.valid(generation)) this.publish({ error: '无法使用本地录音存储，请允许浏览器保存网站数据后重试' }) }
   }
-  async start(): Promise<void> {
+  async start(strategy: RecordingStrategy = 'system-sd-asr/v1'): Promise<void> {
     const account = this.account
     if (!account || this.state.phase !== 'idle') return
     const generation = this.generation; const signal = this.scope.signal
@@ -136,7 +137,7 @@ export class DirectRecordingStore {
           if (!this.valid(generation)) throw new Error('账号已切换，未开始录音')
           const startedAt = this.deps.now(); const id = this.deps.id()
           const stamp = new Date(startedAt).toLocaleString('sv-SE').replace(/[^0-9]/g, '')
-          const record: LocalMicrophoneRecording = { id, accountKey: account.key, userId: account.userId, startedAt, sampleRate, bytes: 0, chunks: 0, finished: false, fileName: `即我录音-${stamp}-${id.slice(0, 8)}.wav` }
+          const record: LocalMicrophoneRecording = { strategy: recordingStrategy(strategy), id, accountKey: account.key, userId: account.userId, startedAt, sampleRate, bytes: 0, chunks: 0, finished: false, fileName: `即我录音-${stamp}-${id.slice(0, 8)}.wav` }
           await this.deps.journal.create(record); current.record = record
           if (!this.valid(generation)) throw new Error('账号已切换，未开始录音')
           this.publish({ startedAt, recordingId: id })
@@ -247,7 +248,7 @@ export class DirectRecordingStore {
       if (!this.valid(generation)) return
       // Sending the captured user id (never 0) lets the host reject account changes.
       await this.deps.upload(account.importPath, file, record.startedAt, account.userId, {
-        signal, recordingKind: 1,
+        signal, recordingKind: 1, strategy: recordingStrategy(record.strategy),
         onProgress: progress => { if (this.valid(generation)) this.publish({ progress: progress.totalBytes ? progress.uploadedBytes / progress.totalBytes : 0 }) },
       })
       // Host accepted and durably owns the file/upload job; safe to clear this browser's copy.

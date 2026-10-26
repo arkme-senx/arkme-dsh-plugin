@@ -1,3 +1,4 @@
+export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
 export type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
 import { isRecordingInstantOnOrAfterUnixEpoch, isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
@@ -538,6 +539,10 @@ export class ArkmeSdk {
   async offlineContext(input:OfflineContextRequest,signal?:AbortSignal):ReturnType<OfflineContextPort['offlineContext']> {
     if((await this.capabilities(signal)).features.offlineContextV1!==true)throw new Error('当前服务不支持录音聊天上下文')
     return this.call('offline-context',input,signal)
+  }
+  async recordingStrategies<T extends import('../recording-strategy-contract.js').RecordingStrategyRequest>(input: T, signal?: AbortSignal): Promise<import('../recording-strategy-contract.js').RecordingStrategyResponse<T>> {
+    if ((await this.capabilities(signal)).features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
+    return this.call(input.action === 'start' ? 'recordings.strategies.start' : 'recordings.strategies', { ...input }, signal)
   }
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
@@ -2237,7 +2242,9 @@ export class ArkmeSdk {
       || !isRecordingInstantOnOrAfterUnixEpoch(input.startAtMillis) || input.startAtMillis > Date.now()
       || !['self', 'other'].includes(input.ownership)) throw new TypeError('Invalid recording import input')
     await this.requireRecordingFileImport(signal)
+    if (input.strategy !== undefined && (await this.capabilities(signal)).features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持选择录音策略')
     return this.call('recordings.import.file', {
+      ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
       fileRef: input.fileRef, startAtMillis: input.startAtMillis, ownership: input.ownership,
     }, signal)
   }

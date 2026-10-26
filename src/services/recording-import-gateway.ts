@@ -532,6 +532,15 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     }
     const timezoneOffsetMillis = job.batch ? recordingBatchOffset(job.startAtMillis, job.batch.timeZone) : -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
     const session = await this.requireJobSession(job)
+    // An older Audio accepts unknown JSON fields. Check the alternative recipe
+    // before creation so an out-of-order client rollout cannot silently publish
+    // the default algorithm as the user's chosen official result.
+    if (job.strategy === 'baseline-sd-asr/20261026') {
+      const strategies = await this.runtime.authenticatedAudioPost<unknown>('/api/v1/audio/strategies', {}, session, signal, { bypassCache: true })
+      if (!Array.isArray(strategies) || !strategies.some(value => value !== null && typeof value === 'object' && value.id === job.strategy)) {
+        throw new RecordingImportContractError('recording-strategy-unavailable', '服务器暂不支持所选录音策略，请稍后重试')
+      }
+    }
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       job.batch ? '/api/v1/audio/import-batches/new-session' : '/api/v1/audio/new-session',
       {
@@ -539,6 +548,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         ...(job.createRequestUID ? { create_request_uid: job.createRequestUID } : {}),
         ...(job.batch ? { import_batch: { contract_version: RECORDING_IMPORT_CONTRACT_VERSION, batch_id: job.batch.batchId, item_index: job.batch.itemIndex, item_count: job.batch.itemCount, time_zone: job.batch.timeZone, file_sha256: job.sha256, file_size: job.fileSize, ownership: job.belongUserId === job.userId ? 'self' : 'other' } } : {}),
         recording_kind: job.recordingKind,
+        ...(job.strategy === undefined ? {} : { strategy: job.strategy }),
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,

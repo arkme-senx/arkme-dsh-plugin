@@ -1,3 +1,4 @@
+import { RECORDING_STRATEGIES, recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -63,13 +64,14 @@ export function useDirectRecordingOwner(accountKey: string | undefined, userId: 
 }
 
 export function ArkmeDirectRecordingButton({ onStart }: { onStart(): void }) {
+  const [strategy, setStrategy] = useState<RecordingStrategy>('system-sd-asr/v1')
   useArkmeLocale()
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const recording = state.phase === 'recording'
   const breathStyle = useRecordingBreathStyle(recording, state.startedAt)
-  return <button type="button" data-arkme-feedback="neutral" style={{ ...button, ...breathStyle, opacity: state.phase === 'idle' ? 1 : .65 }}
+  return <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><select aria-label="录音处理策略" disabled={state.phase !== 'idle'} value={strategy} onChange={e => setStrategy(recordingStrategy(e.target.value))} style={button}>{RECORDING_STRATEGIES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" data-arkme-feedback="neutral" style={{ ...button, ...breathStyle, opacity: state.phase === 'idle' ? 1 : .65 }}
     disabled={state.phase !== 'idle' || !state.accountKey}
-    onClick={() => { onStart(); void store.start() }}><Microphone size={16} aria-hidden data-arkme-recording-breath={recording ? 'icon' : undefined} />{state.phase === 'starting' ? '正在准备…' : '开始录音'}</button>
+    onClick={() => { onStart(); void store.start(strategy) }}><Microphone size={16} aria-hidden data-arkme-recording-breath={recording ? 'icon' : undefined} />{state.phase === 'starting' ? '正在准备…' : '开始录音'}</button></div>
 }
 
 export function ArkmeDirectRecordingStatus({ floating = false, onShowTasks }: { floating?: boolean; onShowTasks?(): void }) {

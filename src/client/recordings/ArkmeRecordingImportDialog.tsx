@@ -1,3 +1,4 @@
+import { RECORDING_STRATEGIES, recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
@@ -42,6 +43,7 @@ interface StagedRecording {
   preparing?: boolean
   selection?: ArkmeRecordingSelection
   startAt: string
+  strategy?: RecordingStrategy
   ownership: Ownership
   submitting: boolean
   batch?: RecordingImportBatch
@@ -763,7 +765,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     id: row.id, accountKey, fileName: row.file.name, fileSize: row.file.size,
     lastModified: row.file.lastModified, mimeType: row.file.type,
     source: row.source ?? { kind: 'file', file: row.file }, selected: row.selected,
-    startAt: row.startAt, ownership: row.ownership, error: row.error,
+    startAt: row.startAt, ...(row.strategy === undefined ? {} : { strategy: row.strategy }), ownership: row.ownership, error: row.error,
     ...(row.needsAccess ? { needsAccess: true } : {}),
     ...(row.submission === undefined ? {} : { submission: row.submission }),
     ...(row.batch === undefined ? {} : { batch: row.batch }),
@@ -863,7 +865,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       journalIDs.current = new Set(saved.map(row => row.id))
       const restored: StagedRecording[] = saved.map(row => ({
         id: row.id, file: importFilePlaceholder(row), source: row.source, selected: row.selected,
-        startAt: row.startAt, ownership: row.ownership, submitting: false, validating: false, error: row.error,
+        startAt: row.startAt, ...(row.strategy === undefined ? {} : { strategy: row.strategy }), ownership: row.ownership, submitting: false, validating: false, error: row.error,
         ...(row.needsAccess ? { needsAccess: true } : {}),
         ...(row.batch === undefined ? {} : { batch: row.batch }),
         ...(row.submission === undefined ? {} : { submission: row.submission }),
@@ -1220,6 +1222,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             'X-Arkme-File-Name': encodeURIComponent(row.file.name), 'X-Arkme-Start-At': String(start),
             'X-Arkme-Belong-User': String(row.ownership === 'self' ? currentUserId : 0), 'X-Arkme-Recording-Kind': '3',
             'X-Arkme-Import-Task': row.id,
+            'X-Arkme-Recording-Strategy': recordingStrategy(row.strategy),
             ...(row.batch ? { 'X-Arkme-Import-Batch': encodeURIComponent(JSON.stringify(row.batch)) } : {}),
           },
         }) as Promise<PublicRecordingImportJob> : uploadArkmeRecording(
@@ -1230,6 +1233,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           {
             ...(row.batch === undefined ? {} : { batch: row.batch }),
             clientTaskId: row.id,
+            strategy: recordingStrategy(row.strategy),
             signal: controller.signal,
             onProgress: progress => {
               if (controller.signal.aborted || !inspectionActiveRef.current) return
@@ -1610,7 +1614,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             const processingSource = stagedProcessingSource(row, durationNowMillis)
             return <div key={row.id} style={styles.row} role="row">
               <span style={styles.cellCenter}>{row.submitting ? null : <input style={styles.checkbox} aria-label={tr("选择 {v0}", { v0: row.file.name })} type="checkbox" checked={row.selected} disabled={pending} onChange={event => { updateRow(row.id, { selected: event.target.checked }) }} />}</span>
-              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
+              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><label style={{ fontSize: 12 }}>处理策略 <select aria-label={`${row.file.name}处理策略`} disabled={rowLocked || row.submission !== undefined} value={recordingStrategy(row.strategy)} onChange={event => updateRow(row.id, { strategy: recordingStrategy(event.target.value) })}>{RECORDING_STRATEGIES.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}</select></label><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
               <span style={styles.cellCenter}>{row.selection?.ok === true ? durationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
               <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: row.file.name })}><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'self'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'self') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'self' }) }}>{tr("我的")}</button><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'other'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'other') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'other' }) }}>{tr("他人")}</button></span>
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>

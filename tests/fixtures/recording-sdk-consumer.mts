@@ -61,3 +61,20 @@ canceled = false
 try { await importer.importRecordingFile(file, lifecycle.signal) } catch { canceled = true }
 if (!canceled || imports.length !== 3) throw new Error('Disposed consumer started import')
 console.log('Packed public SDK consumer: Unicode pages, typed file import, capability refusal and cancellation passed')
+
+const strategyCalls: string[] = []
+const strategies = createArkmeSdk({ fetchImpl: async (_url, options) => {
+  options?.signal?.throwIfAborted()
+  const request = JSON.parse(String(options?.body)); strategyCalls.push(request.operation)
+  return new Response(JSON.stringify({ ok: true, value: request.operation === 'provider.capabilities'
+    ? { contractVersion: 1, features: { recordingStrategiesV1: true } }
+    : request.params.action === 'catalog' ? [{ id: 'system-sd-asr/v1', name: '当前方案' }] : { accepted: true } }))
+} })
+const catalog = await strategies.recordingStrategies({ action: 'catalog' })
+if (catalog[0].id !== 'system-sd-asr/v1') throw new Error('Strategy catalog contract lost')
+const accepted = await strategies.recordingStrategies({ action: 'start', sourceRef: 'opaque-source', strategy: 'baseline-sd-asr/20261026' })
+if (!accepted.accepted || strategyCalls.at(-1) !== 'recordings.strategies.start') throw new Error('Strategy command lost')
+refused = false
+try { await unsupported.recordingStrategies({ action: 'catalog' }) } catch { refused = true }
+if (!refused) throw new Error('Unsupported strategy must fail before reading')
+console.log('Packed strategy SDK consumer: typed catalog/start and capability refusal passed')

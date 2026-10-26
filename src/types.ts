@@ -1502,6 +1502,7 @@ export interface ArkmeProviderCapabilities {
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+    recordingStrategiesV1?: true
     offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
@@ -4127,6 +4128,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.strategies'
+  | 'recordings.strategies.start'
   | 'recordings.transcript.page'
   | 'explore.settings' | 'explore.settings.save'
   | 'people.list' | 'people.open-chat'
@@ -4562,6 +4565,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
+  | 'recordings.strategies'
+  | 'recordings.strategies.start'
   | 'recordings.forward.capabilities'
   | 'recordings.forward'
   | 'recordings.summary-model-config'

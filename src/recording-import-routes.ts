@@ -1,3 +1,4 @@
+import { recordingStrategy } from './recording-strategy-contract.js'
 import { validRecordingImportBatch, type RecordingImportBatch } from './recording-workflow-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
@@ -48,7 +49,7 @@ interface ArkmeRecordingImportAcceptor {
   recordingImportReceipt?(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3 },
+    metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3; strategy?: string },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -119,6 +120,7 @@ export function createArkmeRecordingImportHandler(
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
       const startAtMillis = nonNegativeIntegerHeader(req, 'x-arkme-start-at')
       const belongUserId = nonNegativeIntegerHeader(req, 'x-arkme-belong-user')
+      const strategy = recordingStrategy(headerText(req, 'x-arkme-recording-strategy'))
       const recordingKindHeader = headerText(req, 'x-arkme-recording-kind').trim()
       const recordingKind = recordingKindHeader === '' ? 0 : Number(recordingKindHeader)
       if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) {
@@ -180,6 +182,7 @@ export function createArkmeRecordingImportHandler(
         startAtMillis,
         belongUserId,
         recordingKind,
+        strategy,
         ...(batch ? { batch } : {}),
       }, expectedUserId)
       accepted = true
