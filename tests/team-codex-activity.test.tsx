@@ -61,7 +61,7 @@ describe('Team Codex activity UI',()=>{
   it('uses the shared floating conversation menu and exposes read-only information without changing the transcript or sync',async()=>{
     const task={...base.tasks[0]!,installationId:'device',projectKey:'project',projectName:'产品',cwd:'/workspace/product',branch:'dev'}
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,tasks:[task]}:{items:[]})
-    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11"/>);await tick()})
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personal selfMember="11"/>);await tick()})
     const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
     await taskMenu()
     expect(renderer!.root.findByProps({role:'menu'}).findAllByProps({role:'menuitem'}).map(text)).toEqual(['对话信息'])
@@ -77,7 +77,7 @@ describe('Team Codex activity UI',()=>{
     await act(async()=>{dialog.props.onKeyDown({key:'Escape',preventDefault:vi.fn(),stopPropagation:vi.fn()});await tick()})
     expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
     await taskMenu();await click('对话信息')
-    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11" active={false}/>);await tick()})
+    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personal selfMember="11" active={false}/>);await tick()})
     expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
   })
   it('reapplies member scope when navigating between member shortcuts without filters inside the picker',async()=>{
@@ -153,12 +153,12 @@ describe('Team Codex activity UI',()=>{
     expect(renderer!.root.findAllByProps({className:'arkme-codex-transcript'})).toHaveLength(0)
     expect(text(renderer!.root)).not.toContain(title)
   })
-  it('hides a previously selected transcript when a refreshed member identity can no longer be verified',async()=>{
+  it('hides a previously selected transcript after explicit access denial',async()=>{
     vi.useFakeTimers()
     const target={accountKey:'prod:11',team:{teamRef,name:'团队',jotmoId:'team'},member:self.userRef}
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} conversation target={target}/>);await tick()})
     expect(renderer!.root.findAllByProps({className:'arkme-codex-transcript'})).toHaveLength(1)
-    mocks.callArkme.mockRejectedValue(new Error('无法核对身份'))
+    mocks.callArkme.mockRejectedValue(Object.assign(new Error('无法核对身份'),{body:{code:'team-codex-forbidden'}}))
     await act(async()=>{await vi.advanceTimersByTimeAsync(3000);await tick()})
     expect(renderer!.root.findAllByProps({className:'arkme-codex-transcript'})).toHaveLength(0)
     expect(text(renderer!.root)).toContain('无法核对身份')
@@ -172,12 +172,12 @@ describe('Team Codex activity UI',()=>{
     expect(text(renderer!.root)).not.toContain('排除此任务')
   })
   it('mounts the helper entry in an own local conversation, with no write on click',async()=>{
-    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11"/>);await tick()})
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personal selfMember="11"/>);await tick()})
     expect(renderer!.root.findByType('textarea').props.readOnly).toBe(true)
     await act(async()=>{renderer!.root.findByType('textarea').props.onClick();await tick()})
     expect(text(renderer!.root.findByProps({role:'dialog'}))).toContain('助手派发功能接入中')
     expect(mocks.callArkme.mock.calls.every(call=>['team.codex.state','team.codex.events'].includes(call[0]))).toBe(true)
-    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personalTeams={[]} selfMember="11" active={false}/>);await tick()})
+    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personal selfMember="11" active={false}/>);await tick()})
     expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
   })
   it('auto-opens own recent task, hides member filters, and routes the transcript to its original team',async()=>{
@@ -185,10 +185,10 @@ describe('Team Codex activity UI',()=>{
     const ownRemote={...base.tasks[0]!,id:'on-other-device',updatedAt:Date.now()+100,cloud:{taskId:'remote',sourceId:'device-b',sourceName:'Laptop B',ownerRef:'11',remote:true}}
     const other={...ownRemote,id:'colleague',cloud:{...ownRemote.cloud,ownerRef:'22'},member:{...self,userRef:'other',displayName:'同事'}}
     mocks.callArkme.mockImplementation(async(op:string,params:{teamRef:string})=>op==='team.codex.state' ? params.teamRef===teamRef ? base :
-      {...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:1},tasks:[ownRemote,other]} : {items:[]})
-    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personalTeams={teams} selfMember="11"/>);await tick()})
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.state',{teamRef:'team-b',memberRef:'11',page:1},expect.anything())
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.events',expect.objectContaining({teamRef:'team-b',id:'on-other-device',sourceId:'device-b'}),expect.anything())
+      {...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:1},tasks:[...base.tasks,ownRemote,other]} : {items:[]})
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personal selfMember="11"/>);await tick()})
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.state',{teamRef:'self',memberRef:'11',page:1},expect.anything())
+    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.events',expect.objectContaining({teamRef:'self',id:'on-other-device',sourceId:'device-b'}),expect.anything())
     await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
     expect(renderer!.root.findAllByProps({'aria-label':'筛选成员'})).toHaveLength(0)
     expect(renderer!.root.findAllByProps({className:'arkme-team-codex-task-toggle'})).toHaveLength(2)
@@ -199,16 +199,16 @@ describe('Team Codex activity UI',()=>{
     const teams=[{teamRef,name:'Team A',jotmoId:'a'}]
     const second={...base.tasks[0]!,id:'older',title:'此前的任务',updatedAt:1}
     mocks.callArkme.mockImplementation(async(op:string)=>op==='team.codex.state'?{...base,tasks:[...base.tasks,second]}:{items:[]})
-    const props={teamRef:'',conversation:true,personalTeams:teams,selfMember:'11'}
+    const props={teamRef:'',conversation:true,personal:true,selfMember:'11'}
     await act(async()=>{renderer=create(<TeamCodexActivity {...props}/>);await tick()})
     await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
     await act(async()=>{renderer!.root.findAllByProps({className:'arkme-team-codex-task-toggle'}).find(node=>text(node).includes('此前的任务'))!.props.onClick();await tick()})
     await act(async()=>{renderer!.update(<TeamCodexActivity {...props} active={false}/>);await tick()})
     await act(async()=>{renderer!.update(<TeamCodexActivity {...props} active/>);await tick()})
     expect(text(renderer!.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('此前的任务')
-    await act(async()=>{renderer!.update(<TeamCodexActivity {...props} personalTeams={[]} active={false}/>);await tick()})
+    await act(async()=>{renderer!.update(<TeamCodexActivity {...props} personal active={false}/>);await tick()})
     expect(renderer!.root.findAllByProps({className:'arkme-codex-transcript'})).toHaveLength(0)
-    expect(text(renderer!.root.findByProps({className:'arkme-codex-task-trigger'}))).not.toContain('此前的任务')
+    expect(text(renderer!.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('此前的任务')
   })
   it('opens a team overview task in the shared reader without loading an inline transcript',async()=>{
     const open=vi.fn()

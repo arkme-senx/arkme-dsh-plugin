@@ -1,3 +1,4 @@
+import { readRecordExcerpt } from './record-excerpt.js'
 import { sameArkoTurnIntent, isValidArkoPendingTurn, validArkoStoredTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from './arko-turn-contract.js'
 import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
@@ -273,9 +274,12 @@ function normalizedPending(value: unknown): ArkmePendingWrite[] {
       ? Math.max(0, Math.trunc(source.recordDurationMillis))
       : 0
     const captureContext = normalizedCaptureContext(source.captureContext)
+    const excerpt = readRecordExcerpt(source.excerpt, source.textContent)
+    if (source.excerpt !== undefined && !excerpt) throw new Error('摘录待发送数据损坏，已停止恢复，请保留原文件')
     result.push({
       recordUid: source.recordUid,
       textContent: source.textContent,
+      ...(excerpt?{excerpt}:{}),
       createdAtMillis: typeof source.createdAtMillis === 'number' ? source.createdAtMillis : 0,
       sendAtMillis: typeof source.sendAtMillis === 'number' ? source.sendAtMillis : 0,
       attempts: typeof source.attempts === 'number' ? source.attempts : 0,

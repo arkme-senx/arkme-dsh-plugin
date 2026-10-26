@@ -41,8 +41,8 @@ export class TeamCodexPrivateImages {
     const wanted = existing?.wanted ?? new Map<string, Set<Kind>>()
     for (const event of events) {
       const turn = source.turns ? source.turns.get(event.turnId) : event.turnId
-      if (!turn || !safeId(turn) || event.kind === 'Interrupt') continue
-      const kinds = wanted.get(turn) ?? new Set<Kind>(); kinds.add(event.kind); wanted.set(turn, kinds)
+      if (!turn || !safeId(turn) || !['UserPromptSubmit','Stop'].includes(event.kind)) continue
+      const kinds = wanted.get(turn) ?? new Set<Kind>(); kinds.add(event.kind as Kind); wanted.set(turn, kinds)
     }
     if (existing || !wanted.size) return
     const request = { owner, source, wanted, valid }, epoch = this.epoch
@@ -61,12 +61,16 @@ export class TeamCodexPrivateImages {
       return rows.length ? { ...event, privateImages: rows.map(r => ({ ref: String(r.ref), width: Number(r.width), height: Number(r.height), state: r.ready ? 'ready' as const : 'unavailable' as const })) } : event
     })
   }
-  read(owner: number, source: CodexTimingSource, turnId: string, kind: string, ref: string, full: boolean): { dataUrl: string } | undefined {
+  read(owner:number,source:CodexTimingSource,turnId:string,kind:string,ref:string,full:boolean):{dataUrl:string}|undefined {
+    const value=this.readBytes(owner,source,turnId,kind,ref,full)
+    return value?{dataUrl:`data:${value.mediaType};base64,${Buffer.from(value.data).toString('base64')}`}:undefined
+  }
+  readBytes(owner: number, source: CodexTimingSource, turnId: string, kind: string, ref: string, full: boolean): { data: Uint8Array; mediaType: 'image/png'|'image/webp' } | undefined {
     if (!/^[a-f0-9-]{36}$/.test(ref)) return
     const turn = source.turns ? source.turns.get(turnId) : turnId
     if (!turn) return
     const row = this.db.prepare(`SELECT ${full ? 'image' : 'thumbnail'} AS bytes FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND ref=?`).get(owner, source.sessionId, turn, kind, ref)
-    return row?.bytes instanceof Uint8Array ? { dataUrl: `data:image/${full ? 'png' : 'webp'};base64,${Buffer.from(row.bytes).toString('base64')}` } : undefined
+    return row?.bytes instanceof Uint8Array ? { data:row.bytes,mediaType:full?'image/png':'image/webp' } : undefined
   }
   private async scan(scope: string, request: Request, valid: () => boolean): Promise<void> {
     const path = this.locator.location(request.source)

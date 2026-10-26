@@ -13,7 +13,7 @@ beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);mocks.call.mockRe
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
 it('uses protected reads, shows local-only status, and opens/closes the full preview',async()=>{
  await act(async()=>root.render(<CodexPrivateImages teamRef="team" task={task} event={event}/>))
- expect(host.textContent).toContain('仅本人可见 · 尚未同步到云端')
+ expect(host.textContent).toContain('仅本人可见')
  expect(mocks.call.mock.calls[0]?.slice(0,2)).toEqual(['team.codex.image',{teamRef:'team',id:'task',sourceId:'source',turnId:'turn',kind:'Stop',ref:'opaque-ref',full:false}])
  expect(host.querySelector('img')?.src).toMatch(/^data:image/)
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="查看图片 1"]')!.click())

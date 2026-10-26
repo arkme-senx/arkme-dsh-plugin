@@ -1,3 +1,5 @@
+import{codexImageTool}from'./conversation/codex-image.js'
+import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
 import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
@@ -74,6 +76,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamProfileTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
+  ...codexWorkRecordTools,
+  codexImageTool,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

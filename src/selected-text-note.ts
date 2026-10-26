@@ -1,4 +1,5 @@
 import { MESSAGE_QUOTE_LIMIT } from './message-quote.js'
+import { readExcerptSource, type RecordExcerptSource } from './record-excerpt.js'
 
 /** A personal reading snapshot, not a server-verified extension relation. */
 export interface SelectedTextNoteQuote {
@@ -7,12 +8,15 @@ export interface SelectedTextNoteQuote {
   senderName: string
   sourceAtMillis: number
   text: string
+  source?: RecordExcerptSource
+  origin?:{kind:'recording'|'team_message'|'codex'|'dsh'|'call';itemRef:string}
 }
 export interface SelectedTextNotePresentation {
   quote: SelectedTextNoteQuote
   header: string
   noteText: string
-  storage: 'local'
+  storage: 'local' | 'cloud'
+  migrationConflict?:boolean
   kind?: 'forward'
 }
 export function readSelectedTextNoteQuote(value: unknown): SelectedTextNoteQuote | undefined {
@@ -22,7 +26,11 @@ export function readSelectedTextNoteQuote(value: unknown): SelectedTextNoteQuote
     || typeof q.senderName !== 'string' || !q.senderName.trim() || q.senderName.length > 200
     || !Number.isSafeInteger(q.sourceAtMillis) || q.sourceAtMillis < 0 || q.sourceAtMillis > 8.64e15
     || typeof q.text !== 'string' || !q.text.trim() || q.text.length > MESSAGE_QUOTE_LIMIT) return undefined
-  return { version: 1, sourceLabel: q.sourceLabel.trim(), senderName: q.senderName.trim(), sourceAtMillis: q.sourceAtMillis, text: q.text }
+  const origin=q.origin
+  if(origin!==undefined&&(!['recording','team_message','codex','dsh','call'].includes(origin.kind)||typeof origin.itemRef!=='string'||!origin.itemRef||origin.itemRef.length>16000))return undefined
+  const source = readExcerptSource(q.source)
+  if(q.source !== undefined && !source)return undefined
+  return { version: 1, sourceLabel: q.sourceLabel.trim(), senderName: q.senderName.trim(), sourceAtMillis: q.sourceAtMillis, text: q.text, ...(source?{source}:{}),...(origin?{origin:{kind:origin.kind,itemRef:origin.itemRef}}:{}) }
 }
 export function selectedTextNoteHeader(quote: SelectedTextNoteQuote): string {
   const time = quote.sourceAtMillis > 0 ? new Date(quote.sourceAtMillis).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '原时间未提供'
@@ -53,5 +61,5 @@ export function selectedTextNotePresentation(text: string, saved: SelectedTextNo
   }
   const prefix = selectedTextNotePrefix(saved.quote, saved.header)
   const noteText = text.startsWith(prefix) ? text.slice(prefix.length) : ''
-  return noteText.trim() ? { ...saved, noteText } : undefined
+  return text.startsWith(prefix) ? { ...saved, noteText } : undefined
 }

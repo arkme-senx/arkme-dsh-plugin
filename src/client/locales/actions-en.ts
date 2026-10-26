@@ -641,5 +641,11 @@ export const actionEnglish: Record<string,string> = {
   "在 macOS「隐私与安全」中的「设备控制和数据访问」（旧版为「辅助功能」）授权助手，而不是 Arkme 客户端。": "Authorize the helper, not Arkme, in macOS Privacy & Security under Device Control and Data Access (Accessibility on older versions).",
   "确认账号、团队与来源电脑，开启自动输入": "Confirm the account, team and source computer, then enable automatic input",
   "同步记录不等于授权操作；执行时会短暂切换到 Codex，锁屏或存在草稿时等待。": "Syncing records does not authorize control. Submission briefly switches to Codex and waits if the screen is locked or a draft is present.",
-  "当前入口不会创建请求、发送消息或更改系统权限。": "This entry point does not create requests, send messages or change system permissions."
+  "当前入口不会创建请求、发送消息或更改系统权限。": "This entry point does not create requests, send messages or change system permissions.",
+  "查看原文": "View original",
+  "引用原文": "Original source",
+  "正在核验原文访问权限…": "Checking access to the original…",
+  "个人摘录仍保留，当前未打开原文。": "Your personal excerpt is retained. The original has not been opened.",
+  "重新核验": "Check again",
+  "旧摘录仍保存在本机。原记录已有改动或引用中含旧标签、提及，需核对后再同步引用样式。": "This older excerpt remains on this device. The record changed or has existing tags or mentions inside the quote, so its structure needs review before syncing."
 }

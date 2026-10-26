@@ -29,7 +29,7 @@ export function CodexSelectableBody({ sourceRef, event, inputName, children }: {
   useLayoutEffect(() => {
     if(!ref.current) return
     const canonical=quoteDomProjection(ref.current).text
-    return registerMessageTextSelectionTarget(ref.current,event.text,{ sourceRef, selectionDomain:'codex',localMarkRef:JSON.stringify([sourceRef,codexEventKey(event),canonical]),item:{
+    return registerMessageTextSelectionTarget(ref.current,event.text,{ sourceRef,excerptOrigin:{kind:'codex',itemRef:JSON.stringify([sourceRef,codexEventKey(event)])},selectionDomain:'codex',localMarkRef:JSON.stringify([sourceRef,codexEventKey(event),canonical]),item:{
       itemUid:codexEventKey(event),title:'',textContent:canonical,textFormat:'plain',status:codexSelectable(event)?1:0,senderName:event.kind==='UserPromptSubmit'?inputName:'Codex',isMe:false,sendAtMillis:event.at,
     } })
   },[sourceRef,event.text,event.kind,event.at,event.truncated,event.eventId,event.turnId,event.sequence,inputName])
@@ -96,7 +96,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     check:(event:TeamCodexEvent)=>selection&&codexSelectable(event)?<ArkmeMessageSelectionControl anchor="avatar" checked={selection.has(codexEventKey(event))} disabled={busy} onToggle={()=>toggle(event)}/>:null,
     dock: selection?<ArkmeMessageSelectionBar count={selectedCount} ariaLabel="Codex 多选操作" style={{position:'absolute',inset:0,minHeight:100}} actions={[
       {id:'copy',label:'复制文本',icon:<ArkmeSelectActionIcon kind="copy"/>,disabled:!selectedCount||busy,onSelect:()=>{void act(async()=>{await copyText(snapshot().messages.map(message=>message.text).join('\n\n'));setNotice('已复制')})}},
-      {id:'link',label:'复制链接',icon:<ArkmeSelectActionIcon kind="link"/>,disabled:!selectedCount||busy,onSelect:()=>setNotice('Codex 复制链接：后端接口开发中，开发完成后此功能完整可用。')},
+      {id:'link',label:'复制链接',icon:<ArkmeSelectActionIcon kind="link"/>,disabled:!selectedCount||busy,onSelect:()=>{void act(async()=>{const result=await callArkme<{url:string}>('codex.copy-link',{teamRef,id:task.id,...(task.cloud?.remote?{sourceId:task.cloud.sourceId}:{}),snapshot:snapshot(),expectedUserId:userId},controller.signal);if(!result.url)throw Error('链接尚未通过审核，请稍后重试');await copyText(result.url);setNotice('已复制链接')})}},
       {id:'forward',label:'转发',icon:<ArkmeSelectActionIcon kind="forward"/>,disabled:!selectedCount||busy,onSelect:()=>{void forward()}},
       {id:'exit',label:'退出多选',icon:<ArkmeSelectActionIcon kind="close"/>,disabled:busy,onSelect:()=>{setSelection(undefined);setNotice('')}},
     ]}><span style={{width:'100%',textAlign:'center',fontSize:12,color:arkmeTheme.secondary}}>已选 {selectedCount} 条{selectedCount===100?' · 最多 100 条':''}{busy?' · 处理中…':''}</span></ArkmeMessageSelectionBar>:null,

@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import { callArkme } from '../../api.js'
-import type { ArkmeTeamPage } from '../../../types.js'
 import type { TeamCodexState } from '../../../team-codex-contract.js'
-import type { CodexTeamScope } from './personal-codex-state.js'
 import { readCodexActivity, type CodexActivitySnapshot } from './codex-activity.js'
 
 /** The directory owns this poller, so changing the open conversation cannot stop it. */
@@ -21,17 +19,7 @@ export function useCodexActivity(accountKey: string | undefined, userId: number 
       controller.signal.addEventListener('abort',abort,{once:true})
       const timeout = setTimeout(abort,25_000)
       try {
-        const teams = new Map<string,CodexTeamScope>(), cursors = new Set<string>()
-        let cursor: string | undefined
-        for (let page = 0; page < 100; page++) {
-          const result = await callArkme<ArkmeTeamPage>('team.list',{limit:50,...(cursor?{pageCursor:cursor}:{})},request.signal)
-          request.signal.throwIfAborted()
-          for (const team of result.items) teams.set(team.teamRef,team)
-          if (!result.hasMore) break
-          if (page === 99 || !result.nextPageCursor || cursors.has(result.nextPageCursor)) throw Error('Incomplete teams')
-          cursor = result.nextPageCursor; cursors.add(cursor)
-        }
-        const snapshot = await readCodexActivity([...teams.values()],String(userId),async (teamRef,page) => {
+        const snapshot = await readCodexActivity(String(userId),async (teamRef,page) => {
           const key = JSON.stringify([teamRef,page]), cached = historyPages.get(key)
           // Recent/running/reviewing pages are always fresh. Briefly reuse only terminal history;
           // a reactivated task moves to the fresh first page and supersedes the older snapshot.
@@ -57,11 +45,11 @@ export function useCodexActivity(accountKey: string | undefined, userId: number 
     const timer = setInterval(()=>{void refresh()},10_000)
     const foreground = () => {void refresh()}
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange',foreground)
-    if (typeof window !== 'undefined') {window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if (typeof window !== 'undefined') {window.addEventListener('focus',foreground);window.addEventListener('online',foreground);window.addEventListener('arkme-codex-changed',foreground)}
     return () => {
       controller.abort(); clearInterval(timer)
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange',foreground)
-      if (typeof window !== 'undefined') {window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if (typeof window !== 'undefined') {window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground);window.removeEventListener('arkme-codex-changed',foreground)}
     }
   },[accountKey,userId,active])
   return value?.accountKey === accountKey ? value?.snapshot : undefined

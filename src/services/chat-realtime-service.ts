@@ -338,6 +338,10 @@ export class ChatRealtimeService {
       void this.invalidateRecordProjection()
       return
     }
+    if(notice.cause==='projection-invalidation'&&notice.projectionInvalidation?.projection==='team_codex'){
+      void this.runtime.accountScopedSession().then(session=>{if(!this.disposed&&!notice.connectionSignal?.aborted&&session?.userId===notice.connectionUserId)this.emitChatClientEvent({type:'projection-invalidated',projection:'team_codex',revision:this.nextChatClientRevision()})}).catch(()=>undefined)
+      return
+    }
     if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'message_annotations') {
       void this.runtime.accountScopedSession().then(session => {
         if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'message_annotations', revision: this.nextChatClientRevision() })

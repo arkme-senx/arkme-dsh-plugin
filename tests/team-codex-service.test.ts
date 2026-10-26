@@ -229,3 +229,16 @@ describe('local Codex team journal and real bridge helper', () => {
     await expect(f.service.events(teamRef,invitation.id,0)).rejects.toMatchObject({httpStatus:400})
   })
 })
+
+it('retains captured local commentary as a first-class message while collection is paused',async()=>{
+ const f=fixture(),invite=await f.service.invite(teamRef)
+ f.run(['connect',invite.id]);f.record();await f.service.tick()
+ const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+ const event=db.prepare('SELECT at FROM events WHERE connection_id=? LIMIT 1').get(invite.id)!
+ db.prepare('INSERT INTO codex_live_messages(scope,turn,id,kind,text,at,truncated,source_order) VALUES(?,?,?,?,?,?,0,?)').run(JSON.stringify([11,'','task_current_123']),'turn_123','saved-commentary','commentary','已经保存的过程回复',Number(event.at)+1,10)
+ db.close()
+ await f.service.change(teamRef,invite.id,'pause')
+ const page=await f.service.events(teamRef,invite.id)
+ expect(page.items.some(item=>item.kind==='Progress'&&item.eventId==='saved-commentary'&&item.text==='已经保存的过程回复')).toBe(true)
+ expect(page.items.every(item=>!item.localProgress)).toBe(true)
+})

@@ -24,7 +24,7 @@ export function arkoMessageMarkTarget(message: {
 }, sourceRef: string | undefined): MessageSelectionTarget | undefined {
   if (!sourceRef || !message.localMarkRef || !message.messageId || !message.sessionId
     || message.status !== 'done' || !['user', 'assistant'].includes(message.role)) return undefined
-  return { sourceRef, localMarkRef: message.localMarkRef, item: {
+  return { sourceRef,excerptSource:{kind:'agent_message',agent_session_id:message.sessionId,agent_message_id:message.messageId},localMarkRef: message.localMarkRef, item: {
     itemUid: `arko:${message.sessionId}:${message.messageId}`, senderName: message.role === 'user' ? '我' : 'Arko',
     isMe: message.role === 'user', sendAtMillis: message.createdAtMillis ?? 0,
     title: '', textContent: message.text, textFormat: message.role === 'assistant' ? 'markdown' : 'plain', status: 1,

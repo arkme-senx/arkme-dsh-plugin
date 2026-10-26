@@ -337,12 +337,15 @@ export function apply(ctx: Context, config: Config): void {
       return (await service.accountScope.scopedSession())?.userId
     },
     profile: () => service.cachedProfile(),
+    onCloudSynced:()=>service.migrateLegacyCodexMarks(),
     teams: teamService,
-    ...(config.environment === 'prod' ? { cloud: {
+    cloud: {
       post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
+      bytes:(owner,path,body,headers,signal)=>service.teamCodexBytes(owner,path,body,headers,signal),
       selectedTeam: async (teamRef: string, signal: AbortSignal) => (await teamService.listMembers(teamRef, { limit: 1, signal })).team,
-    } } : {}),
+    },
   })
+  service.setCodexWorkRecords(teamCodex)
   ctx.effect(() => {
     const stop = teamCodex.start()
     const unsubscribe = service.accountScope.subscribe(() => { teamCodex.fence() })

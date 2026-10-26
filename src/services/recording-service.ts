@@ -2273,6 +2273,19 @@ export class RecordingService {
       && (candidate.assignmentSpeakerNumber >= 0 || candidate.transcriptSource === selected.transcriptSource)
   }
 
+  async excerptSource(itemRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource>{
+    const item=await this.openRecordingItemRef(itemRef)
+    return {kind:'recording_segment',recording_uid:item.sessionId,segment_uid:JSON.stringify([item.childId,item.asrItemIndex,item.transcriptSource,item.dateStamp,item.startAtMillis,item.endAtMillis,item.window??null])}
+  }
+  async excerptOriginal(recordingUid:string,segmentUid:string,signal?:AbortSignal):Promise<import('../record-excerpt.js').RecordExcerptOriginal> {
+    let key:unknown;try{key=JSON.parse(segmentUid)}catch{throw new ArkmePluginError('excerpt-source-unavailable','录音缺少精确来源位置',false,404)}
+    if(!Array.isArray(key)||key.length!==7||typeof key[0]!=='string'||!Number.isSafeInteger(key[1])||!['system','doubao'].includes(key[2])||![key[3],key[4],key[5]].every(Number.isSafeInteger)||key[5]<=key[4])throw new ArkmePluginError('excerpt-source-unavailable','录音缺少精确来源位置',false,404)
+    const window=key[6]===null?undefined:key[6] as ArkmeRecordingWindow;this.validateRecordingWindow(window)
+    const session=await this.runtime.requireSession(),data=await this.readRecordingTranscripts(key[3],session,signal,window,true)
+    const row=data.section(key[2]).items.find(item=>item.sessionId===recordingUid&&item.childId===key[0]&&item.asrItemIndex===key[1]&&item.startAtMillis===key[4]&&item.endAtMillis===key[5])
+    if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原转写已删除或无权查看',false,404)
+    return {title:'录音原文',text:row.text,at:row.startAtMillis}
+  }
   private async openRecordingItemRef(itemRef: string): Promise<RecordingItemRefPayload> {
     const raw = await this.openRecordingRef('arkme-recording-item-v1', itemRef)
     const window = raw.window as ArkmeRecordingWindow | undefined

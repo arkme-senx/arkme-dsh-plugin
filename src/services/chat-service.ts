@@ -1,3 +1,4 @@
+import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { commonGroupChanges } from './common-group-service.js'
 import { sealPersonSourcesCursor, openPersonSourcesCursor, type PersonRecordSourcesPage, type PersonSourcesCursor } from '../person-records.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
@@ -4435,6 +4436,7 @@ export class ChatService {
       textContent: string,
       options: {
         recordUid?: string
+        excerpt?:RecordExcerpt
       relationUid?: string
         recordDurationMillis?: number
         captureContext?: ArkmeRecordCaptureContext
@@ -4461,6 +4463,7 @@ export class ChatService {
         const sendAtMillis = Date.now()
         const result = await this.record.createTextForConversation(recordUid, text, {
           expectedUserId: session.userId,
+          ...(options.excerpt?{excerpt:options.excerpt}:{}),
           ...(options.recordDurationMillis === undefined ? {} : { recordDurationMillis: options.recordDurationMillis }),
           ...(options.captureContext === undefined ? {} : { captureContext: options.captureContext }),
         })
@@ -6626,12 +6629,13 @@ export class ChatService {
       )
       const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
       const conversationPreview = arkmeChatConversationPreview(item, session.userId)
-      const localSelfQuote = isMe && recordStatus === 1 ? this.runtime.stateStore.selfNoteQuotes?.project(`${this.runtime.config.environment}:${session.userId}`, uid, stringValue(payload.text_content)) : undefined
+      const localSelfQuote = recordExcerptPresentation(objectValue(payload.content_payload).excerpt,stringValue(payload.text_content)) ?? (isMe && recordStatus === 1 ? this.runtime.stateStore.selfNoteQuotes?.project(`${this.runtime.config.environment}:${session.userId}`, uid, stringValue(payload.text_content)) : undefined)
       const itemIndex = items.push({
         ...recordDeletionCapability({ userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
           recordUid: uid, recordVersion: numberValue(payload.version), recordOwnerUserId: numberValue(payload.owner_user_id),
           isMe: senderUserId === session.userId, status: numberValue(payload.status) }, signingKey),
         itemUid: uid,
+        ...(Number.isSafeInteger(Number(recordOwnerUserId))&&Number(recordOwnerUserId)>0?{excerptSource:{kind:'record' as const,record_uid:uid,owner_user_id:Number(recordOwnerUserId),...(relationUid?{chat_session_uid:source.ownerRef,relation_uid:relationUid}:{})}}:{}),
         ...(options.basicPresentation && recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
         ...(relationUid === '' ? {} : {
           timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, relationUid),

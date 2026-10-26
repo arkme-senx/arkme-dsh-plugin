@@ -1,7 +1,7 @@
 import type { ArkmeTeamMember } from './types.js'
 
 /** Versioned, local-only events. No credentials, raw tool results or private reasoning. */
-export type TeamCodexEventKind = 'UserPromptSubmit' | 'Stop' | 'Interrupt'
+export type TeamCodexEventKind = 'UserPromptSubmit' | 'Progress' | 'Stop' | 'Interrupt'
 export type TeamCodexConnectionStatus = 'pending' | 'active' | 'paused' | 'disconnected' | 'expired'
 /** Navigation hint only. It grants neither cloud access nor upload permission. */
 export interface TeamCodexEntryAvailability {
@@ -39,6 +39,7 @@ export interface TeamCodexTask {
   member: ArkmeTeamMember
   /** Present for server-backed tasks; remote tasks never expose local mutation controls. */
   cloud?: { taskId: string; sourceId: string; sourceName: string; ownerRef: string; remote: boolean }
+  classification?: {version:number;kind:'user'|'background';evidence:string}
   cloudBlocked?: boolean
   /** Absent only on the original, single-session trial records. */
   installationId?: string
@@ -66,7 +67,7 @@ export interface TeamCodexInstallation {
 }
 export interface TeamCodexState {
   localOnly: boolean
-  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string; reviewingTasks?: number }
+  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; settingsPending?: boolean; sourceName?: string; reviewingTasks?: number }
   self: ArkmeTeamMember | null
   tasks: TeamCodexTask[]
   installations: TeamCodexInstallation[]
@@ -92,11 +93,14 @@ export interface TeamCodexTurnTiming {
   /** Explicit source liveness at observedAt; absent on older cloud contracts. */
   live?: boolean
 }
-export interface TeamCodexProgress { id:string; text:string; at:number; truncated:boolean }
+export interface TeamCodexProgress { id:string; text:string; at:number; truncated:boolean; sourceSequence?:number }
 export interface TeamCodexEvent {
   eventId?: string
   version?: number
   sequence: number
+  turnSequence?:number
+  messageSequence?:number
+  cursor?:string
   turnId: string
   kind: TeamCodexEventKind
   text: string
@@ -106,10 +110,30 @@ export interface TeamCodexEvent {
   localProgress?: TeamCodexProgress[]
   timing?: TeamCodexTurnTiming
   /** Host-local, owner-only references. Never serialized into the team cloud journal. */
-  privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'unavailable' }[]
+  privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'pending' | 'unavailable';imageRef?:string }[]
 }
 export interface TeamCodexEventPage {
   items: TeamCodexEvent[]
   nextBefore?: number
+  latestCursor?:string
+  firstCursor?:string
   nextCursor?: string
+}
+
+export const codexEventPhase=(kind:TeamCodexEventKind)=>({UserPromptSubmit:0,Progress:1,Interrupt:2,Stop:3})[kind]
+export function compareCodexEvents(a:TeamCodexEvent,b:TeamCodexEvent):number {
+ if(a.turnSequence!==undefined&&b.turnSequence!==undefined)return a.turnSequence-b.turnSequence||codexEventPhase(a.kind)-codexEventPhase(b.kind)||(a.messageSequence??0)-(b.messageSequence??0)||(a.eventId??'').localeCompare(b.eventId??'')
+ return a.at-b.at||a.sequence-b.sequence
+}
+
+/** Local progress is the same user-visible message kind, even without upload consent. */
+export function expandLocalCodexEvents(events:readonly TeamCodexEvent[],turnOrders:ReadonlyMap<string,number>):TeamCodexEvent[] {
+ return events.flatMap(event=>{
+  const {localProgress,...message}=event
+  const turnSequence=turnOrders.get(event.turnId)??event.sequence
+  return [{...message,turnSequence,messageSequence:0},...(localProgress??[]).map(progress=>({
+   eventId:progress.id,sequence:event.sequence,turnId:event.turnId,turnSequence,
+   messageSequence:progress.sourceSequence??progress.at,kind:'Progress' as const,text:progress.text,at:progress.at,truncated:progress.truncated,
+  }))]
+ }).sort(compareCodexEvents)
 }

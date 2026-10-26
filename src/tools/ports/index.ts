@@ -1,3 +1,4 @@
+import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
 import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
 import type {ExploreQuery,ExplorePage,ExploreDetail} from '../../explore-contract.js'
@@ -27,7 +28,7 @@ import type { ArkmeFileToolPort } from './files.js'
 import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
-export interface ArkmeCoreToolPorts extends
+export interface ArkmeCoreToolPorts extends CodexWorkRecordsPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
@@ -54,6 +55,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeWechatToolPort,
   ArkmeUserBanToolPort,
   ArkmeVoiceprintToolPort {
+  readCodexImage(ref:string,options:{maxBytes:number;signal?:AbortSignal}):Promise<{data:Uint8Array;mediaType:'image/png'|'image/jpeg'|'image/webp'}>
   externalChats(operation: import('../../team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown>
   relationPage(query:Omit<ExploreQuery,'module'>,signal?:AbortSignal):Promise<ExplorePage>
   relationRecords(query:{ref:string;cursor?:string},signal?:AbortSignal):Promise<ExploreDetail>

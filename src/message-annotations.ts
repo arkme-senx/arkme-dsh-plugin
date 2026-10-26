@@ -10,9 +10,9 @@ export interface MessageUnderline {
   pending?: boolean
 }
 export interface MessageUnderlineSnapshot { syncNotice?: string; revision: number; accessible: boolean; items: MessageUnderline[] }
-export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud'; maxBatchSize?: number }
-export type MessageUnderlineChange = { operationId: string; kind: 'add'; anchor: ArkmeMessageQuote }
-  | { operationId: string; kind: 'remove'; annotationId: string }
+export interface MessageUnderlineCapabilities { supported: boolean; maxLength: number; storage?: 'local' | 'cloud'; maxBatchSize?: number; requiresBaseRevision?:boolean }
+export type MessageUnderlineChange = ({ operationId: string; kind: 'add'; anchor: ArkmeMessageQuote }
+  | { operationId: string; kind: 'remove'; annotationId: string }) & {baseRevision?:number}
 const idPattern = /^[A-Za-z0-9._:-]{1,128}$/u
 export function underlineId(value: unknown): value is string { return typeof value === 'string' && idPattern.test(value) }
 export function underlineCapabilities(value: unknown): MessageUnderlineCapabilities {

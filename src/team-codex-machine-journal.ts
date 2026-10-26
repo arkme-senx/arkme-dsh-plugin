@@ -107,7 +107,7 @@ export class TeamCodexMachineJournal {
         if(this.visibility(row.installation_id,row.session_id)!=='user') continue
         const queue = this.queueSnapshot(row.id)
         const input = row.latest_kind === 'UserPromptSubmit' ? this.db.prepare("SELECT turn_id,text,at FROM codex_events WHERE task_id=? AND kind='UserPromptSubmit' ORDER BY at DESC,sequence DESC LIMIT 1").get(row.id) as {turn_id:string;text:string;at:number}|undefined : undefined
-        tasks.push({id:row.id,installationId:row.installation_id,title:row.title,
+        tasks.push({classification:{version:1,kind:'user',evidence:'native-persistent-root'},id:row.id,installationId:row.installation_id,title:row.title,
         projectKey:row.project_key,projectName:row.project_name,cwd:row.cwd,branch:row.branch,worktree:row.worktree,
         excluded:row.excluded===1,projectExcluded:projects.has(row.project_key),status:this.effectiveStatus(installation),
         state:row.latest_kind==='Stop'?'finished':row.latest_kind==='Interrupt'?'interrupted':row.latest_kind==='UserPromptSubmit'?'working':'waiting',

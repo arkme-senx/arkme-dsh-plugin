@@ -1,53 +1,35 @@
 import { expect, it, vi } from 'vitest'
 import { codexTaskViewKey, readPersonalCodexState } from '../src/client/redesign/contacts/personal-codex-state.js'
 import type { TeamCodexState, TeamCodexTask } from '../src/team-codex-contract.js'
-const teams = [{teamRef:'a',name:'A',jotmoId:'a'},{teamRef:'b',name:'B',jotmoId:'b'}]
 const self = {userRef:'self',displayName:'Me',role:'member' as const,joinedAtMillis:1}
 const task:TeamCodexTask = {id:'same-id',title:'Task',status:'active',state:'finished',updatedAt:1,eventCount:1,member:self}
 const local:TeamCodexState = {localOnly:true,self,tasks:[task],installations:[]}
-const remote = (ownerRef:string):TeamCodexTask => ({...task,cloud:{ownerRef,taskId:'remote',sourceId:'source',sourceName:'Laptop',remote:true}})
+const remote = (ownerRef:string,id=ownerRef):TeamCodexTask => ({...task,id,cloud:{ownerRef,taskId:id,sourceId:'source',sourceName:'Laptop',remote:true}})
 const cloud = {status:'ready' as const,pending:0,blocked:0,page:1,hasMore:false}
-it('keeps only own canonical cloud rows and resolved local identities, with separate team routing',async()=>{
-  const read=vi.fn(async(teamRef:string)=>teamRef==='a'?{...local,tasks:[task,{...task,id:'unknown',member:{...self,userRef:'someone'}}]}:
-    {...local,localOnly:false,cloud,tasks:[remote('11'),{...remote('22'),id:'other'}]})
-  const result=await readPersonalCodexState(teams,'11',1,read,new AbortController().signal)
-  expect(result.state.tasks.map(t=>[t.id,t.viewTeam?.teamRef])).toEqual([['same-id','a'],['same-id','b']])
+const signal=()=>new AbortController().signal
+it('uses one account read without requiring a current team and rejects foreign local/cloud identities',async()=>{
+  const read=vi.fn(async()=>({...local,localOnly:false,cloud,tasks:[task,{...task,id:'foreign-local',member:{...self,userRef:'someone'}},remote('11'),remote('22')]}))
+  const result=await readPersonalCodexState('11',read,signal())
+  expect(read.mock.calls).toEqual([['self']])
+  expect(result.state.tasks.map(t=>[t.id,t.viewTeam?.teamRef])).toEqual([['same-id','self'],['11','self']])
   expect(new Set(result.state.tasks.map(codexTaskViewKey)).size).toBe(2)
   expect(result.unavailable).toEqual([])
 })
-it('does not label local fallback or failed cloud reads as complete',async()=>{
-  const result=await readPersonalCodexState(teams,'11',1,async ref=>{
-    if(ref==='a')throw new Error('permission revoked')
-    return {...local,cloud:{...cloud,status:'blocked'},tasks:[task,remote('11')]}
-  },new AbortController().signal)
-  expect(result.state.tasks).toHaveLength(1)
-  expect(result.state.tasks[0]?.cloud).toBeUndefined()
-  expect(result.unavailable.sort()).toEqual(['A','B'])
+it('carries the account endpoint pagination without multiplying requests by team membership',async()=>{
+  const result=await readPersonalCodexState('11',async()=>({...local,localOnly:false,cloud:{...cloud,page:2,hasMore:true},tasks:[remote('11')]}),signal())
+  expect(result.state.cloud).toMatchObject({page:2,hasMore:true})
 })
-it('carries real pagination while not repeating unsupported local rows on later pages',async()=>{
-  const result=await readPersonalCodexState(teams,'11',2,async ref=>ref==='a'?local:
-    {...local,localOnly:false,cloud:{...cloud,page:2,hasMore:true},tasks:[remote('11')]},new AbortController().signal)
-  expect(result.state.tasks.map(t=>t.viewTeam?.teamRef)).toEqual(['b'])
-  expect(result.state.cloud?.hasMore).toBe(true)
-})
-it('aborts without publishing partial old-account results',async()=>{
+it('aborts without publishing old-account results',async()=>{
   const controller=new AbortController()
-  await expect(readPersonalCodexState(teams,'11',1,async()=>{controller.abort();return local},controller.signal)).rejects.toThrow()
+  await expect(readPersonalCodexState('11',async()=>{controller.abort();return local},controller.signal)).rejects.toThrow()
 })
-it('limits simultaneous reads to three',async()=>{
-  let inFlight=0,max=0
-  await readPersonalCodexState(Array.from({length:9},(_,i)=>({...teams[0]!,teamRef:String(i)})),'11',1,async()=>{
-    max=Math.max(max,++inFlight);await new Promise(resolve=>setTimeout(resolve,1));inFlight--;return local
-  },new AbortController().signal)
-  expect(max).toBe(3)
-})
-it('retains only explicitly stale own queue snapshots on transient offline reads',async()=>{
-  const queued={...remote('11'),queueCloud:'ready' as const,queue:{version:1,availability:'stale' as const,reason:'none' as const,
-    checkedAt:1,changedAt:1,sourceAt:1,items:[]}}
+it('preserves only own stale mirrors offline and clears mirrors after explicit denial',async()=>{
   for(const status of ['offline','blocked'] as const) {
-    const result=await readPersonalCodexState([teams[0]!],'11',1,async()=>({...local,cloud:{...cloud,status},
-      tasks:[queued,{...queued,id:'other',cloud:{...queued.cloud!,ownerRef:'22'}}]}),new AbortController().signal)
-    expect(result.state.tasks.map(t=>t.id)).toEqual(status==='offline'?['same-id']:[])
-    expect(result.unavailable).toEqual(['A'])
+    const result=await readPersonalCodexState('11',async()=>({...local,cloud:{...cloud,status},tasks:[task,remote('11'),remote('22')]}),signal())
+    expect(result.state.tasks.map(t=>t.id)).toEqual(status==='offline'?['same-id','11']:['same-id'])
+    expect(result.unavailable).toEqual(['云端暂不可用'])
   }
+})
+it('does not reinterpret a failed account read as an empty history',async()=>{
+  await expect(readPersonalCodexState('11',async()=>{throw Error('offline')},signal())).rejects.toThrow('offline')
 })

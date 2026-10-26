@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os'
 import {DatabaseSync} from 'node:sqlite'
 import {afterEach,describe,it,expect,vi} from 'vitest'
 import {TeamCodexLiveUpdates} from '../src/team-codex-live-updates.js'
+import {expandLocalCodexEvents} from '../src/team-codex-contract.js'
 import type {TeamCodexEvent} from '../src/team-codex-contract.js'
 const roots:string[]=[],dbs:DatabaseSync[]=[],stores:TeamCodexLiveUpdates[]=[]
 afterEach(async()=>{for(const store of stores.splice(0)){store.fence();await store.idle()}for(const db of dbs.splice(0))db.close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true})})
@@ -41,12 +42,25 @@ describe('event-driven public Codex progress',()=>{
  })
  it('captures append from a file notification without another poll, coalesces duplicates, and preserves Unicode partial lines',async()=>{
   const f=fixture();await f.scan()
-  const text=progress('你好 🌏'),buffer=Buffer.from(text),split=buffer.indexOf(Buffer.from('🌏'))+2
+  const text=line('response_item',{id:'public_message_1',type:'message',role:'assistant',phase:'commentary',status:'completed',content:[{type:'output_text',text:'你好 🌏'}]},at+1000),buffer=Buffer.from(text),split=buffer.indexOf(Buffer.from('🌏'))+2
   appendFileSync(f.path,buffer.subarray(0,split));await f.scan();expect(f.projected().localProgress).toBeUndefined()
   appendFileSync(f.path,buffer.subarray(split))
   await vi.waitFor(()=>expect(f.projected().localProgress).toHaveLength(1),{timeout:2500,interval:100})
   expect(f.projected().localProgress![0]!.text).toBe('你好 🌏')
   appendFileSync(f.path,text);await f.scan();expect(f.projected().localProgress).toHaveLength(1)
+ })
+ it('uses native identity for updates and original record positions when native identity is absent',async()=>{
+  const f=fixture()
+  const message=(text:string,time:number)=>line('response_item',{id:'stable_message',type:'message',role:'assistant',phase:'commentary',status:'completed',content:[{type:'output_text',text}]},time)
+  appendFileSync(f.path,message('first',at+1000));await f.scan()
+  const before=f.projected().localProgress![0]!
+  appendFileSync(f.path,message('updated',at+2000));await f.scan()
+  expect(f.projected().localProgress).toHaveLength(1)
+  expect(f.projected().localProgress![0]).toMatchObject({id:before.id,sourceSequence:before.sourceSequence,at:before.at,text:'updated'})
+  appendFileSync(f.path,progress('相同文字',at+3000)+progress('相同文字',at+3000));await f.scan()
+  const equal=f.projected().localProgress!.filter(p=>p.text==='相同文字')
+  expect(equal).toHaveLength(2);expect(equal[0]!.id).not.toBe(equal[1]!.id)
+  expect(equal[0]!.sourceSequence).toBeLessThan(equal[1]!.sourceSequence!)
  })
  it('persists cursor and progress across reopen, scopes account and cloud turn mapping, and replays a missed terminal',async()=>{
   const f=fixture();appendFileSync(f.path,progress()+complete());await f.scan();f.store.fence()
@@ -89,4 +103,11 @@ describe('event-driven public Codex progress',()=>{
   const cursor=f.db.prepare('SELECT offset FROM codex_live_cursors').get()!
   await f.scan();expect(f.db.prepare('SELECT offset FROM codex_live_cursors').get()).toEqual(cursor)
  })
+})
+
+it('projects local commentary as independently selectable messages with stable native order',()=>{
+ const messages=expandLocalCodexEvents([{...prompt,localProgress:[{id:'native-b',text:'同文',at:at+1,truncated:false,sourceSequence:40},{id:'native-a',text:'同文',at:at+2,truncated:false,sourceSequence:20}]},{...prompt,sequence:2,kind:'Stop',text:'最终',at:at+3}],new Map([[turn,1]]))
+ expect(messages.map(value=>value.eventId??value.kind)).toEqual(['UserPromptSubmit','native-a','native-b','Stop'])
+ expect(messages.every(value=>!value.localProgress)).toBe(true)
+ expect(messages[1]).toMatchObject({kind:'Progress',turnSequence:1,messageSequence:20,text:'同文'})
 })

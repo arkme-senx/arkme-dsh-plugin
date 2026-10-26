@@ -436,6 +436,7 @@ export interface ArkmeRecordCursor {
 }
 
 export interface ArkmeSelfRecordItem {
+  excerpt?: import('./record-excerpt.js').RecordExcerpt
   selfRole?: ArkmeSelfRoleSnapshot
   /** Immutable sender presentation stored with this record. */
   avatarRef?: string
@@ -588,6 +589,7 @@ export interface ArkmePendingWrite {
   createdAtMillis: number
   sendAtMillis: number
   attempts: number
+  excerpt?: import('./record-excerpt.js').RecordExcerpt
   /** Composer time that must survive the durable outbox retry path. */
   recordDurationMillis?: number
   /** Browser capture data that must survive the durable outbox retry path. */
@@ -1417,6 +1419,8 @@ export interface ArkmeCallParticipant {
 }
 
 export interface ArkmeCallTranscriptSegment {
+  /** Present only when the source supplies a stable segment identity. */
+  sourceSegmentId?: string
   segmentId: string
   /** Standalone recording of this segment; playback starts at zero, not startMillis. */
   audioUrl?: string
@@ -1587,6 +1591,7 @@ arkoImagesV1?:true
     teamGovernance?: true
     /** Private, local-only Codex task activity journal. */
     teamCodexLocal?: true
+    codexWorkRecordsV1?:true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
@@ -2033,6 +2038,7 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+ excerptSource?:import('./record-excerpt.js').RecordExcerptSource
   /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
   localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
@@ -2284,7 +2290,7 @@ export interface ArkmeForwardRecordPreviewItem {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   contentLabel?: string
-  sourceType?: 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  sourceType?: 'codex' | 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
@@ -4093,7 +4099,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4149,6 +4155,9 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+ | 'codex.image.read'
+ | 'codex.work-records'
+ | 'codex.copy-link'
   | 'native-chat.annotations'
   | 'arko.models'
   | 'arko.ask'
@@ -4447,6 +4456,7 @@ export type ArkmePluginOperation =
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'
+  | 'excerpt.original'
   | 'self-note.quote.send'
   | 'selected-text.forward'
   | 'related-recordings.eligibility'
@@ -4696,6 +4706,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.install' | 'app.migration.reveal'
   | 'app.migration.dismiss'
   | 'codex.forward'
+  | 'codex.copy-link'
+  | 'codex.work-records'
   | 'codex.local-mark.capabilities'
   | 'codex.local-mark.list'
   | 'codex.local-mark.change'

@@ -128,7 +128,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.record('UserPromptSubmit',{prompt})
     const task=await f.task()
     expect(task.currentInput?.text).toBe(body.slice(0,240))
-    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(prompt)
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(body)
   })
   it('buffers a final reply during a short runtime restart, then ingests it exactly once',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()

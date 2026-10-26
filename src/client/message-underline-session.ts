@@ -107,6 +107,7 @@ export class MessageUnderlineSession {
     if (this.controller.signal.aborted || target.sourceRef !== this.sourceRef || !reference || target.item.status !== 1) throw new Error('会话已变化，请重新选择')
     if (!this.capability?.supported) throw new Error(this.notice || '正在确认标记支持情况，请稍后重试')
     const key = underlineTargetKey(target), before = this.snapshots.get(key)
+    if(this.capability?.requiresBaseRevision && change.baseRevision===undefined)change={...change,baseRevision:before?.revision??0}
     if (this.pending.has(key)) throw new Error('这条消息的标记正在同步')
     if (change.kind === 'remove' && !before?.items.some(item => item.id === change.annotationId && item.mine)) throw new Error('只能取消自己的标记')
     if (change.kind === 'add' && change.anchor.text.length > this.capability.maxLength) throw new Error(`标记最多 ${this.capability.maxLength} 个字符`)
@@ -125,7 +126,7 @@ export class MessageUnderlineSession {
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
       if ((!result.accessible || accessEpoch === this.accessEpoch) && current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
-      this.failures.delete(key); this.notice = this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
+      this.failures.delete(key); this.notice = result.syncNotice ?? (this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''); this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted || accessEpoch !== this.accessEpoch) return
       if (this.storage === 'cloud' || accessLost(error)) {

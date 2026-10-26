@@ -1,3 +1,8 @@
+export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
+export type {SelectedTextNoteQuote} from '../selected-text-note.js'
+import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
+export type{CodexWatchRequest,CodexReadRequest,CodexWriteRequest,CodexWorkRequest,CodexWorkResult,CodexTaskLocator}from'../codex-work-records-port.js'
+export type{TeamCodexState,TeamCodexTask,TeamCodexEvent,TeamCodexEventPage,TeamCodexTurnTiming,TeamCodexQueueSnapshot}from'../team-codex-contract.js'
 import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
 export type * from '../arko-lifecycle-contract.js'
 import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
@@ -511,6 +516,24 @@ function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
 }
 
 export class ArkmeSdk {
+  async readCodexImage(imageRef:string,signal?:AbortSignal):Promise<import('../types.js').ArkmeImageBytes>{
+    if((await this.capabilities(signal)).features.codexWorkRecordsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持 Codex 图片',retryable:false})
+    const result=await this.call<import('../types.js').ArkmeImagePayload>('codex.image.read',{imageRef},signal)
+    const data=Uint8Array.from(atob(result.dataBase64),c=>c.charCodeAt(0));if(data.byteLength!==result.bytes||data.byteLength>20*1024*1024)throw new Error('Invalid Codex image response')
+    return {data,bytes:result.bytes,mediaType:result.mediaType}
+  }
+  observeCodexWorkRecords(request:import('../codex-work-records-port.js').CodexWatchRequest,onChange:(result:CodexWorkResult)=>void,onError:(error:unknown)=>void,signal?:AbortSignal):()=>void{
+    const controller=new AbortController(),scoped=signal?AbortSignal.any([controller.signal,signal]):controller.signal
+    let timer:ReturnType<typeof setTimeout>|undefined
+    const read=async()=>{try{const result=await this.codexWorkRecords(request,scoped);if(!scoped.aborted)onChange(result)}catch(error){if(!scoped.aborted)onError(error)}finally{if(!scoped.aborted)timer=setTimeout(()=>{void read()},5000)}}
+    void read();return()=>{controller.abort();if(timer)clearTimeout(timer)}
+  }
+
+  async codexWorkRecords(request:CodexWorkRequest,signal?:AbortSignal):Promise<CodexWorkResult>{
+    if((await this.capabilities(signal)).features.codexWorkRecordsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持 Codex 工作记录',retryable:false})
+    return this.call('codex.work-records',{request},signal)
+  }
+
   async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }
   async nativeAnnotationContexts(targets: NativeAnnotationTarget[], signal?: AbortSignal): Promise<NativeAnnotationContext[]> { return await this.call('native-chat.annotations', { request: { action: 'contexts', targets } }, signal) }
   async listNativeAnnotations(messageRefs: string[], signal?: AbortSignal): Promise<NativeAnnotationSnapshot[]> { return await this.call('native-chat.annotations', { request: { action: 'list', messageRefs } }, signal) }

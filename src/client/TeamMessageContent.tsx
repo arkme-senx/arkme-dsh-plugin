@@ -32,7 +32,7 @@ export function TeamMessageContent({ message, conversationRef, presentation }: {
   return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '' }}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(presentation ? { presentation } : {})}
       selectionTarget={conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
-        ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref } : undefined} />
+        ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref,excerptOrigin:{kind:'team_message',itemRef:message.ref} } : undefined} />
   </ArkmeMediaAccessContext.Provider>
 }
 

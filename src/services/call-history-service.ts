@@ -370,6 +370,12 @@ export class CallHistoryService {
     return this.detailByRoomId(roomId, { version: 1, userId: session.userId, roomId, stableId: `trtc:${roomId}`, issuedAtMillis: Date.now() }, session, signal, true, source)
   }
 
+  async excerptSource(callRef:string,segmentId:string):Promise<import('../record-excerpt.js').RecordExcerptSource> {
+    const session=await this.runtime.requireSession(),target=await this.openCallRef(callRef,session.userId)
+    if(!segmentId||segmentId.length>1024)throw new ArkmePluginError('excerpt-source-unavailable','通话缺少精确片段位置',false,404)
+    return {kind:'call_segment',call_uid:target.roomId,segment_uid:segmentId}
+  }
+
   async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> {
     const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
@@ -768,7 +774,8 @@ export class CallHistoryService {
         const rawItem = objectValue(item)
         const text = clippedText(firstString(rawItem, ['text', 'transcript', 'content']), 2_000)
         if (text === '') return undefined
-        const segmentId = firstString(rawItem, ['segment_id', 'segmentId', 'id']) || `segment-${String(index + 1)}`
+        const sourceSegmentId=firstString(rawItem, ['segment_id', 'segmentId', 'id'])
+        const segmentId = sourceSegmentId || `segment-${String(index + 1)}`
         const remoteAudioUrl = firstString(rawItem, ['audio_url', 'audioUrl'])
         const audioBlock = remoteAudioUrl ? this.media?.forwardContentBlocks([{ type: 2, name: '通话片段', download_url: remoteAudioUrl }], viewerUserId).find(block => block.kind === 'audio') : undefined
         const audioUrl = audioBlock ? `${this.runtime.config.routePath}/media?ref=${encodeURIComponent(audioBlock.mediaRef)}` : undefined
@@ -781,6 +788,7 @@ export class CallHistoryService {
         const absoluteEnd = end >= 100_000_000_000
         return {
           segmentId,
+          ...(sourceSegmentId?{sourceSegmentId}:{}),
           ...(audioUrl ? { audioUrl } : {}),
           speakerDisplayName: firstString(rawItem, ['speaker_display_name', 'speakerDisplayName', 'speaker_name', 'speakerName'])
             || (speakerUserId > 0 ? `Arkme 用户 ${String(speakerUserId)}` : '说话人'),

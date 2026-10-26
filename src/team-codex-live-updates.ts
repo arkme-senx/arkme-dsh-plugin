@@ -15,7 +15,7 @@ type Request = {owner:number;source:CodexTimingSource;wanted:Set<string>;valid()
 type Subscription = {request:Request;watcher?:FSWatcher|undefined;path?:string;timer?:ReturnType<typeof setTimeout>|undefined;busy:boolean;again:boolean}
 
 /** Event-driven local projection. Only already-authorized turns in an exact bound rollout
- * are eligible. Public commentary is separate from terminal events and never cloud-uploaded.
+ * are eligible. Public commentary has stable source identity and original record order; terminal facts stay separate.
  * Native indexes/cursors are private to this account; no Hook command or trust is changed. */
 export class TeamCodexLiveUpdates {
   private readonly locator:TeamCodexTurnTimingReader
@@ -31,6 +31,9 @@ export class TeamCodexLiveUpdates {
       PRIMARY KEY(scope,turn,id));
       CREATE TABLE IF NOT EXISTS codex_live_spans (scope TEXT NOT NULL,turn TEXT NOT NULL,start INTEGER NOT NULL,captured INTEGER NOT NULL,PRIMARY KEY(scope,turn));
       CREATE TABLE IF NOT EXISTS codex_live_seeks(scope TEXT PRIMARY KEY,identity TEXT NOT NULL,end INTEGER NOT NULL);`)
+    const columns=new Set((db.prepare('PRAGMA table_info(codex_live_messages)').all() as {name:string}[]).map(c=>c.name))
+    if(!columns.has('source_order'))db.exec('ALTER TABLE codex_live_messages ADD COLUMN source_order INTEGER NOT NULL DEFAULT 0')
+    if(!(db.prepare('PRAGMA table_info(codex_live_cursors)').all() as {name:string}[]).some(c=>c.name==='projection_version'))db.exec('ALTER TABLE codex_live_cursors ADD COLUMN projection_version INTEGER NOT NULL DEFAULT 0')
   }
   fence():void {
     this.epoch++
@@ -59,8 +62,8 @@ export class TeamCodexLiveUpdates {
       if(event.kind!=='UserPromptSubmit')return event
       const turn=source.turns?source.turns.get(event.turnId):event.turnId
       if(!turn)return event
-      const rows=this.db.prepare("SELECT * FROM codex_live_messages WHERE scope=? AND turn=? AND kind='commentary' ORDER BY at,id").all(scope,turn)
-      const progress:TeamCodexProgress[]=rows.map(row=>({id:String(row.id),text:String(row.text),at:Number(row.at),truncated:row.truncated===1}))
+      const rows=this.db.prepare("SELECT * FROM codex_live_messages WHERE scope=? AND turn=? AND kind='commentary' ORDER BY source_order,at,id").all(scope,turn)
+      const progress:TeamCodexProgress[]=rows.map(row=>({id:String(row.id),text:String(row.text),at:Number(row.at),truncated:row.truncated===1,...(Number(row.source_order)>0?{sourceSequence:Number(row.source_order)}:{})}))
       return progress.length?{...event,localProgress:progress}:event
     })
   }
@@ -102,6 +105,11 @@ export class TeamCodexLiveUpdates {
       const meta=JSON.parse(first.subarray(0,newline).toString('utf8'))
       if(meta.type!=='session_meta'||meta.payload?.id!==request.source.sessionId)return
       const identity=`${stat.dev}:${stat.ino}`,saved=this.db.prepare('SELECT * FROM codex_live_cursors WHERE scope=?').get(scope)
+      if(saved&&Number(saved.projection_version??0)<1){
+        // This is a rebuildable native projection. Revisit only positively indexed,
+        // authorized turns; preserve old cached facts when the rollout is unavailable.
+        this.db.prepare('UPDATE codex_live_spans SET captured=0 WHERE scope=?').run(scope)
+      }
       let offset=Number(saved?.offset??0),current=String(saved?.turn??''),skipping=!!saved?.skipping
       if(saved?.identity!==identity||offset>stat.size){
         offset=0;current='';skipping=false
@@ -145,11 +153,12 @@ export class TeamCodexLiveUpdates {
       // instead of losing progress already skipped before the prompt was authorized.
       for(const turn of request.wanted){
         const span=this.db.prepare('SELECT start FROM codex_live_spans WHERE scope=? AND turn=? AND captured=0').get(scope,turn)
-        if(span&&Number(span.start)<offset){offset=Number(span.start);current='';skipping=false}
+        if(span&&Number(span.start)<offset){offset=Number(span.start);current='';skipping=false;this.db.prepare("DELETE FROM codex_live_messages WHERE scope=? AND turn=? AND kind='commentary' AND source_order=0").run(scope,turn)}
       }
       if(offset===stat.size){this.deliver(scope,request,valid);return}
       let carry=Buffer.alloc(0),position=offset,committed=offset,spent=0
-      const put=this.db.prepare('INSERT OR IGNORE INTO codex_live_messages VALUES(?,?,?,?,?,?,?)')
+      const put=this.db.prepare(`INSERT INTO codex_live_messages(scope,turn,id,kind,text,at,truncated,source_order) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(scope,turn,id) DO UPDATE SET text=excluded.text,truncated=excluded.truncated`)
       while(position<stat.size&&spent<BUDGET&&valid()){
         const buffer=Buffer.alloc(Math.min(CHUNK,stat.size-position)),{bytesRead}=await file.read(buffer,0,buffer.length,position)
         if(!bytesRead)break
@@ -171,13 +180,13 @@ export class TeamCodexLiveUpdates {
                 let kind='',raw='',id=''
                 if(row.type==='response_item'&&p?.type==='message'&&p.role==='assistant'&&p.phase==='commentary'&&(!p.status||p.status==='completed')&&(!p.recipient||p.recipient==='all')){
                   kind='commentary';raw=Array.isArray(p.content)?p.content.filter((c:{type?:string;text?:unknown})=>c.type==='output_text'&&typeof c.text==='string').map((c:{text:string})=>c.text).join('\n'):''
-                  id=createHash('sha256').update(JSON.stringify([current,kind,p.id??null,at,raw])).digest('hex')
+                  id=createHash('sha256').update(JSON.stringify([eventTurn,kind,...(safeId(p.id)?['native',p.id]:['record',identity,base+start])])).digest('hex')
                 }else if(row.type==='event_msg'&&p?.turn_id===eventTurn&&(p.root_turn_id??p.turn_id)===p.turn_id&&['task_complete','turn_aborted'].includes(p.type)){
                   kind=p.type==='task_complete'?'Stop':'Interrupt';raw=kind==='Stop'&&typeof p.last_agent_message==='string'?p.last_agent_message:'';id=kind
                 }
                 if(kind&&(raw.trim()||kind!=='commentary')){
                   const safe=codexImageSafeText(redactCodexQueueText(raw)),text=safe.slice(0,65536).replace(/[\uD800-\uDBFF]$/,'')
-                  put.run(scope,eventTurn,id,kind,text,at,text!==safe?1:0)
+                  put.run(scope,eventTurn,id,kind,text,at,text!==safe?1:0,base+start+1)
                 }
               }
             }catch{/* ignore incomplete/unsupported schema; never infer from prose */}
@@ -188,7 +197,7 @@ export class TeamCodexLiveUpdates {
         if(carry.length>MAX_LINE||skipping){carry=Buffer.alloc(0);skipping=true;committed=position}
       }
       if(!valid())return
-      this.db.prepare('INSERT INTO codex_live_cursors VALUES(?,?,?,?,?) ON CONFLICT(scope) DO UPDATE SET identity=excluded.identity,offset=excluded.offset,turn=excluded.turn,skipping=excluded.skipping').run(scope,identity,committed,current,skipping?1:0)
+      this.db.prepare('INSERT INTO codex_live_cursors(scope,identity,offset,turn,skipping,projection_version) VALUES(?,?,?,?,?,1) ON CONFLICT(scope) DO UPDATE SET identity=excluded.identity,offset=excluded.offset,turn=excluded.turn,skipping=excluded.skipping,projection_version=1').run(scope,identity,committed,current,skipping?1:0)
       this.deliver(scope,request,valid)
       if(position<stat.size)sub.again=true // yield between bounded bootstrap chunks
     }finally{await file.close()}

@@ -49,7 +49,7 @@ describe('durable cloud upload ledger', () => {
     expect(new TeamCodexCloudJournal(f.database).batch(11, 'opaque-team', active)).toEqual(first)
     expect(first.tasks[0]!.events.map(e => e.turn_seq)).toEqual([1, 1])
     expect(JSON.stringify(first)).not.toContain('/private/path')
-    expect(Object.keys(first).sort()).toEqual(['expected_owner_ref', 'source_id', 'source_name', 'tasks', 'team_ref'])
+    expect(Object.keys(first).sort()).toEqual(['expected_owner_ref','protocol_version', 'source_id', 'source_name', 'tasks', 'team_ref'])
     f.journal.acknowledge(first, ack(first))
     expect(f.batch()).toBeUndefined()
   })
@@ -147,8 +147,8 @@ describe('cloud coordinator account/team boundaries', () => {
     const many=Array.from({length:205},(_,i)=>({...events[0]!,sequence:i+1,turnId:`turn-${i}`,at:1000+i,localProgress:[{id:'private-progress',text:'本机过程',at:1,truncated:false}]}))
     await f.cloud.sync(11,'opaque-team',[task],()=>many)
     const uploads=f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))
-    expect(uploads).toHaveLength(3)
-    expect(JSON.stringify(uploads)).not.toContain('本机过程')
+    expect(uploads).toHaveLength(4)
+    expect(JSON.stringify(uploads)).toContain('本机过程');expect(uploads.flatMap(c=>(c[2] as CloudBatch).tasks.flatMap(t=>t.events)).filter(e=>e.kind==='Progress')).toHaveLength(205)
     f.post.mockImplementation(async()=>({owner_ref:'11',task_results:[],event_results:[]}) as never)
     f.post.mockClear()
     await f.cloud.sync(11,'opaque-team',[task],()=>[...many,{...events[0]!,turnId:'extra'}])
@@ -257,7 +257,7 @@ describe('cloud coordinator account/team boundaries', () => {
     expect(result.tasks[0]).toMatchObject({ title: '云任务', state: 'finished', cloud: { remote: true, ownerRef: '22' }, member: { displayName: '同事' } })
     expect(result.tasks[0]!.queue).toBeUndefined()
     expect(result.cloud).toMatchObject({ page: 2, hasMore: true })
-    expect(f.post.mock.calls.at(-1)![2]).toEqual({ view: 'team', team_ref: '101', page: 2, limit: 50, member_ref: '22' })
+    expect(f.post.mock.calls.at(-1)![2]).toEqual({protocol_version:2,view: 'team', team_ref: '101', page: 2, limit: 50, member_ref: '22' })
   })
   it('permission loss drops cloud rows and preserves only local records', async () => {
     const f = cloudFixture()
@@ -272,7 +272,7 @@ describe('cloud coordinator account/team boundaries', () => {
       items: [{ event_id: 'event', version: 2, turn_id: 'turn', turn_seq: 3, kind: 'Stop', text: '只有回答', at: 1000, truncated: true }], has_more: true, next_cursor: 'opaque_cursor',
     } : original(owner, path, body))
     const result = await f.cloud.events(11, 'opaque-team', '22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111')
-    expect(result).toMatchObject({ nextCursor: 'opaque_cursor', items: [{ eventId: 'event', version: 2, text: '只有回答', sequence: 11, truncated: true }] })
+    expect(result).toMatchObject({ nextCursor: 'opaque_cursor', items: [{ eventId: 'event', version: 2, text: '只有回答', sequence: 15, truncated: true }] })
   })
   it('sends source-scoped project filters and never mixes unrelated local tasks', async () => {
     const f = cloudFixture()
@@ -305,4 +305,45 @@ describe('cloud coordinator account/team boundaries', () => {
     const result=await f.cloud.state(11,'opaque-team',{...f.local,tasks:[{...task,cloudBlocked:true}]})
     expect(result.cloud).toMatchObject({blocked:1,message:'部分任务存在跨账号归属冲突，仅保留在本机，未继续上传。'})
   })
+})
+
+it('requires an independent classification ACK and versions background repair without sending historical text',()=>{
+ const f=journalFixture()
+ f.reconcile(events,[{...task,classification:{version:1,kind:'user',evidence:'native-persistent-root'}}])
+ const metadata=f.batch();f.journal.acknowledge(metadata,ack(metadata))
+ const classification=f.journal.classificationBatch(11,'opaque-team')!
+ expect(classification.tasks[0]).toMatchObject({events:[],classification:{version:1,kind:'user'}})
+ expect(f.journal.acknowledgeClassifications(classification,ack(classification))).toBe(0)
+ expect(f.journal.classificationBatch(11,'opaque-team')).toEqual(classification)
+ const response={owner_ref:'11',task_results:classification.tasks.map(t=>({task_id:t.task_id,status:'unchanged',version:t.version,classification_result:{status:'saved',version:1}}))}
+ expect(f.journal.acknowledgeClassifications(classification,response)).toBe(1)
+ expect(f.journal.classificationBatch(11,'opaque-team')).toBeUndefined()
+ f.database.exec(`CREATE TABLE codex_tasks(id TEXT,installation_id TEXT,session_id TEXT);
+ CREATE TABLE codex_session_visibility(installation_id TEXT,session_id TEXT,visibility TEXT);
+ INSERT INTO codex_tasks VALUES('local-task','installation','native-session');
+ INSERT INTO codex_session_visibility VALUES('installation','native-session','internal');`)
+ const repair=f.journal.classificationBatch(11,'opaque-team')!
+ expect(repair.tasks[0]).toMatchObject({version:1,events:[],classification:{version:2,kind:'background'}})
+ expect(f.journal.acknowledgeClassifications(classification,response)).toBe(1)
+ expect(f.journal.classificationBatch(11,'opaque-team')).toEqual(repair)
+ expect(f.journal.classificationBatch(22,'opaque-team')).toBeUndefined()
+})
+
+
+it('reads the same canonical progress on the source device with tuple pagination and late-window reload',()=>{
+ const f=journalFixture()
+ const progress=Array.from({length:80},(_,i)=>({id:'native-'+i,text:'step '+i,at:1100+i,truncated:false,sourceSequence:100+i*10}))
+ f.reconcile([{...events[0]!,localProgress:progress},events[1]!])
+ const newest=f.journal.readPage(11,'opaque-team',task.id)!
+ expect(newest.items).toHaveLength(50);expect(newest.items.at(-1)?.kind).toBe('Stop')
+ const older=f.journal.readPage(11,'opaque-team',task.id,newest.nextCursor)!
+ expect(older.items).toHaveLength(32);expect(older.items[0]?.kind).toBe('UserPromptSubmit')
+ expect(new Set([...older.items,...newest.items].map(e=>e.eventId)).size).toBe(82)
+ const first=newest.items[0]!.cursor!,last=newest.items.at(-1)!.cursor!
+ f.reconcile([{...events[0]!,localProgress:[...progress,{id:'late-source-record',text:'late',at:1100,truncated:false,sourceSequence:455}]},events[1]!])
+ const window=f.journal.readPage(11,'opaque-team',task.id,'',{from:first,through:last})!
+ expect(window.items.some(e=>e.text==='late')).toBe(true)
+ expect(window.items.find(e=>e.text==='late')?.messageSequence).toBe(455)
+ expect(f.journal.readPage(22,'opaque-team',task.id)).toBeUndefined()
+ expect(()=>f.journal.readPage(11,'opaque-team',task.id,'lc1_invalid')).toThrow()
 })

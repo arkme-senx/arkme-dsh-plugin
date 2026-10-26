@@ -1,3 +1,4 @@
+import {codexAccessRevoked} from '../../../team-codex-access.js'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
@@ -6,7 +7,7 @@ import type { TeamCodexInvitation, TeamCodexState, TeamCodexTask } from '../../.
 import type { ArkmeTeam } from '../../../types.js'
 import { TeamCodexConversation, codexReadingKey, newCodexReadingState, type CodexReadingState } from './TeamCodexConversation.js'
 import type { CodexConversationTarget } from './codex-conversation-target.js'
-import { codexTaskViewKey, readPersonalCodexState, type CodexTeamScope, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
+import { codexTaskViewKey, readPersonalCodexState, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
 import { CodexDispatchEntry } from './CodexDispatchEntry.js'
 import { CodexSyncStatus } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
@@ -33,15 +34,15 @@ function status(task: TeamCodexTask): string {
 
 const taskPriority = (task: TeamCodexTask): number => !liveTask(task) ? 0 : task.state==='working' ? 2 : queueAvailability(task)==='ready' && !!task.queue?.items.length ? 1 : 0
 
-export function TeamCodexActivity({ teamRef, team, active = true, conversation = false, managementOnly = false, target, selfMember = '', scopeControl, headerActions, personalTeams, onManage, onOpenTask }: {
+export function TeamCodexActivity({ teamRef, team, active = true, conversation = false, managementOnly = false, target, selfMember = '', scopeControl, headerActions, personal = false, onManage, onOpenTask }: {
   teamRef: string; team?: Pick<ArkmeTeam, 'name' | 'jotmoId'>; active?: boolean; conversation?: boolean
   managementOnly?: boolean
   target?: CodexConversationTarget; selfMember?: string; scopeControl?: ReactNode; onManage?(): void
-  headerActions?: ReactNode; personalTeams?: readonly CodexTeamScope[]
+  headerActions?: ReactNode; personal?: boolean
   onOpenTask?(task: TeamCodexTask, filters: {page:number;member:string;project:string}): void
 }) {
   useArkmeLocale()
-  const isPersonal = personalTeams !== undefined
+  const isPersonal = personal
   const [state, setState] = useState<CodexViewState>()
   const [unavailable,setUnavailable] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -81,19 +82,19 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const reading = useRef(false)
   const retryAfter = useRef(0)
   const controllers = useRef(new Set<AbortController>())
-  const directoryScope = JSON.stringify([conversation,teamRef,selfMember,member,target?.accountKey,personalTeams?.map(team=>team.teamRef).sort()])
+  const directoryScope = JSON.stringify([conversation,teamRef,selfMember,member,target?.accountKey,personal])
   useEffect(() => {
     conversationPages.current.clear(); setMoreError(''); setLoadingMore(false)
   },[directoryScope])
   useEffect(() => {
-    if (!personalTeams) return
-    const allowed = new Set(personalTeams.map(team=>team.teamRef))
+    if (!personal) return
+    const allowed = new Set(['self'])
     setState(current => current && ({...current,tasks:current.tasks.filter(task=>task.viewTeam && allowed.has(task.viewTeam.teamRef))}))
     for (const key of readings.current.keys()) {
       const [ref] = JSON.parse(key) as string[]
       if (!allowed.has(ref!)) readings.current.delete(key)
     }
-  },[personalTeams])
+  },[personal])
   useEffect(() => {
     if (!target?.task) {
       if (target && member !== (target.member ?? '')) {
@@ -128,10 +129,10 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     finally { controllers.current.delete(controller) }
   }, [teamRef])
   const readPage = useCallback(async (at: number,signal: AbortSignal): Promise<CodexConversationPage> => {
-    if (personalTeams) return readPersonalCodexState(personalTeams,selfMember,at,
+    if (personal) return readPersonalCodexState(selfMember,
       ref=>request<TeamCodexState>('team.codex.state',{teamRef:ref,page:at,memberRef:selfMember}),signal)
     return {state:await request<TeamCodexState>('team.codex.state',{page:at,memberRef:member,sourceId:selectedSource,projectKey:selectedProject}),unavailable:[]}
-  },[request,personalTeams,selfMember,member,selectedSource,selectedProject])
+  },[request,personal,selfMember,member,selectedSource,selectedProject])
   const refresh = useCallback(async () => {
     if (reading.current) return
     const epoch = readEpoch.current
@@ -165,7 +166,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         }]))}))
         if(result.localOnly && result.cloud?.status==='blocked') {setKnownMembers({});setKnownProjects({})}
       }
-    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; readings.current.clear();conversationPages.current.clear();setState(undefined);setExpanded(undefined) } }
+    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; if(codexAccessRevoked(error)){readings.current.clear();conversationPages.current.clear();setState(undefined);setExpanded(undefined)} } }
     finally { controllers.current.delete(batch); reading.current = false }
   }, [readPage,page,member,conversation,directoryScope])
   const loadMore = useCallback(async () => {
@@ -202,11 +203,11 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     void refresh()
     const timer = setInterval(() => { if (Date.now() >= retryAfter.current && (typeof document === 'undefined' || !document.hidden)) void refresh() },isPersonal ? 5000 : 3000)
     const foreground=()=>{if(typeof document==='undefined'||!document.hidden)void refresh()}
-    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground);window.addEventListener('arkme-codex-changed',foreground)}
     if(typeof document!=='undefined')document.addEventListener('visibilitychange',foreground)
     return () => {
       alive.current=false;readEpoch.current++;clearInterval(timer);for(const c of controllers.current)c.abort()
-      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground);window.removeEventListener('arkme-codex-changed',foreground)}
       if(typeof document!=='undefined')document.removeEventListener('visibilitychange',foreground)
     }
   }, [refresh, active,isPersonal])
@@ -260,6 +261,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const localStatus = !state ? tr('正在确认…') : connection?.status==='active' ? tr('已连接') : connection?.status==='paused' ? tr('已暂停') : connection?.configured ? tr('已配置，等待 Codex 真实事件') : tr('等待接入')
   const cloudStatus = !state ? tr('正在确认…') : !state.cloud || state.cloud.status==='unsupported' ? tr('仅本机采集')
     : state.cloud.status!=='ready' ? tr(state.cloud.message ?? '暂无法核验云端状态')
+    : state.cloud.settingsPending ? tr('同步设置等待云端确认')
     : !state.cloud.uploadEnabled ? tr('未开启 · 仅查看云端记录')
     : state.cloud.blocked>0 ? tr('已开启 · 需处理 {count} 条',{count:state.cloud.blocked})
     : tr('已开启 · 待上传 {count} 条',{count:state.cloud.pending})

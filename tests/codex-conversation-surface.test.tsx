@@ -11,13 +11,13 @@ const team={teamRef:'team-a',name:'Team A',jotmoId:'a',currentUserRole:'member',
 let renderer:ReactTestRenderer|undefined
 const tick=async()=>{await Promise.resolve();await Promise.resolve();await Promise.resolve()}
 const readers=()=>renderer!.root.findAllByProps({'data-reader':true})
-const own=()=>readers().find(reader=>reader.props.personalTeams)!
+const own=()=>readers().find(reader=>reader.props.personal)!
 beforeEach(()=>{arkmeUi.authChanged(false);mocks.call.mockReset();mocks.call.mockResolvedValue({items:[team],hasMore:false,totalCount:1})})
 afterEach(async()=>{await act(async()=>{renderer?.unmount();await tick()});arkmeContactsTab.activateAccount(undefined)})
 it('opens own tasks automatically without a team gate or changes to upload settings',async()=>{
   arkmeUi.showCodex(null)
   await act(async()=>{renderer=create(<CodexConversationSurface accountKey="prod:11" userId={11} active/>);await tick()})
-  expect(own().props).toMatchObject({teamRef:'',personalTeams:[team],selfMember:'11',active:true,conversation:true})
+  expect(own().props).toMatchObject({teamRef:'',personal:true,selfMember:'11',active:true,conversation:true})
   expect(renderer!.root.findAllByType('select')).toHaveLength(0)
   expect(mocks.call.mock.calls.every(call=>call[0]==='team.list')).toBe(true)
   await act(async()=>{own().props.onManage();await tick()})
@@ -33,7 +33,7 @@ it('keeps own reader mounted while inspecting a team task, then returns to it',a
   const personalReader=own()
   await act(async()=>{arkmeUi.showCodex(target as never);await tick()})
   expect(own()).toBe(personalReader);expect(own().props.active).toBe(false)
-  expect(readers().find(r=>!r.props.personalTeams)?.props.target).toBe(target)
+  expect(readers().find(r=>!r.props.personal)?.props.target).toBe(target)
   await act(async()=>{renderer!.root.findAllByType('button').find(b=>b.children.includes('回到我的任务'))!.props.onClick();await tick()})
   expect(own()).toBe(personalReader);expect(own().props.active).toBe(true)
   expect(arkmeUi.getSnapshot().codexTarget).toBeUndefined()
@@ -63,7 +63,9 @@ it('collects all team directory pages using the opaque cursor',async()=>{
     .mockResolvedValueOnce({items:[{...team,teamRef:'team-b',name:'Team B'}],hasMore:false,totalCount:2})
   await act(async()=>{renderer=create(<CodexConversationSurface accountKey="prod:11" userId={11} active/>);await tick()})
   expect(mocks.call).toHaveBeenLastCalledWith('team.list',{limit:50,pageCursor:'opaque-cursor'},expect.anything())
-  expect(own().props.personalTeams.map((t:{teamRef:string})=>t.teamRef)).toEqual(['team-a','team-b'])
+  expect(own().props.personal).toBe(true)
+  await act(async()=>{own().props.onManage();await tick()})
+  expect(renderer!.root.findAllByProps({className:'arkme-codex-team-choice'})).toHaveLength(2)
 })
 it('removes revoked team panels on re-entry, without clearing other navigation state',async()=>{
   arkmeUi.showCodex({accountKey:'prod:11',team,fromTeam:true})
@@ -72,13 +74,19 @@ it('removes revoked team panels on re-entry, without clearing other navigation s
   mocks.call.mockResolvedValue({items:[],hasMore:false})
   await act(async()=>{renderer!.update(<CodexConversationSurface accountKey="prod:11" userId={11} active/>);await tick()})
   expect(readers()).toHaveLength(1)
-  expect(own().props.personalTeams).toEqual([])
+  expect(own().props.personal).toBe(true)
   expect(arkmeUi.getSnapshot().codexTarget).toBeUndefined()
 })
 it('stops on repeated directory cursors rather than polling forever',async()=>{
   mocks.call.mockResolvedValue({items:[team],hasMore:true,nextPageCursor:'repeat'})
   await act(async()=>{renderer=create(<CodexConversationSurface accountKey="prod:11" userId={11} active/>);await tick()})
   expect(mocks.call).toHaveBeenCalledTimes(2)
-  expect(own().props.active).toBe(false)
+  expect(own().props.active).toBe(true)
   expect(renderer!.root.findByProps({role:'alert'}).children).toContain('团队列表未完整加载，请重试')
+})
+
+it('retains the own history entry when the team directory cannot be reached',async()=>{
+ mocks.call.mockRejectedValue(Error('team service offline'))
+ await act(async()=>{renderer=create(<CodexConversationSurface accountKey="prod:11" userId={11} active/>);await tick()})
+ expect(own().props.active).toBe(true)
 })

@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+ 'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_arko_change_lifecycle',
   'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
@@ -91,6 +92,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
+  if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'
   if (name === 'arkme_arko_change_lifecycle') return `是否${args.action === 'restore' ? '恢复' : '删除'}刚才选定的 ${Array.isArray(args.message_refs) ? args.message_refs.length : 0} 条 Arko 消息？删除后 30 天内可恢复，已创建的快记和安排会保留。`
   if (name === 'arkme_conversation_words_generate') return '是否按刚才指定的对话、人员和日期范围开始或更新词频统计？这不会调用大模型或扣除 AI 积分。'
   if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
@@ -283,7 +286,7 @@ export function registerArkmeTools(
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
     for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile, 'attachments')) {
-      imageCtx.tools.register(definition)
+      imageCtx.tools.register(withCoreConversationalConfirmation(definition,coreConversation))
     }
   })
 }

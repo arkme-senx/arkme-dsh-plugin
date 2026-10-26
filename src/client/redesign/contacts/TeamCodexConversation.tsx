@@ -1,3 +1,4 @@
+import {codexAccessRevoked} from '../../../team-codex-access.js'
 import { arkmeAuthStore } from '../../auth-store.js'
 import { CodexSelectableBody, useCodexMessageInteractions } from './CodexMessageInteractions.js'
 import { codexSelectable } from './codex-message-actions.js'
@@ -9,6 +10,7 @@ import remarkBreaks from 'remark-breaks'
 import { callArkme } from '../../api.js'
 import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
+import { compareCodexEvents } from '../../../team-codex-contract.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
 import { codexPromptPresentation, type CodexQuestionReply } from '../../../team-codex-prompt-text.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
@@ -25,7 +27,7 @@ export interface CodexReadingState {
   atBottom: boolean
 }
 export const newCodexReadingState = (): CodexReadingState => ({ items: [], loaded: false, scrollTop: 0, atBottom: true })
-export const codexReadingKey = (teamRef: string, task: TeamCodexTask): string => JSON.stringify([teamRef, task.cloud?.remote ? task.cloud.sourceId : 'local', task.id])
+export const codexReadingKey = (teamRef: string, task: TeamCodexTask): string => JSON.stringify([teamRef, task.cloud?.sourceId ?? 'local', task.cloud?.taskId ?? task.id])
 const stamp = (at: number) => new Date(at).toLocaleString(arkmeIntlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const dayKey = (at: number) => { const date = new Date(at); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}` }
 
@@ -35,7 +37,7 @@ export function mergeCodexEvents(current: TeamCodexEvent[], incoming: TeamCodexE
     const previous = byId.get(item.eventId ?? item.sequence)
     if (!previous || (item.version ?? 0) >= (previous.version ?? 0)) byId.set(item.eventId ?? item.sequence, item)
   }
-  return [...byId.values()].sort((a, b) => a.at - b.at || a.sequence - b.sequence)
+  return [...byId.values()].sort(compareCodexEvents)
 }
 function plain(children: ReactNode): string {
   return Children.toArray(children).map(child => typeof child === 'string' || typeof child === 'number' ? String(child)
@@ -119,9 +121,26 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     controllers.current.add(controller)
     setBusy(true)
     try {
-      const page = await callArkme<TeamCodexEventPage>('team.codex.events', { teamRef, id: task.id,
-        ...(task.cloud?.remote ? { sourceId: task.cloud.sourceId, cursor: typeof older === 'string' ? older : '' } : typeof older === 'number' ? { before: older } : {}),
+      let page = await callArkme<TeamCodexEventPage>('team.codex.events', { teamRef, id: task.id,
+        ...(task.cloud?.remote ? { sourceId: task.cloud.sourceId } : {}),
+        ...(typeof older==='string'?{cursor:older}:typeof older==='number'?{before:older}:{}),
       }, controller.signal)
+      if((task.cloud?.remote||reading.items.some(event=>event.cursor?.startsWith('lc1_'))) && older===undefined && reading.items.length){
+        const ordered=[...reading.items].sort(compareCodexEvents),first=ordered[0]?.cursor,last=ordered.at(-1)?.cursor
+        const readRange=async (bounds:Record<string,string>)=>{
+          let continuation='',round=0;const seen=new Set<string>(),values:TeamCodexEvent[]=[]
+          do {
+            const next=await callArkme<TeamCodexEventPage>('team.codex.events',{teamRef,id:task.id,...(task.cloud?.remote?{sourceId:task.cloud.sourceId}:{}),...bounds,cursor:continuation},controller.signal)
+            controller.signal.throwIfAborted();values.push(...next.items)
+            continuation=next.nextCursor??''
+            if(continuation&&seen.has(continuation))throw Error('工作动态分页异常，请重试')
+            seen.add(continuation)
+            if(++round>=100&&continuation)throw Error('工作动态较多，正在继续同步')
+          }while(continuation)
+          return values
+        }
+        if(first&&last)page={...page,items:[...await readRange({from:first,through:last}),...await readRange({after:last})]}
+      }
       if (!live.current || controller.signal.aborted) return
       const merged = mergeCodexEvents(reading.items, page.items)
       const changed = JSON.stringify(merged) !== JSON.stringify(reading.items)
@@ -139,8 +158,8 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     } catch (failure) {
       if (!live.current || controller.signal.aborted) return
       setError(failure instanceof Error ? failure.message : tr('工作动态加载失败，请重试'))
-      // Do not keep readable remote content after a failed permission revalidation.
-      if (task.cloud?.remote) { reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; setItems([]); setBefore(undefined); setCursor(undefined) }
+      // Explicit denial clears content; a transient network/service error retains the reading window.
+      if (task.cloud?.remote && codexAccessRevoked(failure)) { reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; setItems([]); setBefore(undefined); setCursor(undefined) }
     } finally {
       controllers.current.delete(controller); loading.current = false
       if (live.current && !controller.signal.aborted) setBusy(false)
@@ -151,11 +170,11 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     void load()
     const timer = setInterval(() => { if (typeof document === 'undefined' || !document.hidden) void load() }, 5000)
     const foreground=()=>{if(typeof document==='undefined'||!document.hidden)void load()}
-    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground);window.addEventListener('arkme-codex-changed',foreground)}
     if(typeof document!=='undefined')document.addEventListener('visibilitychange',foreground)
     return () => {
       live.current=false;clearInterval(timer);for(const controller of controllers.current)controller.abort()
-      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground);window.removeEventListener('arkme-codex-changed',foreground)}
       if(typeof document!=='undefined')document.removeEventListener('visibilitychange',foreground)
     }
   }, [load])
@@ -196,7 +215,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
           {event.kind!=='UserPromptSubmit' && event.timing && <CodexTurnDuration timing={event.timing} task={task}/>}
-          <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : '任务已中断')}>
+          <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
             {interactions.check(event)}<div style={{minWidth:0}}>
             <CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
               : event.text ? event.kind === 'UserPromptSubmit' ? <CodexPromptBody text={event.text} replies={event.replies}/> : <CodexMessageBody text={event.text}/>
