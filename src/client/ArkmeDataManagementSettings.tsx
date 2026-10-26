@@ -1,9 +1,10 @@
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
+import { ArkmeConfirmDialog, ArkmeConfirmDialogPreview } from './ArkmeConfirmDialog.js'
 import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedItemsPage } from './data-deleted-items.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
@@ -68,7 +69,6 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [confirm, setConfirm] = useState<DeletedItem>()
-  const confirmation = useRef<HTMLDivElement>(null)
   const [recovering, setRecovering] = useState(false)
   const mounted = useRef(true)
   const recoveryController = useRef<AbortController>()
@@ -77,8 +77,6 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
   const deletedGeneration = page === 'deleted' ? lifecycleGeneration : 0
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; recoveryController.current?.abort() } }, [])
   useEffect(() => { setError(''); setNotice(''); setConfirm(undefined) }, [page, revision])
-  // Focus also brings the existing confirmation into view below a long list.
-  useLayoutEffect(() => { if (confirm) confirmation.current?.focus() }, [confirm?.key])
   useEffect(() => {
     if (page !== 'deleted' && page !== 'export') { setLoading(false); return }
     const controller = new AbortController()
@@ -138,7 +136,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <small>{tr("不会自动上传文件，也不会通过链接传递你的登录凭证。")}</small>
     </div> : <>
       <button type="button" className="arkme-settings-link" disabled={loading || recovering} onClick={() => setRevision(value => value + 1)}>{loading ? tr("读取中…") : tr("刷新")}</button>
-      {error && <p role="alert" className="arkme-data-error">{tr(error)}</p>}
+      {error && !confirm && <p role="alert" className="arkme-data-error">{tr(error)}</p>}
       {notice && <p role="status">{notice}</p>}
       {page === 'deleted' && deleted && <>
         <p className="arkme-data-hint">{deleted.items.length ? `本次显示 ${deleted.items.length} 条${deleted.mayHaveMore ? '，更多记录请在手机端查看' : ''}。` : deleted.unverifiedCount ? tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。') : deleted.mayHaveMore ? tr('本次读取范围内暂无可恢复记录，更多记录请在手机端查看。') : tr('暂无最近删除的记录。')}{deleted.items.length > 0 && !!deleted.unverifiedCount && tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。')}{tr('浏览不会自动清除数据。')}</p>
@@ -146,13 +144,15 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
           <details><summary>{item.title || item.text.slice(0, 80) || '无文字记录'}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></summary>
             <p>{item.text || '此记录无文字内容，附件请在恢复后查看。'}</p>
           </details>
-          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError(''); if (confirm?.key === item.key) confirmation.current?.focus() }}>{tr("恢复")}</button>
+          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError('') }}>{tr("恢复")}</button>
         </li>)}</ul>
-        {confirm && <div ref={confirmation} tabIndex={-1} className="arkme-data-panel" role="group" aria-label={tr("确认恢复记录")}><p>{tr("恢复“")}{confirm.title || confirm.text.slice(0, 40) || '无文字记录'}”？</p>
-          <button type="button" disabled={recovering} onClick={() => { void recover() }}>{recovering ? '正在恢复…' : '确认恢复'}</button>
-          <button type="button" disabled={recovering} onClick={() => setConfirm(undefined)}>{tr("取消")}</button>
-        </div>}
       </>}
+      {page === 'deleted' && confirm && <ArkmeConfirmDialog
+        titleId="arkme-data-recover-title" title={tr('恢复这条内容？')}
+        description={tr('恢复后可在原位置查看此内容。')}
+        confirmLabel={tr('确认恢复')} busyLabel={tr('正在恢复…')} busy={recovering} error={tr(error)}
+        onClose={() => setConfirm(undefined)} onConfirm={() => { void recover() }}
+      ><ArkmeConfirmDialogPreview>{confirm.title || confirm.text.slice(0, 80) || tr('无文字记录')}</ArkmeConfirmDialogPreview></ArkmeConfirmDialog>}
       {page === 'export' && <div className="arkme-data-panel">
         <h3>{tr("完整备份")}</h3>
         {preflight && <><p>{preflight.recordCount} {tr("条快记 ·")} {preflight.voiceCount} {tr("个语音 ·")} {preflight.imageCount} {tr("张图片")}</p>

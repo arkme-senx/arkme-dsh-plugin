@@ -10,10 +10,14 @@ vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 let root: Root, host: HTMLDivElement
 const record = { recordUid: '88:1', version: 5, title: '保留的快记', text: '快记详情', sendAtMillis: 1000 }
 const message = () => ({ messageRef: 'opaque', messageKey: '88:1', version: 1, state: 'deleted', deletedAtMillis: 1, purgeAtMillis: Date.now() + 5000, lastOperationUid: 'delete', message: { text: '已删除的问题', createdAtMillis: 2000 } })
-const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent === text)!
+const button = (text: string) => [...document.querySelectorAll('button')].find(b => b.textContent === text)!
 const click = async (text: string) => { await act(async () => { expect(button(text), text).toBeDefined(); button(text).click() }) }
 const open = async () => { await act(async () => root.render(<ArkmeDataManagementSettings />)); await click('最近删除') }
-const select = async (text: string) => { await act(async () => [...host.querySelectorAll('li')].find(li => li.textContent?.includes(text))!.querySelector('button')!.click()) }
+const select = async (text: string) => { await act(async () => {
+  const trigger = [...host.querySelectorAll('li')].find(li => li.textContent?.includes(text))!.querySelector('button')!
+  trigger.focus(); trigger.click()
+}) }
+const dialog = () => document.querySelector('[data-arkme-confirm-dialog]')
 const writes = () => vi.mocked(callArkme).mock.calls.filter(([op]) => op === 'data.recover' || op === 'arko.lifecycle.change')
 let messages: ReturnType<typeof message>[]
 beforeEach(() => {
@@ -33,22 +37,30 @@ beforeEach(() => {
   })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
-it('focuses the existing recovery confirmation in a long list, including repeated selection', async () => {
+it('opens a modal over a long list and returns focus on cancel without scrolling or writing', async () => {
   messages = Array.from({ length: 45 }, (_, index) => ({ ...message(), messageRef: `opaque-${index}`, messageKey: `88:${index + 1}`,
     message: { text: index === 0 ? '恢复定位目标' : `其他已删除消息 ${index}`, createdAtMillis: 2000 - index } }))
   await open()
   expect(host.querySelectorAll('li')).toHaveLength(46)
+  host.scrollTop = 600
   await select('恢复定位目标')
-  const confirmation = host.querySelector('[aria-label="确认恢复记录"]')!
-  expect(document.activeElement).toBe(confirmation)
+  const confirmation = dialog()!
+  expect(confirmation.getAttribute('role')).toBe('dialog')
+  expect(confirmation.getAttribute('aria-modal')).toBe('true')
+  expect(host.contains(confirmation)).toBe(false)
+  expect(document.activeElement).toBe(button('取消'))
   expect(confirmation.textContent).toContain('恢复定位目标')
   expect(writes()).toHaveLength(0)
+  expect(host.scrollTop).toBe(600)
   const restore = host.querySelector('li button') as HTMLButtonElement
-  restore.focus()
-  await select('恢复定位目标')
-  expect(document.activeElement).toBe(confirmation)
   await click('取消')
-  expect(host.querySelector('[aria-label="确认恢复记录"]')).toBeNull()
+  expect(dialog()).toBeNull()
+  expect(document.activeElement).toBe(restore)
+  await select('恢复定位目标')
+  await act(async () => button('取消').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(dialog()).toBeNull()
+  expect(document.activeElement).toBe(restore)
+  expect(host.scrollTop).toBe(600)
   expect(writes()).toHaveLength(0)
 })
 it('reuses existing rows and confirmation while routing identical keys to the correct owner', async () => {
@@ -77,6 +89,8 @@ it('keeps unknown restores in the list and makes repeated confirmation read-only
   await open(); await select('已删除的问题'); await click('确认恢复')
   expect(host.textContent).not.toContain('已恢复')
   expect(host.querySelectorAll('li')).toHaveLength(2)
+  expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain('操作结果暂时无法确认')
+  expect(host.querySelector('[role="alert"]')).toBeNull()
   await click('确认恢复'); expect(writes()).toHaveLength(1)
   expect(host.textContent).not.toMatch(/核对状态|恢复所选|尚未确认/)
   resolved = true; messages = []
@@ -90,6 +104,9 @@ it('cancels account-scoped recovery and drops late success after logout', async 
   let finish!: (value: unknown) => void
   vi.mocked(callArkme).mockImplementation((op, input, signal) => op === 'arko.lifecycle.change' ? new Promise(resolve => { finish = resolve }) as never : original(op, input, signal))
   await open(); await select('已删除的问题'); await click('确认恢复')
+  expect(button('取消').disabled).toBe(true)
+  await act(async () => dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(dialog()).not.toBeNull()
   await click('正在恢复…'); expect(writes()).toHaveLength(1)
   const signal = writes()[0]![2]!
   await act(async () => arkmeAuthStore.setAuth({ status: 'logged_out', environment: 'test' } as never))
@@ -114,7 +131,7 @@ it('removes expired content and its pending confirmation without polling or hidi
   await act(async () => { await vi.advanceTimersByTimeAsync(5001) })
   expect(host.textContent).not.toContain('已删除的问题')
   expect(host.textContent).toContain('保留的快记')
-  expect(host.querySelector('[aria-label="确认恢复记录"]')).toBeNull()
+  expect(dialog()).toBeNull()
   expect(vi.mocked(callArkme).mock.calls).toHaveLength(readCount)
   expect(writes()).toHaveLength(0)
 })
@@ -123,6 +140,20 @@ it('clears stale confirmation after cross-device restoration using the existing 
   messages = []
   await act(async () => arkoLifecycleSync.invalidate())
   expect(host.textContent).not.toContain('已删除的问题')
-  expect(host.querySelector('[aria-label="确认恢复记录"]')).toBeNull()
+  expect(dialog()).toBeNull()
+  expect(writes()).toHaveLength(0)
+})
+it('keeps the modal mounted while a background list refresh verifies the same target', async () => {
+  await open(); await select('已删除的问题')
+  const currentDialog = dialog()
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  let finish!: (value: unknown) => void
+  vi.mocked(callArkme).mockImplementation((op, input, signal) => op === 'arko.deleted'
+    ? new Promise(resolve => { finish = resolve }) as never : original(op, input, signal))
+  await act(async () => arkoLifecycleSync.invalidate())
+  expect(dialog()).toBe(currentDialog)
+  expect(document.activeElement).toBe(button('取消'))
+  await act(async () => finish({ items: messages, hasMore: false }))
+  expect(dialog()).toBe(currentDialog)
   expect(writes()).toHaveLength(0)
 })
