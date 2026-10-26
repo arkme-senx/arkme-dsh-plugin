@@ -7,3 +7,6 @@
 .arkme-day-map-dialog .arkme-location-stage{border-radius:0}
 .arkme-day-map-detail{position:absolute;inset:0;z-index:10;overflow:auto;display:flex;flex-direction:column}
 @media(max-width:650px){.arkme-day-map-backdrop{padding:12px}.arkme-day-map-dialog{height:calc(100dvh - 24px)}}
+
+.arkme-day-map-backdrop[data-native-window=true]{padding:0;background:transparent}
+.arkme-day-map-backdrop[data-native-window=true] .arkme-day-map-dialog{width:100%;height:100%;border-radius:0;box-shadow:none}

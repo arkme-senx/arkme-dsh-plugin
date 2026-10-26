@@ -31,7 +31,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
   scrollRoot?: RefObject<HTMLElement>; scope?: ArkmeLongArticleBrowseScope; active?: boolean; created?: ArkmeSearchRecordItem | undefined
   initialPage?: ArkmeRecordSearchResult | undefined; titleOnly?: boolean
   currentArticle?: { sourceRef: string; itemUid: string; title: string; recordOwnerUserId?: ArkmeSearchRecordItem['recordOwnerUserId'] } | undefined
-  onChooseArticle?(item: ArkmeSearchRecordItem): void
+  onChooseArticle?: ((item: ArkmeSearchRecordItem) => void) | undefined
   updatedArticle?: { sourceRef: string; detail: ArkmeLongArticleDetail } | undefined
 }) {
   useArkmeLocale()

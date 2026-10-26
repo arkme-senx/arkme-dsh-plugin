@@ -11,14 +11,37 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { openBrowseWindow, openLongArticleWindow, longArticleWindowBridge } from './long-article-window.js'
 import css from './long-article-library.css?inline'
 
 const scopes: { key: ArkmeLongArticleBrowseScope; label: string }[] = [
   { key: 'recent', label: '最近' }, { key: 'shared_by_me', label: '我共享的' }, { key: 'shared_with_me', label: '共享给我的' },
 ]
 
-export function ArkmeLongArticleLibraryDialog({ onClose, returnFocusRef }: { onClose(): void; returnFocusRef?: RefObject<HTMLElement> }) {
+type LibraryProps = { onClose(): void; returnFocusRef?: RefObject<HTMLElement>; standalone?: boolean }
+export function ArkmeLongArticleLibraryDialog(props: LibraryProps) {
+  const [fallback, setFallback] = useState(props.standalone === true || (longArticleWindowBridge()?.version ?? 0) < 3)
+  const [error, setError] = useState('')
+  const close = useRef(props.onClose); close.current = props.onClose
+  useEffect(() => {
+    if (props.standalone) return
+    let active = true
+    void openBrowseWindow('library').then(opened => { if (active) { if (opened) close.current(); else setFallback(true) } })
+      .catch(reason => { if (active) { setError(reason instanceof Error ? reason.message : '无法打开长文窗口'); setFallback(true) } })
+    return () => { active = false }
+  }, [])
+  return <>{error && <p role="alert">{error}</p>}{fallback && <LibraryContent {...props} />}</>
+}
+function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
   useArkmeLocale()
+  const [revision, setRevision] = useState(0)
+  useEffect(() => {
+    if (!standalone) return
+    const refresh = () => setRevision(value => value + 1)
+    const stop = longArticleWindowBridge()?.onChanged?.(refresh)
+    window.addEventListener('focus', refresh)
+    return () => { stop?.(); window.removeEventListener('focus', refresh) }
+  }, [standalone])
   const id = useId(), root = useRef<HTMLElement>(null)
   const recent = useRef<HTMLDivElement>(null), sent = useRef<HTMLDivElement>(null), received = useRef<HTMLDivElement>(null)
   const panels = { recent, shared_by_me: sent, shared_with_me: received }
@@ -49,13 +72,15 @@ export function ArkmeLongArticleLibraryDialog({ onClose, returnFocusRef }: { onC
       const current = arkmeAuthStore.getSnapshot().auth
       if (`${current?.environment}:${current?.userId}` !== originalAccount.current) throw new Error('账号已切换，请重新打开长文')
       if (target.kind !== 'send_to_self' || !target.sourceRef) throw new Error('暂时无法读取发给自己，请重试')
-      setCreating(target)
+      if (standalone) {
+        if (!await openLongArticleWindow({ ...target, sourceKey: target.sourceKey ?? target.sourceRef }, undefined, true)) throw new Error('当前客户端不支持长文窗口')
+      } else setCreating(target)
     } catch (reason) { if (!controller.signal.aborted && mounted.current) setError(reason instanceof Error ? reason.message : '无法新建长文，请重试') }
     finally { if (request.current === controller) { request.current = undefined; if (mounted.current) setPreparing(false) } }
   }
-  const body = <div className="arkme-article-library-backdrop" data-arkme-notification-blocking-overlay="true" onMouseDown={event => { if (event.target === event.currentTarget && !creating) onClose() }}>
+  const body = <div className="arkme-article-library-backdrop" data-native-window={standalone || undefined} data-arkme-notification-blocking-overlay="true" onMouseDown={event => { if (event.target === event.currentTarget && !creating) onClose() }}>
     <style>{css}</style>
-    <section ref={root} data-arkme-long-article-library role="dialog" aria-modal="true" aria-label={tr('长文库')} tabIndex={-1}
+    <section ref={root} data-arkme-long-article-library role="dialog" aria-modal={standalone ? undefined : true} aria-label={tr('长文库')} tabIndex={-1}
       className="arkme-article-library" style={{ background: arkmeTheme.base, color: arkmeTheme.text }}
       {...(creating ? { inert: '', 'aria-hidden': true } : {})}
       onKeyDown={event => {
@@ -70,7 +95,7 @@ export function ArkmeLongArticleLibraryDialog({ onClose, returnFocusRef }: { onC
       }}>
       <header className="arkme-article-library-header"><h2>{tr('长文')}</h2>
         <button type="button" disabled={preparing} aria-busy={preparing} onClick={() => { void create() }}><Plus size={16} aria-hidden />{tr(preparing ? '准备中…' : '新建长文')}</button>
-        <button type="button" aria-label={tr('关闭长文库')} onClick={onClose}><X size={20} aria-hidden /></button>
+        {!standalone && <button type="button" aria-label={tr('关闭长文库')} onClick={onClose}><X size={20} aria-hidden /></button>}
       </header>
       {error && <p className="arkme-article-library-error" role="alert" style={{ color: arkmeTheme.danger }}>{error}</p>}
       <div className="arkme-article-library-tabs" role="tablist" aria-label={tr('长文分类')}>
@@ -85,7 +110,11 @@ export function ArkmeLongArticleLibraryDialog({ onClose, returnFocusRef }: { onC
       </div>
       {scopes.filter(item => visited.includes(item.key)).map(item => <div key={item.key} ref={panels[item.key]} id={`${id}-${item.key}-panel`} role="tabpanel"
         aria-labelledby={`${id}-${item.key}-tab`} className="arkme-article-library-panel" hidden={scope !== item.key}>
-        <ArkmeLongArticleQuickView scope={item.key} active={scope === item.key} scrollRoot={panels[item.key]} created={created} />
+        <ArkmeLongArticleQuickView key={`${item.key}:${revision}`} onChooseArticle={standalone ? item => {
+          if (!item.targetSource) return
+          void openLongArticleWindow({ ...item.targetSource, sourceKey: item.targetSource.sourceKey ?? item.targetSource.sourceRef }, { mode: 'existing', item: { senderName: '', isMe: false, status: 1, templateKind: 8, displayKind: 1, itemUid: item.recordUid, title: item.title, textContent: item.textContent, sendAtMillis: item.sendAtMillis,
+            ...(item.recordOwnerUserId !== undefined ? { recordOwnerUserId: item.recordOwnerUserId } : {}) } }).catch(reason => setError(reason instanceof Error ? reason.message : '无法打开长文'))
+        } : undefined} scope={item.key} active={scope === item.key} scrollRoot={panels[item.key]} created={created} />
       </div>)}
     </section>
     {creating && <ArkmeLongArticleDialog sourceRef={creating.sourceRef} overlayZIndex={10060} onClose={() => {
