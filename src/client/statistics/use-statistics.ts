@@ -5,8 +5,8 @@ import { withArkmeReadDeadline } from '../read-deadline.js'
 
 export type StatisticsResource<T> = { value?: T; loading: boolean; error: string }
 export const statisticsError = (error: unknown) => error instanceof Error ? error.message : '读取失败，请重试'
-export function useStatistics<T extends StatisticsDetail | StatisticsPoint[] | StatisticsRecordPage>(
-  kind: 'detail' | 'active' | 'long', query: StatisticsQuery, enabled: boolean, revision: number,
+export function useStatistics<T extends StatisticsDetail | StatisticsPoint[] | StatisticsRecordPage | import('../../analytics-contract.js').PersonalKeywordSummary>(
+  kind: 'detail' | 'active' | 'long' | 'keywords', query: StatisticsQuery, enabled: boolean, revision: number,
 ) {
   const key = JSON.stringify([query, revision]), [result, setResult] = useState<{ key: string; state: StatisticsResource<T> }>()
   useEffect(() => {
