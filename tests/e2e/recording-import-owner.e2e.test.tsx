@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import type { ImportJournal, ImportQueueRecord } from '../../src/client/recordings/recording-import-journal.js'
 
 const directory = process.env.JOTMO_IMPORT_E2E_DIR
 it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persisted exact summary', async () => {
@@ -28,6 +29,22 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
   }
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('File', NodeFile); vi.stubGlobal('Blob', NodeBlob)
+  // JSDOM supplies neither Web Locks nor IndexedDB. This single-window owner
+  // fixture provides only those browser facilities; upload admission, bytes,
+  // Host/API, transactions and MQ still run through their production paths.
+  // This fixture does not validate browser persistence or lock arbitration.
+  const queue = new Map<string, ImportQueueRecord>()
+  const journal: ImportJournal = {
+    async list(accountKey) { return [...queue.values()].filter(row => row.accountKey === accountKey) },
+    async change(upserts, removals) {
+      for (const id of removals) queue.delete(id)
+      for (const row of upserts) queue.set(row.id, row)
+    },
+  }
+  const previousLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+    async request(_name: string, options: { signal: AbortSignal }, work: () => Promise<void>) { options.signal.throwIfAborted(); await work() },
+  } })
   vi.stubGlobal('fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const headers = new Headers(init?.headers); headers.set('origin', origin) // Same-origin browser POST header.
     return nativeFetch(new URL(typeof input === 'string' || input instanceof URL ? input : input.url, origin), { ...init, headers })
@@ -62,7 +79,7 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     const sdk = createArkmeSdk({ fetchImpl: (url, init) => nativeFetch(new URL(url, origin), init) })
     const wait = async (predicate: () => boolean | Promise<boolean>, timeout = 60000) => { const deadline = Date.now() + timeout; while (!await predicate()) { if (Date.now() > deadline) throw new Error(`timeout: ${container.textContent}`); await act(async () => { await new Promise(r => setTimeout(r, 100)) }) } }
     let accepted = false
-    await act(async () => { root.render(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import" defaultStartAtMillis={Date.parse('2026-10-12T10:00:00+08:00')} currentUserId={fixture.user_id} onAccepted={() => { accepted = true }} />) })
+    await act(async () => { root.render(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import" defaultStartAtMillis={Date.parse('2026-10-12T10:00:00+08:00')} currentUserId={fixture.user_id} journal={journal} onAccepted={() => { accepted = true }} />) })
     // A valid two-second PCM WAVE is inspected by both browser and Host probes.
     const wav = Buffer.alloc(44 + 32000 * 2); wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40)
     const file = new NodeFile([wav], '链路验收.wav', { type: 'audio/wav' })
@@ -135,6 +152,8 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     expect(calls).toContain('/api/v1/audio/recordings/speakers/bind')
 
   } finally {
+    if (previousLocks) Object.defineProperty(navigator, 'locks', previousLocks)
+    else Reflect.deleteProperty(navigator, 'locks')
     await act(async () => { root.unmount() }); service.dispose(); container.remove(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); vi.unstubAllGlobals(); await rm(state, { recursive: true, force: true }); await writeFile(join(directory!, 'stop'), 'done', { mode: 0o600 })
   }
 }, 120000)
