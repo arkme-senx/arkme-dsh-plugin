@@ -239,3 +239,26 @@ describe('unified member join names', () => {
     await expect(service.read('ref', {}, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
+
+describe('sealed system event navigation', () => {
+ it('uses one exact around request and rejects cross-account, conversation, environment and forged anchors', async () => {
+  const { systemTimelineAnchorCodec } = await import('../src/services/system-timeline-anchor.js')
+  const ref = systemTimelineAnchorCodec('key', 'test', 1, 'chat').seal('group_metadata', 'group_invite:chat')
+  const post = vi.fn(async () => response())
+  const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+    stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
+    { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
+    { projectChatTimelineItems: async () => [] } as never, {} as never)
+  try {
+   await service.read('ref', { mode: 'around', systemRef: ref, limit: 40 })
+   expect(post).toHaveBeenCalledTimes(1)
+   expect(post.mock.calls[0]).toEqual(expect.arrayContaining([expect.objectContaining({ mode: 'around', anchor_source: 'group_metadata', anchor_id: 'group_invite:chat' })]))
+   for (const other of [systemTimelineAnchorCodec('key', 'test', 2, 'chat'), systemTimelineAnchorCodec('key', 'prod', 1, 'chat'), systemTimelineAnchorCodec('key', 'test', 1, 'other'), systemTimelineAnchorCodec('other-key', 'test', 1, 'chat')]) {
+    await expect(service.read('ref', { mode: 'around', systemRef: other.seal('group_metadata', 'group_invite:chat') })).rejects.toThrow()
+   }
+   await expect(service.read('ref', { systemRef: ref })).rejects.toThrow()
+   await expect(service.read('ref', { mode: 'around', systemRef: ref, itemUid: 'record', recordOwnerUserId: 1 })).rejects.toThrow()
+   expect(post).toHaveBeenCalledTimes(1)
+  } finally { service.dispose() }
+ })
+})

@@ -1184,14 +1184,15 @@ describe('Arkme rich content presentation', () => {
   })
 
 
-  it('renders a separate long-article composer with title, body, timer, count, and publish action', () => {
+  it('renders a separate long-article editor with count and publication status without a duration clock or manual publish button', () => {
     const html = renderToStaticMarkup(<ArkmeLongArticleDialog sourceRef="source-1" onClose={() => undefined} />)
     expect(html).toContain('data-arkme-long-article-dialog="create"')
     expect(html).toContain('placeholder="请输入标题"')
     expect(html).toContain('正在加载长文')
-    expect(html).toContain('0秒')
+    expect(html).not.toContain('0秒')
     expect(html).toContain('0字')
-    expect(html).toContain('发布')
+    expect(html).toContain('未发布')
+    expect(html).not.toContain('>发布</button>')
   })
 
   it('recognizes the Jotmo template-8 article contract without a legacy display kind', () => {

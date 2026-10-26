@@ -1,0 +1,30 @@
+.arkme-article-workspace-backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:#0007}
+.arkme-article-workspace{position:relative;width:min(1600px,100%);height:100%;max-height:1200px;display:grid;grid-template-columns:minmax(0,1fr);overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:16px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#17191c);box-shadow:0 24px 72px #0004;outline:none}
+.arkme-article-workspace[data-left=true]{grid-template-columns:220px minmax(0,1fr)}
+.arkme-article-workspace[data-right=true]{grid-template-columns:minmax(0,1fr) 200px}
+.arkme-article-workspace[data-left=true][data-right=true]{grid-template-columns:220px minmax(0,1fr) 200px}
+.arkme-article-workspace-main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.arkme-article-workspace-side{min-height:0;min-width:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1,#f8f9fa)}
+.arkme-article-workspace-side[hidden]{display:none}
+.arkme-article-workspace-directory{border-right:1px solid var(--dsw-alias-border-l2,#ddd)}
+.arkme-article-workspace-outline{border-left:1px solid var(--dsw-alias-border-l2,#ddd);background:var(--dsw-alias-bg-base,#fff)}
+.arkme-article-workspace-side header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:16px 12px 8px;flex:none;font-size:13px}
+.arkme-article-workspace-side header h3{margin:0;font-size:13px;font-weight:600}
+.arkme-article-workspace-side header button,.arkme-article-workspace-control{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:0;border-radius:7px;padding:0;background:transparent;color:var(--dsw-alias-label-secondary,#68707c);cursor:pointer}
+.arkme-article-workspace-control:hover,.arkme-article-workspace-side button:hover{background:var(--dsw-alias-interactive-bg-hover,#0001)}
+.arkme-article-workspace-scroll{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 12px}
+.arkme-article-directory-item,.arkme-article-directory-current{display:block;width:100%;min-width:0;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:9px 10px;border:0;border-radius:7px;color:inherit;background:transparent;font:inherit;font-size:13px;line-height:20px;cursor:pointer}
+.arkme-article-directory-current{margin-top:8px;cursor:default}
+.arkme-article-directory-item[aria-current=page],.arkme-article-directory-current{background:var(--dsw-alias-state-business-tertiary,#eef1fa);font-weight:600}
+.arkme-article-outline-item{display:block;width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:7px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#68707c);font:inherit;font-size:12px;line-height:20px;cursor:pointer}
+.arkme-article-outline-item[aria-current=location]{color:var(--dsw-alias-state-business-primary,#4778f5);background:var(--dsw-alias-state-business-tertiary,#eef1fa);font-weight:600}
+.arkme-article-workspace-controls{display:inline-flex;align-items:center;gap:4px;flex:none}
+.arkme-article-workspace button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4778f5);outline-offset:-2px}
+.arkme-article-workspace[data-compact=true]{grid-template-columns:minmax(0,1fr)}
+.arkme-article-workspace[data-compact=true] .arkme-article-workspace-side{position:absolute;top:0;bottom:0;width:min(280px,80%);z-index:3;box-shadow:0 4px 24px #0003}
+.arkme-article-workspace[data-compact=true] .arkme-article-workspace-directory{left:0}
+.arkme-article-workspace[data-compact=true] .arkme-article-workspace-outline{right:0}
+.arkme-article-workspace-scrim{position:absolute;inset:0;z-index:2;border:0;padding:0;background:#0005}
+.arkme-article-workspace-backdrop[data-standalone=true]{padding:0;background:var(--dsw-alias-bg-base,#fff)}
+.arkme-article-workspace-backdrop[data-standalone=true] .arkme-article-workspace{width:100%;max-height:none;border:0;border-radius:0;box-shadow:none}
+@media(max-width:600px){.arkme-article-workspace-backdrop{padding:12px}}

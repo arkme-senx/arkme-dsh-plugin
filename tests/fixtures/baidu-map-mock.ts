@@ -3,6 +3,7 @@ import type { BaiduMaps, BaiduPoint } from '../../src/client/baidu-map.js'
 export function createBaiduMapMock() {
   const events = new Map<string, () => void>()
   const map = {
+    setMapStyle: vi.fn(),
     centerAndZoom: vi.fn(() => { events.get('tilesloaded')?.() }),
     setViewport: vi.fn(), pointToPixel: vi.fn(() => ({ x: 150, y: 120 })),
     getZoom: vi.fn(() => 16), setZoom: vi.fn(), panBy: vi.fn(),

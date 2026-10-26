@@ -99,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 import { ArkmeFileQuickView } from './ArkmeFileQuickView.js'
-import { ArkmeLongArticleQuickView } from './ArkmeLongArticleQuickView.js'
+import { ArkmeLongArticleLibraryDialog } from './ArkmeLongArticleLibraryDialog.js'
 import { ArkmeLinkQuickView } from './ArkmeLinkQuickView.js'
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
@@ -273,6 +273,8 @@ function ArkmeSearchSurfaceBody({
   const [selectedDshSessionId, setSelectedDshSessionId] = useState('')
   const [sourceRecords, setSourceRecords] = useState<ArkmeSearchRecordItem[]>([])
   const [quick, setQuick] = useState<QuickKey>()
+  const [longArticlesOpen, setLongArticlesOpen] = useState(false)
+  const articleOpener = useRef<HTMLElement | null>(null)
   const [images, setImages] = useState<ArkmeImageSearchItem[]>()
   const [imageCursor, setImageCursor] = useState('')
   const [imageHasMore, setImageHasMore] = useState(false)
@@ -506,6 +508,10 @@ function ArkmeSearchSurfaceBody({
   }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    if (value === 'long_article') {
+      if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) articleOpener.current = document.activeElement
+      setLongArticlesOpen(true); return
+    }
     searchAbort.current?.abort()
     searchAbort.current = undefined
     quickRequestAbort.current?.abort()
@@ -514,7 +520,7 @@ function ArkmeSearchSurfaceBody({
     const id = ++requestId.current
     quickRef.current = value
     setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
-    if (value === 'file' || value === 'long_article' || value === 'link' || hasCachedPage) { setLoading(false); return }
+    if (value === 'file' || value === 'link' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20_000)
@@ -747,7 +753,7 @@ function ArkmeSearchSurfaceBody({
     </div>
   </>
 
-  return <div style={{ ...(variant === 'dialog' ? styles.dialogShell : styles.shell), position: 'relative' }}>
+  return <div style={{ ...(variant === 'dialog' ? styles.dialogShell : styles.shell), position: 'relative' }} {...(longArticlesOpen ? { inert: '', 'aria-hidden': true } : {})}>
     {variant === 'page' && <header style={styles.hero}>
       <h1 style={styles.heroTitle}>{tr("一句话，找到所有内容")}</h1>
     </header>}
@@ -785,8 +791,9 @@ function ArkmeSearchSurfaceBody({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'long_article' ? <ArkmeLongArticleQuickView {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
     </div>}
+    {longArticlesOpen && <ArkmeLongArticleLibraryDialog returnFocusRef={articleOpener} onClose={() => setLongArticlesOpen(false)} />}
     {personalDetail !== undefined && (personalDetail.value !== undefined
       ? <ArkmeTimelineDetailDrawer item={personalDetail.value} canExtend={false}
         sourceBadge={personalDetail.source.sourceKind === 4
@@ -806,7 +813,7 @@ export function ArkmeGlobalSearchDialog({
 }: Required<Pick<ArkmeSearchSurfaceProps, 'onClose'>> & Omit<ArkmeSearchSurfaceProps, 'variant' | 'onClose'>) {
   useArkmeLocale()
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && document.querySelector('[data-arkme-note-detail]') === null) onClose() }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && document.querySelector('[data-arkme-note-detail],[data-arkme-long-article-library]') === null) onClose() }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [onClose])

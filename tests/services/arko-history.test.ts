@@ -23,7 +23,7 @@ async function setup(handler: (url: string, init?: RequestInit) => Promise<Respo
   const directory = await mkdtemp(join(tmpdir(), 'arko history tests '))
   let session: ArkmeSessionCredentials | undefined = { userId: 7, accessToken: 'synthetic', refreshToken: 'synthetic-refresh' }
   const runtime = new ServiceRuntime({ ...config, fileStateDirectory: directory }, { async read() { return session }, async write(value) { session = value }, async delete() { session = undefined } }, { async uniqueCode() { return 'synthetic-profile-key' } } as StateStore,
-    async (url, init) => handler(String(url), init))
+    async (url, init) => String(url).endsWith('/lifecycle/query') ? json({revision:0,items:[]}) : handler(String(url), init))
   const actions = new MessageActionService({ requireSession: () => runtime.requireSession() } as never, {} as never, new LocalMessageActionCapabilityCodec(() => runtime.stateStore.uniqueCode()))
   const service = new ArkoService(runtime, new ProfileService(runtime), actions)
   cleanups.push(async () => { service.dispose(); runtime.dispose(); await rm(directory, { recursive: true, force: true }) })

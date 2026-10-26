@@ -26,7 +26,7 @@ it.each([false, true])('renders received Markdown and bound images with detail f
   })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root.render(<ArkmeLongArticleDialog sourceRef="chat" item={item} onClose={() => {}} />))
-  expect(api).toHaveBeenCalledWith('source.long-article.detail', { sourceRef: 'chat', itemUid: 'article', messageActionRef: 'signed-reference' })
+  expect(api).toHaveBeenCalledWith('source.long-article.detail', { sourceRef: 'chat', itemUid: 'article', messageActionRef: 'signed-reference' }, expect.any(AbortSignal))
   expect(host.querySelector('h1')?.textContent).toBe('标题')
   expect(host.querySelector('img')?.getAttribute('src')).toContain('ref=controlled')
   expect(host.textContent).not.toContain('arkme-asset:')

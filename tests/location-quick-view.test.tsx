@@ -22,14 +22,43 @@ beforeEach(()=>{
 })
 afterEach(()=>{ if(renderer) act(()=>renderer.unmount()); vi.unstubAllGlobals() })
 describe('location quick view',()=>{
-  it('starts at the latest location when the global cluster query is empty',async()=>{
-    mocks.call.mockImplementation(async (_op,query)=>query.mode==='viewport'
-      ? {markers:query.zoom===3?[]:[marker('local')],truncated:false} : page([row('recent')]))
+  it('never replaces a wide empty viewport with the latest local location',async()=>{
+    mocks.call.mockResolvedValue({markers:[],truncated:false})
     await act(async()=>{renderer=create(<ArkmeLocationQuickView onOpenRecord={()=>{}} />)})
-    expect(mocks.call.mock.calls.map(call=>call[1])).toContainEqual({mode:'viewport',bounds:{swLat:38.9,swLon:115.9,neLat:39.1,neLon:116.1},zoom:12})
-    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.initialViewport.zoom).toBe(12)
-    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.markers).toHaveLength(1)
-    expect(mocks.call.mock.calls.find(call=>call[1].mode==='list')?.[1]).toEqual({mode:'list',limit:1})
+    const initial = renderer.root.findByType(ArkmeLocationSearchMap).props.initialViewport
+    const wide = {bounds:{swLat:0,swLon:-180,neLat:70,neLon:180},zoom:3}
+    await act(async()=>renderer.root.findByType(ArkmeLocationSearchMap).props.onViewport(wide))
+    expect(mocks.call.mock.calls.map(call=>call[1])).toEqual([
+      {mode:'viewport',...initial},{mode:'viewport',...wide},
+    ])
+    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.initialViewport).toBe(initial)
+    expect(text(renderer.toJSON())).toContain('此范围暂无位置记录')
+  })
+  it('keeps old pins with an updating notice and ignores an obsolete viewport response',async()=>{
+    await act(async()=>{renderer=create(<ArkmeLocationQuickView onOpenRecord={()=>{}} />)})
+    const initial = renderer.root.findByType(ArkmeLocationSearchMap).props.initialViewport
+    let resolveOld!: (value:unknown)=>void
+    mocks.call.mockImplementation((_op,query)=>query.zoom===4 ? new Promise(resolve=>{resolveOld=resolve})
+      : Promise.resolve({markers:[marker('current')],truncated:false}))
+    await act(async()=>renderer.root.findByType(ArkmeLocationSearchMap).props.onViewport({...initial,zoom:4}))
+    expect(text(renderer.toJSON())).toContain('正在更新位置…')
+    expect(text(renderer.toJSON())).not.toContain('当前范围 2')
+    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.markers).toHaveLength(2)
+    await act(async()=>renderer.root.findByType(ArkmeLocationSearchMap).props.onViewport({...initial,zoom:5}))
+    await act(async()=>resolveOld({markers:[],truncated:false}))
+    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.markers[0].key).toBe('current')
+    expect(renderer.root.findByType(ArkmeLocationSearchMap).props.initialViewport).toBe(initial)
+  })
+  it('reads partitioned clusters with their producing bounds and original server key on every page',async()=>{
+    const part = {bounds:{swLat:-20,swLon:100,neLat:50,neLon:180},zoom:3}
+    const pin = {...marker('display-key'),clusterQuery:{...part,key:'server-key'}}
+    mocks.call.mockImplementation(async (_op,query)=>query.mode==='viewport'
+      ? {markers:[pin],truncated:false} : page([row(`page-${query.offset}`)],{hasMore:query.offset===0,nextOffset:query.offset+6}))
+    await act(async()=>{renderer=create(<ArkmeLocationQuickView onOpenRecord={()=>{}} />)})
+    await act(async()=>renderer.root.findByType(ArkmeLocationSearchMap).props.onSelect(pin))
+    expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({mode:'cluster',...part,clusterKeys:['server-key'],offset:0,limit:6})
+    await act(async()=>renderer.root.findByProps({className:'arkme-location-more'}).props.onClick())
+    expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({mode:'cluster',...part,clusterKeys:['server-key'],offset:6,limit:20})
   })
   it('starts with only the map, expands four source filters and loads records only on selection',async()=>{
     const open = vi.fn()

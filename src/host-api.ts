@@ -78,6 +78,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
   if (operation === 'recordings.speaker.correction.apply') return 1024 * 1024
@@ -937,6 +938,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'dictation.transcribe' && (!isLoopback(req.socket.remoteAddress) || origin === undefined || new URL(origin).host !== req.headers.host)) {
+        throw new ArkmePluginError('origin-required', '听写必须从当前本机页面发起', false, 403)
+      }
       if ((['team.app.external.share', 'team.app.external.unshare'].includes(request.operation)
         || request.operation === 'team.external' && ['share', 'unshare'].includes(String(params.operation))) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '共享私聊必须从当前 DSH 页面或受信任插件发起', false, 403)
@@ -1091,6 +1095,8 @@ export async function dispatchArkmeHostOperation(
   if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
   if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
+  if (operation === 'statistics.keywords') return service.personalKeywordsRead(params, requestSignal)
+  if (operation === 'statistics.keyword-records') return service.personalKeywordRecords(params, requestSignal)
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
@@ -1161,6 +1167,7 @@ export async function dispatchArkmeHostOperation(
     case 'device.lock.status': return await service.deviceLockStatus()
     case 'device.lock.lock': return await service.lockDevice()
     case 'device.lock.unlock': return await service.requestDeviceUnlock()
+    case 'dictation.transcribe': return await service.transcribeDictation({ expectedUserId: numberParam(params, 'expectedUserId', 0), segmentId: stringParam(params, 'segmentId'), pcm: stringParam(params, 'pcm') }, requestSignal)
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
@@ -1794,6 +1801,7 @@ export async function dispatchArkmeHostOperation(
       const limit = numberParam(params, 'limit', 20)
       const cursor = stringParam(params, 'cursor')
       return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }),
+        ...(params?.articleScope === undefined ? {} : { articleScope: stringParam(params, 'articleScope') as import('./types.js').ArkmeLongArticleBrowseScope }),
         ...searchScopeParam(params),
         ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
         ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
@@ -1841,6 +1849,9 @@ export async function dispatchArkmeHostOperation(
     case 'arko.new-session': return await service.arkoCreateSession()
     case 'arko.models': return await service.arkoModelCatalog()
     case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.lifecycle.query': return await service.arkoLifecycle(stringListParam(params, 'messageRefs'), requestSignal)
+    case 'arko.lifecycle.change': return await service.arkoChangeLifecycle(params as unknown as import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, requestSignal)
+    case 'arko.deleted': return await service.arkoRecentlyDeleted(stringParam(params, 'cursor') || undefined, requestSignal)
     case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
     case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
     case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),
@@ -2262,6 +2273,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.person-records.sources': return await service.personRecordSources(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal)
     case 'source.person-records.capabilities': return await service.personRecordsCapabilities(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
@@ -2795,6 +2807,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'itemUid') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.autoPublish === true ? { autoPublish: true } : {}),
       ...(typeof params.baseVersion === 'number' && Number.isSafeInteger(params.baseVersion) && params.baseVersion > 0 ? { baseVersion: params.baseVersion } : {}),
       ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
       ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),

@@ -128,4 +128,26 @@ describe('long-article quick browse', () => {
     expect(content(renderer!.toJSON())).toContain('原会话暂不可访问')
     expect(mocks.dialog).not.toHaveBeenCalled()
   })
+  it('cancels a hidden category and reloads an interrupted first page without accepting its late response',async()=>{
+    let finish!:(value:ArkmeRecordSearchResult)=>void
+    mocks.call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValueOnce(page([item('current')]))
+    await mount()
+    const signal=mocks.call.mock.calls[0]![2] as AbortSignal
+    await act(async()=>renderer!.update(<ArkmeLongArticleQuickView active={false}/>))
+    expect(signal.aborted).toBe(true)
+    await act(async()=>renderer!.update(<ArkmeLongArticleQuickView active/>))
+    await act(async()=>finish(page([item('old')])))
+    expect(cards()).toHaveLength(1)
+    expect(content(renderer!.toJSON())).toContain('文章current')
+    expect(content(renderer!.toJSON())).not.toContain('文章old')
+  })
+  it('keeps a just-created article visible when the earlier search response has not indexed it yet',async()=>{
+    let finish!:(value:ArkmeRecordSearchResult)=>void
+    mocks.call.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+    await mount()
+    await act(async()=>renderer!.update(<ArkmeLongArticleQuickView created={item('created')}/>))
+    await act(async()=>finish(page([])))
+    expect(cards()).toHaveLength(1)
+    expect(content(renderer!.toJSON())).toContain('文章created')
+  })
 })

@@ -20,6 +20,18 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it('rejects unavailable article sharing scopes before a server can silently ignore them',async()=>{
+    const authenticatedPost=vi.fn()
+    const service=new SearchService({authenticatedPost} as never,{} as never,{} as never)
+    for(const articleScope of ['shared_by_me','shared_with_me'] as const){
+      await expect(service.searchScene({scene:'long_article',articleScope,limit:30})).rejects.toMatchObject({
+        code:'long-article-sharing-unavailable',message:'后端接口开发中，开发完成后此功能完整可用。',retryable:false,
+      })
+    }
+    await expect(service.searchScene({scene:'file',articleScope:'shared_by_me',limit:30})).rejects.toMatchObject({code:'long-article-scope-invalid'})
+    await expect(service.searchScene({scene:'long_article',articleScope:'unknown' as never,limit:30})).rejects.toMatchObject({code:'long-article-scope-invalid'})
+    expect(authenticatedPost).not.toHaveBeenCalled()
+  })
   it.each([
     ['send_to_self', { search_scope: 'global', source_kinds: [1, 2] }],
     ['default_category', { search_scope: 'global', source_kinds: [1] }],

@@ -1192,6 +1192,7 @@ export interface ArkmeCachedQueryResult {
 }
 
 export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+export type ArkmeLongArticleBrowseScope = 'recent' | 'shared_by_me' | 'shared_with_me'
 
 export interface ArkmeSearchQueryGuard {
   state: string
@@ -1497,6 +1498,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+    analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
@@ -1509,6 +1511,7 @@ arkoImagesV1?:true
     localFirstDirectory?: true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
+    arkoLifecycleV1?: true
     arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
@@ -2508,6 +2511,9 @@ export interface ArkmeLongArticleUpdateInput {
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
+  /** Verified current record and account-bound action capabilities; never inferred by the reader. */
+  actionItem?: ArkmeTimelineItem
+  createdAtMillis?: number
   contentBlocks?: ArkmeContentBlock[]
   sourceRef: string
   itemUid: string
@@ -2525,6 +2531,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  /** Pending automatic publication; composer attachment drafts never set this. */
+  autoPublish?: boolean
   baseVersion?: number
   document?: Record<string, unknown>
   images?: ArkmeLongArticleImage[]
@@ -3842,6 +3850,7 @@ export interface ArkmeArkoModelCatalog {
 export type ArkmeArkoMessageRole = 'user' | 'assistant'
 
 export interface ArkmeArkoHistoryItem {
+  lifecycleVersion?: number
   messageRef?: string
   orderAtMillis?: number
   sourceType?: number
@@ -4193,6 +4202,7 @@ export type ArkmePluginOperation =
   | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
+  | 'dictation.transcribe'
   | 'auth.status'
   | 'auth.config'
   | 'auth.begin'
@@ -4307,6 +4317,8 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.reconcile'
   | 'calendar.day-review.resume'
   | 'calendar.day-review.evidence'
+  | 'statistics.keywords'
+  | 'statistics.keyword-records'
   | 'statistics.detail'
   | 'statistics.active'
   | 'statistics.long'
@@ -4411,6 +4423,7 @@ export type ArkmePluginOperation =
   | 'source.member-event.profile'
   | 'source.member-event.private.open'
   | 'source.member-records'
+  | 'source.person-records.sources'
   | 'source.person-records.capabilities'
   | 'source.mark-read'
   | 'source.message-preparing.report'
@@ -4563,6 +4576,9 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'arko.lifecycle.query'
+  | 'arko.lifecycle.change'
+  | 'arko.deleted'
   | 'arko.messages'
   | 'arko.search'
   | 'arko.context'

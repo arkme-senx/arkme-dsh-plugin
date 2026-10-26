@@ -32,11 +32,13 @@ beforeEach(async () => {
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
   arkmeArkoProfileStore.activateUser(undefined)
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
-  vi.mocked(callArkme).mockImplementation(async method => {
+  vi.mocked(callArkme).mockImplementation(async (method, params) => {
+    if (method === 'arko.lifecycle.query') return { revision: 0, items: ((params?.messageRefs ?? []) as string[]).map(messageRef => ({ messageRef, messageKey: `88:${messageRef.split('-')[1]}`, version: 0, state: 'active', deletedAtMillis: 0, purgeAtMillis: 0, lastOperationUid: '' })) } as never
+    if (method === 'arko.lifecycle.change') return { operationUid: params?.operationUid, items: (params?.targets as {messageRef:string}[]).map(({messageRef}) => ({messageRef, messageKey: `88:${messageRef.split('-')[1]}`, version:1,state:'deleted',deletedAtMillis:1,purgeAtMillis:2,lastOperationUid:params?.operationUid,result:'applied'})) } as never
     if (method === 'arko.session') return { sessionId: 88 } as never
     if (method === 'arko.messages') return { items: [
-      { messageId: 1, sessionId: 88, role: 'user', runUid: 'completed-turn', runStatus: 'queued', messageActionRef: 'user-action', messageActionConversationRef: 'conversation', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] },
-      { messageId: 2, sessionId: 88, role: 'assistant', runUid: 'completed-turn', runStatus: 'completed', messageActionRef: 'assistant-action', messageActionConversationRef: 'conversation', text: '完整回答', reasoning: '已有思考内容', createdAtMillis: 1786000001000, status: 1, createdRecordUids: [] },
+      { messageId: 1, sessionId: 88, messageRef: 'ref-1', lifecycleVersion: 0, role: 'user', runUid: 'completed-turn', runStatus: 'queued', messageActionRef: 'user-action', messageActionConversationRef: 'conversation', text: '我的问题', reasoning: '', createdAtMillis: 1786000000000, status: 1, createdRecordUids: [] },
+      { messageId: 2, sessionId: 88, messageRef: 'ref-2', lifecycleVersion: 0, role: 'assistant', runUid: 'completed-turn', runStatus: 'completed', messageActionRef: 'assistant-action', messageActionConversationRef: 'conversation', text: '完整回答', reasoning: '已有思考内容', createdAtMillis: 1786000001000, status: 1, createdRecordUids: [] },
     ] } as never
     if (method === 'arko.models') return { options: [] } as never
     if (method === 'arko.profile') return { displayName: '小助', version: 2 } as never
@@ -188,24 +190,39 @@ it('keeps multi-select semantics and never reopens detail after exiting selectio
   await click(document.querySelector('[aria-label="退出多选"]')!)
   expect(detail()).toBeNull()
 })
-it('offers deletion for selected user and assistant history while honestly keeping it pending backend support', async () => {
+it('deletes only after confirmation and removes confirmed messages', async () => {
   await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
   await click(document.querySelector('[aria-label="多选"]')!)
   await click(bubble('完整回答'))
-  const calls = vi.mocked(callArkme).mock.calls.length
   await click(document.querySelector('[aria-label="删除"]')!)
   const modal = document.querySelector('[data-arkme-confirm-dialog]')!
   expect(modal.textContent).toContain('删除所选 2 条 Arko 消息？')
-  expect(modal.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
   expect(modal.textContent).toContain('30 天内可恢复')
+  expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation === 'arko.lifecycle.change')).toBe(false)
   const confirm = [...modal.querySelectorAll('button')].find(button => button.textContent === '确认删除')!
-  expect(confirm.disabled).toBe(true)
+  expect(confirm.disabled).toBe(false)
   await click(confirm)
+  expect(bubble('我的问题')).toBeUndefined(); expect(bubble('完整回答')).toBeUndefined()
+  expect(vi.mocked(callArkme).mock.calls.filter(([operation]) => operation === 'arko.lifecycle.change')).toHaveLength(1)
+})
+it('keeps messages until confirmed and removes only the successful target without new status UI', async () => {
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  let finish!: (value: unknown) => void
+  vi.mocked(callArkme).mockImplementation((method, params, signal) => method === 'arko.lifecycle.change'
+    ? new Promise(resolve => { finish = resolve }) as never : original(method, params, signal))
+  await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+  await click(document.querySelector('[aria-label="多选"]')!)
+  await click(bubble('完整回答'))
+  await click(document.querySelector('[aria-label="删除"]')!)
+  await click([...document.querySelectorAll('[data-arkme-confirm-dialog] button')].find(button => button.textContent === '确认删除')!)
   expect(bubble('我的问题')).toBeDefined(); expect(bubble('完整回答')).toBeDefined()
-  expect(vi.mocked(callArkme).mock.calls).toHaveLength(calls)
-  await click([...modal.querySelectorAll('button')].find(button => button.textContent === '取消')!)
-  expect(document.querySelector('[data-arkme-confirm-dialog]')).toBeNull()
-  expect(host.querySelector('[role="toolbar"][aria-label="已选择 2 条消息"]')).not.toBeNull()
+  await act(async () => finish({items:[
+    {messageRef:'ref-1',messageKey:'88:1',version:0,state:'active',result:'generating',deletedAtMillis:0,purgeAtMillis:0,lastOperationUid:''},
+    {messageRef:'ref-2',messageKey:'88:2',version:1,state:'deleted',result:'applied',deletedAtMillis:1,purgeAtMillis:2,lastOperationUid:'operation'},
+  ]}))
+  expect(bubble('我的问题')).toBeDefined(); expect(bubble('完整回答')).toBeUndefined()
+  expect(host.querySelector('[data-arko-selection-key="history:1"]')).not.toBeNull()
+  expect(host.textContent).not.toMatch(/同步删除|关联内容已删除|核对状态/)
 })
 it('closes the pending deletion confirmation on account change without mutating history', async () => {
   await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })

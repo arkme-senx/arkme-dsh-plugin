@@ -1,6 +1,8 @@
+import { DictationService } from './services/dictation-service.js'
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
+import { PersonalKeywordService } from './services/personal-keyword-service.js'
 import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
 import { GENERATED_ARTIFACT_PREFIX } from './generated-artifacts.js'
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
@@ -395,6 +397,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly personalKeywords: PersonalKeywordService
   private readonly statistics: StatisticsService
   private readonly people: PeopleService
   private readonly explore: ExploreService
@@ -467,6 +470,22 @@ export class ArkmeService {
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
   }
+  async personalKeywordsRead(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, false, signal) as Promise<import('./analytics-contract.js').PersonalKeywordSummary> }
+  async personalKeywordRecords(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, true, signal) as Promise<import('./analytics-contract.js').PersonalKeywordRecords> }
+  async analyticsRead(input: import('./analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown> {
+    if (input.kind === 'personal_keywords') return input.action === 'state' ? this.personalKeywordsRead(input.query, signal) : this.personalKeywordRecords(input.query, signal)
+    if (input.kind === 'conversation_words') {
+      if (input.action === 'state') return this.conversationWordsState(input.query, signal)
+      if (input.action === 'participants') return this.conversationWordsParticipants(input.query, signal)
+      return this.conversationWordsMessages(input.query, signal)
+    }
+    if (input.kind === 'conversation_activity') {
+      if (input.action === 'state') return this.conversationActivityRead(input.query, signal)
+      if (input.action === 'participants') return this.conversationActivityParticipants(input.query, signal)
+      return this.conversationActivityMessages(input.query, signal)
+    }
+    throw new Error('统计能力不支持此操作')
+  }
   async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
 
   async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
@@ -508,6 +527,11 @@ export class ArkmeService {
   private readonly conversationWords: ConversationWordFrequencyService
   private readonly speechStatistics: RecordingSpeechStatisticsService
   private readonly calendarDayReview: CalendarDayReviewService
+  private dictationOwner?: DictationService
+  async transcribeDictation(input: { expectedUserId: number; segmentId: string; pcm: string }, signal?: AbortSignal) {
+    this.dictationOwner ??= new DictationService(this.runtime)
+    return await this.dictationOwner.transcribe(input, signal)
+  }
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
@@ -733,6 +757,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
     this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
@@ -829,6 +854,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.dictationOwner?.dispose()
     this.messageSync.reset()
     this.unifiedTimeline.reset()
     this.recordingPresenceWriter.revoke()
@@ -1110,6 +1136,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+        analyticsV1: true,
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
@@ -1119,6 +1146,7 @@ arkoImagesV1:true,
         sourceDirectory: true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
+        arkoLifecycleV1: true,
         arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -1258,6 +1286,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.dictationOwner?.dispose()
     this.messageSync.dispose()
     this.unifiedTimeline.dispose()
     this.teamDelivery.dispose()
@@ -1479,6 +1508,9 @@ arkoImagesV1:true,
     return await this.arko.arkoActivateModel(routeKey, signal)
   }
 
+  async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.arko.arkoLifecycle(refs, signal) }
+  async arkoChangeLifecycle(command: import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.arko.arkoChangeLifecycle(command, signal) }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.arko.arkoRecentlyDeleted(cursor, signal) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoMessages(query, signal)
@@ -1865,6 +1897,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
+    return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
+  }
   async personRecordsCapabilities(sourceRef: string, memberRef: string, signal?: AbortSignal) {
     return this.chat.personRecordsCapabilities(sourceRef, memberRef, signal)
   }
@@ -2923,6 +2958,7 @@ arkoImagesV1:true,
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('./types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'

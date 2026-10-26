@@ -1,6 +1,11 @@
+import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
+export type * from '../arko-lifecycle-contract.js'
 export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
 export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
 
+export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
+export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
+export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
 import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
@@ -546,6 +551,21 @@ export class ArkmeSdk {
     }
   }
 
+  private async requireArkoLifecycle(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoLifecycleV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持消息删除与恢复，请升级', retryable: false })
+  }
+  async arkoLifecycle(messageRefs: readonly string[] = [], signal?: AbortSignal): Promise<ArkmeArkoLifecycleSnapshot> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.query', { messageRefs }, signal)
+  }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal): Promise<ArkmeArkoLifecycleResult> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.change', { ...command }, signal)
+  }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal): Promise<ArkmeArkoDeletedPage> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
+  }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }
@@ -2672,6 +2692,19 @@ export class ArkmeSdk {
   }
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
+  private async requireAnalytics(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.analyticsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统计能力 v1', retryable: false })
+  }
+  async personalKeywords(query: import('../statistics-contract.js').StatisticsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordSummary> { await this.requireAnalytics(signal); return this.call('statistics.keywords', { ...query }, signal) }
+  async personalKeywordRecords(query: import('../analytics-contract.js').PersonalKeywordRecordsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordRecords> { await this.requireAnalytics(signal); return this.call('statistics.keyword-records', { ...query }, signal) }
+  async conversationWordsState(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.state', { ...query }, signal) }
+  async conversationWordsCreate(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.create', { ...query }, signal) }
+  async conversationWordParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.participants', { ...query }, signal) }
+  async conversationWordMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; wordKey: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordMessages> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.messages', { ...query }, signal) }
+  async conversationActivity(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityState> { await this.requireAnalytics(signal); return this.call('chat.activity.read', { ...query }, signal) }
+  async conversationActivityParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.activity.participants', { ...query }, signal) }
+  async conversationActivityMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; hour: number; weekday: number | null; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityMessages> { await this.requireAnalytics(signal); return this.call('chat.activity.messages', { ...query }, signal) }
+
   async calendarChatStatistics(options: {
     sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {

@@ -1,7 +1,9 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
 import {SharePrivateChat} from './TeamExternalChats.js'
+import { cancelConversationFollow } from './conversation-bottom-follow.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -2159,6 +2161,7 @@ export function ArkmeSurface({
 
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
+  const [dictationBusy, setDictationBusy] = useState(false)
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
@@ -2687,7 +2690,7 @@ export function ArkmeSurface({
   // message waits for the server, otherwise fast keyboard input is dropped.
   const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
   useSyncExternalStore(conversationSending.subscribe, conversationSending.getRevision, conversationSending.getRevision)
-  const canSend = (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
+  const canSend = !dictationBusy && (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
     ? !archiveReadOnly && !directAdmission.blocked && (pendingArticle ? !pendingArticle.sending : arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles))
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
@@ -3105,6 +3108,7 @@ export function ArkmeSurface({
     revision: number
     momentId?: string
     contextRef?: string
+    systemRef?: string
     transientHighlight?: boolean
   }>()
   const interwovenRequestRef = useRef<AbortController>()
@@ -4136,8 +4140,9 @@ export function ArkmeSurface({
       arkmeUi.consumeConversationTarget(target.revision)
       return
     }
-    if (target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
-      || !target.contextRef && items.some(item => item.itemUid === target.itemUid)
+    if (target.systemRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.eventId === target.itemUid)
+      || target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
+      || !target.systemRef && !target.contextRef && items.some(item => item.itemUid === target.itemUid)
       || target.momentId && recordOwnerId(target.recordOwnerUserId) === 0) {
       if (pendingConversationTargetLocateRef.current?.revision === target.revision) return
       let animationFrame = 0
@@ -4170,10 +4175,11 @@ export function ArkmeSurface({
           pendingViewportRestoreRef.current = undefined
           viewportRestoreIntentRef.current = false
           const calendarLocate = ownsCalendarNavigation(target.revision)
+          cancelConversationFollow(body)
           body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
             // Virtual context chunks can change height while mounting. Match the
             // around-page path: establish the viewport before releasing its anchor.
-            behavior: calendarLocate || target.contextRef ? 'auto' : 'smooth' })
+            behavior: calendarLocate || target.contextRef || target.systemRef ? 'auto' : 'smooth' })
           conversationTargetLocatedRevisionRef.current = target.revision
           const calendarFinished = finishCalendarNavigation(target.revision)
           highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
@@ -4193,7 +4199,7 @@ export function ArkmeSurface({
       return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
-      && (target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
+      && (target.systemRef || target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
       && !conversationTargetPagingRef.current.aroundRequested) {
       conversationTargetPagingRef.current.aroundRequested = true
       const generation = timelineGenerationRef.current
@@ -4207,10 +4213,10 @@ export function ArkmeSurface({
       let readStartDeltas = new Map<string, ArkmeTimelineItem>()
       void withArkmeReadDeadline(signal => retryArkmeRead(() => {
         readStartDeltas = new Map(arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).items.map(item => [item.itemUid, item]))
-        if (target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
-          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', contextRef: target.contextRef, limit: 40 } },
+        if (target.systemRef || target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
+          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', ...(target.systemRef ? { systemRef: target.systemRef } : { contextRef: target.contextRef }), limit: 40 } },
         }, signal).then(page => {
-          if (!page.unified) throw new Error('线下交流定位暂不可用')
+          if (!page.unified) throw new Error(target.systemRef ? '系统通知定位暂不可用' : '线下交流定位暂不可用')
           return { ...page, anchorItemUid: target.itemUid, anchorIndex: -1, anchorSequence: 0,
             olderHasMore: page.unified.olderHasMore, newerHasMore: page.unified.newerHasMore,
             ...(page.unified.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: page.unified.olderCursor } } } : {}),
@@ -4233,7 +4239,7 @@ export function ArkmeSurface({
         const delta = sourceIsChat ? arkmeChatTimelineDelta.getSnapshotForSource(conversationKey) : undefined
         const items = page.unified ? page.items : reconcileTimelinePage(cached?.items ?? [],
           delta, page.items, readStartDeltas)
-        if (target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
+        if (target.systemRef ? !page.unified?.events.some(event => event.eventId === target.itemUid) : target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.systemRef ? '该系统通知已不可用，请刷新后重试' : target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
         timelineRequestsRef.current.get('initial')?.controller.abort()
         timelineRequestsRef.current.delete('initial')
         timelineWindowRevisionRef.current += 1
@@ -4269,6 +4275,7 @@ export function ArkmeSurface({
           transientHighlight: target.transientHighlight === true,
           ...(target.momentId ? { momentId: target.momentId } : {}),
           ...(target.contextRef ? { contextRef: target.contextRef } : {}),
+          ...(target.systemRef ? { systemRef: target.systemRef } : {}),
         }
         setTimelineView({
           sourceKey: conversationKey,
@@ -6725,6 +6732,7 @@ export function ArkmeSurface({
     pendingConversationTargetLocateRef.current = undefined
     pendingViewportRestoreRef.current = undefined
     viewportRestoreIntentRef.current = false
+    cancelConversationFollow(body)
     body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'), behavior: 'auto' })
     const highlightUid = pending.momentId ? `moment:${pending.momentId}` : pending.itemUid
     conversationTargetLocatedRevisionRef.current = pending.revision
@@ -9472,7 +9480,7 @@ export function ArkmeSurface({
               }}
               onFile={file => selectFiles([file], true)}
               onError={message => setError(message)}
-            />}</div><div style={styles.composerSendArea}>
+            />}<ArkmeDictationButton key={`dictation:${composerDraftKey}:${activeRecordReeditComposer?.item.itemUid ?? ''}`} scopeKey={composerDraftKey} active={activeConversation && activeSelectMode === undefined} disabled={composerFilesDisabled || directAdmission.blocked} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} /></div><div style={styles.composerSendArea}>
               {authenticatedUserId !== undefined && authenticatedAccountKey !== undefined
                 && source !== undefined && isArkmeSelfWorkspaceSource(source)
                 && activeRecordReeditComposer === undefined && <ArkmeSelfRolePicker
@@ -9694,7 +9702,8 @@ export function ArkmeSurface({
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
           accountKey={authenticatedAccountKey}
           sourceName={source.kind === 'private_chat' ? tr('与TA的私聊') : source.displayName}
-          onOpenOrigin={item => { setMemberRecords(undefined); arkmeUi.showConversationTarget(source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
+          source={source}
+          onOpenOrigin={(item, origin) => { setMemberRecords(undefined); arkmeUi.showConversationTarget(origin ?? source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
           sourceRef={source.sourceRef}
           sourceIdentityKey={conversationKey}
           member={memberRecords.member}
@@ -9898,6 +9907,7 @@ export function ArkmeSurface({
       {activeConversation && longArticleCreating && source !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeLongArticleDialog
           sourceRef={source.sourceRef}
+          sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }

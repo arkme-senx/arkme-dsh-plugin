@@ -4,6 +4,7 @@ export interface MicrophoneCapture {
 export interface MicrophoneCaptureOptions {
   signal: AbortSignal
   maxMillis: number
+  chunkMillis?: number
   onReady(sampleRate: number): Promise<void>
   onChunk(pcm: ArrayBuffer, level: number): void
   onInterrupted(message: string): void
@@ -13,7 +14,7 @@ export interface MicrophoneCaptureOptions {
 export const microphoneWorkletSource = `
 class ArkmePcmJournal extends AudioWorkletProcessor {
   constructor(options) {
-    super(); this.samples = new Int16Array(sampleRate); this.used = 0; this.peak = 0;
+    super(); this.samples = new Int16Array(Math.round(sampleRate * (options.processorOptions.chunkMillis || 1000) / 1000)); this.used = 0; this.peak = 0;
     this.frames = 0; this.maxFrames = Math.floor(sampleRate * options.processorOptions.maxMillis / 1000);
     this.stopped = false;
     this.port.onmessage = () => { this.stopped = true; this.flush(); this.port.postMessage({ stopped: true }); };
@@ -88,7 +89,7 @@ export async function captureMicrophone(options: MicrophoneCaptureOptions): Prom
     guard()
     await options.onReady(context.sampleRate)
     guard()
-    node = new AudioWorkletNode(context, 'arkme-pcm-journal', { channelCount: 1, channelCountMode: 'explicit', processorOptions: { maxMillis: options.maxMillis } })
+    node = new AudioWorkletNode(context, 'arkme-pcm-journal', { channelCount: 1, channelCountMode: 'explicit', processorOptions: { maxMillis: options.maxMillis, chunkMillis: options.chunkMillis ?? 1000 } })
     node.port.onmessage = event => {
       if (event.data.pcm instanceof ArrayBuffer) options.onChunk(event.data.pcm, Number(event.data.level) || 0)
       if (event.data.stopped) ack?.()

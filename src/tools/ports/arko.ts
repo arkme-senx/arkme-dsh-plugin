@@ -1,3 +1,4 @@
+import type { ArkmeArkoLifecyclePort } from '../../arko-lifecycle-contract.js'
 import type { ArkmeArkoHistoryPort } from '../../arko-history-contract.js'
 import type {
   ArkmeArkoAskResult,
@@ -8,7 +9,7 @@ import type {
   ArkmeArkoSession,
 } from '../../types.js'
 
-export interface ArkmeArkoToolPort extends ArkmeArkoHistoryPort {
+export interface ArkmeArkoToolPort extends ArkmeArkoHistoryPort, ArkmeArkoLifecyclePort {
  arkoModelCatalog(signal?:AbortSignal):Promise<import('../../types.js').ArkmeArkoModelCatalog>
  arkoPendingTurns():Promise<import('../../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
   arkoProfile(signal?: AbortSignal): Promise<ArkmeArkoProfile>
