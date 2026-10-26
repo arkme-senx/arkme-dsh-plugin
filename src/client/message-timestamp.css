@@ -66,13 +66,3 @@
   margin-left: auto;
   align-self: flex-end;
 }
-.arkme-timed-bubble:has(> [data-arkme-message-media-only="true"]:first-child:nth-last-child(2)) > .arkme-message-timestamp {
-  position: absolute;
-  right: 19px;
-  bottom: 16px;
-  margin: 0;
-  padding: 1px 5px;
-  border-radius: 7px;
-  color: #fff;
-  background: rgba(0, 0, 0, .52);
-}
