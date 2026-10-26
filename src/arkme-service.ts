@@ -2617,45 +2617,78 @@ arkoImagesV1:true,
       if (input.action === 'query') {
         for (const item of page.items) if (item.actors_visible) include(sourceByTarget.get(item.target_id), item.groups.flatMap(group => group.actorIds))
       } else include(input.target.sourceRef, ids)
+      const teamKeys = new Map<string, Map<number, string>>()
+      if (input.action === 'query') {
+        for (const target of input.targets) if (target.teamConversationRef) {
+          const item = page.items.find(item => item.target_id === target.id)
+          if (item?.actors_visible) teamKeys.set(target.id, await this.teamApp.reactionActorKeys(
+            target.teamConversationRef, item.groups.flatMap(group => group.actorIds)))
+        }
+      } else if (input.target.teamConversationRef) {
+        teamKeys.set(input.target.id, await this.teamApp.reactionActorKeys(input.target.teamConversationRef, ids))
+      }
       if (input.action === 'query' && input.actorPresentation === 'deferred') {
         const references = new Map<string, Map<number, string>>()
-        const teamIds=new Set(input.targets.filter(target=>target.teamConversationRef).map(target=>target.id))
-        const teamActors=[...new Set(page.items.filter(item=>teamIds.has(item.target_id)&&item.actors_visible).flatMap(item=>item.groups.flatMap(group=>group.actorIds)))]
-        const teamProfiles=teamActors.length?await this.profile.publicProfileSummariesByUserIds(teamActors,session,signal,5_000):new Map<number,{displayName?:string;avatarUrl?:string}>()
-        const teamAvatars=await actorAvatars(session.userId,teamProfiles)
         for (const [sourceRef, users] of sourceIds) references.set(sourceRef, await this.chat.reactionActorReferences(sourceRef, [...users]))
         if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
         return { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(({ actorIds, ...group }) => ({
-          ...group, actors: item.actors_visible ? actorIds.map(userId => teamIds.has(item.target_id) ? presentActor(userId,teamProfiles.get(userId)?.displayName,undefined,teamAvatars.get(userId)) : ({ userId, displayName: '用户', presentationPending: true,
+          ...group, actors: item.actors_visible ? actorIds.map(userId => ({ userId, displayName: '用户', presentationPending: true,
+            ...(teamKeys.get(item.target_id)?.get(userId) ? { teamPersonKey: teamKeys.get(item.target_id)!.get(userId)! } : {}),
             ...(references.get(sourceByTarget.get(item.target_id) ?? '')?.get(userId) ? { memberRef: references.get(sourceByTarget.get(item.target_id)!)!.get(userId)! } : {}),
           })) : [],
         })) })) }
       }
-      const [profiles, labels] = await Promise.all([
-        measureReaction('actor-profiles', { count: ids.length }, () => this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000)),
+      const teamTargetIds = new Set(input.action === 'query' ? input.targets.filter(target => target.teamConversationRef).map(target => target.id) : [])
+      const teamActorIds = input.action === 'query'
+        ? [...new Set(page.items.filter(item => teamTargetIds.has(item.target_id) && item.actors_visible).flatMap(item => item.groups.flatMap(group => group.actorIds)))]
+        : input.target.teamConversationRef ? ids : []
+      const [profiles, labels, teamRemarks] = await Promise.all([
+        measureReaction('actor-profiles', { count: ids.length }, () => this.profile.publicProfileSummariesByUserIds(ids, session, signal, 5_000)).catch(error => {
+          if (signal?.aborted || !teamActorIds.length) throw error
+          return new Map<number, { displayName?: string; avatarUrl?: string }>()
+        }),
         (async () => {
           const labels = new Map<string, Map<number, { remark: string; groupNickname: string }>>()
           for (const [sourceRef, users] of sourceIds) labels.set(sourceRef, await measureReaction('actor-labels', { count: users.size }, () => actorLabels(sourceRef, [...users])))
           return labels
         })(),
+        (async () => {
+          if (!teamActorIds.length) return new Map<number, string>()
+          try { return await this.source.privateRemarksByUserIds(teamActorIds, signal ? { signal } : {}) }
+          catch (error) { if (signal?.aborted) throw error; return new Map<number, string>() }
+        })(),
       ])
       const avatars = await actorAvatars(session.userId, profiles)
       if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-      const present = ({ actorIds, ...group }: WireGroup, sourceRef: string | undefined, visible = true) => ({ ...group, actors: visible ? actorIds.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(sourceRef ?? '')?.get(userId), avatars.get(userId))) : [] })
+      const present = ({ actorIds, ...group }: WireGroup, sourceRef: string | undefined, visible = true, team = false, aliases?: ReadonlyMap<number, string>) => ({ ...group, actors: visible ? actorIds.map(userId => ({ ...presentActor(userId, profiles.get(userId)?.displayName, team ? { remark: teamRemarks.get(userId) ?? '', groupNickname: '' } : labels.get(sourceRef ?? '')?.get(userId), avatars.get(userId)),
+        ...(aliases?.get(userId) ? { teamPersonKey: aliases.get(userId)! } : {}),
+      })) : [] })
       return input.action === 'query'
-        ? { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(group => present(group, sourceByTarget.get(item.target_id), item.actors_visible)) })) }
-        : { ...groupPage, items: groupPage.items.map(group => present(group, input.target.sourceRef)) }
+        ? { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(group => present(group, sourceByTarget.get(item.target_id), item.actors_visible, teamTargetIds.has(item.target_id), teamKeys.get(item.target_id))) })) }
+        : { ...groupPage, items: groupPage.items.map(group => present(group, input.target.sourceRef, true, !!input.target.teamConversationRef, teamKeys.get(input.target.id))) }
     }
     if (input.action !== 'actors') return result
     const page = result as { user_ids: number[]; has_more: boolean }
     const session = await this.runtime.requireSession()
-    const [profiles, labels] = await Promise.all([
-      this.profile.publicProfileSummariesByUserIds(page.user_ids, session, signal, 5_000),
+    const [profiles, labels, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(page.user_ids, session, signal, 5_000).catch(error => {
+        if (signal?.aborted || !input.target.teamConversationRef) throw error
+        return new Map<number, { displayName?: string; avatarUrl?: string }>()
+      }),
       actorLabels(input.target.sourceRef, page.user_ids),
+      (async () => {
+        if (!input.target.teamConversationRef || !page.user_ids.length) return new Map<number, string>()
+        try { return await this.source.privateRemarksByUserIds(page.user_ids, signal ? { signal } : {}) }
+        catch (error) { if (signal?.aborted) throw error; return new Map<number, string>() }
+      })(),
     ])
     const avatars = await actorAvatars(session.userId, profiles)
+    const teamKeys = input.target.teamConversationRef && page.user_ids.length
+      ? await this.teamApp.reactionActorKeys(input.target.teamConversationRef, page.user_ids) : new Map<number, string>()
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
-    return { items: page.user_ids.map(userId => presentActor(userId, profiles.get(userId)?.displayName, labels.get(userId), avatars.get(userId))), has_more: page.has_more }
+    return { items: page.user_ids.map(userId => ({ ...presentActor(userId, profiles.get(userId)?.displayName, input.target.teamConversationRef ? { remark: remarks.get(userId) ?? '', groupNickname: '' } : labels.get(userId), avatars.get(userId)),
+      ...(teamKeys.get(userId) ? { teamPersonKey: teamKeys.get(userId)! } : {}),
+    })), has_more: page.has_more }
     })
   }
   async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
