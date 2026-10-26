@@ -677,6 +677,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const journalFingerprint = useRef('')
   const journalIDs = useRef(new Set<string>())
   const queueOwner = useRef(false)
+  const [queueRequested, setQueueRequested] = useState(true)
   const [queueReady, setQueueReady] = useState(false)
   const [queueNotice, setQueueNotice] = useState('正在恢复导入队列…')
   const rowsRef = useRef<StagedRecording[]>([])
@@ -698,6 +699,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const [rows, setRows] = useState<StagedRecording[]>([])
   const [jobs, setJobs] = useState<RecordingImportSnapshot[]>([])
   const [dialogEpoch, setDialogEpoch] = useState(0)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [pending, setPending] = useState(false)
   const [backgroundNoticeVisible, setBackgroundNoticeVisible] = useState(false)
@@ -836,6 +838,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const open = () => {
     setError('')
+    setQueueRequested(true)
+    setDialogOpen(true)
     setBackgroundNoticeVisible(false)
     dialogRef.current?.showModal()
     dialogRef.current?.focus()
@@ -849,10 +853,13 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     setProcessingDetails(undefined)
     setStatusDetails(undefined)
     dialogRef.current?.close()
+    setDialogOpen(false)
   }
   useImperativeHandle(ref, () => ({ open, close: () => { close() } }))
 
   useEffect(() => {
+    if (!queueRequested) return
+    setQueueReady(false)
     const controller = new AbortController()
     lifecycleAbortRef.current = controller
     inspectionActiveRef.current = true
@@ -876,8 +883,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       // Resume only submitted groups; merely selected candidates stay untouched.
       const groups = new Set(restored.filter(row => row.submission && !row.error).map(row => row.submission!))
       for (const group of groups) submitRows(undefined, group)
-    }, () => { setQueueNotice('正在接管导入队列；若其他窗口正在处理，将在其关闭后继续。') }).catch(reason => {
-      if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : '导入队列恢复失败'); setQueueNotice('队列未就绪，请刷新重试。') }
+    }, () => { setQueueNotice('正在准备导入队列；若其他窗口正在使用，结束后会自动接续。') }).catch(reason => {
+      if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : '导入队列恢复失败'); setQueueNotice('队列未就绪，请重新打开上传窗口重试。'); setQueueRequested(false) }
     })
     return () => {
       queueOwner.current = false
@@ -891,7 +898,23 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       submissionControllersRef.current.clear()
       submissionOwnersRef.current.clear()
     }
-  }, [])
+  }, [queueRequested])
+
+  useEffect(() => {
+    // The account owner stays mounted while users browse other surfaces. It
+    // must not reserve the browser-wide lock merely because the page exists.
+    // Submitted work still resumes on mount and continues after panel close.
+    if (!queueReady || dialogOpen || pending || rows.some(row => row.submitting || row.validating)) return
+    let canceled = false
+    const saved = journalTail.current
+    const owner = lifecycleAbortRef.current
+    void saved.then(() => {
+      if (canceled || owner?.signal.aborted || lifecycleAbortRef.current !== owner || journalTail.current !== saved || dialogRef.current?.open) return
+      setQueueReady(false)
+      setQueueRequested(false)
+    }).catch(() => { /* Keep unsaved rows owned; the persistence error is visible. */ })
+    return () => { canceled = true }
+  }, [queueReady, dialogOpen, pending, rows])
 
   useEffect(() => {
     if (!foreground) {
@@ -1076,6 +1099,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     } catch (reason) { if (!(reason instanceof Error && reason.name === 'AbortError')) setError(reason instanceof Error ? reason.message : '无法选择文件') }
   }
   const receiveFiles = async (files: File[], handles: Array<Promise<RecordingFileHandle | null>> = []) => {
+    if (!queueOwner.current || pending) return
     try {
       const native = desktopImportBridge()
       const sources = new Map<File, ImportFileSource>()
@@ -1508,6 +1532,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   }
 
   const visibleJobs = jobs.filter(job => (!isLocalRecordingImport(job) || job.phase !== 'cancelled') && job.status !== 'completed')
+  const fileSelectionDisabled = !queueReady || pending
   const importDisabled = !queueReady || pending
     || selectedRows.length === 0 || activeDuplicateNames.length > 0
 
@@ -1602,8 +1627,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       <div style={styles.body}>
         <>
           {queueNotice && <div role="status" style={{ padding: '0 24px 8px', color: desktop.secondary, fontSize: 12 }}>{queueNotice}</div>}
-          <input ref={fileInputRef} hidden multiple disabled={pending} aria-label={tr("选择录音文件")} type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { if (!pending && event.target.files !== null) void receiveFiles([...event.target.files]); event.target.value = '' }} />
-          <div style={{ ...styles.dropzone, ...(pending ? { opacity: .55, cursor: 'default' } : {}) }} role="button" aria-disabled={pending} tabIndex={pending ? -1 : 0} onClick={() => { if (!pending) void chooseFiles() }} onKeyDown={event => { if (!pending && (event.key === 'Enter' || event.key === ' ')) void chooseFiles() }} onDragEnter={event => { event.preventDefault(); if (!pending) setDragging(true) }} onDragOver={event => { event.preventDefault() }} onDragLeave={() => { setDragging(false) }} onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (!pending) { const items = [...event.dataTransfer.items].filter(item => item.kind === 'file'); const handles = items.map(item => (item as unknown as { getAsFileSystemHandle?: () => Promise<RecordingFileHandle | null> }).getAsFileSystemHandle?.() ?? Promise.resolve(null)); void receiveFiles([...event.dataTransfer.files], handles) } }}><span style={styles.dropCopy}><UploadSimple size={18} aria-hidden /><span>{tr("点击、拖拽上传音频文件（支持多选）")}</span><small style={styles.hint}>{tr("支持 WAV、MP3、M4A 格式")}</small></span>{dragging && <span style={styles.dragOverlay}>{tr("松开上传至 Arkme")}</span>}</div>
+          <input ref={fileInputRef} hidden multiple disabled={fileSelectionDisabled} aria-label={tr("选择录音文件")} type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { if (!fileSelectionDisabled && event.target.files !== null) void receiveFiles([...event.target.files]); event.target.value = '' }} />
+          <div style={{ ...styles.dropzone, ...(fileSelectionDisabled ? { opacity: .55, cursor: 'default' } : {}) }} role="button" aria-disabled={fileSelectionDisabled} tabIndex={fileSelectionDisabled ? -1 : 0} onClick={() => { if (!fileSelectionDisabled) void chooseFiles() }} onKeyDown={event => { if (!fileSelectionDisabled && (event.key === 'Enter' || event.key === ' ')) void chooseFiles() }} onDragEnter={event => { event.preventDefault(); if (!fileSelectionDisabled) setDragging(true) }} onDragOver={event => { event.preventDefault() }} onDragLeave={() => { setDragging(false) }} onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (!fileSelectionDisabled) { const items = [...event.dataTransfer.items].filter(item => item.kind === 'file'); const handles = items.map(item => (item as unknown as { getAsFileSystemHandle?: () => Promise<RecordingFileHandle | null> }).getAsFileSystemHandle?.() ?? Promise.resolve(null)); void receiveFiles([...event.dataTransfer.files], handles) } }}><span style={styles.dropCopy}><UploadSimple size={18} aria-hidden /><span>{tr("点击、拖拽上传音频文件（支持多选）")}</span><small style={styles.hint}>{tr("支持 WAV、MP3、M4A 格式")}</small></span>{dragging && <span style={styles.dragOverlay}>{tr("松开上传至 Arkme")}</span>}</div>
           {(rows.length > 0 || visibleJobs.length > 0) && <div style={styles.tableViewport}><div style={styles.table} role="table" aria-label={tr("待导入录音")}><div style={styles.tableHeader} role="row"><span /><span>{tr("文件名称")}</span><span style={styles.cellCenter}>{tr("录音时长")}</span><span style={styles.cellCenter}>{tr("文件大小")}</span><span style={styles.cellCenter} title={tr("我的数据写入时间轴，他人仅保存")}>{tr("数据归属")}</span><span style={styles.cellCenter}>{tr("上传状态")}</span><span style={styles.cellCenter}>{tr("处理耗时")}</span><span /></div><div style={styles.rowList} role="rowgroup" aria-label={tr("录音文件列表")}>{rows.map(row => {
             const start = new Date(row.startAt).getTime(); const duration = row.selection?.ok === true ? row.selection.durationMillis ?? 0 : 0
             const timeError = row.selection?.ok === true ? recordingImportEndTimeError(start, duration) : ''

@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import type { ImportJournal, ImportQueueRecord } from '../../src/client/recordings/recording-import-journal.js'
@@ -79,7 +79,14 @@ it.skipIf(!directory)('imports through real UI/Host/Audio/MQ and opens the persi
     const sdk = createArkmeSdk({ fetchImpl: (url, init) => nativeFetch(new URL(url, origin), init) })
     const wait = async (predicate: () => boolean | Promise<boolean>, timeout = 60000) => { const deadline = Date.now() + timeout; while (!await predicate()) { if (Date.now() > deadline) throw new Error(`timeout: ${container.textContent}`); await act(async () => { await new Promise(r => setTimeout(r, 100)) }) } }
     let accepted = false
-    await act(async () => { root.render(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import" defaultStartAtMillis={Date.parse('2026-10-12T10:00:00+08:00')} currentUserId={fixture.user_id} journal={journal} onAccepted={() => { accepted = true }} />) })
+    const dialog = createRef<import('../../src/client/recordings/ArkmeRecordingImportDialog.js').ArkmeRecordingImportDialogHandle>()
+    await act(async () => { root.render(<ArkmeRecordingImportDialog ref={dialog} importPath="/arkme-self/api/recording/import" defaultStartAtMillis={Date.parse('2026-10-12T10:00:00+08:00')} currentUserId={fixture.user_id} journal={journal} onAccepted={() => { accepted = true }} />) })
+    // JSDOM has no modal-dialog implementation. Model only its open flag; the
+    // real browser acceptance separately exercises the native dialog/picker.
+    const element = container.querySelector('dialog')!
+    element.showModal = () => { element.open = true }
+    element.close = () => { element.open = false }
+    await act(async () => { dialog.current!.open() })
     // A valid two-second PCM WAVE is inspected by both browser and Host probes.
     const wav = Buffer.alloc(44 + 32000 * 2); wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40)
     const file = new NodeFile([wav], '链路验收.wav', { type: 'audio/wav' })

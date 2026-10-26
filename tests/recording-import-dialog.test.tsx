@@ -1,4 +1,4 @@
-import { createRef } from 'react'
+import { cloneElement, createRef, useLayoutEffect, useRef, type ReactElement, type Ref } from 'react'
 import { FileAudio } from '@phosphor-icons/react/dist/icons/FileAudio'
 import { UploadSimple } from '@phosphor-icons/react/dist/icons/UploadSimple'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
@@ -28,6 +28,18 @@ vi.mock('../src/client/recordings/recording-import-journal.js', async importOrig
 
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
+
+// File-selection tests exercise an opened panel, like the real toolbar action.
+// Hidden-page ownership and automatic recovery are tested with native Web Locks
+// in recording-import-ownership.test.tsx.
+function createOpenedDialog(element: ReactElement<{ ref?: Ref<ArkmeRecordingImportDialogHandle> }>, options?: Parameters<typeof create>[1]) {
+  function OpenedDialog() {
+    const ref = useRef<ArkmeRecordingImportDialogHandle>(null)
+    useLayoutEffect(() => { ref.current!.open() }, [])
+    return cloneElement(element, { ref })
+  }
+  return create(<OpenedDialog />, options)
+}
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 
@@ -67,7 +79,7 @@ describe('recording import dialog behavior', () => {
       ok: true, format: 'M4A', durationMillis: 1_000,
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -104,7 +116,7 @@ describe('recording import dialog behavior', () => {
   async function remount(journal: ReturnType<typeof memoryJournal>, userId = 42) {
     await act(async () => { renderer.unmount(); await tick() })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={1_725_000_000_000}
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={userId} journal={journal} onAccepted={() => {}} />)
       await tick()
     })
@@ -283,7 +295,7 @@ describe('recording import dialog behavior', () => {
     })
 
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -725,7 +737,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -797,7 +809,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -832,7 +844,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -876,7 +888,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -930,7 +942,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -990,7 +1002,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1021,7 +1033,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1048,7 +1060,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1097,7 +1109,7 @@ describe('recording import dialog behavior', () => {
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1147,7 +1159,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1232,7 +1244,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1270,7 +1282,7 @@ describe('recording import dialog behavior', () => {
       }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
-    await act(async () => { renderer.unmount(); renderer = create(<ArkmeRecordingImportDialog
+    await act(async () => { renderer.unmount(); renderer = createOpenedDialog(<ArkmeRecordingImportDialog
       importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
       currentUserId={42} onAccepted={() => {}}
     />); await tick() })
@@ -1309,7 +1321,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={common.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
       await tick()
     })
@@ -1336,7 +1348,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={file.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
       await tick()
     })
@@ -1567,7 +1579,7 @@ describe('recording import dialog behavior', () => {
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={onAccepted}
       />)
@@ -1746,12 +1758,12 @@ describe('recording import dialog behavior', () => {
       return await new Promise(() => undefined)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
         onAccepted={() => {}}
-      />, { createNodeMock: element => element.type === 'dialog' ? { showModal: vi.fn(), close } : null })
+      />, { createNodeMock: element => element.type === 'dialog' ? { showModal: vi.fn(), close, focus: vi.fn() } : null })
       await tick()
     })
     await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
