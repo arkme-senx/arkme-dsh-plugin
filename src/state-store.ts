@@ -158,6 +158,7 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
   return {
     sourceRef: source.sourceRef,
+    ...(source.autoPublish === true ? { autoPublish: true } : {}),
     ...(itemUid === undefined ? {} : { itemUid }),
     ...(typeof source.baseVersion === 'number' && Number.isSafeInteger(source.baseVersion) && source.baseVersion > 0 ? { baseVersion: source.baseVersion } : {}),
     ...(source.textFormat === 'markdown' || source.textFormat === 'plain' ? { textFormat: source.textFormat } : {}),

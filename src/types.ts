@@ -200,6 +200,7 @@ export type ArkmeTeamJoinRejectReason = 'team_not_found'
 export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
 
 export interface ArkmeTeam {
+  key?: string
   profileRevision?: number
   canEditProfile?: boolean
   avatar?: ArkmeTeamAvatar
@@ -1191,6 +1192,7 @@ export interface ArkmeCachedQueryResult {
 }
 
 export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+export type ArkmeLongArticleBrowseScope = 'recent' | 'shared_by_me' | 'shared_with_me'
 
 export interface ArkmeSearchQueryGuard {
   state: string
@@ -1513,6 +1515,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamProfiles?: true
+    teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
     dshAccountSessions?: true
@@ -2506,6 +2509,9 @@ export interface ArkmeLongArticleUpdateInput {
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
+  /** Verified current record and account-bound action capabilities; never inferred by the reader. */
+  actionItem?: ArkmeTimelineItem
+  createdAtMillis?: number
   contentBlocks?: ArkmeContentBlock[]
   sourceRef: string
   itemUid: string
@@ -2523,6 +2529,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  /** Pending automatic publication; composer attachment drafts never set this. */
+  autoPublish?: boolean
   baseVersion?: number
   document?: Record<string, unknown>
   images?: ArkmeLongArticleImage[]
@@ -4191,6 +4199,7 @@ export type ArkmePluginOperation =
   | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
+  | 'dictation.transcribe'
   | 'auth.status'
   | 'auth.config'
   | 'auth.begin'
@@ -4220,6 +4229,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.external'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
@@ -4408,6 +4418,7 @@ export type ArkmePluginOperation =
   | 'source.member-event.profile'
   | 'source.member-event.private.open'
   | 'source.member-records'
+  | 'source.person-records.sources'
   | 'source.person-records.capabilities'
   | 'source.mark-read'
   | 'source.message-preparing.report'

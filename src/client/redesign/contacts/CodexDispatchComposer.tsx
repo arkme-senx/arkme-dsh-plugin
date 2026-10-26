@@ -1,3 +1,4 @@
+import { ArkmeDictationButton, textareaDictationTarget } from '../../ArkmeDictationButton.js'
 import { useEffect, useRef, useState } from 'react'
 import type { CodexDispatchRequest } from '../../../team-codex-dispatch-journal.js'
 import { tr, useArkmeLocale } from '../../locale.js'
@@ -41,10 +42,12 @@ export function CodexDispatchComposer(props: CodexDispatchComposerProps) {
   // Destroy drafts and in-flight UI state immediately on account/team/task changes.
   return <ScopedComposer key={props.scopeKey} {...props}/>
 }
-function ScopedComposer({ availability: requestedAvailability, latest, submit, onConnect }: CodexDispatchComposerProps) {
+function ScopedComposer({ scopeKey, availability: requestedAvailability, latest, submit, onConnect }: CodexDispatchComposerProps) {
   useArkmeLocale()
   const availability = requestedAvailability === 'ready' && !submit ? 'blocked' : requestedAvailability
   const connectable = !!onConnect && ['integration_pending', 'helper_unavailable', 'authorization_required'].includes(availability)
+  const input = useRef<HTMLTextAreaElement>(null)
+  const [dictationBusy, setDictationBusy] = useState(false)
   const [text, setText] = useState('')
   const [pending, setPending] = useState<{ id: string; text: string }>()
   const [busy, setBusy] = useState(false)
@@ -53,7 +56,7 @@ function ScopedComposer({ availability: requestedAvailability, latest, submit, o
   const alive = useRef(true), sending = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const send = async () => {
-    if (sending.current || availability !== 'ready' || !submit || !text.trim()) return
+    if (dictationBusy || sending.current || availability !== 'ready' || !submit || !text.trim()) return
     const request = pending ?? { id: crypto.randomUUID(), text }
     sending.current = true; setBusy(true); setPending(request)
     try {
@@ -72,13 +75,14 @@ function ScopedComposer({ availability: requestedAvailability, latest, submit, o
       : latest.createdAt > result.createdAt ? latest : result
   return <div className="arkme-codex-dispatch-composer">
     <form onSubmit={event => { event.preventDefault(); if (connectable) onConnect?.(); else void send() }}>
-      <textarea aria-label={tr('输入下一条需求')} placeholder={tr('输入下一条需求…')} rows={2}
+      <textarea ref={input} aria-label={tr('输入下一条需求')} placeholder={tr('输入下一条需求…')} rows={2}
         disabled={availability !== 'ready' && !connectable} readOnly={availability !== 'ready' || busy || uncertain} value={text}
         aria-haspopup={connectable ? 'dialog' : undefined}
         onClick={connectable ? onConnect : undefined}
         onKeyDown={event => { if (connectable && ['Enter', ' '].includes(event.key)) { event.preventDefault(); onConnect?.() } }}
         onChange={event => { if (availability === 'ready') { setText(event.target.value); setResult(undefined) } }}/>
-      <button type="submit" disabled={!connectable && (availability !== 'ready' || busy || !text.trim())}
+      {availability === 'ready' && <ArkmeDictationButton scopeKey={scopeKey} disabled={busy || uncertain} getTarget={() => textareaDictationTarget(input.current, setText)} onBusyChange={setDictationBusy} />}
+      <button type="submit" disabled={dictationBusy || !connectable && (availability !== 'ready' || busy || !text.trim())}
         aria-haspopup={connectable ? 'dialog' : undefined}>
         {tr(busy ? '正在保存…' : uncertain ? '重试保存' : '加入队列')}
       </button>

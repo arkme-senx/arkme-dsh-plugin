@@ -26,6 +26,8 @@ describe('Arkme long-article link presentation', () => {
       .mockReturnValueOnce('article-record')
       .mockReturnValueOnce('article-relation') })
     mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'provider.capabilities') return { features: { markdownLongArticles: false } }
+      if (operation === 'source.long-article.draft.put' || operation === 'source.long-article.detail') return undefined
       if (operation === 'source.long-article.draft.get') return undefined
       if (operation === 'source.long-article.draft.delete') return undefined
       if (operation === 'source.send-rich') return {
@@ -36,7 +38,7 @@ describe('Arkme long-article link presentation', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => {
-      renderer = create(<ArkmeLongArticleDialog sourceRef="source-1" onClose={onClose} onCreated={onCreated} />)
+      renderer = create(<ArkmeLongArticleDialog sourceRef="source-1" sendOnConfirm onClose={onClose} onCreated={onCreated} />)
       await Promise.resolve()
     })
     const inputs = renderer.root.findAllByType('input')

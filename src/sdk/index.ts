@@ -768,6 +768,10 @@ export class ArkmeSdk {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
 
+  async externalChats<O extends import('../team-external-chat-contract.js').ExternalChatOperation>(operation: O, params: import('../team-external-chat-contract.js').ExternalChatParameters[O], signal?: AbortSignal): Promise<import('../team-external-chat-contract.js').ExternalChatResults[O]> {
+    if ((await this.capabilities(signal)).features.teamExternalChats !== true) throw new Error('当前 Provider 不支持对外私聊')
+    return await this.call<import('../team-external-chat-contract.js').ExternalChatResults[O]>('team.external', { operation, params }, signal)
+  }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}
@@ -2878,3 +2882,5 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
+
+export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline } from '../team-external-chat-contract.js'

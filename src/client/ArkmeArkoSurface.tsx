@@ -1,3 +1,4 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import { attachmentPreparationHint } from './attachment-preparation.js'
 import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
 import type { ArkmeArkoContextWindow, ArkmeArkoMessagePage } from '../arko-history-contract.js'
@@ -422,6 +423,7 @@ export function ArkmeArkoSurface() {
   const composerInputBoundaryRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLElement>(null)
   const textareaRef = useRef<ArkmeDocumentComposerHandle>(null)
+  const [dictationBusy, setDictationBusy] = useState(false)
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const pendingComposerFocusRef = useRef(false)
   const shortcutFocusOriginRef = useRef<HTMLElement | null>(null)
@@ -982,7 +984,7 @@ export function ArkmeArkoSurface() {
   }, [accountKey, activeRun, detailScope, profileUserId, sending])
 
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
-  const sendDisabled = loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
+  const sendDisabled = dictationBusy || loading || interactionLocked || clearing || selectingModel || catalog?.selectionSource === 'unavailable'
     || imageDraft.preparing !== ''
     || session === undefined || profileUserId === undefined
   const inputDisabled = loading || interactionLocked || session === undefined || profileUserId === undefined
@@ -1433,6 +1435,7 @@ export function ArkmeArkoSurface() {
           onBeforeToggle={() => { textareaRef.current?.captureSelection() }}
           onSelect={insertEmoji}
         />
+        <ArkmeDictationButton scopeKey={composerDraftKey} active={!messageActions.selecting} disabled={inputDisabled} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} />
         <span style={styles.hint} title={hint}>{hint}</span>
         <button data-arkme-feedback="neutral"
           type="button"

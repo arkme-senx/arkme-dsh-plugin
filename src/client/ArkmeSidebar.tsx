@@ -1,6 +1,8 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
+import {SharePrivateChat} from './TeamExternalChats.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -2158,6 +2160,7 @@ export function ArkmeSurface({
 
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
+  const [dictationBusy, setDictationBusy] = useState(false)
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
@@ -2686,7 +2689,7 @@ export function ArkmeSurface({
   // message waits for the server, otherwise fast keyboard input is dropped.
   const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
   useSyncExternalStore(conversationSending.subscribe, conversationSending.getRevision, conversationSending.getRevision)
-  const canSend = (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
+  const canSend = !dictationBusy && (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
     ? !archiveReadOnly && !directAdmission.blocked && (pendingArticle ? !pendingArticle.sending : arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles))
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
@@ -3226,6 +3229,7 @@ export function ArkmeSurface({
     if (authView === 'login') setError('')
   }, [authView, localeId])
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const [sharePrivateChatOpen,setSharePrivateChatOpen]=useState(false)
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [selfCalendarOpen, setSelfCalendarOpen] = useState(false)
   const [selfHeaderPanel, setSelfHeaderPanel] = useState<'search' | 'statistics'>()
@@ -8864,7 +8868,8 @@ export function ArkmeSurface({
             ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
             visibility: relatedPanelOpen ? 'hidden' : 'visible',
           }}>
-            <ConversationActionsMenu items={[...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
+            <ConversationActionsMenu items={[{id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
@@ -9469,7 +9474,7 @@ export function ArkmeSurface({
               }}
               onFile={file => selectFiles([file], true)}
               onError={message => setError(message)}
-            />}</div><div style={styles.composerSendArea}>
+            />}<ArkmeDictationButton key={`dictation:${composerDraftKey}:${activeRecordReeditComposer?.item.itemUid ?? ''}`} scopeKey={composerDraftKey} active={activeConversation && activeSelectMode === undefined} disabled={composerFilesDisabled || directAdmission.blocked} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} /></div><div style={styles.composerSendArea}>
               {authenticatedUserId !== undefined && authenticatedAccountKey !== undefined
                 && source !== undefined && isArkmeSelfWorkspaceSource(source)
                 && activeRecordReeditComposer === undefined && <ArkmeSelfRolePicker
@@ -9691,7 +9696,8 @@ export function ArkmeSurface({
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
           accountKey={authenticatedAccountKey}
           sourceName={source.kind === 'private_chat' ? tr('与TA的私聊') : source.displayName}
-          onOpenOrigin={item => { setMemberRecords(undefined); arkmeUi.showConversationTarget(source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
+          source={source}
+          onOpenOrigin={(item, origin) => { setMemberRecords(undefined); arkmeUi.showConversationTarget(origin ?? source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
           sourceRef={source.sourceRef}
           sourceIdentityKey={conversationKey}
           member={memberRecords.member}
@@ -9895,6 +9901,7 @@ export function ArkmeSurface({
       {activeConversation && longArticleCreating && source !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeLongArticleDialog
           sourceRef={source.sourceRef}
+          sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }

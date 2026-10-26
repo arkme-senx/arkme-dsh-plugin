@@ -26,7 +26,6 @@ it('keeps the editor focused after releasing a click inside the article portal',
   }}><ArkmeMessageContent sourceRef="source" item={{ itemUid: 'article', senderName: '我', isMe: true, sendAtMillis: 1, status: 1, title: '已有长文', textContent: '第一段正文', textFormat: 'markdown', displayKind: 1 }} /></div>))
   await act(async () => (host.querySelector('[data-arkme-long-article="preview"]') as HTMLButtonElement).click())
   const dialog = document.querySelector('[role="dialog"]')!
-  await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent?.includes('编辑'))!.click())
   const textbox = dialog.querySelector('.ProseMirror') as HTMLElement & { editor: Editor }
   expect(textbox).not.toBeNull()
   act(() => { textbox.editor.commands.setTextSelection(textbox.editor.state.doc.content.size - 1); textbox.editor.view.focus() })
@@ -50,7 +49,6 @@ it('preserves the editor document, selection and undo history when the timeline 
   await act(async () => root.render(<ArkmeMessageContent sourceRef="source" item={item} />))
   await act(async () => (host.querySelector('[data-arkme-long-article="preview"]') as HTMLButtonElement).click())
   const dialog = document.querySelector('[role="dialog"]')!
-  await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent?.includes('编辑'))!.click())
   const textbox = dialog.querySelector('.ProseMirror') as HTMLElement & { editor: Editor }
   const editor = textbox.editor
   act(() => { editor.commands.setTextSelection(editor.state.doc.content.size - 1); editor.commands.insertContent('未发布修改'); editor.view.focus() })

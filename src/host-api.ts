@@ -78,6 +78,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
   if (operation === 'recordings.speaker.correction.apply') return 1024 * 1024
@@ -937,6 +938,13 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'dictation.transcribe' && (!isLoopback(req.socket.remoteAddress) || origin === undefined || new URL(origin).host !== req.headers.host)) {
+        throw new ArkmePluginError('origin-required', '听写必须从当前本机页面发起', false, 403)
+      }
+      if ((['team.app.external.share', 'team.app.external.unshare'].includes(request.operation)
+        || request.operation === 'team.external' && ['share', 'unshare'].includes(String(params.operation))) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '共享私聊必须从当前 DSH 页面或受信任插件发起', false, 403)
+      }
       if (request.operation.startsWith('device.lock.') && !isLoopback(req.socket.remoteAddress)) throw new ArkmePluginError('loopback-required', '电脑锁定仅允许本机访问', false, 403)
       if (request.operation.startsWith('app.migration.') && (origin === undefined || !isLoopback(req.socket.remoteAddress))) {
         throw new ArkmePluginError('local-desktop-required', '迁移下载仅允许本机桌面访问', false, 403)
@@ -1157,6 +1165,7 @@ export async function dispatchArkmeHostOperation(
     case 'device.lock.status': return await service.deviceLockStatus()
     case 'device.lock.lock': return await service.lockDevice()
     case 'device.lock.unlock': return await service.requestDeviceUnlock()
+    case 'dictation.transcribe': return await service.transcribeDictation({ expectedUserId: numberParam(params, 'expectedUserId', 0), segmentId: stringParam(params, 'segmentId'), pcm: stringParam(params, 'pcm') }, requestSignal)
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
@@ -1222,6 +1231,7 @@ export async function dispatchArkmeHostOperation(
       await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
       return { ok: true }
     }
+    case 'team.external': return await service.externalChats(stringParam(params, 'operation') as import('./team-external-chat-contract.js').ExternalChatOperation, (params.params ?? {}) as Record<string,unknown>, requestSignal)
     case 'team.profile.get':return await service.getTeamProfile(stringParam(params,'jotmoId'),requestSignal)
     case 'team.profile.update':return await service.updateTeamProfile(stringParam(params,'profileRef'),params.command as ArkmeTeamProfileUpdate,requestSignal)
     case 'team.profile.avatar.upload':return await service.uploadTeamAvatar(stringParam(params,'profileRef'),stringParam(params,'contentBase64'),stringParam(params,'uploadUid'),requestSignal)
@@ -1789,6 +1799,7 @@ export async function dispatchArkmeHostOperation(
       const limit = numberParam(params, 'limit', 20)
       const cursor = stringParam(params, 'cursor')
       return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }),
+        ...(params?.articleScope === undefined ? {} : { articleScope: stringParam(params, 'articleScope') as import('./types.js').ArkmeLongArticleBrowseScope }),
         ...searchScopeParam(params),
         ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
         ...(params?.sourceRef === undefined ? {} : { sourceRef: stringParam(params, 'sourceRef') }),
@@ -2257,6 +2268,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.person-records.sources': return await service.personRecordSources(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal)
     case 'source.person-records.capabilities': return await service.personRecordsCapabilities(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(
       stringParam(params, 'sourceRef'),
@@ -2790,6 +2802,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'itemUid') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.autoPublish === true ? { autoPublish: true } : {}),
       ...(typeof params.baseVersion === 'number' && Number.isSafeInteger(params.baseVersion) && params.baseVersion > 0 ? { baseVersion: params.baseVersion } : {}),
       ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
       ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),

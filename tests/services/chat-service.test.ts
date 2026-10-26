@@ -3684,9 +3684,10 @@ describe('received Markdown long article detail', () => {
       authenticatedChatPost: vi.fn(async () => ({ item: raw })),
       authenticatedPost: vi.fn(),
     }
-    const media = { richContentBlocks: vi.fn(() => [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'controlled' }]) }
+    const media = { richContentBlocks: vi.fn(() => [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'controlled' }]), recordMediaUnavailable: () => false }
     const source = { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }) }
-    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const record = new RecordService(runtime as never, media as never, source as never)
+    const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record, {} as never, {} as never, {} as never, {} as never)
     const actionRef = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99, displayKind: 1 })
     return { chat, runtime, raw, actionRef, media }
   }
