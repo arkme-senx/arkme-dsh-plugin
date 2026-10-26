@@ -1041,6 +1041,20 @@ describe('team member candidate and pending add boundary', () => {
 describe('explicit external private chats', () => {
   const grant = {share_uid:'grant-secret',team_id:7,sharer_user_id:90,peer_user_id:91,chat_session_uid:'original-chat',sharer_name:'成员',peer_name:'客户'}
   const page = {items:[{relation:{rel_uid:'relation-secret',seq:4,display_name_snapshot:'客户',attach_at:1700000000000},record:{status:1,payload:{version:2,text_content:'共享正文',media_display_items:[{file_asset_uid:'asset-private',file_uid:'file-private',file_name:'photo.png',mime_type:'image/png',download_url:'https://userfiles.jotmo.cc/private-signed'}]}}}],has_more:false,next_before_seq:4}
+  it('projects sender direction from identity rather than names without granting message mutations', async () => {
+    const messages = [90, 91, undefined].map((sender, index) => ({...page.items[0], relation: {...page.items[0]!.relation,
+      rel_uid: `message-${index}`, sender_user_id: sender, display_name_snapshot: '同名用户'}}))
+    const f = fixture(path => path.endsWith('/page') ? {...page, items: messages} : {items: [grant]})
+    const mine = await f.service.execute('team.app.external.mine', {sourceRef: 'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result = await f.service.execute('team.app.external.page', {shareRef: mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    expect(result.items.map(item => item.senderSide)).toEqual(['sharer', 'peer', 'unknown'])
+    expect(result.items.every(item => item.isMe === false)).toBe(true)
+    for (const item of result.items) {
+      expect(item).not.toHaveProperty('senderUserId')
+      expect(item).not.toHaveProperty('mutationTarget')
+      expect(item).not.toHaveProperty('ref')
+    }
+  })
   it.each([42, undefined])('returns reauthorized full media size %s for a partial download', async size => {
     const mediaPage = structuredClone(page)
     Object.assign(mediaPage.items[0]!.record.payload.media_display_items[0]!, { size })

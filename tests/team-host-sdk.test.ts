@@ -145,7 +145,8 @@ describe('Team Host and SDK contract', () => {
 it('external private chat SDK capability checks then calls the same Host owner', async () => {
   let supported=true
   const calls: string[]=[]
-  const service={externalChats:vi.fn(async()=>({items:[],hasMore:false}))}
+  const sharedItem = {itemUid: 'safe-message-key', senderName: '同名用户', senderSide: 'sharer', isMe: false, textContent: '只读正文'}
+  const service={externalChats:vi.fn(async (operation: string) => operation === 'page' ? {items:[sharedItem],hasMore:false,beforeSeq:1,mediaUrls:{}} : {items:[],hasMore:false})}
   const fetchImpl=vi.fn(async(_url:unknown,init?:RequestInit)=>{
     const input=JSON.parse(String(init?.body))
     calls.push(input.operation)
@@ -156,7 +157,8 @@ it('external private chat SDK capability checks then calls the same Host owner',
   const sdk=new ArkmeSdk({fetchImpl:fetchImpl as typeof fetch})
   await expect(sdk.externalChats('list',{teamRef:'opaque-team'})).resolves.toMatchObject({items:[]})
   expect(service.externalChats).toHaveBeenCalledWith('list',{teamRef:'opaque-team'},undefined)
+  await expect(sdk.externalChats('page',{shareRef:'opaque-share'})).resolves.toMatchObject({items:[{senderSide:'sharer',isMe:false}]})
   supported=false
   await expect(sdk.externalChats('page',{shareRef:'opaque-share'})).rejects.toThrow('不支持')
-  expect(service.externalChats).toHaveBeenCalledTimes(1)
+  expect(service.externalChats).toHaveBeenCalledTimes(2)
 })

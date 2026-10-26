@@ -2930,5 +2930,5 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
 
-export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline } from '../team-external-chat-contract.js'
+export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline, ExternalChatTimelineItem } from '../team-external-chat-contract.js'
 export type {TeamForwardInput,TeamForwardDestination} from '../team-message-contract.js'
