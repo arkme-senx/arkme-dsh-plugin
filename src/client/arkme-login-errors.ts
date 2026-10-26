@@ -2,6 +2,9 @@ import { ArkmeClientError } from './api.js'
 import type { ArkmeLoginLocaleKey, ArkmeLoginTranslate } from './arkme-login-locales.js'
 
 const errorKeys: Readonly<Record<string, ArkmeLoginLocaleKey>> = {
+  'password-account-invalid': 'error.password.account',
+  'password-invalid': 'error.password.empty',
+  'password-login-rejected': 'error.password.rejected',
   'wechat-qr-unavailable': 'error.wechat.unavailable',
   'login-attempt-not-found': 'error.qr.expired',
   'test-login-disabled': 'error.test.disabled',

@@ -1096,6 +1096,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       environment: this.config.environment,
       features: {
         authStatus: true,
+        passwordLogin: true,
         cachedSnapshot: true,
         remoteRefresh: true,
         search: true,
@@ -1141,6 +1142,7 @@ arkoImagesV1:true,
         selfRoles: true,
         imageCacheRead: true,
         directMessageAdmission: true,
+        messageTextAnchorsV1: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
@@ -2325,6 +2327,7 @@ arkoImagesV1:true,
   async sourceLocalMarkCapabilities(sourceRef: string) { return this.chat.sourceLocalMarkCapabilities(sourceRef) }
   async sourceLocalMarks(sourceRef: string, actionRefs: readonly string[]) { return this.chat.sourceLocalMarks(sourceRef, actionRefs) }
   async changeSourceLocalMark(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange) { return this.chat.changeSourceLocalMark(sourceRef, actionRef, change) }
+  async captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number) { return this.chat.captureSourceMessageAnchor(sourceRef, actionRef, start, end) }
   async sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceUnderlineCapabilities(sourceRef, signal) }
   async sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) { return this.chat.sourceUnderlines(sourceRef, actionRefs, signal) }
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }
@@ -2806,6 +2809,10 @@ arkoImagesV1:true,
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {
     return await this.auth.testLogin(userId)
+  }
+
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.loginByPassword(account, password, signal)
   }
 
   async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {

@@ -6,6 +6,7 @@ import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 import { quoteSourceContent, type ArkmeMessageQuote } from '../message-quote.js'
 import type { MessageUnderline } from '../message-annotations.js'
 import { MessageUnderlineSession, underlineTargetKey, type MessageMarkTransport } from './message-underline-session.js'
+import { subscribeMessageMarkInvalidations } from './message-mark-invalidations.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 export type MarkPosition = { key: string; target: MessageSelectionTarget; ids: string[]; left: number; top: number; width: number; height: number; element?: HTMLElement; stale: boolean; changed?: boolean; pending: boolean }
@@ -48,9 +49,9 @@ function visibleBox(element: HTMLElement) {
   return box.bottom > top && box.top < bottom && box.right > left && box.left < right ? { left, top, right, bottom } : undefined
 }
 
-export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined, transport?: MessageMarkTransport) {
+export function useMessageUnderlines(scope: string, sourceRef: string | undefined, viewerId: number | undefined, transport?: MessageMarkTransport, storage: 'local' | 'cloud' = 'local') {
   const [revision, update] = useReducer((value: number) => value + 1, 0)
-  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, 'local', transport) : undefined, [scope, !!sourceRef, viewerId, transport])
+  const session = useMemo(() => sourceRef && viewerId ? new MessageUnderlineSession(sourceRef, viewerId, update, storage, transport) : undefined, [scope, !!sourceRef, viewerId, transport, storage])
   if (session && sourceRef) session.sourceRef = sourceRef
   useEffect(() => { if (session) void session.prepare(); return () => session?.dispose() }, [session])
   return {
@@ -75,7 +76,7 @@ export function useMessageUnderlines(scope: string, sourceRef: string | undefine
       void session.change(target, { kind: 'remove', annotationId: mark.id, operationId: crypto.randomUUID() }).catch(error => session.report(error))
       return undefined
     } : undefined,
-    layer: session ? <UnderlineLayer key={scope} session={session} revision={revision} /> : null,
+    layer: session ? <UnderlineLayer key={`${scope}:${storage}`} session={session} revision={revision} /> : null,
   }
 }
 
@@ -97,7 +98,17 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     const refresh = startMessageMarkRefresh({
       read: async () => await session.read(registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element)).map(({ target }) => target)),
       visible: () => !document.hidden,
-      subscribe: invalidate => session.subscribe(invalidate) ?? (() => undefined),
+      subscribe: invalidate => {
+        const stopTransport = session.subscribe(invalidate)
+        const stopCloud = session.storage === 'cloud' ? subscribeMessageMarkInvalidations(clear => {
+          if (clear) {
+            session.invalidate(); signature.current = ''; setPositions([])
+            highlightApi?.delete(highlightName)
+          }
+          invalidate()
+        }) : undefined
+        return () => { stopTransport?.(); stopCloud?.() }
+      },
       onError: error => session.report(error),
     })
     const sync = () => refresh.request(0)
@@ -107,7 +118,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
       requestRead.current = undefined; refresh.dispose()
       window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync)
     }
-  }, [session, session.capability?.supported])
+  }, [session, session.capability?.supported, highlightApi, highlightName])
   useEffect(() => {
     if (!session.capability?.supported) {
       highlightApi?.delete(highlightName)

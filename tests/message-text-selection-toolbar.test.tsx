@@ -144,3 +144,60 @@ it('dismisses a stale toolbar when the selection moves outside registered conten
   select(editor.firstChild!, 0, 2)
   await act(async () => document.dispatchEvent(new Event('selectionchange'))); expect(menu()).toBeNull()
 })
+
+it('keeps ordinary, native and transcript selection toolbars in their own domains', async () => {
+  const item = (id: string) => ({ itemUid: id, title: '', textContent: `正文${id}`, status: 1 }) as ArkmeTimelineItem
+  await render(<>
+    <ArkmeMessageTextSelectionToolbar replySourceRef="ordinary" />
+    <ArkmeMessageTextSelectionToolbar replySourceRef="native" selectionDomain="native" replyLabel="引用" />
+    <ArkmeMessageTextSelectionToolbar replySourceRef="transcript" selectionDomain="transcript" replyLabel="引用" />
+    {(['ordinary', 'native', 'transcript'] as const).map(domain => <ArkmeSelectableMessageText key={domain} text={`正文${domain}`}
+      target={{ item: item(domain), sourceRef: domain, ...(domain === 'ordinary' ? {} : { selectionDomain: domain }) }}><p id={domain}>{`正文${domain}`}</p></ArkmeSelectableMessageText>)}
+  </>)
+  for (const domain of ['ordinary', 'native', 'transcript']) {
+    const p = host.querySelector(`#${domain}`)!
+    await mouse(p, 'mousedown'); select(p.firstChild!, 0, 2); await mouse(p, 'mouseup')
+    expect(document.querySelectorAll('[role="toolbar"]')).toHaveLength(1)
+    expect(document.getSelection()!.toString()).toBe('正文')
+    await act(async () => buttons()[0]!.click())
+    expect(copyText).toHaveBeenLastCalledWith('正文')
+    expect(menu()).toBeNull()
+  }
+})
+
+it('keeps a live-growing toolbar inside its viewport without losing selection', async () => {
+  let width = 280, height = 60
+  const observers: Array<{ callback: ResizeObserverCallback; target?: Element; disconnected: boolean }> = []
+  vi.stubGlobal('ResizeObserver', class {
+    entry: typeof observers[number]
+    constructor(callback: ResizeObserverCallback) {
+      this.entry = { callback, disconnected: false }; observers.push(this.entry)
+    }
+    observe(target: Element) { this.entry.target = target }
+    disconnect() { this.entry.disconnected = true }
+  })
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    return this.getAttribute('role') === 'toolbar' ? new DOMRect(0, 0, width, height) : originalRect.call(this)
+  })
+  Range.prototype.getBoundingClientRect = () => new DOMRect(50, 480, 180, 20)
+  Range.prototype.getClientRects = () => [new DOMRect(50, 480, 180, 20)] as unknown as DOMRectList
+  try {
+    await render(<><ArkmeMessageTextSelectionToolbar getViewport={() => ({ left: 0, right: 800, top: 0, bottom: 600 })} />
+      <ArkmeSelectableMessageText text={`前缀${partial}后缀`}><p id="one">{`前缀${partial}后缀`}</p></ArkmeSelectableMessageText></>)
+    await open()
+    const toolbar = menu() as HTMLElement
+    expect(parseFloat(toolbar.style.top) + height).toBeLessThanOrEqual(592)
+    // A realtime author update changes the already open menu's rendered size.
+    width = 784; height = 202
+    await act(async () => {
+      for (const observer of observers) if (observer.target === toolbar && !observer.disconnected) observer.callback([], {} as ResizeObserver)
+    })
+    expect(parseFloat(toolbar.style.left) + width).toBeLessThanOrEqual(792)
+    expect(parseFloat(toolbar.style.top) + height).toBeLessThanOrEqual(592)
+    expect(document.getSelection()!.toString()).toBe(partial)
+    expect(buttons().map(button => button.textContent)).toEqual(['复制', '全选'])
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(observers.filter(observer => observer.target === toolbar).every(observer => observer.disconnected)).toBe(true)
+  } finally { rect.mockRestore() }
+})

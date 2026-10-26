@@ -1,3 +1,6 @@
+export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
+export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
+
 import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
@@ -1002,6 +1005,17 @@ export class ArkmeSdk {
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
+  }
+
+  /** User-entered credentials only: never persist them or pass them to model tools. */
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    if (account.trim() === '' || account.trim().length > 254 || password === '' || password.length > 1024) {
+      throw new TypeError('Account and password must be non-empty and within the supported length')
+    }
+    if ((await this.capabilities(signal)).features.passwordLogin !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号密码登录，请升级', retryable: false })
+    }
+    return await this.call('auth.password.login', { account: account.trim(), password }, signal)
   }
 
   /** Read recent call history through Browser-safe opaque call references. */
@@ -2298,6 +2312,31 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  private async requireMessageTextAnchors(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.messageTextAnchorsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持同步标记与局部引用，请升级', retryable: false })
+  }
+  async messageMarkCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.capabilities', { sourceRef }, signal)
+  }
+  async messageMarks(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../message-annotations.js').MessageUnderlineSnapshot }[]> {
+    await this.requireMessageTextAnchors(signal)
+    if (actionRefs.length < 1 || actionRefs.length > 40) throw new TypeError('Expected 1-40 signed message action references')
+    return this.call('source.message-underline.list', { sourceRef, actionRefs }, signal)
+  }
+  async changeMessageMark(sourceRef: string, messageActionRef: string, change: import('../message-annotations.js').MessageUnderlineChange, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineSnapshot> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.change', { sourceRef, messageActionRef, change }, signal)
+  }
+  async captureMessageQuote(sourceRef: string, messageActionRef: string, start: number, end: number, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeMessageQuote> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-anchor.capture', { sourceRef, messageActionRef, start, end }, signal)
+  }
+  async messageQuoteCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeQuoteReplyCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-extension.capabilities', { sourceRef }, signal)
+  }
+
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
@@ -2317,6 +2356,7 @@ export class ArkmeSdk {
     textContent: string,
     options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
       throw new TypeError('Arkme source message extension requires a target and text or attachments')

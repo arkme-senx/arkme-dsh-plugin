@@ -1192,6 +1192,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageTextAnchorsV1: true,
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,

@@ -343,7 +343,8 @@ import {
 } from './ArkmeRelatedQuickNotes.js'
 import { arkmeUi } from './ui-controller.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
-import { arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
+import { arkmeConfiguredLoginMode, arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
+import { usePasswordLogin } from './use-password-login.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
   RelatedRecordingsPanel, shouldShowPrivateChatActions,
@@ -2309,7 +2310,8 @@ export function ArkmeSurface({
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useArkmeComposerInputTimePreference()
   const composerExtensionTarget = composerDraft.extensionTarget
-  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId)
+  const [messageMarkStorage, setMessageMarkStorage] = useState<'local' | 'cloud'>('cloud')
+  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId, undefined, messageMarkStorage)
   const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote, sourceIsChat ? '回复' : '延展')
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
@@ -3027,7 +3029,7 @@ export function ArkmeSurface({
   const qrRequestStartedRef = useRef(false)
   const qrFlowRevisionRef = useRef(0)
   const currentJiwoAttemptRef = useRef<string>()
-  const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
+  const selectedLoginModeRef = useRef<ArkmeLoginMode>()
   const [viewportPersistence] = useState(() => new ConversationViewportPersistence(undefined, {
     read: (accountKey, surface, signal) => callArkme('conversation.viewport.read', { accountKey, surface }, signal),
     write: (accountKey, surface, entries) => callArkme('conversation.viewport.write', { accountKey, surface, entries }, AbortSignal.timeout(5000)),
@@ -3334,6 +3336,7 @@ export function ArkmeSurface({
   }, [active])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
+    if (snapshot.status === 'authenticated' || snapshot.status === 'binding-required') selectedLoginModeRef.current = undefined
     const previous = arkmeAuthStore.getSnapshot().auth
     const accountChanged = arkmeAuthenticatedAccountChanged(previous, snapshot)
     arkmeAuthStore.setAuth(snapshot)
@@ -3379,11 +3382,7 @@ export function ArkmeSurface({
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
     setJiwoScanLoginEnabled(authStoreSnapshot.config.jiwoScanLoginEnabled)
     if (!phoneBindingRequired && (auth?.status === 'logged-out' || auth?.status === 'expired')) {
-      const selectedMode = pendingLoginModeSelectionRef.current
-      pendingLoginModeSelectionRef.current = undefined
-      setLoginMode(selectedMode ?? (authStoreSnapshot.config.jiwoScanLoginEnabled
-        ? 'jiwo'
-        : authStoreSnapshot.config.testLoginEnabled ? 'test' : 'wechat'))
+      setLoginMode(arkmeConfiguredLoginMode(selectedLoginModeRef.current, authStoreSnapshot.config))
     }
   }, [auth?.status, authStoreSnapshot.config, phoneBindingRequired])
   useEffect(() => {
@@ -3404,9 +3403,7 @@ export function ArkmeSurface({
         setJiwoScanLoginEnabled(config.jiwoScanLoginEnabled)
       }
       if (!['authenticated', 'binding-required'].includes(snapshot.status)) {
-        setLoginMode(config?.jiwoScanLoginEnabled === true
-          ? 'jiwo'
-          : config?.testLoginEnabled === true ? 'test' : 'wechat')
+        setLoginMode(arkmeConfiguredLoginMode(selectedLoginModeRef.current, config))
       }
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) }
     finally { setBusy(false) }
@@ -5005,6 +5002,8 @@ export function ArkmeSurface({
   }, [])
 
   const changeLoginMode = (mode: ArkmeLoginMode) => {
+    if (submitBusy) return
+    selectedLoginModeRef.current = mode
     qrFlowRevisionRef.current += 1
     const attemptId = currentJiwoAttemptRef.current
     currentJiwoAttemptRef.current = undefined
@@ -5012,7 +5011,6 @@ export function ArkmeSurface({
       void callArkme('auth.app.cancel', { attemptId }).catch(() => undefined)
     }
     if (auth?.status === 'pending') {
-      pendingLoginModeSelectionRef.current = mode
       arkmeAuthStore.setAuth({ status: 'logged-out', environment: auth.environment })
     }
     setLoginMode(mode)
@@ -5020,6 +5018,11 @@ export function ArkmeSurface({
     setError('')
     qrRequestStartedRef.current = false
   }
+
+  const passwordLogin = usePasswordLogin({
+    active: authView === 'login' && loginMode === 'password' && !phoneBindingRequired,
+    agreed, busy, t, setBusy, setSubmitBusy, setError, acceptAuthSnapshot,
+  })
 
   const uploadFavoriteSticker = async (file: File): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
@@ -5803,7 +5806,7 @@ export function ArkmeSurface({
 
   const personalExtensionParents = usePersonalExtensionParents(
     `${authenticatedAccountKey}:${conversationKey}:${sourceProjectionRevision}`,
-    activeConversation && source !== undefined && isArkmeSelfWorkspaceSource(source) ? source.sourceRef : undefined, items,
+    activeConversation && source !== undefined && (isArkmeSelfWorkspaceSource(source) || source.kind === 'private_chat' || source.kind === 'group_chat') ? source.sourceRef : undefined, items, source?.sourceKey, source?.kind === 'private_chat' || source?.kind === 'group_chat',
   )
   const detailRawRow = items.find(item => item.itemUid === detailItemUid)
   const detailRow = detailRawRow && source ? recordMutations.project(detailRawRow, source, selfSources) : detailRawRow
@@ -8623,7 +8626,9 @@ export function ArkmeSurface({
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
       selfNote={{ sourceLabel: source?.displayName || '发给自己', ...(authenticatedAccountKey ? { accountKey: authenticatedAccountKey } : {}) }}
       replyLabel={sourceIsChat ? '回复' : '延展'}
-      markStorage="local"
+      markStorage={messageMarkStorage}
+      onMarkStorageChange={setMessageMarkStorage}
+      markAudience={sourceIsChat ? 'conversation' : 'self'}
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}
@@ -8917,6 +8922,7 @@ export function ArkmeSurface({
           submitBusy={submitBusy}
           error={error}
           phone={phone}
+          passwordLogin={passwordLogin}
           smsCode={smsCode}
           smsCountdown={smsCountdown}
           testLoginEnabled={testLoginEnabled}
