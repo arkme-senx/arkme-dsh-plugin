@@ -8,6 +8,8 @@ export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot
 export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
 export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
 export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
+import type { TeamNotificationPage, TeamNotificationPolicy } from '../team-notification-contract.js'
+export type { TeamNotificationEntry, TeamNotificationPage, TeamNotificationPolicy, TeamNotificationPort } from '../team-notification-contract.js'
 import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
@@ -806,6 +808,18 @@ export class ArkmeSdk {
   async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.send',{command},signal)}
   async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
   async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.task-update',{conversationRef,taskRef,action},signal)}
+  private async requireTeamNotifications(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.teamNotificationPoliciesV1!==true) throw new Error('当前 Provider 不支持团队消息通知设置')
+  }
+  async listTeamNotificationConversations(side:'team'|'external',cursor?:string,signal?:AbortSignal):Promise<TeamNotificationPage> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.list',{side,...(cursor?{cursor}:{})},signal)
+  }
+  async getTeamNotificationPolicy(conversationRef:string,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.get',{conversationRef},signal)
+  }
+  async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}

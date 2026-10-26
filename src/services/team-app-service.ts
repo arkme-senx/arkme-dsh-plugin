@@ -1,4 +1,5 @@
 import {projectTeamForward} from '../team-forward-presentation.js'
+import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
 import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -27,6 +28,13 @@ const str = stringValue
 const num = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) ? v : 0
 const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map(obj) : []
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
+function notificationPolicy(raw: unknown, required = false): TeamNotificationPolicy {
+  if (raw === undefined && !required) return {muted:false,policyVersion:0,notifyAfterSeq:0}
+  const value = obj(raw)
+  if (typeof value.muted !== 'boolean' || !Number.isSafeInteger(value.policy_version) || Number(value.policy_version) < 0 ||
+      !Number.isSafeInteger(value.notify_after_seq) || Number(value.notify_after_seq) < 0) throw invalid()
+  return {muted:value.muted,policyVersion:num(value.policy_version),notifyAfterSeq:num(value.notify_after_seq)}
+}
 function receiptCounts(raw: unknown) {
   const v = obj(raw), keys = ['recipient_count', 'read_count', 'unread_count'] as const
   if (keys.some(k => !Number.isSafeInteger(v[k]) || Number(v[k]) < 0) || Number(v.read_count) + Number(v.unread_count) !== Number(v.recipient_count)) throw new ArkmePluginError('team-receipts-incomplete', '阅读状态返回不完整，请重试', true, 502)
@@ -66,6 +74,13 @@ function imagePresentationIdentity(raw: string): string {
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
+  private readonly policies = new Map<string,TeamNotificationPolicy>()
+  private policy(raw:unknown, actor:number, uid:string, required=false):TeamNotificationPolicy {
+    const key=`${actor}:${uid}`, next=mergeTeamNotificationPolicy(this.policies.get(key),notificationPolicy(raw,required))
+    this.policies.set(key,next)
+    while(this.policies.size>2048)this.policies.delete(this.policies.keys().next().value!)
+    return next
+  }
   private readonly codec: EncryptedReferenceCodec
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
@@ -105,6 +120,14 @@ export class TeamAppService {
     const [context,message]=await Promise.all([this.open('conversation',conversationRef,actor),this.open('message',messageRef,actor)])
     if(message.conversation_uid!==context.conversation_uid||message.side!==context.side||!['team','external'].includes(str(context.side)))throw invalid()
     return {team_conversation_uid:str(context.conversation_uid),team_message_uid:str(message.message_uid),team_side:context.side as 'team'|'external'}
+  }
+  /** Presentation aliases for actors already authorized by the reaction owner. */
+  async reactionActorKeys(conversationRef: string, ids: readonly number[]): Promise<Map<number, string>> {
+    const actor = (await this.runtime.requireSession()).userId
+    const context = await this.open('conversation', conversationRef, actor)
+    if (context.side !== 'team') return new Map()
+    return new Map(await Promise.all([...new Set(ids)].map(async id =>
+      [id, await this.key(`person:${id}`, actor)] as const)))
   }
   async replyKey(conversationRef: string, messageRef: string, actor: number): Promise<string> {
     const context = await this.open('conversation', conversationRef, actor)
@@ -175,6 +198,7 @@ export class TeamAppService {
     return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor, { id: v.external_user_id, context: { conversation_uid: uid, side } }) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
+      notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
@@ -222,6 +246,19 @@ export class TeamAppService {
     return { ref: await this.ref('external-share', { share_uid: str(v.share_uid), sharer_id: v.sharer_user_id, sharer_name: str(v.sharer_name), peer_name: str(v.peer_name) }, actor), key: await this.key(`external:${str(v.share_uid)}`, actor),
       teamKey: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: v.team_id }, actor), sharerKey: await this.key(`person:${String(v.sharer_user_id)}`, actor),
       sharerName: str(v.sharer_name) || '团队成员', peerName: str(v.peer_name) || '外部联系人', own: recordOwnerId(v.sharer_user_id) === actor }
+  }
+  async resolveMessageNotification(hint: {eventUid:string;messageUid:string;conversationUid:string}, session:ArkmeSessionCredentials, signal:AbortSignal) {
+    const raw = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/notifications/resolve',
+      {message_uid:hint.messageUid,event_uid:hint.eventUid}, session, signal, true))
+    if (raw.notification == null) return undefined
+    const n = obj(raw.notification)
+    if (n.event_uid !== hint.eventUid || n.message_uid !== hint.messageUid || n.conversation_uid !== hint.conversationUid ||
+        !['team','external'].includes(str(n.side)) || num(n.seq)<=0 || num(n.published_at)<=0 || num(n.expires_at)-num(n.published_at)!==3600000) throw invalid()
+    const current = await this.runtime.accountScopedSession()
+    if (signal.aborted || current?.userId!==session.userId || current.refreshToken!==session.refreshToken) throw invalid()
+    return { eventUid:hint.eventUid, sourceRef:await this.ref('notification',{conversation_uid:n.conversation_uid},session.userId),
+      sourceKey:await this.key(`${str(n.conversation_uid)}:${str(n.side)}`,session.userId), sourceKind:'team_conversation' as const,
+      title:str(n.title), body:str(n.body), eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
   }
 
   async assertViewer(expectedAccountKey: unknown): Promise<ArkmeSessionCredentials> {
@@ -835,6 +872,27 @@ export class TeamAppService {
         return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side })
       }
       case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
+      case 'team.app.notification-policy.get': {
+        const context=await conversation()
+        return this.policy(await post('conversations/notification-policy/get',context,true),actor,str(context.conversation_uid),true)
+      }
+      case 'team.app.notification-policy.set': {
+        if (typeof p.muted !== 'boolean') throw invalid()
+        const context = await conversation()
+        try { return this.policy(await post('conversations/notification-policy/set', {...context, muted:p.muted}),actor,str(context.conversation_uid),true) }
+        catch (error) {
+          const current = this.policy(await post('conversations/notification-policy/get', context, true),actor,str(context.conversation_uid),true)
+          if (current.muted !== p.muted) throw error
+          return current
+        }
+      }
+      case 'team.app.notification.open': {
+        const target = await this.open('notification', p.notificationRef, actor)
+        const current = await post('conversations/context', {conversation_uid:target.conversation_uid}, true)
+        if (str(current.conversation_uid) !== target.conversation_uid || !['team','external'].includes(str(current.side))) throw invalid()
+        const data = await post('conversations/timeline/page', {conversation_uid:target.conversation_uid,side:current.side,limit:1}, true)
+        return await this.conversation(data.conversation, actor)
+      }
       case 'team.app.home.visibility': {
         const data = await post('conversations/home-visibility', { ...await conversation(), expected_version: num(p.version), ...(typeof p.showInHome === 'boolean' ? {show_in_home:p.showInHome} : {}) })
         if (typeof data.show_in_home !== 'boolean' || !Number.isSafeInteger(data.version) || num(data.version) < 0) throw invalid()
@@ -855,7 +913,7 @@ export class TeamAppService {
           const key = await this.key(`${id}:${str(first.side)}`, actor)
           if (!row.accessible) return {key, accessible: false}
           if (['last_seq', 'my_read_seq', 'unread'].some(k => !Number.isSafeInteger(row[k]) || Number(row[k]) < 0)) throw invalid()
-          return {key, accessible: true, lastSeq: num(row.last_seq), myReadSeq: num(row.my_read_seq), unread: num(row.unread)}
+          return {key, accessible: true, notificationPolicy:this.policy(row.notification_policy,actor,id), lastSeq: num(row.last_seq), myReadSeq: num(row.my_read_seq), unread: num(row.unread)}
         }))
       }
       case 'team.app.receipt-summaries': {
