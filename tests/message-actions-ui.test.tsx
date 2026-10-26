@@ -29,6 +29,12 @@ function Harness({ conversationRef }: { conversationRef: string }) {
   </>
 }
 
+function LocalImageHarness() {
+  const image = { ...message, actionRef: '', copyLinkAvailable: false, forwardAvailable: false }
+  const actions = useArkmeMessageActions({ scopeKey: 'arko-image', items: [image], selectionItems: [image] })
+  return <><div data-message="image" onContextMenu={event => actions.openMenu(image, event)}>图片</div>{actions.selectionBar}{actions.overlay}</>
+}
+
 function MixedOwnerHarness() {
   const second = { ...message, id: 'message-two', actionRef: 'opaque-action-two', conversationRef: 'bot-conversation-two' }
   const actions = useArkmeMessageActions({ scopeKey: 'mixed-owner-test', items: [message, second] })
@@ -46,6 +52,14 @@ function button(renderer: ReactTestRenderer, label: string) {
 
 describe('shared owner message action UI', () => {
   let renderer: ReactTestRenderer | undefined
+
+  it('allows a visible Arko image message to enter local selection without a signed forwarding ref', async () => {
+    await act(async () => { renderer = create(<LocalImageHarness />) })
+    await act(async () => renderer!.root.findByProps({ 'data-message': 'image' }).props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 10, clientY: 10 }))
+    await act(async () => button(renderer!, '多选')!.props.onClick())
+    expect(button(renderer!, '退出多选')).toBeDefined()
+    expect(button(renderer!, '复制链接')?.props.disabled).toBe(true)
+  })
 
   beforeEach(() => {
     mocks.callArkme.mockReset()

@@ -190,24 +190,23 @@ describe('browse without binding; prompt only on social writes', () => {
   it('retains world text and selected images and does not upload them when binding is required', async () => {
     const closed = vi.fn(), published = vi.fn()
     await mount(<><PublishDialog onClose={closed} onPublished={published} /><ArkmeSocialBindingDialog /></>)
-    const input = document.querySelector('textarea')!
+    const input = document.querySelector<HTMLElement>('[role="textbox"][aria-label="世界内容"]')!
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '保留世界草稿')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      input.dispatchEvent(new Event('change', { bubbles: true }))
+      input.textContent = '保留世界草稿'
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '保留世界草稿' }))
     })
     const fileInput = document.querySelector('input[type="file"]')!
     await act(async () => {
       Object.defineProperty(fileInput, 'files', { value: [new File(['photo'], 'photo.png', { type: 'image/png' })] })
       fileInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    const submit = [...document.querySelectorAll('button')].find(node => node.textContent?.includes('发布') && !node.getAttribute('aria-label')?.includes('关闭'))!
+    const submit = document.querySelector<HTMLButtonElement>('[aria-label="发布"]')!
     await act(async () => submit.click())
     expect(socialBindingPrompt.getSnapshot()).toBeDefined()
     expect(provider.upload).not.toHaveBeenCalled(); expect(provider.publish).not.toHaveBeenCalled()
-    expect(input.value).toBe('保留世界草稿')
+    expect(input.textContent).toBe('保留世界草稿')
     expect(closed).not.toHaveBeenCalled(); expect(published).not.toHaveBeenCalled()
     await act(async () => button('暂不绑定').click())
-    expect(input.value).toBe('保留世界草稿')
+    expect(input.textContent).toBe('保留世界草稿')
   })
 })

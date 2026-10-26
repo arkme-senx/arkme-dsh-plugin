@@ -6,16 +6,16 @@ import { ArkmePluginError, type ServiceRuntime } from './service.js'
 const invalid = () => new ArkmePluginError('native-local-mark-invalid', '本机标记引用无效，请重新打开会话', false, 403)
 /** Private annotations of client-rendered DSH text, never authority to edit/share a Chat record. */
 export class NativeLocalMarks {
-  constructor(private readonly runtime: ServiceRuntime) {}
+  constructor(private readonly runtime: ServiceRuntime, private readonly namespace: 'dsh-native' | 'codex' = 'dsh-native') {}
   private async context(sourceRef: string, signal?: AbortSignal) {
     const session = await this.runtime.requireSession()
     let source: unknown
     try { source = JSON.parse(sourceRef) } catch { throw invalid() }
-    if (!Array.isArray(source) || source.length !== 3 || source[0] !== 'dsh-native'
+    if (!Array.isArray(source) || source.length !== 3 || source[0] !== this.namespace
       || source[1] !== session.userId || typeof source[2] !== 'string' || !source[2].trim() || source[2].length > 512) throw invalid()
     const store = this.runtime.stateStore.messageMarks
     if (!store) throw new ArkmePluginError('native-local-mark-storage-unavailable', '本机标记存储暂不可用，请重试', true, 503)
-    const scope = JSON.stringify([this.runtime.config.environment, session.userId, 'dsh-native', source[2]])
+    const scope = JSON.stringify([this.runtime.config.environment, session.userId, this.namespace, source[2]])
     const assertAccount = async () => {
       signal?.throwIfAborted()
       const current = await this.runtime.accountScopedSession()

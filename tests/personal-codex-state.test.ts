@@ -41,3 +41,13 @@ it('limits simultaneous reads to three',async()=>{
   },new AbortController().signal)
   expect(max).toBe(3)
 })
+it('retains only explicitly stale own queue snapshots on transient offline reads',async()=>{
+  const queued={...remote('11'),queueCloud:'ready' as const,queue:{version:1,availability:'stale' as const,reason:'none' as const,
+    checkedAt:1,changedAt:1,sourceAt:1,items:[]}}
+  for(const status of ['offline','blocked'] as const) {
+    const result=await readPersonalCodexState([teams[0]!],'11',1,async()=>({...local,cloud:{...cloud,status},
+      tasks:[queued,{...queued,id:'other',cloud:{...queued.cloud!,ownerRef:'22'}}]}),new AbortController().signal)
+    expect(result.state.tasks.map(t=>t.id)).toEqual(status==='offline'?['same-id']:[])
+    expect(result.unavailable).toEqual(['A'])
+  }
+})

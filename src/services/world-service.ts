@@ -1,4 +1,8 @@
 import { TimelineTokenCodec } from './timeline-token.js'
+import { localWorldReactionTarget } from './world-local-reaction-service.js'
+import { arkmePeerMemberType } from '../peer-membership.js'
+import { isPublicRecordUid, parseShareLink } from '../share-link-preview.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeWorldShareResult } from '../types.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -353,6 +357,9 @@ export class WorldService {
   private readonly extensionPublicationShareCache = new Map<string, ArkmeWorldExtensionShareCacheEntry>()
   private readonly extensionPublicationShareInFlight = new Map<string, Promise<ArkmeWorldExtensionShare | undefined>>()
   private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
+  private readonly authorMemberships = new Map<string, { memberType: ReturnType<typeof arkmePeerMemberType>; expiresAt: number }>()
+  private readonly authorMembershipInFlight = new Map<string, Promise<void>>()
+  private readonly authorMembershipRequests = new Set<AbortController>()
   private readonly voiceprintSocialCache = new Map<string, ArkmeWorldVoiceprintSocialCacheEntry>()
   private readonly voiceprintSocialInFlight = new Map<string, Promise<ArkmeWorldVoiceprintSocialContext>>()
 
@@ -366,6 +373,10 @@ export class WorldService {
 
   dispose(): void {
     this.epoch++
+    for (const request of this.authorMembershipRequests) request.abort()
+    this.authorMembershipRequests.clear()
+    this.authorMemberships.clear()
+    this.authorMembershipInFlight.clear()
     this.worldImageRefs.clear()
     this.worldAvatarResolutionCache.clear()
     this.extensionPublicationShareCache.clear()
@@ -394,6 +405,42 @@ export class WorldService {
     if ((await this.runtime.requireSession()).userId !== session.userId || epoch !== this.epoch) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     if (!item) throw new ArkmePluginError('world-record-unavailable', '这条公开快记已不可用', false, 404)
     return item
+  }
+
+  /** Share the existing public URL, never a private Record or a copied media snapshot. */
+  async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldShareResult> {
+    const epoch = this.epoch, session = await this.runtime.requireSession()
+    if (expectedUserId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开分享', false, 409)
+    const recordUid = this.openWorldRecordRef(recordRef, session.userId).recordUid
+    const raw = await this.runtime.post<Record<string, unknown>>(
+      this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/detail', { record_uid: recordUid }, undefined, [200], signal,
+    )
+    if (raw.is_public !== true || stringValue(raw.record_uid) !== recordUid || ![0, 2, 3].includes(numberValue(raw.check_status))
+      || stringValue(raw.parent_record_uid).trim() || !isPublicRecordUid(recordUid)) {
+      throw new ArkmePluginError('world-share-unavailable', '这条内容已不可公开分享，请刷新世界', false, 404)
+    }
+    const ownerUserId = numberValue(raw.user_id)
+    if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new ArkmePluginError('world-share-author-invalid', '无法确认公开内容的作者，请重试', true, 502)
+    const profiles = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/get-public-users-by-ids', { user_ids: [ownerUserId] }, session, signal,
+    )
+    const author = listValue(profiles.items).map(objectValue).find(value => numberValue(value.user_id) === ownerUserId)
+    const arkmeId = [author?.jotmo_id, author?.name_slug, author?.arkme_id].map(stringValue).map(value => value.trim())
+      .find(value => /^[A-Za-z][A-Za-z0-9_-]{4,31}$/.test(value))
+    if (!arkmeId) throw new ArkmePluginError('world-share-author-invalid', '暂时无法生成这条内容的公开链接，请重试', true, 502)
+    let url: string
+    try { url = new URL(`/shijie/${encodeURIComponent(arkmeId)}/record/${encodeURIComponent(recordUid)}`, this.runtime.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE).href }
+    catch { throw new ArkmePluginError('world-share-url-invalid', '分享地址配置暂不可用', false, 503) }
+    const target = parseShareLink(url)
+    if (target?.kind !== 'public-record' || target.environment !== this.runtime.config.environment || target.id !== recordUid) {
+      throw new ArkmePluginError('world-share-url-invalid', '分享地址配置暂不可用', false, 503)
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (epoch !== this.epoch || current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开分享', false, 409)
+    }
+    return { url, title: stringValue(raw.headline).trim() || `${stringValue(raw.nick_name).trim() || 'Arkme用户'}的世界`, previewText: stringValue(raw.text_content).trim().slice(0, 240) }
   }
 
   async listWorldRecords(
@@ -1319,8 +1366,13 @@ export class WorldService {
       })
     return {
       recordRef,
+      localReactionTarget: await localWorldReactionTarget(this.runtime, viewerUserId, recordUid, createHash('sha256').update(JSON.stringify({ headline, textContent, templateKind: item.template_kind,
+        images: rawImages.map(worldImageAssetIdentity), videos: listValue(item.videos).map(value => typeof value === 'string' ? worldImageAssetIdentity(value) : value), voices: listValue(item.voices).map(value => typeof value === 'string' ? worldImageAssetIdentity(value) : value),
+        files: listValue(item.file_assets).map(value => { const asset = objectValue(value); return [asset.file_asset_uid, asset.storage_key, asset.sort_order] }),
+      })).digest('hex')),
       ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: recordRef } : {}),
       authorName,
+      ...(this.cachedAuthorMembership(viewerUserId, ownerUserId) === undefined ? {} : { memberType: this.cachedAuthorMembership(viewerUserId, ownerUserId) }),
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       headline,
@@ -1523,6 +1575,7 @@ export class WorldService {
       isSelf: ownerUserId === viewerUserId,
       ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: interactionRef } : {}),
       authorName,
+      ...(this.cachedAuthorMembership(viewerUserId, ownerUserId) === undefined ? {} : { memberType: this.cachedAuthorMembership(viewerUserId, ownerUserId) }),
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       textContent,
@@ -1588,20 +1641,76 @@ export class WorldService {
   }
 
   /** Resolve viewer-local labels after World content has already been rendered. */
+  private cachedAuthorMembership(viewerUserId: number, ownerUserId: number) {
+    const value = this.authorMemberships.get(`${viewerUserId}:${ownerUserId}`)
+    return value && value.expiresAt > Date.now() ? value.memberType : undefined
+  }
+
+  /** Decoration is bounded, shared across pages/details, and never blocks the feed read. */
+  private async loadAuthorMemberships(userIds: readonly number[], session: ArkmeSessionCredentials) {
+    const epoch = this.epoch
+    const key = (id: number) => `${session.userId}:${id}`
+    const missing = userIds.filter(id => this.cachedAuthorMembership(session.userId, id) === undefined && !this.authorMembershipInFlight.has(key(id)))
+    if (missing.length > 0) {
+      const controller = new AbortController()
+      this.authorMembershipRequests.add(controller)
+      const timeout = setTimeout(() => controller.abort(), 4_000)
+      const request = (async () => {
+        const values = new Map<number, ReturnType<typeof arkmePeerMemberType>>()
+        try {
+          const peers = missing.filter(id => id !== session.userId)
+          const [data, own] = await Promise.all([
+            peers.length ? this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+              '/api/v1/auth/get-public-users-by-ids', { user_ids: peers }, session, controller.signal,
+              { lane: 'interactive-read', key: `world-author-membership:${[...peers].sort((a, b) => a - b).join('|')}` },
+            ).catch(() => ({ items: [] })) : { items: [] },
+            missing.includes(session.userId) ? this.runtime.authenticatedAuthReadPost<Record<string, unknown>>(
+              '/api/v1/premium/get/member', {}, session, controller.signal,
+            ).catch(() => undefined) : undefined,
+          ])
+          for (const raw of listValue(data.items)) {
+            const row = objectValue(raw), userId = numberValue(row.user_id)
+            if (peers.includes(userId)) values.set(userId, arkmePeerMemberType(row.member_type))
+          }
+          if (own) values.set(session.userId, arkmePeerMemberType(own.member_type))
+        } catch { /* Missing entitlement stays unknown; never infer a free or paid membership. */ }
+        finally { clearTimeout(timeout); this.authorMembershipRequests.delete(controller) }
+        if (epoch !== this.epoch) return
+        for (const id of missing) {
+          const memberType = values.get(id) ?? 'unknown'
+          this.authorMemberships.set(key(id), { memberType, expiresAt: Date.now() + (memberType === 'unknown' ? 5_000 : 60_000) })
+        }
+        while (this.authorMemberships.size > 4096) this.authorMemberships.delete(this.authorMemberships.keys().next().value!)
+      })().finally(() => {
+        for (const id of missing) if (this.authorMembershipInFlight.get(key(id)) === request) this.authorMembershipInFlight.delete(key(id))
+      })
+      for (const id of missing) this.authorMembershipInFlight.set(key(id), request)
+    }
+    await Promise.all(new Set(userIds.map(id => this.authorMembershipInFlight.get(key(id))).filter(value => value !== undefined)))
+    return new Map(userIds.map(id => [id, this.cachedAuthorMembership(session.userId, id) ?? 'unknown']))
+  }
+
   async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    signal?.throwIfAborted()
+    const epoch = this.epoch
     const session = await this.runtime.requireSession()
     const refs = [...new Set(recordRefs.map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
     const entries = refs.map(authorRef => ({ authorRef, entry: this.openWorldRecordRef(authorRef, session.userId) }))
-      .filter(({ entry }) => entry.ownerUserId !== undefined && entry.ownerUserId > 0 && entry.ownerUserId !== session.userId)
+      .filter(({ entry }) => Number.isSafeInteger(entry.ownerUserId) && entry.ownerUserId! > 0)
     if (entries.length === 0) return []
     const userIds = [...new Set(entries.map(({ entry }) => entry.ownerUserId!))]
-    const labels = this.viewerLabels === undefined
-      ? new Map<number, string>()
-      : await this.viewerLabels.privateDisplayNamesByUserIds(userIds, { ...(signal === undefined ? {} : { signal }) })
-        .catch(() => new Map<number, string>())
+    const peers = userIds.filter(id => id !== session.userId)
+    const [labels, memberships] = await Promise.all([
+      this.viewerLabels === undefined || peers.length === 0 ? new Map<number, string>()
+        : this.viewerLabels.privateDisplayNamesByUserIds(peers, { ...(signal === undefined ? {} : { signal }) }).catch(() => new Map<number, string>()),
+      this.loadAuthorMemberships(userIds, session),
+    ])
+    signal?.throwIfAborted()
+    if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     return entries.map(({ authorRef, entry }) => ({
       authorRef,
       authorName: labels.get(entry.ownerUserId!) ?? entry.authorName ?? 'Arkme用户',
+      memberType: memberships.get(entry.ownerUserId!) ?? 'unknown',
     }))
   }
 

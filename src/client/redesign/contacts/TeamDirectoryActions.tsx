@@ -37,7 +37,8 @@ export function TeamDirectoryActions({ accountKey, onChanged, onSelect }: {
     {mode && <TeamMembershipForm key={`${accountKey}:${mode}`} mode={mode} accountKey={accountKey} onClose={() => { setMode(undefined) }} onChanged={onChanged} onSelect={onSelect} />}
   </div>
 }
-function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: {
+/** Shared by Contacts and the public team card; creation keeps one validation/write path. */
+export function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: {
   mode: 'create' | 'join' | 'link'; accountKey: string; onClose(): void; onChanged(): void; onSelect(selection: ArkmeDirectorySelection): void
 }) {
   const formId = useId(), inputRef = useRef<HTMLInputElement>(null)
@@ -54,14 +55,14 @@ function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: 
     if (mode !== 'create' || !id || formatHint) return
     const request = new AbortController()
     const timer = setTimeout(() => {
-      void callArkme<TeamJotmoIdAvailability>('team.app.create.check', { jotmoId: id }, request.signal).then(result => {
+      void callArkme<TeamJotmoIdAvailability>('team.app.create.check', { jotmoId: id, expectedAccountKey: accountKey }, request.signal).then(result => {
         if (!request.signal.aborted) setAvailability({ id, available: result.available, hint: result.available ? tr('该即我号可用') : tr(result.reason === 'taken' ? '该即我号已被占用' : result.reason === 'invalid' ? '即我号格式不正确' : '该即我号不可用') })
       }, () => {
         if (!request.signal.aborted) setAvailability({ id, available: false, hint: tr('暂时无法校验即我号，请重试'), retry: true })
       })
     }, 600)
     return () => { clearTimeout(timer); request.abort() }
-  }, [mode, id, formatHint, checkAttempt])
+  }, [accountKey, mode, id, formatHint, checkAttempt])
   const requestUid = useRef(crypto.randomUUID()), controller = useRef(new AbortController()), idRef = useRef('')
   const statusSequence = useRef(0), submitting = useRef(false), resultRef = useRef(joinResult)
   const attemptedId = useRef(''), statusAgain = useRef(false), statusRequest = useRef<AbortController>()
@@ -141,7 +142,7 @@ function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSelect }: 
     setBusy(true); setError('')
     try {
       if (mode === 'create') {
-        const team = await callArkme<ArkmeTeam>('team.app.create', { name: name.trim(), jotmoId: jotmoId.trim(), requestUid: requestUid.current }, signal)
+        const team = await callArkme<ArkmeTeam>('team.app.create', { expectedAccountKey: accountKey, name: name.trim(), jotmoId: jotmoId.trim(), requestUid: requestUid.current }, signal)
         if (signal.aborted) return
         onChanged(); onSelect({ kind: 'team', teamRef: team.teamRef }); onClose()
       } else {

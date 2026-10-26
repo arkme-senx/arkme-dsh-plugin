@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { captureMessageTextSelection } from './message-text-selection.js'
 import { copyText } from './clipboard-text.js'
@@ -11,11 +11,14 @@ import { captureQuoteAnchor, quoteDigest } from './message-quote-selection.js'
 import { findSelectedMessageText } from './message-selection-search.js'
 import { ArkmeSelectedTextReplace, type PrepareSelectedTextReplace } from './ArkmeSelectedTextReplace.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { forwardSelectedText } from './selected-text-forward.js'
+import type { SelectedTextNoteQuote } from '../selected-text-note.js'
+import { arkmeAuthStore } from './auth-store.js'
 
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
   /** Owner-local authority is never passed to ordinary Chat actions. */
-  selectionDomain?: 'transcript' | 'native'
+  selectionDomain?: 'transcript' | 'native' | 'codex'
   localMarkRef?: string
 }
 export function messageSelectionReference(target: MessageSelectionTarget): string | undefined {
@@ -143,10 +146,11 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
+  selfNote?: { sourceLabel: string; accountKey?: string } | undefined
   /** Embedded native chat may occupy only part of a full-window clipped iframe. */
   getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
-  selectionDomain?: 'transcript' | 'native' | undefined
+  selectionDomain?: 'transcript' | 'native' | 'codex' | undefined
   replySourceRef?: string | undefined
   markStorage?: 'local' | 'cloud' | undefined
   onMarkStorageChange?: ((storage: 'local' | 'cloud') => void) | undefined
@@ -159,6 +163,17 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   canReplace?: ((target: MessageSelectionTarget) => boolean) | undefined
   prepareReplace?: PrepareSelectedTextReplace | undefined
 } = {}) {
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const accountKey = selfNote?.accountKey ?? (auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  const [selfController, setSelfController] = useState<AbortController>()
+  useEffect(() => {
+    const controller = new AbortController()
+    setSelfController(controller)
+    return () => controller.abort()
+  }, [accountKey, replySourceRef])
+  const [selfSent, setSelfSent] = useState(false)
+  useEffect(() => { setSelfSent(false) }, [accountKey, replySourceRef])
+  useEffect(() => { if (selfSent) { const timer = setTimeout(() => setSelfSent(false), 3500); return () => clearTimeout(timer) } }, [selfSent])
   const [replacing, setReplacing] = useState<{ target: MessageSelectionTarget; quote: ArkmeMessageQuote; rect: DOMRect }>()
   const [verified, setVerified] = useState<{ snapshot: Snapshot; quote: ArkmeMessageQuote }>()
   const [snapshot, setSnapshot] = useState<Snapshot>()
@@ -301,7 +316,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   if (typeof document === 'undefined') return null
   if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
     {...replacing} prepare={prepareReplace} onClose={() => setReplacing(undefined)} />
-  if (!snapshot) return null
+  if (!snapshot) return selfSent ? createPortal(<div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 12000, padding: '8px 14px', borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}>已转发</div>, document.body) : null
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const quote = verified?.snapshot === snapshot ? verified.quote : undefined
   const marks = quote && replyTarget ? (getMarks?.(replyTarget) ?? []).filter(mark => mark.state === 'available'
@@ -326,7 +341,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     } catch (error) { if (current.current === snapshot) setNotice(error instanceof Error ? error.message : '取消标记失败，请重试') }
   }
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
-    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || (selectionDomain === 'native' && !!replyTarget.localMarkRef))
+    && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || ((selectionDomain === 'native' || selectionDomain === 'codex') && !!replyTarget.localMarkRef))
+  const canSendSelf = !!selfNote && !!accountKey && !!replyTarget && replyTarget.item.status === 1 && replyTarget.sourceRef === replySourceRef
   const find = () => {
     if (!stillValid(snapshot) || !replySourceRef) return
     if (!findSelectedMessageText(replySourceRef, snapshot.text)) { setNotice('当前对话暂不支持查找'); return }
@@ -342,8 +358,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
     } catch (error) { setNotice(error instanceof Error ? error.message : '无法读取选区，请重新选择') }
   }
-  const reply = async (underline = false) => {
-    if ((!canReply && !underline) || !replyTarget || replyTarget.sourceRef !== replySourceRef || !stillValid(snapshot)) return
+  const reply = async (underline = false, sendSelf = false) => {
+    if ((!canReply && !underline && !(sendSelf && canSendSelf)) || !replyTarget || replyTarget.sourceRef !== replySourceRef || !stillValid(snapshot)) return
     try {
       const sourceItem = replyTarget.item
       const source = JSON.stringify([quoteSourceContent(sourceItem), sourceItem.recordVersion])
@@ -366,7 +382,18 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         const message = await onUnderline?.(freshTarget, quote)
         if (current.current !== snapshot) return
         if (message) { setNotice(message); return }
-      } else onReply!(freshTarget, quote)
+      } else if (sendSelf && selfNote && selfController && !selfController.signal.aborted) {
+        const frozen: SelectedTextNoteQuote = {
+          version: 1, sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
+          sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,
+        }
+        const signal = selfController.signal
+        document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
+        try { const result = await forwardSelectedText(accountKey, frozen, signal); if (!signal.aborted && result.completed) setSelfSent(true) }
+        catch (error) { if (!signal.aborted) { setSnapshot(snapshot); setNotice(error instanceof Error ? error.message : '转发失败，请重试') } }
+        return
+      }
+      else onReply!(freshTarget, quote)
       document.getSelection()?.removeAllRanges()
       setSnapshot(undefined)
     } catch (error) { setNotice(error instanceof Error ? error.message : '引用失败，请重新选择') }
@@ -438,6 +465,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     {prepareReplace && replyTarget && replyTarget.sourceRef === replySourceRef && canReplace?.(replyTarget)
       && <button type="button" style={buttonStyle} onClick={() => { void replace() }}>{tr('替换')}</button>}
     {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
+    {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('转发')}</button>}
     </div>
     {(authors.length > 0 || (markStorage === 'local' && !onMarkStorageChange && canMark)) && <div data-arkme-mark-authors tabIndex={0} aria-label="标记作者" style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary, minHeight: 0, maxHeight: 'min(160px, 35vh)', overflowY: 'auto', overflowWrap: 'anywhere' }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' && !onMarkStorageChange ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}
     {notice && <span role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{notice}</span>}

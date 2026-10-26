@@ -170,13 +170,14 @@ export interface ArkmeContactAddResult {
 }
 
 export type ArkmeDirectorySectionKind =
-  | 'groups' | 'bots' | 'unmarked-speakers' | 'teams' | 'contacts'
+  | 'groups' | 'bots' | 'unmarked-speakers' | 'manual-speakers' | 'teams' | 'contacts'
 
 /** Browser-safe directory row. Provider-private identifiers never cross this boundary. */
 export type ArkmeDirectoryItem =
   | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
+  | { kind: 'manual-speaker'; speakerKey: string; speakerRef: string; displayName: string }
   | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
@@ -804,6 +805,9 @@ export interface ArkmeWorldExtensionPublication {
 }
 
 export interface ArkmeWorldFeedItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
+  /** Account-bound private annotation target; never a public reaction/share capability. */
+  localReactionTarget?: import('./reaction-contract.js').ReactionTargetRef
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
   authorRef?: string
@@ -826,6 +830,12 @@ export interface ArkmeWorldFeedItem {
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
+export interface ArkmeWorldShareResult {
+  url: string
+  title: string
+  previewText: string
+}
+
 export interface ArkmeWorldFeedPage {
   items: ArkmeWorldFeedItem[]
   total: number
@@ -837,6 +847,7 @@ export interface ArkmeWorldFeedPage {
 export interface ArkmeWorldAuthorLabel {
   authorRef: string
   authorName: string
+  memberType?: ArkmeSourceItem['peerMemberType']
 }
 
 export interface ArkmeWorldVoiceprintAvailabilityItem {
@@ -888,6 +899,7 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
   isSelf?: boolean
   interactionRef: string
   parentRef: string
@@ -1063,6 +1075,10 @@ export interface ArkmeArrangementPage {
 }
 
 export type ArkmeArrangementDetail = ArkmeArrangementItem
+
+/** Read-only deleted owner projection; deliberately excluded from live mutations. */
+export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }
+export type ArkmeDeletedArrangementPage = Omit<ArkmeArrangementPage, 'items'> & { items: ArkmeDeletedArrangementItem[] }
 
 /** Reminder-event identity is intentionally separate from Arrangement identity. */
 export interface ArkmeArrangementReminderEvent {
@@ -2009,6 +2025,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
+  localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
@@ -4207,6 +4225,7 @@ export type ArkmePluginOperation =
   | 'team.codex.entry-availability'
   | 'team.codex.invite'
   | 'team.codex.events'
+  | 'team.codex.image'
   | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
@@ -4316,6 +4335,8 @@ export type ArkmePluginOperation =
   | 'image.read'
   | 'images.list'
   | 'world.record.read'
+  | 'world.share'
+  | 'world.forward'
   | 'world.feed'
   | 'world.mine'
   | 'world.user'
@@ -4324,6 +4345,9 @@ export type ArkmePluginOperation =
   | 'chat.official-author.profile'
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
+  | 'world.reactions.prepare'
+  | 'world.reactions'
+  | 'world.reactions.local'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
@@ -4341,6 +4365,8 @@ export type ArkmePluginOperation =
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'
   | 'arrangements.list'
+  | 'arrangements.deleted.list'
+  | 'arrangements.deleted.detail'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.source.open'
@@ -4379,6 +4405,7 @@ export type ArkmePluginOperation =
   | 'source.member-event.profile'
   | 'source.member-event.private.open'
   | 'source.member-records'
+  | 'source.person-records.capabilities'
   | 'source.mark-read'
   | 'source.message-preparing.report'
   | 'source.message-preparing.cancel'
@@ -4397,6 +4424,8 @@ export type ArkmePluginOperation =
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'
+  | 'self-note.quote.send'
+  | 'selected-text.forward'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
   | 'related-recordings.share'
@@ -4434,6 +4463,7 @@ export type ArkmePluginOperation =
   | 'user.card'
   | 'chat.private.open'
   | 'chat.member.private.open'
+  | 'chat.member.world-target'
   | 'source.send-rich'
   | 'favorite-stickers.list'
   | 'reactions'
@@ -4462,6 +4492,9 @@ export type ArkmePluginOperation =
   | 'source.long-article.draft.get'
   | 'source.long-article.draft.put'
   | 'source.long-article.draft.delete'
+  | 'world.source-draft'
+  | 'world.arko-source-draft'
+  | 'world.message-source-draft'
   | 'source.record-reedit.detail'
   | 'source.record-reedit.draft.put'
   | 'source.record-reedit.draft.delete'
@@ -4636,6 +4669,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.cancel'
   | 'app.migration.install' | 'app.migration.reveal'
   | 'app.migration.dismiss'
+  | 'codex.forward'
+  | 'codex.local-mark.capabilities'
+  | 'codex.local-mark.list'
+  | 'codex.local-mark.change'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
   | 'native-chat.annotations'

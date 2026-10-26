@@ -625,6 +625,26 @@ export class RecordService {
     }
   }
 
+  async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<import('../world-publish-source.js').WorldPublishSourceDraft> {
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (!['send_to_self', 'default_category', 'topic', 'private_chat', 'group_chat'].includes(source.kind)) throw new ArkmePluginError('world-source-invalid', '仅支持将自己发出的内容发到世界', false, 403)
+    const owner = await this.recordReeditOwnerSnapshot(sourceRef, itemUid, session, source, signal)
+    const blocks = await this.recordReeditMediaBlocks(owner, session)
+    const attachments = await this.recordReeditAttachmentViews(owner, recordReeditMediaGroups(owner.contentPayload).map(group => ({ fileAssetUid: group.fileAssetUid })), blocks)
+    const voiceUid = stringValue(objectValue(owner.contentPayload?.voice).source_file_asset_uid)
+    if (voiceUid && !attachments.some(item => item.asset?.fileAssetUid === voiceUid)) {
+      const block = blocks.find(item => item.fileAssetUid === voiceUid)
+      attachments.push({ selection: { fileAssetUid: voiceUid }, asset: { fileAssetUid: voiceUid, fileName: block?.fileName ?? '语音', mimeType: block?.mimeType ?? 'audio/mpeg', fileKind: 2, size: block?.size ?? 0 }, ...(block ? { block } : {}), ...(block ? {} : { unavailable: true }) })
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { sourceRef, itemUid: owner.itemUid, sourceLabel: source.displayName, version: owner.version, title: owner.title, textContent: owner.textContent,
+      textFormat: arkmeRecordTextFormat(owner.contentPayload), sendAtMillis: owner.sendAtMillis, attachments }
+  }
+
   async recordReeditEditor(sourceRefInput: string, itemUidInput: string): Promise<ArkmeRecordReeditEditorSnapshot> {
     const session = await this.runtime.requireSession()
     return (await this.loadRecordReeditEditor(sourceRefInput.trim(), itemUidInput.trim(), session)).view
@@ -1115,10 +1135,11 @@ export class RecordService {
     itemUid: string,
     session: ArkmeSessionCredentials,
     openedSource?: ArkmeSourceRefPayload,
+    signal?: AbortSignal,
   ): Promise<RecordReeditOwnerSnapshot> {
     const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/detail', { record_uid: itemUid }, session,
+      '/api/v1/records/detail', { record_uid: itemUid }, session, signal,
     )
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid).trim() !== itemUid) {
@@ -1887,7 +1908,11 @@ export class RecordService {
         numberValue(item.send_at ?? core.send_at), this.media)
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
     const callRecord = projectCallRecord(raw, userId)
+    const localSelfQuote = (options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId) && numberValue(item.status ?? core.status) === 1
+      ? this.runtime.stateStore?.selfNoteQuotes?.project(`${this.runtime.config.environment}:${userId}`,
+        stringValue(item.record_uid ?? core.record_uid).trim(), stringValue(item.text_content ?? core.text_content)) : undefined
     return {
+      ...(localSelfQuote === undefined ? {} : { localSelfQuote }),
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       ...recordSenderSnapshot(raw),
       ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),

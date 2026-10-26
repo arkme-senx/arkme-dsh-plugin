@@ -8,6 +8,9 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
+  'deletedArrangements', 'deletedArrangementDetail',
+  // Independent World namespaces, authenticated original reads and selected-text forwarding.
+  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordsCapabilities', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
   'nativeAnnotations', 'setNativeAnnotationSource',
@@ -23,7 +26,7 @@ const expectedPublicMethods = [
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'offlineContext', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
-  'teamCodexPost',
+  'teamCodexPost', 'changeCodexLocalMark', 'codexLocalMarkCapabilities', 'codexLocalMarks', 'forwardCodexChat', 'sendQuotedSelfNote',
   'interwovenReadReceipts', 'sourceMessageExtensionParent',
   'reactions',
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
@@ -120,6 +123,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
   'conversation-activity-service.ts',
   'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
@@ -127,7 +131,7 @@ const expectedServiceFiles = [
   'explore-projection.ts', 'explore-service.ts',
   'chat-message-sync-service.ts',
   'profile-image.ts',
-  'team-codex-transport.ts',
+  'team-codex-transport.ts', 'selected-text-self-note.ts',
   'reaction-service.ts',
   'reaction-notification-context.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',

@@ -133,7 +133,7 @@ export class ContactDirectoryService {
   ): Promise<ArkmeDirectoryPage> {
     options.signal?.throwIfAborted()
     if (options.refresh && options.cursor) throw new ArkmePluginError('directory-cursor-invalid', '刷新目录需要从首页开始', false, 400)
-    if (section === 'unmarked-speakers' || section === 'teams') {
+    if (section === 'unmarked-speakers' || section === 'manual-speakers' || section === 'teams') {
       throw new ArkmePluginError('directory-section-not-owned', '该目录由独立业务服务提供', false, 501)
     }
     if (options.countOnly === true) return await this.count(section, options)
@@ -144,7 +144,7 @@ export class ContactDirectoryService {
     }
   }
 
-  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'teams'>, options: { refresh?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage> {
+  private async count(section: Exclude<ArkmeDirectorySectionKind, 'unmarked-speakers' | 'manual-speakers' | 'teams'>, options: { refresh?: boolean; signal?: AbortSignal }): Promise<ArkmeDirectoryPage> {
     const session = await this.runtime.requireSession()
     let total = 0
     switch (section) {
@@ -298,6 +298,19 @@ export class ContactDirectoryService {
       section: 'bots', items, total: bots.length, hasMore,
       ...(hasMore ? { nextCursor: await this.sealSnapshotCursor('bots', offset + slice.length, session.userId, snapshot.id) } : {}),
     }
+  }
+
+  /** Internal picker adapter. Contact identities remain inside the Host. */
+  async teamMemberCandidates(options: { cursor?: string; refresh?: boolean; signal?: AbortSignal } = {}): Promise<import('../team-member-add-contract.js').TeamMemberCandidateSourcePage> {
+    const page = await this.list('contacts', { ...options, limit: 50 })
+    if (page.cursorStale) throw new ArkmePluginError('team-candidates-stale', '联系人列表已更新，请重新加载', true, 409)
+    const items = await Promise.all(page.items.flatMap(item => item.kind === 'contact' ? [this.resolveContactRef(item.contactRef).then(({ entry }) => ({
+      userId: entry.targetUserId, displayName: entry.displayName, nickname: entry.nickname,
+      ...(entry.accountName ? { accountName: entry.accountName } : {}),
+      ...(entry.avatarRef ? { avatarRef: entry.avatarRef } : {}),
+      ...(entry.avatarFallback ? { avatarFallback: entry.avatarFallback } : {}),
+    }))] : []))
+    return { items, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), ...(page.coverage ? { coverage: page.coverage } : {}) }
   }
 
   private async listContacts(

@@ -2017,4 +2017,19 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 重试这次反馈|Retry this feedback
 暂未确认操作结果，请重试这次反馈。|The result is not confirmed. Retry this same feedback.
 这次操作未生效，请刷新后再操作。|This operation was not applied. Refresh and try again.
+手动说话人|Manual speakers
+手动说话人详情|Manual speaker details
+暂无手动说话人，可在录音标记时创建|No manual speakers. Create one while labeling a recording.
+说话人名单读取不完整，请重试|The speaker list is incomplete. Please try again.
+{v0}的说话人头像|Speaker avatar for {v0}
+录音出现记录|Recording appearances
+正在读取录音出现记录…|Loading recording appearances…
+录音出现记录读取失败|Failed to load recording appearances
+录音出现记录待更新|Recording appearances need updating
+录音出现记录仍在整理|Recording appearances are still being prepared
+{v0} 个关联的识别说话人|{v0} linked recognized speakers
+查看最近录音|View latest recording
+暂无可核实的关联录音，已创建的说话人仍会保留在名单中。|No verified linked recordings yet. The created speaker remains in the list.
+对应的识别说话人|Linked recognized speakers
+查看说话人 {v0} 的最近录音|View the latest recording for speaker {v0}
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

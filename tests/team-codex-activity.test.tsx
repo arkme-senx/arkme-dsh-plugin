@@ -26,7 +26,7 @@ describe('Team Codex activity UI',()=>{
   afterEach(async()=>{await act(async()=>{renderer?.unmount();await tick()});vi.useRealTimers();vi.unstubAllGlobals()})
   const click=async(label:string)=>{await act(async()=>{const b=renderer!.root.findAllByType('button').find(b=>text(b)===label);expect(b).toBeDefined();b!.props.onClick();await tick()})}
   const selectTask=async()=>{await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})}
-  const taskMenu=async()=>{await act(async()=>{renderer!.root.findByProps({'aria-label':'任务信息与操作'}).props.onClick();await tick()})}
+  const taskMenu=async()=>{await act(async()=>{renderer!.root.findAllByType('button').find(button=>['任务信息与操作','更多 Codex 对话操作'].includes(button.props['aria-label']))!.props.onClick();await tick()})}
   it('asks for a compact source alias inside existing cloud consent, validates bytes, and passes it only on confirmation',async()=>{
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,cloud:{status:'ready',pending:0,blocked:0,page:1,uploadEnabled:false}}:{ok:true})
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} managementOnly/>);await tick()})
@@ -58,29 +58,100 @@ describe('Team Codex activity UI',()=>{
     await act(async()=>{renderer!.update(<TeamCodexActivity {...props} target={{...props.target}}/>);await tick()})
     expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
   })
-  it('moves task management into the personal reader and writes only to the selected task team',async()=>{
-    const task={...base.tasks[0]!,installationId:'device',projectKey:'project'}
+  it('uses the shared floating conversation menu and exposes read-only information without changing the transcript or sync',async()=>{
+    const task={...base.tasks[0]!,installationId:'device',projectKey:'project',projectName:'产品',cwd:'/workspace/product',branch:'dev'}
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,tasks:[task]}:{items:[]})
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11"/>);await tick()})
-    await taskMenu();await click('排除此任务')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:task.id,action:'exclude'},expect.anything())
-    await click('排除此项目')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:'device',action:'exclude',projectKey:'project'},expect.anything())
-    mocks.callArkme.mockClear()
-    await click('删除本地记录')
-    expect(mocks.callArkme).not.toHaveBeenCalled()
-    await click('确认')
-    expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.change',{teamRef,id:task.id,action:'delete'},expect.anything())
+    const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
+    await taskMenu()
+    expect(renderer!.root.findByProps({role:'menu'}).findAllByProps({role:'menuitem'}).map(text)).toEqual(['对话信息'])
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-task-info'})).toHaveLength(0)
+    await click('对话信息')
+    expect(renderer!.root.findAllByProps({role:'menu'})).toHaveLength(0)
+    const dialog=renderer!.root.findByProps({role:'dialog'})
+    expect(text(dialog)).toContain('/workspace/product')
+    expect(text(dialog)).toContain('产品')
+    expect(text(dialog)).not.toMatch(/排除此任务|排除此项目|删除本地记录|暂停同步|断开连接/)
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    expect(mocks.callArkme.mock.calls.some(call=>call[0]==='team.codex.change')).toBe(false)
+    await act(async()=>{dialog.props.onKeyDown({key:'Escape',preventDefault:vi.fn(),stopPropagation:vi.fn()});await tick()})
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
+    await taskMenu();await click('对话信息')
+    await act(async()=>{renderer!.update(<TeamCodexActivity teamRef="" conversation personalTeams={[{teamRef,name:'Team A',jotmoId:'a'}]} selfMember="11" active={false}/>);await tick()})
+    expect(renderer!.root.findAllByProps({role:'dialog'})).toHaveLength(0)
   })
-  it('reapplies a member shortcut if that cached reader was subsequently switched to all members',async()=>{
+  it('reapplies member scope when navigating between member shortcuts without filters inside the picker',async()=>{
     const props={teamRef,conversation:true,selfMember:'11',target:{accountKey:'prod:11',team:{teamRef,name:'团队',jotmoId:'team'},member:self.userRef,memberName:self.displayName}}
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:1}}:{items:[]})
     await act(async()=>{renderer=create(<TeamCodexActivity {...props}/>);await tick()})
     await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
-    await act(async()=>{renderer!.root.findByProps({'aria-label':'筛选成员'}).props.onChange({target:{value:''}});await tick()})
+    expect(renderer!.root.findAllByProps({'aria-label':'筛选成员'})).toHaveLength(0)
+    await act(async()=>{renderer!.update(<TeamCodexActivity {...props} target={{...props.target,member:'22'}}/>);await tick()})
     mocks.callArkme.mockClear()
     await act(async()=>{renderer!.update(<TeamCodexActivity {...props} target={{...props.target}}/>);await tick()})
     expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.state',expect.objectContaining({memberRef:self.userRef}),expect.anything())
+  })
+  it('fills the compact picker across filtered empty pages and deduplicates page overlaps without changing the reader',async()=>{
+    const recent=base.tasks[0]!
+    const older={...recent,id:'older',title:'较早的对话',updatedAt:Date.now()-86400_000}
+    mocks.callArkme.mockImplementation(async(op,params)=>op==='team.codex.state'?{
+      ...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:params.page,hasMore:params.page<3},
+      tasks:params.page===1?[recent]:params.page===2?[]:[{...recent,title:'旧页中的过期标题',updatedAt:1},older],
+    }:{items:[]})
+    const props={teamRef,conversation:true,selfMember:'11',target:{accountKey:'prod:11',team:{teamRef,name:'Team',jotmoId:'team'},member:'11'}}
+    await act(async()=>{renderer=create(<TeamCodexActivity {...props}/>,{createNodeMock:element=>element.props.className==='arkme-codex-task-sidebar'?{scrollHeight:100,clientHeight:500,scrollTop:0}:null});await tick()})
+    const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
+    await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
+    const picker=renderer!.root.findByProps({className:'arkme-codex-task-picker'})
+    expect(picker.findAllByProps({className:'arkme-team-codex-task-toggle'}).map(text)).toEqual(['改进测试刚刚','较早的对话1天'])
+    expect(picker.findAllByType('input')).toHaveLength(0)
+    expect(picker.findAllByType('select')).toHaveLength(0)
+    expect(text(picker)).not.toMatch(/上一页|下一页|新会话|添加工作区|视图/)
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    expect(mocks.callArkme.mock.calls.filter(call=>call[0]==='team.codex.state').map(call=>call[1].page)).toEqual([1,2,3])
+  })
+  it('keeps the current reader when loading older conversations fails and retries the same page',async()=>{
+    let failed=true
+    const older={...base.tasks[0]!,id:'older',title:'较早的对话',updatedAt:1}
+    mocks.callArkme.mockImplementation(async(op,params)=>{
+      if(op!=='team.codex.state')return {items:[]}
+      if(params.page===2 && failed)throw new Error('加载失败')
+      return {...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:params.page,hasMore:params.page===1},tasks:params.page===1?base.tasks:[older]}
+    })
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} conversation selfMember="11" target={{accountKey:'prod:11',team:{teamRef,name:'Team',jotmoId:'team'},member:'11'}}/>);await tick()})
+    const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
+    await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
+    await act(async()=>{renderer!.root.findByProps({className:'arkme-codex-task-sidebar'}).props.onScroll({currentTarget:{scrollHeight:500,clientHeight:400,scrollTop:100}});await tick()})
+    expect(text(renderer!.root)).toContain('加载失败')
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    failed=false
+    await click('重试')
+    expect(renderer!.root.findAllByProps({className:'arkme-team-codex-task-toggle'})).toHaveLength(2)
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    expect(mocks.callArkme.mock.calls.filter(call=>call[0]==='team.codex.state').map(call=>call[1].page)).toEqual([1,2,2])
+  })
+  it('refreshes an older selected conversation in place and removes revoked pages',async()=>{
+    vi.useFakeTimers()
+    let blocked=false
+    let title='较早的对话'
+    mocks.callArkme.mockImplementation(async(op,params)=>{
+      if(op!=='team.codex.state')return {items:[]}
+      if(blocked)return {...base,tasks:[],localOnly:true,cloud:{status:'blocked',pending:0,blocked:0,page:1}}
+      return {...base,localOnly:false,cloud:{status:'ready',pending:0,blocked:0,page:params.page,hasMore:params.page===1},tasks:params.page===1?base.tasks:[{...base.tasks[0]!,id:'older',title,updatedAt:1}]}
+    })
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} conversation selfMember="11" target={{accountKey:'prod:11',team:{teamRef,name:'Team',jotmoId:'team'},member:'11'}}/>);await tick()})
+    await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
+    await act(async()=>{renderer!.root.findByProps({className:'arkme-codex-task-sidebar'}).props.onScroll({currentTarget:{scrollHeight:500,clientHeight:400,scrollTop:100}});await tick()})
+    await act(async()=>{renderer!.root.findAllByProps({className:'arkme-team-codex-task-toggle'})[1]!.props.onClick();await tick()})
+    const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
+    title='较早的对话已改名'
+    await act(async()=>{await vi.advanceTimersByTimeAsync(3000);await tick()})
+    expect(text(renderer!.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain(title)
+    expect(renderer!.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+    blocked=true
+    await act(async()=>{await vi.advanceTimersByTimeAsync(3000);await tick()})
+    expect(renderer!.root.findAllByProps({className:'arkme-codex-transcript'})).toHaveLength(0)
+    expect(text(renderer!.root)).not.toContain(title)
   })
   it('hides a previously selected transcript when a refreshed member identity can no longer be verified',async()=>{
     vi.useFakeTimers()
@@ -154,7 +225,7 @@ describe('Team Codex activity UI',()=>{
     await selectTask()
     const trigger=renderer!.root.findByProps({className:'arkme-codex-task-trigger'})
     expect(text(trigger)).toContain('改进测试')
-    expect(text(trigger)).toContain('处理中')
+    expect(text(trigger)).toContain('进行中')
     expect(trigger.props['aria-expanded']).toBe(false)
     expect(renderer!.root.findAllByProps({className:'arkme-codex-task-sidebar'})).toHaveLength(0)
     expect(text(renderer!.root)).not.toContain('开启云端同步')
@@ -321,7 +392,7 @@ describe('Team Codex activity UI',()=>{
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef}/>);await tick()})
     expect(text(renderer!.root)).toContain('同事 · 工作电脑 · 项目')
     await selectTask()
-    expect(text(renderer!.root)).toContain('排队请求暂仅在来源电脑可见')
+    expect(text(renderer!.root)).toContain('排队同步后端接口开发中，接通后可跨设备查看')
     expect(text(renderer!.root)).not.toContain('暂无排队请求')
     await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})
     await taskMenu()
@@ -329,7 +400,7 @@ describe('Team Codex activity UI',()=>{
     expect(text(renderer!.root)).not.toContain('排除此任务')
   })
   it('refreshes remote history without metadata changes and paginates using the opaque cursor',async()=>{
-    vi.useFakeTimers();vi.stubGlobal('document',{hidden:false})
+    vi.useFakeTimers();vi.stubGlobal('document',{hidden:false,addEventListener:vi.fn(),removeEventListener:vi.fn()});vi.stubGlobal('window',{addEventListener:vi.fn(),removeEventListener:vi.fn()})
     const task={...base.tasks[0]!,id:'remote-task',cloud:{taskId:'remote-task',sourceId:'remote-source',sourceName:'电脑B',ownerRef:'22',remote:true}}
     let version=1
     mocks.callArkme.mockImplementation(async(op:string)=>op==='team.codex.state'?{...base,localOnly:false,tasks:[task],cloud:{status:'ready',pending:0,blocked:0,page:1}}:
