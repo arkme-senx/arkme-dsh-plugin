@@ -642,7 +642,7 @@ export class ServiceRuntime {
       '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
-      '/api/v1/reactions/query', '/api/v1/reactions/notifications/query',
+      '/api/v1/reactions/query', '/api/v1/reactions/team/query', '/api/v1/reactions/team/actors/query', '/api/v1/reactions/team/groups/query', '/api/v1/reactions/notifications/query',
       '/api/v1/reactions/actors/query', '/api/v1/reactions/groups/query',
       '/api/v1/reactions/history/query', '/api/v1/reactions/received/query',
       '/api/v1/reactions/history-policy/query', '/api/v1/reactions/library/query',
@@ -651,7 +651,7 @@ export class ServiceRuntime {
     ]).has(path)) return true
     if (baseUrl === this.config.teamBaseUrl && new Set([
       '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
-      '/api/v1/team/conversations/list', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
+      '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
@@ -1020,7 +1020,7 @@ export class ServiceRuntime {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
     } finally {
-      if (['/api/v1/reactions/set', '/api/v1/reactions/world/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
+      if (['/api/v1/reactions/team/set', '/api/v1/reactions/set', '/api/v1/reactions/world/set', '/api/v1/reactions/notifications/read', '/api/v1/reactions/history-policy/set', '/api/v1/reactions/library/set'].includes(path)) {
         // Even an unknown write outcome must not join a read started before it.
         this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${this.config.recordBaseUrl.replace(/\/+$/, '')}/api/v1/reactions/`)
       }

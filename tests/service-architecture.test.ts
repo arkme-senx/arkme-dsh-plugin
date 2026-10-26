@@ -37,7 +37,9 @@ const expectedPublicMethods = [
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
-  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // built-in App UI composition only; not Consumer SDK or Tools
+  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
+  'listTeamConversations','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'localTranscriptEntries', 'publishLongArticle', 'stageLongArticleImage',
@@ -135,7 +137,7 @@ const expectedServiceFiles = [
   'explore-projection.ts', 'explore-service.ts',
   'chat-message-sync-service.ts',
   'profile-image.ts',
-  'team-codex-transport.ts', 'selected-text-self-note.ts',
+  'team-codex-transport.ts', 'team-message-forward-service.ts', 'selected-text-self-note.ts',
   'reaction-service.ts',
   'reaction-notification-context.ts',
   'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',

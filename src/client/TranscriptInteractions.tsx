@@ -116,7 +116,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
   const snapshot = async (row: TranscriptInteractionRow, entry: LocalTranscriptEntry | undefined): Promise<MessageUnderlineSnapshot> => {
     if (!entry?.marks.length) return { revision: entry?.revision ?? 0, accessible: true, items: [] }
     const digest = await quoteDigest({ title: '', textContent: display(row, entry), textFormat: 'plain' } as ArkmeTimelineItem)
-    return { revision: entry?.revision ?? 0, accessible: true, items: (entry?.marks ?? []).map(mark => ({ ...mark, state: mark.anchor.sourceDigest === digest ? 'available' : 'stale' })) }
+    return { revision: entry?.revision ?? 0, accessible: true, items: (entry?.marks ?? []).map(mark => ({ ...mark, state: mark.anchor?.sourceDigest === digest ? 'available' : 'stale' })) }
   }
   const transport = useMemo<MessageMarkTransport>(() => ({
     capabilities: async () => ({ supported: !!account && enabled, maxLength: 2000, storage: 'local' }),

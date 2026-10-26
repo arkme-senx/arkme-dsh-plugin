@@ -20,7 +20,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_conversation_words_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
-  'arkme_team_profile_update', 'arkme_team_external_chat_share',
+  'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_reactions_write',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
@@ -121,6 +121,14 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_archive_set') return args.self_archived === true
     ? '是否确认归档此主题及其子主题？内容仍可搜索和引用，可在已归档中恢复。'
     : '是否确认取消此主题的单独归档？独立归档的子主题会保留；如果父级仍归档，此主题仍随父级归档。'
+  if (name === 'arkme_team_mark_change') return cleanArgument(args.audience,30)==='team' ? '是否确认修改这条消息的团队内部共享标记？' : '是否确认修改此会话双方都可见的共享标记？'
+  if (name === 'arkme_team_message_forward') return '是否确认将所选团队消息转发到指定目标？目标中的冻结内容和附件将按其当前访问权限提供。'
+  if (name === 'arkme_team_message_copy_link') return '是否确认生成所选团队消息的公开分享链接？取得链接的人可按分享审核规则查看这些内容。'
+  if (name === 'arkme_team_message_report') return '是否确认将这条团队消息的当前版本举报给平台审核？这不会删除作者的个人快记。'
+  if (name === 'arkme_team_send_task') return cleanArgument(args.action, 30) === 'cancel'
+    ? '是否确认取消这条尚未发布的团队发送任务？已发布消息仍遵循作者全局删除规则。'
+    : '是否确认继续原团队发送任务？将保留原请求身份，不创建重复消息。'
+  if (name === 'arkme_team_message_send') return '是否确认将这段文字发送到已选择的团队对外会话？引用和正文将按当前权限与版本校验。'
   if (name === 'arkme_topic_home_visibility') return args.show_in_home === true
     ? '是否确认将这个主题的快记展示在首页？'
     : '是否确认在首页隐藏这个主题的快记？主题与快记不会被删除。'

@@ -12,6 +12,7 @@ export function createArkmeFileTransfers(options: {
   runtime: ServiceRuntime
   source: SourceService
   media: MediaService
+  teamMedia?:Pick<import('./services/team-app-service.js').TeamAppService,'fetchMedia'>
   chat: ChatService
   openPath?: (path: string, signal: AbortSignal) => Promise<void>
 }): FileTransfers | undefined {
@@ -56,7 +57,14 @@ export function createArkmeFileTransfers(options: {
           : { kind: 'owner_not_accepted', message: error.message, code: error.code, retryable: error.retryable }
       }
     },
-    fetchMedia: async (ref, signal) => await options.media.fetchMedia(ref, undefined, signal, true),
+    fetchMedia: async (ref, signal) => {
+      if(ref.startsWith('team-app-media.')){
+        if(!options.teamMedia)throw new ArkmePluginError('team-media-unavailable','团队原件读取暂不可用',false,503)
+        const result=await options.teamMedia.fetchMedia(ref,undefined,signal)
+        return {response:result.response,descriptor:{fileName:result.fileName,mimeType:result.mimeType,size:result.size}}
+      }
+      return await options.media.fetchMedia(ref, undefined, signal, true)
+    },
     ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
     reconcile: async (input, signal) => {
       const page = await options.chat.readSource(input.sourceRef, { limit: 100, signal })

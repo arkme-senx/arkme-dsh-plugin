@@ -1,53 +1,53 @@
-import type { TeamConversation, TeamMessage, TeamTimeline } from '../team-app-contract.js'
-import { callArkme } from './api.js'
-import { prepareAskDshNotes } from './ask-dsh-notes.js'
-import { teamMessagePresentation } from './TeamMessageContent.js'
+import type {ArkmeContentBlock,ArkmeTimelineItem} from '../types.js'
+import type {TeamMessage} from '../team-app-contract.js'
+import {createArkmeSdk} from '../sdk/index.js'
+import {teamMessagePresentation} from './TeamMessageContent.js'
+import {prepareAskDshNotes} from './ask-dsh-notes.js'
+import {readAskDshOriginal} from './use-ask-dsh.js'
+import {remapLongArticleAssets} from '../long-article-assets.js'
 
-export const canAskDshTeamMessage = (message: TeamMessage): boolean => message.state === 'published'
-  && message.contentStatus === 'available' && !!message.content && message.seq > 0
+interface TeamMaterialReader {
+  preflight(conversationRef:string,selections:{messageRef:string;version:number}[],signal:AbortSignal):Promise<TeamMessage[]>
+  original(block:ArkmeContentBlock,signal:AbortSignal):Promise<Blob>
+}
 
-/** Reauthorize selected versions only. Never pass Team references to Chat APIs. */
-export async function prepareTeamAskDsh(conversation: TeamConversation, messages: readonly TeamMessage[],
-  accountKey: string, signal: AbortSignal, progress: (text: string) => void): Promise<File[]> {
-  if (!messages.length || messages.length > 100 || messages.some(message => !canAskDshTeamMessage(message))) throw new Error('请选择 1 至 100 条可读取的消息')
-  const verified: TeamMessage[] = new Array(messages.length)
-  let next = 0
-  const controller = new AbortController(), readSignal = AbortSignal.any([signal, controller.signal])
-  try { await Promise.all(Array.from({ length: Math.min(4, messages.length) }, async () => {
-    while (next < messages.length) {
-      readSignal.throwIfAborted()
-      const index = next++, selected = messages[index]!
-      const page = await callArkme<TeamTimeline>('team.app.timeline', {
-        conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: selected.seq + 1, limit: 1,
-      }, readSignal)
-      const fresh = page.messages.find(message => message.key === selected.key)
-      if (page.conversation.key !== conversation.key || !fresh || !canAskDshTeamMessage(fresh)
-        || fresh.version !== selected.version || JSON.stringify(fresh.content) !== JSON.stringify(selected.content)) {
-        throw new Error('所选消息已变化或不可访问，请刷新后重新选择')
-      }
-      // Keep the viewer's contact remark; source bytes and authority come from the fresh read.
-      verified[index] = { ...fresh, sender: { ...fresh.sender, nickname: selected.sender.nickname } }
-    }
-  })) } finally { controller.abort() }
+export const canAskDshTeamMessage = (message: TeamMessage): boolean => message.state === 'published' && message.contentStatus === 'available' && !!message.content && message.seq > 0
+
+/** Preflight precedes even pure-text export. Only returned bodies are fed to
+ * the shared preparer; its timeline-text preference cannot restore stale text. */
+export async function prepareTeamAskDshNotes(conversationRef:string,selected:readonly TeamMessage[],sourceName:string,signal:AbortSignal,progress?:(text:string)=>void,reader?:TeamMaterialReader):Promise<File[]>{
   signal.throwIfAborted()
-  const media = new Map(verified.flatMap(message => message.media.map(file => [file.ref, file] as const)))
-  const source = conversation.side === 'team'
-    ? `${conversation.channel.name} · ${conversation.visitor?.nickname ?? '外部用户'}` : conversation.channel.name
-  const items = verified.map(message => ({ ...teamMessagePresentation(message), exportSourceName: source,
-    contentBlocks: teamMessagePresentation(message).contentBlocks!.map(block => ({ ...block, originalRef: block.mediaRef })),
-  }))
-  return prepareAskDshNotes(items, {
-    detail: async () => { throw new Error('团队消息附件不完整，请刷新后重试') },
-    original: async (block, readSignal) => {
-      const file = media.get(block.originalRef ?? '')
-      if (!file) throw new Error('团队附件不可用')
-      const url = new URL(file.url, window.location.origin)
-      if (url.origin !== window.location.origin || !url.pathname.endsWith('/team/media') || url.searchParams.get('ref') !== file.ref) throw new Error('团队附件读取地址无效')
-      const response = await fetch(url, { signal: readSignal, redirect: 'error' })
-      if (!response.ok || response.headers.get('content-type')?.includes('application/json')) throw new Error('附件已失效或无权访问，请刷新消息')
-      const blob = await response.blob()
-      if (file.size > 0 && blob.size !== file.size) throw new Error('原附件不完整，请重试')
-      return blob
-    },
-  }, signal, progress)
+  if(!selected.length||selected.length>100||selected.some(m=>m.state!=='published'||m.contentStatus!=='available'||m.version<=0))throw new Error('请选择 1 至 100 条当前可读的团队消息')
+  const port=reader??{preflight:(ref,selections,readSignal)=>createArkmeSdk().preflightTeamMessages(ref,selections,readSignal),original:readAskDshOriginal}
+  const fresh=await port.preflight(conversationRef,selected.map(message=>({messageRef:message.ref,version:message.version})),signal)
+  signal.throwIfAborted()
+  if(fresh.length!==selected.length||fresh.some((message,index)=>message.key!==selected[index]!.key||message.version!==selected[index]!.version||message.contentStatus!=='available'))throw new Error('选中的团队消息已变化，请重新选择')
+  const items=fresh.map((message,index)=>{
+    if(message.mediaComplete===false||!message.forwardRecords&&message.content?.template_kind!==1&&!message.media.length)throw new Error('完整附件清单暂不可用，请刷新后重试')
+    const item=teamMessagePresentation({...message,sender:{...message.sender,nickname:selected[index]!.sender.nickname}})
+    const originalBlock=(block:ArkmeContentBlock):ArkmeContentBlock=>{
+      const media=message.media.find(media=>media.ref===block.mediaRef)
+      if(!media)throw new Error('完整附件清单暂不可用，请刷新后重试')
+      // Keep an already issued grant only for the exact authorized asset and
+      // body version. Each first download still reauthorizes through Team;
+      // completed local files retain the existing personal cache contract.
+      const original=selected[index]!.media.find(old=>old.key===media.key)?.ref??media.ref
+      return {...block,originalRef:original,fileAssetUid:media.key}
+    }
+    // Forward detail rows have their own inline aliases. Export resources share
+    // one namespace, so rewrite those aliases to the authorized media identity.
+    // The selected card is one intent: never export a partial detail silently.
+    const forward=item.forwardRecords
+    if(forward&&(forward.truncated||!forward.items.length||forward.items.some(row=>row.truncated||row.mediaUnavailable)))throw new Error('完整转发内容暂不可用或过大，请打开详情后重试')
+    return {...item,exportSourceName:sourceName,contentBlocks:(item.contentBlocks??[]).map(originalBlock),
+      ...(forward?{forwardRecords:{...forward,items:forward.items.map(row=>{
+        const blocks=row.contentBlocks??[],converted=blocks.map(originalBlock)
+        const aliases=new Map(blocks.flatMap((block,position)=>block.fileAssetUid?[[`arkme-asset:${block.fileAssetUid}`,`arkme-asset:${converted[position]!.fileAssetUid}`]]:[]))
+        return {...row,textContent:row.textFormat==='markdown'?remapLongArticleAssets(row.textContent,aliases):row.textContent,contentBlocks:converted}
+      })}}:{})}
+  })
+  return await prepareAskDshNotes(items,{
+    detail:async(item:ArkmeTimelineItem)=>({itemUid:item.itemUid,title:item.title,textContent:item.textContent,startAtMillis:item.sendAtMillis,contentBlocks:item.contentBlocks!,backgroundSound:'unknown'}),
+    original:port.original,
+  },signal,progress)
 }

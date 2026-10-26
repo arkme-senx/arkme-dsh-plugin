@@ -1,4 +1,8 @@
 import { DictationService } from './services/dictation-service.js'
+import {TeamMessageForwardService} from './services/team-message-forward-service.js'
+import type {TeamMessageReadOptions} from './team-message-contract.js'
+import type {TeamConversation,TeamPage,TeamSide,TeamTimeline} from './team-app-contract.js'
+import type {TeamSendTask} from './team-send-contract.js'
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
@@ -434,6 +438,7 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamDelivery: TeamSendQueue
   private readonly teamApp: TeamAppService
+  private readonly teamForward:TeamMessageForwardService
   async externalChats(operation: import('./team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown> {
     if (!['list','mine','share','unshare','page'].includes(operation)) throw new Error('Unsupported external chat operation')
     return await this.teamApp.execute(`team.app.external.${operation}`, params, signal)
@@ -459,6 +464,40 @@ export class ArkmeService {
     return await this.uploadTeamAvatar(profileRef,bytes.toString('base64'),uploadUid,signal)
   }
   async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void> {await this.teamApp.execute('team.app.profile.avatar.abort',{uploadRef},signal)}
+  async forwardTeamMessages(input:import('./team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>{return this.teamForward.forward(input,signal)}
+  async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>{
+    return await this.executeTeamApp('team.app.copy-link',{conversationRef,selections},signal) as import('./types.js').ArkmeMessageCopyLinkResult
+  }
+  async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('./team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamReportResult>{
+    return await this.executeTeamApp('team.app.report',{conversationRef,messageRef,version,reason,description},signal) as import('./team-message-contract.js').TeamReportResult
+  }
+  async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamMessage[]>{
+    return await this.executeTeamApp('team.app.preflight',{conversationRef,selections},signal) as import('./team-app-contract.js').TeamMessage[]
+  }
+  async readTeamMarks(conversationRef:string,audience:import('./team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('./message-annotations.js').MessageUnderlineSnapshot}[]> {
+    return await this.executeTeamApp('team.app.mark.list',{conversationRef,audience,markRefs},signal) as {actionRef:string;snapshot:import('./message-annotations.js').MessageUnderlineSnapshot}[]
+  }
+  async changeTeamMark(conversationRef:string,audience:import('./team-message-contract.js').TeamMarkAudience,markRef:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('./message-annotations.js').MessageUnderlineSnapshot> {
+    return await this.executeTeamApp('team.app.mark.change',{conversationRef,audience,markRef,change},signal) as import('./message-annotations.js').MessageUnderlineSnapshot
+  }
+  async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>> {
+    if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
+    return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
+  }
+  async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
+    return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
+  }
+  async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask> {
+    signal?.throwIfAborted()
+    return await this.executeTeamApp('team.app.send.enqueue',command as unknown as Record<string,unknown>,signal) as TeamSendTask
+  }
+  async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]> {
+    return await this.executeTeamApp('team.app.send.tasks',{conversationRef},signal) as TeamSendTask[]
+  }
+  async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask> {
+    if (!['retry','cancel'].includes(action)) throw new TypeError('Invalid Team send action')
+    return await this.executeTeamApp(action==='retry'?'team.app.send.retry-task':'team.app.send.cancel-task',{conversationRef,taskRef},signal) as TeamSendTask
+  }
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
@@ -631,6 +670,10 @@ export class ArkmeService {
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
+    this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
+      if(target.kind==='private_chat'||target.kind==='group_chat')this.realtime.scheduleChatSessionProjection(target.ownerRef,sequence??0)
+      else await this.realtime.invalidateRecordProjection()
+    })
     this.messageActions = new MessageActionService(
       new ArkmeMessageActionGateway(
         this.runtime,
@@ -794,6 +837,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       source: this.source,
       media: this.media,
       chat: this.chat,
+      teamMedia:this.teamApp,
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
         await this.localFileOpener(path, signal)
@@ -1152,6 +1196,7 @@ arkoImagesV1:true,
         entityArchive: true,
         teamProfiles: true,
         teamExternalChats: true,
+        teamMessageInteractions: 1,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
@@ -2508,7 +2553,7 @@ arkoImagesV1:true,
   }
   async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService): Promise<unknown> {
     return await withReactionTrace(input, async () => {
-    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
+    const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.teamConversationRef!==undefined ? this.teamApp.reactionTarget(target.teamConversationRef,target.teamMessageRef) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
       const [sources, profiles] = await Promise.all([
         this.source.chatSourcesBySessionUids([...new Set(items.map(item => item.sessionUID).filter(Boolean))], signal),
@@ -2574,10 +2619,14 @@ arkoImagesV1:true,
       } else include(input.target.sourceRef, ids)
       if (input.action === 'query' && input.actorPresentation === 'deferred') {
         const references = new Map<string, Map<number, string>>()
+        const teamIds=new Set(input.targets.filter(target=>target.teamConversationRef).map(target=>target.id))
+        const teamActors=[...new Set(page.items.filter(item=>teamIds.has(item.target_id)&&item.actors_visible).flatMap(item=>item.groups.flatMap(group=>group.actorIds)))]
+        const teamProfiles=teamActors.length?await this.profile.publicProfileSummariesByUserIds(teamActors,session,signal,5_000):new Map<number,{displayName?:string;avatarUrl?:string}>()
+        const teamAvatars=await actorAvatars(session.userId,teamProfiles)
         for (const [sourceRef, users] of sourceIds) references.set(sourceRef, await this.chat.reactionActorReferences(sourceRef, [...users]))
         if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
         return { ...page, items: page.items.map(item => ({ ...item, groups: item.groups.map(({ actorIds, ...group }) => ({
-          ...group, actors: item.actors_visible ? actorIds.map(userId => ({ userId, displayName: '用户', presentationPending: true,
+          ...group, actors: item.actors_visible ? actorIds.map(userId => teamIds.has(item.target_id) ? presentActor(userId,teamProfiles.get(userId)?.displayName,undefined,teamAvatars.get(userId)) : ({ userId, displayName: '用户', presentationPending: true,
             ...(references.get(sourceByTarget.get(item.target_id) ?? '')?.get(userId) ? { memberRef: references.get(sourceByTarget.get(item.target_id)!)!.get(userId)! } : {}),
           })) : [],
         })) })) }

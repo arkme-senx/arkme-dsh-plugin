@@ -1,3 +1,4 @@
+import { projectTeamForward } from './team-forward-presentation.js'
 import type { ArkmeForwardRecordsPreview, ArkmeForwardRecordPreviewItem, ArkmeForwardTranscriptSegment } from './types.js'
 import type { MediaService } from './services/media-service.js'
 import type { ProfileService } from './services/profile-service.js'
@@ -42,6 +43,10 @@ export function projectForwardRecordsPreview(
 ): ArkmeForwardRecordsPreview | undefined {
   const nested = objectValue(contentPayload.forward_records ?? contentPayload.forwardRecords)
   const payload = Object.keys(nested).length > 0 ? nested : contentPayload
+  if (payload.source_type === 'team_message') {
+    return projectTeamForward({ forward_records: payload },
+      (files, longArticle) => media.forwardContentBlocks(files, viewerUserId, { longArticle }))
+  }
   if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
 
   const projectedItems: ArkmeForwardRecordPreviewItem[] = []

@@ -1,3 +1,4 @@
+import {projectTeamForward} from '../team-forward-presentation.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
 import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -12,7 +13,7 @@ import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team
 import type { TeamWorldView, TeamWorldPrepareResult } from '../team-world-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
-import { underlineId, type MessageUnderlineChange } from '../message-annotations.js'
+import { readTeamUnderlineSnapshot, underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
@@ -41,7 +42,9 @@ const reasons: Record<string, string> = {
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
+ content_too_large: '选中内容过大，请减少消息数量后重试',
   idempotency_conflict: '同一发送请求的内容不一致，请核对发送结果', invalid_request: '请求内容无效',
+  annotation_limit:'这条消息的共享标记已达上限，请先取消不需要的标记',
   rate_limited: '操作过于频繁，请稍后使用原请求重试',
   dependency_unavailable: '服务暂时不可用，请使用原请求重试', approval_required: '已启用加入审批', already_member: '你已经是团队成员',
 }
@@ -70,6 +73,7 @@ export class TeamAppService {
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
     private readonly memberCandidates?: TeamMemberCandidatePort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
+
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
     return await this.codec.seal(`team-app-${kind}`, { ...value, viewer: actor })
@@ -79,9 +83,28 @@ export class TeamAppService {
     if (decoded.viewer !== actor) throw invalid()
     return decoded
   }
+  async resolveConversation(ref:string,actor:number):Promise<{conversation_uid:string;side:TeamSide}>{
+    const value=await this.open('conversation',ref,actor)
+    if(!str(value.conversation_uid)||!['team','external'].includes(str(value.side)))throw invalid()
+    return {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+  }
+  async resolveMessageSelection(conversationRef:string,selections:unknown,actor:number):Promise<{conversation_uid:string;message_uid:string;side:TeamSide;expected_record_version:number}[]>{
+    const context=await this.resolveConversation(conversationRef,actor)
+    if(!Array.isArray(selections)||!selections.length||selections.length>100)throw invalid()
+    const selected=await Promise.all(selections.map(async raw=>{const input=obj(raw),message=await this.open('message',input.messageRef,actor);if(message.conversation_uid!==context.conversation_uid||message.side!==context.side||num(input.version)<=0)throw invalid();return {...context,message_uid:str(message.message_uid),expected_record_version:num(input.version)}}))
+    if(selected.some(item=>!item.message_uid)||new Set(selected.map(item=>item.message_uid)).size!==selected.length)throw invalid()
+    return selected
+  }
+  async messageReceipt(raw:unknown,actor:number,context:{conversation_uid:string;side:TeamSide}):Promise<TeamMessage>{return this.message(raw,actor,context)}
   async conversationKey(ref: string, actor: number): Promise<string> {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
+  }
+  async reactionTarget(conversationRef:string,messageRef:string):Promise<import('./reaction-service.js').ReactionWireTarget>{
+    const actor=(await this.runtime.requireSession()).userId
+    const [context,message]=await Promise.all([this.open('conversation',conversationRef,actor),this.open('message',messageRef,actor)])
+    if(message.conversation_uid!==context.conversation_uid||message.side!==context.side||!['team','external'].includes(str(context.side)))throw invalid()
+    return {team_conversation_uid:str(context.conversation_uid),team_message_uid:str(message.message_uid),team_side:context.side as 'team'|'external'}
   }
   async replyKey(conversationRef: string, messageRef: string, actor: number): Promise<string> {
     const context = await this.open('conversation', conversationRef, actor)
@@ -157,28 +180,41 @@ export class TeamAppService {
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
+    const reply = obj(v.reply)
+    const replyPreview = str(reply.message_uid) ? {
+      ref: await this.ref('message', {conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},actor),
+      key:await this.key(str(reply.message_uid),actor),seq:num(reply.seq),version:num(reply.record_version),
+      state: ['available','edited'].includes(str(reply.state)) ? str(reply.state) as 'available'|'edited' : 'unavailable' as const,
+      text: ['available','edited'].includes(str(reply.state)) ? str(reply.text) : '',sender:await this.identity(['available','edited'].includes(str(reply.state))?reply.sender:{},actor),
+      ...(reply.state === 'available' && readMessageQuote(reply.quote) ? {quote:readMessageQuote(reply.quote)!} : {}),
+    } : undefined
     const markContent = { title: str(content.title), textContent: str(content.text_content), textFormat: obj(content.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const }
     const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
-    return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
-      ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
-        digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonical: quoteCanonicalText(markContent) }, actor) } : {}),
-      side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
-      ...(str(v.reply_to) ? { replyToKey: await this.key(str(v.reply_to), actor) } : {}),
-      state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
-      ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
-      version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
-        text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
-        ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
-      } } : {}),
-      media: await Promise.all(list(content.media).map(async f => {
-        const ref = await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type) }, actor)
+    const projectedMedia = await Promise.all(list(content.media).map(async f => {
+        const ref = await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type), size:num(f.size) }, actor)
         return {
           key: await this.key(`media:${uid}:${num(content.version)}:${str(f.file_asset_uid)}`, actor), ref,
           // This local route reauthorizes every byte read, not an upstream signed URL.
           url: `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,
           name: str(f.file_name) || '附件', mimeType: str(f.mime_type), size: num(f.size), kind: num(f.file_kind),
         }
-      })),
+      }))
+    const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
+    const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
+    return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
+      ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
+        digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),
+      side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
+      state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
+      ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
+      ...(replyPreview ? {reply:replyPreview} : {}),
+      version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
+        text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
+        ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
+      } } : {}),
+      mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
+      media: projectedMedia,
+      ...(forwardRecords?{forwardRecords}:{}),
     }
   }
 
@@ -205,8 +241,8 @@ export class TeamAppService {
     const resolve = async (ref: string) => {
       const target = await this.open('local-mark', ref, actor)
       if (target.conversation_uid !== context.conversation_uid || target.side !== context.side
-        || !str(target.message_uid) || !/^[a-f0-9]{64}$/u.test(str(target.digest)) || typeof target.canonical !== 'string') throw invalid()
-      return { key: str(target.message_uid), digest: str(target.digest), canonical: target.canonical, version: num(target.record_version) }
+        || !str(target.message_uid) || !/^[a-f0-9]{64}$/u.test(str(target.digest)) || !/^[a-f0-9]{64}$/u.test(str(target.canonicalDigest))) throw invalid()
+      return { key: str(target.message_uid), digest: str(target.digest), canonicalDigest: str(target.canonicalDigest), version: num(target.record_version) }
     }
     const assertAccount = async () => {
       signal?.throwIfAborted()
@@ -215,11 +251,11 @@ export class TeamAppService {
     }
     if (operation === 'team.app.local-mark.capabilities') {
       await assertAccount()
-      return { supported: true, maxLength: 2000, storage: 'local' }
+      return { supported: true, maxLength: 2000, storage: 'local', maxBatchSize: 4 }
     }
     if (operation === 'team.app.local-mark.list') {
       const refs = p.markRefs
-      if (!Array.isArray(refs) || !refs.length || refs.length > 40 || refs.some(ref => typeof ref !== 'string') || new Set(refs).size !== refs.length) throw invalid()
+      if (!Array.isArray(refs) || !refs.length || refs.length > 4 || refs.some(ref => typeof ref !== 'string') || new Set(refs).size !== refs.length) throw invalid()
       const targets = await Promise.all(refs.map(resolve))
       await assertAccount()
       return targets.map((target, index) => ({ actionRef: refs[index], snapshot: store.read(scope, target.key, actor, target.digest) }))
@@ -228,8 +264,10 @@ export class TeamAppService {
     if (!underlineId(change.operationId) || !['add', 'remove'].includes(str(change.kind))
       || change.kind === 'remove' && !underlineId(change.annotationId)) throw invalid()
     const anchor = change.kind === 'add' ? readMessageQuote(change.anchor) : undefined
+    const canonical = str(change.canonical)
     if (change.kind === 'add' && (!anchor || anchor.sourceDigest !== target.digest
-      || anchor.recordVersion !== target.version || !quoteMatchesCanonical(anchor, target.canonical))) {
+      || anchor.recordVersion !== target.version || Buffer.byteLength(canonical, 'utf8') > 256_000
+      || createHash('sha256').update(canonical).digest('hex') !== target.canonicalDigest || !quoteMatchesCanonical(anchor, canonical))) {
       throw new ArkmePluginError('team-local-mark-source-changed', '选区与原文不一致，请重新选择', false, 409)
     }
     await assertAccount()
@@ -654,8 +692,57 @@ export class TeamAppService {
         return { name: str(data.team_name), conversationRef: await this.ref('conversation',
           { conversation_uid: str(data.conversation_uid), side: str(data.side) }, actor) }
       }
+      case 'team.app.report': {
+        const context=await conversation(),m=await message()
+        if(m.conversation_uid!==context.conversation_uid||m.side!==context.side||!Number.isSafeInteger(p.version)||num(p.version)<=0||!['spam','harassment','illegal','privacy','other'].includes(str(p.reason)))throw invalid()
+        const result=await post('conversations/messages/reports/create',{...context,message_uid:m.message_uid,expected_record_version:p.version,reason:p.reason,description:str(p.description)})
+        if(!str(result.report_uid))throw invalid()
+        return {reportUid:str(result.report_uid)}
+      }
+      case 'team.app.copy-link': {
+        const selected=await this.resolveMessageSelection(str(p.conversationRef),p.selections,actor)
+        const sources=selected.map(source=>({kind:'team_message',team_source:source}))
+        const result=obj(await this.runtime.authenticatedChatPost('/api/v1/chats/messages/copy-link/get-or-create',{sources},session,signal))
+        if(!str(result.sid)||!/^https?:\/\//u.test(str(result.url)))throw invalid()
+        return {sid:str(result.sid),url:str(result.url)}
+      }
+      case 'team.app.preflight': {
+        const context=await conversation()
+        const sources=await this.resolveMessageSelection(str(p.conversationRef),p.selections,actor)
+        const selected=sources.map(source=>({message_uid:source.message_uid,expected_record_version:source.expected_record_version}))
+        const data=await post('conversations/messages/batch-get',{...context,items:selected},true),rows=list(data.messages)
+        if(rows.length!==selected.length||rows.some((row,index)=>row.message_uid!==selected[index]!.message_uid||obj(row.record).version!==selected[index]!.expected_record_version||obj(row.record).status!=='available'))throw invalid()
+        return await Promise.all(rows.map(row=>this.message(row,actor,context)))
+      }
+      case 'team.app.mark.capabilities': {const context=await conversation();if(!['team','conversation'].includes(str(p.audience))||p.audience==='team'&&context.side!=='team')throw invalid();return {supported:true,maxLength:2000,storage:'cloud',maxBatchSize:4}}
+      case 'team.app.mark.list':
+      case 'team.app.mark.change': {
+        const context=await conversation(),audience=p.audience
+        if(!['team','conversation'].includes(str(audience))||audience==='team'&&context.side!=='team')throw invalid()
+        const refs=operation==='team.app.mark.list'?p.markRefs:[p.markRef]
+        if(!Array.isArray(refs)||!refs.length||refs.length>4)throw invalid()
+        const targets=await Promise.all(refs.map(ref=>this.open('message',ref,actor)))
+        if(targets.some(target=>target.conversation_uid!==context.conversation_uid||target.side!==context.side||!str(target.message_uid)))throw invalid()
+        if(operation==='team.app.mark.list'){
+          const messageUIDs=[...new Set(targets.map(target=>target.message_uid))]
+          const data=await post('conversations/messages/annotations/batch-query',{...context,audience,message_uids:messageUIDs},true)
+          const rows=list(data.items)
+          if(rows.length!==messageUIDs.length)throw invalid()
+          return targets.map((target,index)=>{const row=rows.find(row=>row.message_uid===target.message_uid&&row.audience===audience);if(!row)throw invalid();return {actionRef:refs[index],snapshot:readTeamUnderlineSnapshot(row)}})
+        }
+        const change=obj(p.change),kind=change.kind
+        if(kind!=='add'&&kind!=='remove')throw invalid()
+        const anchor=kind==='add'?readMessageQuote(change.anchor):undefined
+        if(kind==='add'&&(!anchor||!str(change.operationId))||kind==='remove'&&!underlineId(change.annotationId))throw invalid()
+        const data=await post('conversations/messages/annotations/change',{...context,audience,message_uid:targets[0]!.message_uid,action:kind,...(anchor?{operation_uid:change.operationId,anchor}:{annotation_uid:change.annotationId})})
+        return readTeamUnderlineSnapshot(data)
+      }
+      case 'team.app.locate':
       case 'team.app.timeline': {
-        const context = await conversation(), data = await post('conversations/timeline/page', { ...context, before_seq: num(p.beforeSeq), limit: num(p.limit) || 50 }, true)
+        const context = await conversation()
+        const target = operation === 'team.app.locate' ? await this.open('message', p.messageRef, actor) : undefined
+        if (target && (target.conversation_uid !== context.conversation_uid || target.side !== context.side)) throw invalid()
+        const data = await post(operation === 'team.app.locate' ? 'conversations/timeline/locate' : 'conversations/timeline/page', { ...context, ...(target ? {message_uid:target.message_uid} : {before_seq:num(p.beforeSeq)}), limit:num(p.limit)||50 }, true)
         const current = await this.conversation(data.conversation, actor)
         const external = list(data.messages).find(v => v.side === 'external')
         if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
@@ -715,10 +802,13 @@ export class TeamAppService {
       }
       case 'team.app.send': {
         const context = await conversation()
-        if (p.replyToRef !== undefined) await this.replyKey(str(p.conversationRef), str(p.replyToRef), actor)
+        const reply = p.replyToRef ? await this.open('message',p.replyToRef,actor) : undefined
+        if (reply && (reply.conversation_uid !== context.conversation_uid || reply.side !== context.side)) throw invalid()
+        const quote = p.quote === undefined ? undefined : readMessageQuote(p.quote)
+        if (p.quote !== undefined && (!quote || !reply || quote.recordVersion !== num(p.replyRecordVersion))) throw invalid()
         try {
           const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: obj(p.content),
-            ...(p.replyToRef ? { reply_to: (await this.open('message', p.replyToRef, actor)).message_uid } : {}) })
+            ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
           return { message: await this.message(data, actor, context) }
         } catch (error) {
           if (!(error instanceof ArkmeUpstreamResponseError)) throw error
@@ -837,7 +927,7 @@ export class TeamAppService {
     } } finally { await reader.cancel().catch(() => {}) }
     return Buffer.concat(chunks)
   }
-  async fetchMedia(mediaRef: string, range: string | undefined, signal: AbortSignal): Promise<{ response: Response; fileName: string; mimeType: string }> {
+  async fetchMedia(mediaRef: string, range: string | undefined, signal: AbortSignal): Promise<{ response: Response; fileName: string; mimeType: string;size:number }> {
     const initial = await this.runtime.requireSession()
     const ref = await this.open('media', mediaRef, initial.userId)
     if (ref.share_uid) {
@@ -852,7 +942,7 @@ export class TeamAppService {
       const response = await this.runtime.fetchImpl(authorizedStorageURL(url), { signal, redirect: 'error', ...(range ? { headers: { Range: range } } : {}) })
       const current = await this.runtime.accountScopedSession()
       if (!response.ok || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
-      return { response, fileName: str(ref.file_name) || '附件', mimeType: str(ref.mime_type) || 'application/octet-stream' }
+      return { response, fileName: str(ref.file_name) || '附件', mimeType: str(ref.mime_type) || 'application/octet-stream', size: num(asset.size) }
     }
     const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false }
     if (!this.runtime.config.teamBaseUrl) throw invalid()
@@ -866,7 +956,7 @@ export class TeamAppService {
     const current = await this.runtime.accountScopedSession()
     if (signal.aborted || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
     if (!response.ok || response.headers.get('content-type')?.includes('application/json')) { await response.body?.cancel(); throw new ArkmePluginError('team-not_accessible', '附件已失效或无权访问，请刷新消息', false, 403) }
-    return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream' }
+    return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream',size:num(ref.size) }
   }
   private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){

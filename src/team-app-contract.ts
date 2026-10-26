@@ -1,14 +1,16 @@
+import type { ArkmeMessageQuote } from './message-quote.js'
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
 
-/** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
+/** Built-in App transport. SDK and Tools expose the typed TeamMessagePort. */
 export type TeamAppOperation = `team.app.${
   'external.list' | 'external.mine' | 'external.share' | 'external.unshare' | 'external.page' | 'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
-  | 'source' | 'channel' | 'channel.configure' | 'official' | 'official.membership' | 'open' | 'conversations' | 'timeline'
-  | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
+  | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
+  | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
+  | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory'
   | 'internal-group.prepare'
@@ -43,10 +45,12 @@ export interface TeamConversation {
 export interface TeamContent { text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
 export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
+ forwardRecords?: import('./types.js').ArkmeForwardRecordsPreview
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
-  replyToKey?: string
+  reply?: TeamReplyPreview
+  mediaComplete?: boolean
   recipientRead?: boolean
   /** Sealed, viewer-scoped snapshot for private local annotations, not Chat actions. */
   localMarkRef?: string
@@ -81,5 +85,14 @@ export interface TeamJotmoIdAvailability { available: boolean; reason: string }
 
 export interface TeamRecordSource { name: string; conversationRef: string }
 
+/** Immutable reply selection retained by the existing durable send owner. */
+export interface TeamReplyTarget {
+  messageRef: string; messageKey: string; version: number; text: string; senderName: string
+  quote?: ArkmeMessageQuote
+}
+export interface TeamReplyPreview {
+  ref: string; key: string; seq: number; version: number; state: 'available' | 'edited' | 'unavailable'
+  text: string; sender: TeamIdentity; quote?: ArkmeMessageQuote
+}
 export type TeamConversationReadState = {key: string; accessible: false}
   | {key: string; accessible: true; lastSeq: number; myReadSeq: number; unread: number}

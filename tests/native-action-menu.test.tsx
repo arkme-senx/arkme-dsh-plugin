@@ -118,3 +118,23 @@ it('keeps an opted-in modal menu inside the dialog and retains keyboard dismissa
  expect(close).toHaveBeenCalledOnce()
  expect(document.activeElement).toBe(host.querySelector('dialog button'))
 })
+
+
+it('ignores scroll notifications queued before the point menu opened, but dismisses on subsequent source scrolling', async () => {
+  const close = vi.fn()
+  const scrollport = document.createElement('div')
+  document.body.append(scrollport)
+  const queued = new Event('scroll')
+  Object.defineProperty(queued, 'timeStamp', { value: window.performance.now() - 1 })
+  try {
+    await act(async () => root.render(<ArkmeActionMenu label="滚动中的消息菜单" point={{ x: 30, y: 40 }} onClose={close}
+      actions={[{ id: 'reply', label: '延展', onSelect: vi.fn() }]} />))
+    await act(async () => scrollport.dispatchEvent(queued))
+    expect(close).not.toHaveBeenCalled()
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+    await act(async () => menu.dispatchEvent(new Event('scroll')))
+    expect(close).not.toHaveBeenCalled()
+    await act(async () => scrollport.dispatchEvent(new Event('scroll')))
+    expect(close).toHaveBeenCalledOnce()
+  } finally { scrollport.remove() }
+})

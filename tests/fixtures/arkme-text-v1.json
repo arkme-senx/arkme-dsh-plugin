@@ -1,0 +1,226 @@
+[
+  {
+    "name": "vector-1",
+    "body": "<a>&中文😀",
+    "format": "plain",
+    "digest": "a243cae04c068ec7e84afacef09cb5197f6e77accf6f3825cf9c482428b28502",
+    "canonical": "<a>&中文😀"
+  },
+  {
+    "name": "vector-2",
+    "body": "ab c﻿d e f",
+    "format": "plain",
+    "digest": "dc79341708bf7fc09f1231e87f271e031981d065323c044534a28ac4dd098ea9",
+    "canonical": "ab c d e f"
+  },
+  {
+    "name": "vector-3",
+    "body": "重复 😀 重复 [jm_emoji:thumb_up] [im_emoji:unknown]",
+    "format": "plain",
+    "digest": "92c264fe8f9ca41e9cdc1d634898693e91c75c4974fc5636ae2d21419cbf8059",
+    "canonical": "重复 😀 重复 👍 [im_emoji:unknown]"
+  },
+  {
+    "name": "vector-4",
+    "body": "a\r\nb\t c",
+    "format": "plain",
+    "digest": "b64e86a9fbf325c8d68e7cb256657b415eebeaf6009c1d1d29e2ca312c1005d3",
+    "canonical": "a b c"
+  },
+  {
+    "name": "vector-5",
+    "body": "\\u2028 \u0000\b\f",
+    "format": "plain",
+    "digest": "885326560e9b62b177c82c9fb8edbb88d788459ae55cfd17803b0057ff116a82",
+    "canonical": "\\u2028 \u0000\b"
+  },
+  {
+    "name": "vector-6",
+    "body": "# 标题\n\n段落 **加粗** 和 *斜体* [链接](https://example.com) ~~删去~~。",
+    "format": "markdown",
+    "digest": "4df6e9cef510c09e33d4fad2a32655d2bb4a18fd89cf20bfd1131810dc8c5d18",
+    "canonical": "标题 段落 加粗 和 斜体 链接 删去。"
+  },
+  {
+    "name": "vector-7",
+    "body": "- 第一项\n- 第二项\n  - 子项\n\n> 引用\n> 两行",
+    "format": "markdown",
+    "digest": "d589eeaf0de6c3cad51669861599bf356478f109d045b1041b069e488ec5e835",
+    "canonical": "第一项 第二项 子项 引用 两行"
+  },
+  {
+    "name": "vector-8",
+    "body": "| A | B |\n|---|---|\n| 中 | 文 |",
+    "format": "markdown",
+    "digest": "ac24f9976a25c10aa62d284c69138b426dec6da83511f6f170e06a0d3e43a764",
+    "canonical": "A B 中 文"
+  },
+  {
+    "name": "vector-9",
+    "body": "` a  b ` 和 `&amp;`\n\n```go\n<a>& x\n下一行\n```",
+    "format": "markdown",
+    "digest": "e65f45cd8318c639c899fe2e28687b2efe6efc418b0fa1a4edf164025c082b23",
+    "canonical": "a b 和 &amp; <a>& x 下一行"
+  },
+  {
+    "name": "vector-10",
+    "body": "转义 \\*文字\\* &amp; &#x1f600;  \n硬换行\n软换行",
+    "format": "markdown",
+    "digest": "90d9c8a26982bb7cd5906c73066bb2117c9562456dc5accca02314888eeeeec9",
+    "canonical": "转义 *文字* & 😀硬换行 软换行"
+  },
+  {
+    "name": "vector-11",
+    "body": "![文字](https://example.com/a.png \"图\") 和 ![内部](arkme-asset:abc)",
+    "format": "markdown",
+    "digest": "40089cbe6586521df08043d97c877ac38703dfae69b418903b7f86ab04b7285c",
+    "canonical": "![文字](https://example.com/a.png \"图\") 和 [图片]"
+  },
+  {
+    "name": "vector-12",
+    "body": "![图][pic]\n\n[pic]: https://example.com/a.png",
+    "format": "markdown",
+    "digest": "00840d05d4e65ba21a1844693028bc94c890763ea40e38330fa003e60b7f7a6d",
+    "canonical": "![图][pic]"
+  },
+  {
+    "name": "vector-13",
+    "body": "<b>可见 HTML</b>\n\n<div>\n正文\n</div>",
+    "format": "markdown",
+    "digest": "bbf84df3932eea9a98b9d5ca32a080c7a6f7813071413709b174cec7744ca201",
+    "canonical": "<b>可见 HTML</b> <div> 正文 </div>"
+  },
+  {
+    "name": "vector-14",
+    "body": "- [x] 完成\n- [ ] 待办",
+    "format": "markdown",
+    "digest": "e2acb6adf802cfe47379e9c8fc1dc6e112cb1e3e3e53a4cd9b74a1de56c17bfd",
+    "canonical": "完成 待办"
+  },
+  {
+    "name": "vector-15",
+    "body": "[jm_emoji:thumb_up] 😀 é 中",
+    "format": "markdown",
+    "digest": "8717126640a9b682c6a1048224632c04aa86591bb83c53ed36b4198de61e9488",
+    "canonical": "👍 😀 é 中"
+  },
+  {
+    "name": "vector-16",
+    "body": "![a *b*](https://a.test/x_(1)) 与 ![a \\] b](https://b.test/x)",
+    "format": "markdown",
+    "digest": "bb49ded9355439a8078a8a4c1eb45c3640143234f688285c734676dd1c228ed0",
+    "canonical": "![a *b*](https://a.test/x_(1)) 与 ![a \\] b](https://b.test/x)"
+  },
+  {
+    "name": "vector-17",
+    "body": "![](https://a.test/x) 后面 ![](arkme-asset:a)",
+    "format": "markdown",
+    "digest": "989f9bf744e908a5c991efe9a25d7400d897ddf2c1f537bc7d803f9d594750e2",
+    "canonical": "![](https://a.test/x) 后面 [图片]"
+  },
+  {
+    "name": "vector-18",
+    "body": "![asset][a]\n\n[a]: arkme-asset:abc",
+    "format": "markdown",
+    "digest": "9cee57a6a86925c83628acca35854f43db55a504bdb7e8427c9b0ab65d46709c",
+    "canonical": "![asset][a]"
+  },
+  {
+    "name": "vector-19",
+    "body": "[a]: https://a.test\n\n分割\n\n---\n\n结尾",
+    "format": "markdown",
+    "digest": "3e16152995299690cdddcd672f5b05b48ed48322c1517746de52dffde686f4be",
+    "canonical": "分割 结尾"
+  },
+  {
+    "name": "vector-20",
+    "body": "\\&amp; &#38;amp; &amp;lt; \\&#65;",
+    "format": "markdown",
+    "digest": "2908da2e722fdef197350237562c8b356e175c683ce1009d6b3e548a6d5038ba",
+    "canonical": "&amp; &amp; &lt; &#65;"
+  },
+  {
+    "name": "vector-21",
+    "body": "\\\\![图](https://a.test/x) 与 \\![字](https://a.test/x)",
+    "format": "markdown",
+    "digest": "a296054cc2183093e3d67b930960a625ed92b93c2eff55bff705e258fc522e80",
+    "canonical": "\\![图](https://a.test/x) 与 !字"
+  },
+  {
+    "name": "vector-22",
+    "body": "<div>![](https://fake.test/x)</div>\n\n![](https://real.test/x)",
+    "format": "markdown",
+    "digest": "fca6ea1c8624d3d29680a66d904eda9abcad3d94abe3b93448d41c4304845d5b",
+    "canonical": "<div>![](https://fake.test/x)</div> ![](https://real.test/x)"
+  },
+  {
+    "name": "vector-23",
+    "body": "`![](https://fake.test/x)`\n\n![](https://real.test/x)",
+    "format": "markdown",
+    "digest": "847e742c83649085516466ba895d757813eeb5eeffc1f7e108bf570437c95d80",
+    "canonical": "![](https://fake.test/x) ![](https://real.test/x)"
+  },
+  {
+    "name": "vector-24",
+    "body": "```\n![](https://fake.test/x)\n```\n\n![](https://real.test/x)",
+    "format": "markdown",
+    "digest": "90e69bca065cea2f16f392c05117ed1ddcf74e3889d9484233af5c2adbe5eeaf",
+    "canonical": "![](https://fake.test/x) ![](https://real.test/x)"
+  },
+  {
+    "name": "vector-25",
+    "body": "a\\\nb\n\nc  \nd",
+    "format": "markdown",
+    "digest": "42224a3c85e09a280c3ed7c524f965cbb8efefaa6cfaedb93d847c33dffe7019",
+    "canonical": "ab cd"
+  },
+  {
+    "name": "vector-26",
+    "body": "a\rb\r\nc\n\nd",
+    "format": "markdown",
+    "digest": "ed6598c6b2a6801da189dc4f0762cd2d4e90cdb9a611ebc0964398ffc7841347",
+    "canonical": "a b c d"
+  },
+  {
+    "name": "vector-27",
+    "body": "![a](https://example.test/x \"a ) title\")",
+    "format": "markdown",
+    "digest": "6c47dfe18783d3483bae8a1bcf7e5dd2c3906efa89060b3586ef43a6db551bcc",
+    "canonical": "![a](https://example.test/x \"a ) title\")"
+  },
+  {
+    "name": "vector-28",
+    "body": "![a *b*][ref]\n\n[ref]: https://a.test/x \"a\"",
+    "format": "markdown",
+    "digest": "5e7dba3efb4c5874023f5f1af7936f68672f53262938b59af0990e1036ea4a86",
+    "canonical": "![a *b*][ref]"
+  },
+  {
+    "name": "vector-29",
+    "body": "<> <https://a.test/x> www.a.test a@example.com",
+    "format": "markdown",
+    "digest": "00673414b116c2426fd350212aeaba4b4a014f7c5f7fabe533b4df1eb7db74b7",
+    "canonical": "<> https://a.test/x www.a.test a@example.com"
+  },
+  {
+    "name": "vector-30",
+    "body": "    a\n    b\n\n结尾",
+    "format": "markdown",
+    "digest": "ec409fae64ee11a73c938107bdd0d9e41fb631228284661fa0686d53d12a574c",
+    "canonical": "a b 结尾"
+  },
+  {
+    "name": "vector-31",
+    "body": "`  a  ` ``a\nb`` ` `",
+    "format": "markdown",
+    "digest": "c5e1c5a73d70fa9847e6ed7522cc13f21e8a9feabca7b4863ec024733509f35e",
+    "canonical": "a a b"
+  },
+  {
+    "name": "vector-32",
+    "body": "中文\u0000零 段 [x](https://a.test)",
+    "format": "markdown",
+    "digest": "bef0421742abf3eb20f0200e9536fad89e1cb3d9b30a771e5bc36f97e08dee5c",
+    "canonical": "中文�零 段 x"
+  }
+]

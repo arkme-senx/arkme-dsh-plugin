@@ -1,11 +1,9 @@
 import type { ArkmeComposerAttachment } from './composer-draft-store.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset } from '../types.js'
-import type { TeamContent, TeamMessage } from '../team-app-contract.js'
+import type { TeamContent, TeamMessage, TeamReplyTarget } from '../team-app-contract.js'
 
-export type TeamReplyTarget = Pick<TeamMessage, 'ref' | 'key' | 'seq'> & { senderName: string; text: string }
-
-export type TeamDraft = { attachments?: readonly ArkmeComposerAttachment[]; text: string; replyTarget?: TeamReplyTarget | undefined; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; attempt?: { uid: string; replyTarget?: TeamReplyTarget | undefined; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
+export type TeamDraft = { attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
 
 export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string, draft: TeamDraft): void {
   const { attachments: _transient, ...persisted } = draft

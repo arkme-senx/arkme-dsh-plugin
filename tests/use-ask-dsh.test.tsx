@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), auth: { status: 'authenticated', environment: 'test', userId: 42 }, listeners: new Set<() => void>() }))
@@ -69,4 +70,14 @@ it('does not prepare a native draft if the custom reader fails', async () => {
   const done = vi.fn(); await act(async () => { renderer = create(<Harness done={done} />) })
   await act(async () => { await state.runPrepared('team',async()=>{throw new Error('原消息已变化')}) })
   expect(state.status).toBe('原消息已变化'); expect(prepare).not.toHaveBeenCalled(); expect(done).not.toHaveBeenCalled()
+})
+
+it('preserves the native iframe error message across JavaScript realms', async () => {
+  const failure = runInNewContext("new Error('目标对话草稿已被编辑，请重新选择快记后操作')")
+  expect(failure instanceof Error).toBe(false)
+  environment(async () => { throw failure })
+  const done = vi.fn(); await act(async () => { renderer = create(<Harness done={done} />) })
+  await act(async () => { await state.run('source', [note]) })
+  expect(state.status).toBe('目标对话草稿已被编辑，请重新选择快记后操作')
+  expect(state.busy).toBe(false); expect(done).not.toHaveBeenCalled()
 })
