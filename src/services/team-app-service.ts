@@ -397,7 +397,9 @@ export class TeamAppService {
           const contentBlocks = blocks.filter((_, index) => attachments[index]?.path[0] === 'media_display_items')
           const forwardRecords = sharedForwardPreview(body, attachments, blocks, actor, num(rel.attach_at))
           const sharedRecording = this.privateChat?.chatSharedRecordingPreview?.(v)
+          const sender = recordOwnerId(rel.sender_user_id), sharer = recordOwnerId(grant.sharer_id)
           return { itemUid: await this.key(`external:${String(grant.share_uid)}:${str(rel.rel_uid)}`, actor),
+            senderSide: sender !== 0 && sharer !== 0 ? sender === sharer ? 'sharer' as const : 'peer' as const : 'unknown' as const,
             senderName: str(rel.display_name_snapshot) || (recordOwnerId(rel.sender_user_id) === recordOwnerId(grant.sharer_id) ? str(grant.sharer_name) || '分享成员' : str(grant.peer_name) || '聊天对方'), isMe: false,
             sendAtMillis: num(rel.attach_at), title: str(body.title), textContent: num(record.status) === 1 ? remapLongArticleAssets(str(body.text_content), new Map(list(body.media_display_items).map((f, index) => [`arkme-asset:${str(f.file_asset_uid)}`, `arkme-asset:media-${index}`]))) : '内容当前不可用',
             textFormat: obj(body.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const,

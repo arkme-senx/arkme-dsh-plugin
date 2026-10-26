@@ -137,6 +137,20 @@ describe('registerArkmeTools', () => {
     expect(externalChats).toHaveBeenLastCalledWith('share',expect.objectContaining({teamRef:'team-ref',sourceRef:'source-ref'}),expect.any(AbortSignal))
     await registration.dispose()
   })
+  it('preserves shared message direction through the registered read tool', async () => {
+    const ctx = await setup()
+    const externalChats = vi.fn(async () => ({items:[{itemUid:'opaque-message',senderName:'用户',senderSide:'sharer',isMe:false,textContent:'共享正文'}],hasMore:false,beforeSeq:1,mediaUrls:{}}))
+    const registration = await mountArkmeTools(ctx, 'business', {...ports,externalChats} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([])
+    const agent = {id:SessionId('external-direction'),session:{get events(){return events}}} as unknown as Agent
+    const signal = new AbortController().signal
+    try {
+      const result = await ctx.tools.execute({callId:CallId('external-page'),name:'arkme_team_external_chats',arguments:{operation:'page',share_ref:'opaque-share'},agent,signal})
+      expect(result.isError).toBe(false)
+      expect(JSON.stringify(result)).toContain('sharer')
+      expect(externalChats).toHaveBeenCalledWith('page',expect.objectContaining({shareRef:'opaque-share'}),expect.any(AbortSignal))
+    } finally {await registration.dispose()}
+  })
   it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
     const ctx = await setup()
     const reactions = vi.fn(async () => ({ revision: 0, items: [] }))

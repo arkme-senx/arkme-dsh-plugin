@@ -305,7 +305,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
         </span>
       </div>
     </header>
-    {externalChatsOpen && <TeamExternalChats teamRef={page.team.teamRef} teamName={page.team.name} onClose={()=>setExternalChatsOpen(false)}/>}
+    {externalChatsOpen && <TeamExternalChats teamRef={page.team.teamRef} teamKey={page.team.key} teamName={page.team.name} onClose={()=>setExternalChatsOpen(false)}/>}
     <section className="arkme-team-features" aria-label={tr('团队功能')}>
       <div className="arkme-team-features-container">
         <h2>{tr('团队功能')}</h2>
@@ -334,7 +334,10 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-feature-icon" aria-hidden="true"><Globe size={22} /></span>
             <span>{tr('团队的世界')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
-          <button type="button" className="arkme-team-feature" onClick={()=>setExternalChatsOpen(true)}><ChatCircle size={22}/><span>对外私聊</span><span>›</span></button>
+          <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={externalChatsOpen} onClick={()=>setExternalChatsOpen(true)}>
+            <span className="arkme-team-feature-icon" aria-hidden="true"><ChatCircle size={22}/></span>
+            <span>{tr('对外私聊')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
+          </button>
         </div>
       </div>
     </section>
