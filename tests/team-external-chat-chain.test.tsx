@@ -45,8 +45,10 @@ it.skipIf(!process.env.JOTMO_EXTERNAL_CHAT_FIXTURE)('UI -> SDK -> Host -> authen
   try {
     await act(async () => { view.render(<SharePrivateChat sourceRef="synthetic-source" name="外部联系人" onClose={() => {}}/>) })
     await waitFor(() => checkbox() !== null && !checkbox().disabled)
-    expect(text()).toContain('完整历史和后续消息')
+    expect(text()).toContain('全部历史和新消息')
     await act(async () => { checkbox().click() })
+    await act(async () => { button('确认共享').click() })
+    await waitFor(() => text().includes('共享设置已更新'))
     await waitFor(() => checkbox().checked === true)
     await act(async () => view.unmount())
     view = createRoot(container)

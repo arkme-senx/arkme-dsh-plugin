@@ -4,7 +4,7 @@ import {afterEach,expect,it,vi} from 'vitest'
 const mocks=vi.hoisted(()=>({callArkme:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.callArkme}))
 vi.mock('../src/client/ArkmeRichContent.js',()=>({ArkmeMessageContent:({item}:any)=><p>{item.textContent}</p>}))
-vi.mock('../src/client/redesign/contacts/TeamFeatureDialog.js',()=>({TeamFeatureDialog:({children}:any)=><div>{children}</div>}))
+vi.mock('../src/client/redesign/contacts/TeamFeatureDialog.js',()=>({TeamFeatureDialog:({children,footer}:any)=><div>{children}{footer}</div>}))
 import {TeamExternalChats,SharePrivateChat} from '../src/client/TeamExternalChats.js'
 const share={key:'s',ref:'share',teamKey:'team-key',teamRef:'fresh-sealed-team-ref',sharerKey:'member',sharerName:'成员甲',peerName:'客户乙',own:true}
 const item=(uid:string,textContent:string)=>({itemUid:uid,textContent,senderName:'客户乙',sendAtMillis:1,version:1,contentBlocks:[]})
@@ -34,11 +34,14 @@ it('groups by sharer and refreshes away withdrawn content, clearing content on r
 it('matches shared state by stable team key and cancels using the grant reference',async()=>{
  mocks.callArkme.mockImplementation(async(op)=>op==='team.app.teams'?[{teamRef:'different-team-ref',key:'team-key',name:'团队'}]:{items:[share]})
  await act(async()=>{view=create(<SharePrivateChat sourceRef="source" name="客户" onClose={()=>{}}/>);await tick()})
- expect(text()).toContain('完整历史和后续消息')
+ expect(text()).toContain('全部历史和新消息')
  expect(view.root.findByType('input').props.checked).toBe(true)
  await act(async()=>{view.root.findByType('input').props.onChange();await tick()})
+ expect(mocks.callArkme).not.toHaveBeenCalledWith('team.app.external.unshare',expect.anything(),expect.anything())
+ await act(async()=>{button('保存更改').props.onClick();await tick()})
  expect(mocks.callArkme).toHaveBeenCalledWith('team.app.external.unshare',{shareRef:'share'},expect.any(AbortSignal))
  expect(view.root.findByType('input').props.checked).toBe(false)
+ expect(text()).toContain('共享设置已更新')
 })
 it('aborts a pending request when leaving the share picker',async()=>{
  mocks.callArkme.mockImplementation(()=>new Promise(()=>{}))
