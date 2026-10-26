@@ -11,7 +11,7 @@ const target: MessageSelectionTarget = { sourceRef: 'self', item: { itemUid: 'no
 const mark = { id: 'mine', actorId: 42, actorName: '你', mine: true, anchor, state: 'available' as const }
 const initial: MessageUnderlineSnapshot = { revision: 1, accessible: true, items: [mark, { ...mark, id: 'other', actorId: 7, actorName: '宏顺', mine: false }] }
 const deferred = <T,>() => { let resolve!: (v:T)=>void, reject!: (e:unknown)=>void; const promise = new Promise<T>((r,j)=>{resolve=r;reject=j}); return {promise,resolve,reject} }
-beforeEach(() => vi.mocked(callArkme).mockReset())
+beforeEach(() => { vi.mocked(callArkme).mockReset() })
 it('requires a versioned capability and derives mine from authenticated viewer', () => {
   expect(underlineCapabilities({ enabled:true })).toMatchObject({supported:false})
   expect(underlineCapabilities({ enabled:true,protocol_version:1,projection:'arkme-text-v1',max_length:9000 })).toEqual({supported:true,maxLength:2000})
@@ -37,8 +37,8 @@ it('keeps the same message in list and detail as independent hit-test surfaces',
   expect(merged).toHaveLength(2)
   expect(merged[0]?.element).not.toBe(merged[1]?.element)
 })
-it('removes only mine immediately and rolls back failure with the same retry id', async () => {
-  const session = new MessageUnderlineSession('self',42,vi.fn()); session.capability = {supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
+it('local cancellation removes only mine and rolls back failure with the same retry id', async () => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'local'); session.capability = {supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
   const response = deferred<MessageUnderlineSnapshot>(); vi.mocked(callArkme).mockReturnValueOnce(response.promise)
   const mutation = session.change(target,{kind:'remove',annotationId:'mine',operationId:'stable'})
   expect(session.snapshots.get(underlineTargetKey(target))?.items.map(i=>i.id)).toEqual(['other'])
@@ -65,6 +65,54 @@ it('does not write when unsupported, and ignores completion after scope disposal
   session.capability={supported:true,maxLength:2000}; const response=deferred<unknown>(); vi.mocked(callArkme).mockReturnValueOnce(response.promise)
   const writing=session.change(target,{kind:'add',anchor,operationId:'op'}); session.dispose(); response.resolve(initial); await writing
   expect(session.snapshots.size).toBe(0)
+})
+it.each(['arkme-code-2001', 'arkme-network-error'])('cloud cancellation clears unverified text on %s and retries its original operation after a fresh read', async code => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target),initial)
+  vi.mocked(callArkme).mockRejectedValueOnce(Object.assign(new Error('source unavailable'),{body:{code,httpStatus:502}}))
+  await session.change(target,{kind:'remove',annotationId:'mine',operationId:'original'})
+  expect(session.snapshots.size).toBe(0)
+  vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:initial}])
+    .mockResolvedValueOnce({...initial,revision:2,items:[initial.items[1]!]})
+  await session.retry?.()
+  expect(vi.mocked(callArkme).mock.calls[1]?.[0]).toBe('source.message-underline.list')
+  expect(vi.mocked(callArkme).mock.calls[2]?.[1]).toMatchObject({change:{operationId:'original'}})
+  expect(session.snapshots.get(underlineTargetKey(target))?.items.map(item=>item.id)).toEqual(['other'])
+  session.dispose()
+})
+it.each(['add', 'remove'] as const)('settles a lost %s response when a fresh owner snapshot already confirms the requested state', async kind => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target), kind === 'remove' ? initial : {...initial,items:[initial.items[1]!]})
+  const change = kind === 'remove'
+    ? {kind,annotationId:'mine',operationId:'lost'} as const
+    : {kind,anchor,operationId:'lost'} as const
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('response lost'))
+  await session.change(target,change)
+  const confirmed = {...initial,revision:2,items:kind === 'remove' ? [initial.items[1]!] : initial.items.map(item => ({...item,anchor:{...item.anchor,recordVersion:1}}))}
+  vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:confirmed}])
+  await session.retry?.()
+  expect(session.snapshots.get(underlineTargetKey(target))).toEqual(confirmed)
+  expect(session.notice).toBe('')
+  expect(session.retry).toBeUndefined()
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  session.dispose()
+})
+it.each(['denied', 'failed'] as const)('does not interpret a %s access read as successful cancellation', async state => {
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud')
+  session.capability = {supported:true,maxLength:2000}
+  session.snapshots.set(underlineTargetKey(target),initial)
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('response lost'))
+  await session.change(target,{kind:'remove',annotationId:'mine',operationId:'lost'})
+  if (state === 'denied') vi.mocked(callArkme).mockResolvedValueOnce([{actionRef:'ref',snapshot:{revision:0,accessible:false,items:[]}}])
+  else vi.mocked(callArkme).mockRejectedValueOnce(new Error('access lookup failed'))
+  await session.retry?.()
+  expect(session.notice).not.toBe('')
+  expect(session.retry).toBeDefined()
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  expect(session.snapshots.get(underlineTargetKey(target))?.items ?? []).toEqual([])
+  session.dispose()
 })
 it.each([false,true])('paints background (native=%s) and opens the shared toolbar with exact own cancellation', async (native) => {
   const {act}=await import('react'),{createRoot}=await import('react-dom/client'),{webcrypto}=await import('node:crypto')
@@ -197,6 +245,111 @@ it('local save failure rolls back and retries the same operation', async () => {
   vi.mocked(callArkme).mockResolvedValueOnce({...initial,items:[mark]});await session.retry?.()
   expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toMatchObject({change:{operationId:'local-fail'}})
 })
+
+it('clears cloud fragments when permission lookup fails and rejects a pending write restoring them', async () => {
+  const session = new MessageUnderlineSession('self',42,vi.fn()); session.capability={supported:true,maxLength:2000}; session.snapshots.set(underlineTargetKey(target),initial)
+  const write=deferred<unknown>(); vi.mocked(callArkme).mockReturnValueOnce(write.promise)
+  const writing=session.change(target,{kind:'remove',annotationId:'mine',operationId:'stable'})
+  vi.mocked(callArkme).mockRejectedValueOnce(new Error('source lookup unavailable'))
+  await session.read([target])
+  expect(session.snapshots.size).toBe(0)
+  write.reject(new Error('lost response')); await writing
+  expect(session.snapshots.size).toBe(0)
+  session.dispose()
+})
+it.each([{ audience: 'self' as const, label: '在我的设备间同步', button: '标记' }, { audience: 'conversation' as const, label: '会话成员可见', button: '共享标记' }])('keeps $audience marking simple and switches existing stores without writing', async ({ audience, label, button }) => {
+  const { act, useState } = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { webcrypto } = await import('node:crypto')
+  const { useMessageUnderlines } = await import('../src/client/ArkmeMessageUnderlines.js')
+  const { ArkmeMessageTextSelectionToolbar } = await import('../src/client/ArkmeMessageTextSelection.js')
+  const { ArkmeMessageContent } = await import('../src/client/ArkmeRichContent.js')
+  const { quoteDigest } = await import('../src/client/message-quote-selection.js')
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 50, 200, 60))
+  const clientRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
+  Range.prototype.getClientRects = () => [new DOMRect(20, 50, 100, 20)] as unknown as DOMRectList
+  const originalPoint = document.elementFromPoint
+  document.elementFromPoint = () => null
+  const actual = { ...anchor, sourceDigest: await quoteDigest(target.item) }
+  const local = { ...initial, items: [{ ...mark, anchor: actual }] }
+  const cloud = { ...initial, items: [] }
+  vi.mocked(callArkme).mockImplementation(async (operation: string) => {
+    if (operation.endsWith('.capabilities')) return { supported: true, maxLength: 2000 }
+    if (operation.endsWith('.list')) return [{ actionRef: 'ref', snapshot: operation.startsWith('source.local-') ? local : cloud }]
+    throw new Error('Switching storage must not write')
+  })
+  function Fixture() {
+    const [storage, setStorage] = useState<'local' | 'cloud'>('cloud')
+    const marks = useMessageUnderlines('scope', 'self', 42, undefined, storage)
+    return <><ArkmeMessageContent item={target.item} sourceRef="self" />{marks.layer}
+      <ArkmeMessageTextSelectionToolbar replySourceRef="self" markStorage={storage} onMarkStorageChange={setStorage} markAudience={audience}
+        onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} /></>
+  }
+  const dom = document.createElement('div'); document.body.append(dom)
+  const root = createRoot(dom)
+  const settle = async (check: () => void) => vi.waitFor(async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); check()
+  })
+  try {
+    await act(async () => root.render(<Fixture />))
+    const text = dom.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+    const node = document.createTreeWalker(text, NodeFilter.SHOW_TEXT).nextNode()!
+    const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 2)
+    document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range)
+    await act(async () => text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    const toolbar = () => document.querySelector('[role="toolbar"]')!
+    expect(toolbar().textContent).not.toMatch(/查看仅本机|跨设备同步|会话共享/)
+    expect([...toolbar().querySelectorAll('button')].some(b => b.textContent === button)).toBe(true)
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    const openScope = async () => {
+      await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="标记范围"]')!.click())
+      await settle(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
+    }
+    const choose = async (text: string) => {
+      const option = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === text)!
+      expect(option).toBeDefined()
+      // Native mouse events on the portaled list must not dismiss the selection toolbar.
+      await act(async () => {
+        option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        option.click()
+      })
+    }
+    await openScope()
+    expect([...document.querySelectorAll('[role="menuitem"]')].map(b => b.textContent)).toEqual([label, '仅此电脑可见'])
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(toolbar()).not.toBeNull()
+    expect(document.getSelection()?.toString()).toBe('重点')
+    await openScope()
+    await choose('仅此电脑可见')
+    await settle(() => expect(toolbar().textContent).toContain('取消标记（仅此电脑）'))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.getSelection()?.toString()).toBe('重点')
+    await openScope()
+    await choose(label)
+    await settle(() => expect(toolbar().textContent).not.toContain('取消标记'))
+    expect(toolbar().textContent).not.toContain('仅此电脑')
+    await openScope()
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="toolbar"]')).toBeNull()
+    expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation.startsWith('source.local-') && operation.endsWith('.list'))).toBe(true)
+    expect(vi.mocked(callArkme).mock.calls.some(([operation]) => operation === 'source.message-underline.list')).toBe(true)
+    expect(vi.mocked(callArkme).mock.calls.every(([operation]) => operation.endsWith('.list') || operation.endsWith('.capabilities'))).toBe(true)
+    expect(local.items).toHaveLength(1)
+    expect(cloud.items).toHaveLength(0)
+  } finally {
+    await act(async () => root.unmount()); dom.remove(); document.getSelection()?.removeAllRanges()
+    rect.mockRestore(); document.elementFromPoint = originalPoint
+    if (clientRects) Object.defineProperty(Range.prototype, 'getClientRects', clientRects)
+    else Reflect.deleteProperty(Range.prototype, 'getClientRects')
+    vi.unstubAllGlobals()
+  }
+})
 it('retains one queued invalidation while an older snapshot is still reading', async () => {
  const session=new MessageUnderlineSession('self',42,vi.fn());session.capability={supported:true,maxLength:2000}
  const stale=deferred<unknown>()
@@ -206,4 +359,51 @@ it('retains one queued invalidation while an older snapshot is still reading', a
  stale.resolve([{actionRef:'ref',snapshot:{revision:1,accessible:true,items:[]}}]);await read
  expect(callArkme).toHaveBeenCalledTimes(2);expect(session.snapshots.get(underlineTargetKey(target))?.revision).toBe(2)
  session.dispose()
+})
+
+it('discards the pre-invalidation read while draining the upstream queued refresh', async () => {
+  const session = new MessageUnderlineSession('self', 42, vi.fn(), 'cloud')
+  session.capability = { supported: true, maxLength: 2000 }
+  const stale = deferred<unknown>(), fresh = deferred<unknown>()
+  vi.mocked(callArkme).mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+  const reading = session.read([target])
+  session.invalidate()
+  void session.read([target])
+  stale.resolve([{ actionRef: 'ref', snapshot: initial }])
+  await vi.waitFor(() => expect(callArkme).toHaveBeenCalledTimes(2))
+  expect(session.snapshots.size).toBe(0)
+  fresh.resolve([{ actionRef: 'ref', snapshot: { ...initial, revision: 2, items: [] } }])
+  await reading
+  expect(session.snapshots.get(underlineTargetKey(target))).toMatchObject({ revision: 2, items: [] })
+  session.dispose()
+})
+
+it('shares refresh scheduling while retaining cloud access invalidation and transport cleanup', async () => {
+  const { act } = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { UnderlineLayer } = await import('../src/client/ArkmeMessageUnderlines.js')
+  const { invalidateMessageMarks } = await import('../src/client/message-mark-invalidations.js')
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const stop = vi.fn(), subscribe = vi.fn(() => stop)
+  const session = new MessageUnderlineSession('self', 42, vi.fn(), 'cloud', {
+    capabilities: async () => ({ supported: true, maxLength: 2000 }),
+    list: async () => [], change: async () => initial, subscribe,
+  })
+  session.capability = { supported: true, maxLength: 2000 }
+  session.snapshots.set(underlineTargetKey(target), initial)
+  const invalidate = vi.spyOn(session, 'invalidate')
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<UnderlineLayer session={session} revision={0} />))
+    expect(subscribe).toHaveBeenCalledOnce()
+    await act(async () => invalidateMessageMarks(true))
+    expect(invalidate).toHaveBeenCalledOnce()
+    expect(session.snapshots.size).toBe(0)
+    await act(async () => root.unmount())
+    expect(stop).toHaveBeenCalledOnce()
+    invalidateMessageMarks(true)
+    expect(invalidate).toHaveBeenCalledOnce()
+  } finally { await act(async () => root.unmount()); session.dispose(); host.remove(); vi.unstubAllGlobals() }
 })

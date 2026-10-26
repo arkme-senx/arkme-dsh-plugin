@@ -1,3 +1,5 @@
+import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
+import { invalidateMessageMarks } from './message-mark-invalidations.js'
 import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
 import { arkmeMessageSync } from './message-sync-store.js'
 import { callArkme } from './api.js'
@@ -264,6 +266,8 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
           publishNativeAnnotationInvalidation(authenticatedAccountScope)
           void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
           officialNotifications.invalidate(authenticatedAccountScope)
@@ -308,6 +312,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
+        if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
           if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
           if (update.projection === 'offline_context') {
@@ -315,6 +320,8 @@ export function useArkmeRealtimeClientEvents(
             arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])
             return
           }
+          if (update.projection === 'record') invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
           if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
           if (update.projection === 'topic-directory') {
@@ -341,6 +348,8 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'timeline-changed') {
+          invalidateMessageQuoteSources(update.sourceKey)
+          invalidateMessageMarks(true)
           arkmeChatTimelineDelta.applyTimelineChange(update)
           arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeCalendarInvalidations.publishAll()
