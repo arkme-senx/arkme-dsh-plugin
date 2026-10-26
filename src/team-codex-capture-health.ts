@@ -4,6 +4,8 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { TeamCodexTask } from './team-codex-contract.js'
+import type { CodexTimingSource } from './team-codex-turn-timing.js'
+import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
 
 type Json = Record<string, unknown>
 const object = (value: unknown): Json => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}
@@ -36,6 +38,63 @@ export function codexCaptureCommand(command: unknown): { directory: string; inst
  */
 export class TeamCodexCaptureHealthReader {
   constructor(private readonly home = process.env.CODEX_HOME || join(homedir(), '.codex'), private readonly now = Date.now) {}
+  /** Resolve timing for a permission-checked cloud page through the explicitly configured
+   * local source. Never match a title, scan another installation, or import message text. */
+  timingSource(owner:number,team:string,taskId:string,sourceId:string,turnIds:readonly string[]):CodexTimingSource|undefined {
+    try {
+      if(lstatSync(this.home).isSymbolicLink()) return
+      const homeKey=createHash('sha256').update(realpathSync(this.home)).digest('hex')
+      const hooks=object(json(join(this.home,'hooks.json')).hooks)
+      const entries=new Map<string,ReturnType<typeof codexCaptureCommand>>()
+      for(const event of ['UserPromptSubmit','Stop','Interrupt']) {
+        for(const group of Array.isArray(hooks[event])?hooks[event] as unknown[]:[]) {
+          for(const hook of Array.isArray(object(group).hooks)?object(group).hooks as unknown[]:[]) {
+            const entry=codexCaptureCommand(object(hook).command)
+            if(entry?.homeKey===homeKey) entries.set(`${entry.directory}/${entry.installation}`,entry)
+          }
+        }
+      }
+      if(entries.size>8) return
+      for(const entry of entries.values()) {
+        if(!entry) continue
+        let db:DatabaseSync|undefined
+        try {
+          if(lstatSync(entry.directory).isSymbolicLink()) continue
+          const path=join(entry.directory,'journal.sqlite')
+          for(const suffix of ['','-wal','-shm']) {
+            try {const stat=lstatSync(path+suffix);if(!stat.isFile()||stat.isSymbolicLink()) throw Error('Invalid source')}
+            catch(error) {if(suffix&&(error as NodeJS.ErrnoException).code==='ENOENT') continue;throw error}
+          }
+          db=new DatabaseSync(path,{readOnly:true})
+          db.exec('PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=50')
+          const task=db.prepare(`SELECT t.id,t.session_id FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
+            JOIN codex_cloud_tasks c ON c.local_id=t.id JOIN codex_cloud_sources s ON s.id=c.source
+            WHERE i.id=? AND i.user_id=? AND i.team_ref=? AND i.home_key=? AND i.status='active'
+            AND c.id=? AND s.id=? AND s.owner=? AND s.local_team=? AND t.deleted=0 AND t.excluded=0
+            AND NOT EXISTS(SELECT 1 FROM codex_project_exclusions p WHERE p.installation_id=i.id AND p.project_key=t.project_key)`)
+            .get(entry.installation,owner,team,homeKey,taskId,sourceId,owner,team)
+          if(!task || typeof task.session_id!=='string') continue
+          const hasVisibility=!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_session_visibility'").get()
+          const visible=hasVisibility ? db.prepare("SELECT 1 FROM codex_session_visibility WHERE installation_id=? AND session_id=? AND visibility='user'").get(entry.installation,task.session_id)
+            : new TeamCodexDesktopTitleReader(this.home).inspect(homeKey,[task.session_id])?.visibility.get(task.session_id)==='user'
+          if(!visible) continue
+          const wanted=new Set(turnIds),turns=new Map<string,string>()
+          for(const row of db.prepare('SELECT DISTINCT turn_id FROM codex_events WHERE task_id=?').all(String(task.id))) {
+            const local=String(row.turn_id),hash=createHash('sha256').update(local).digest('hex')
+            if(wanted.has(hash)) turns.set(hash,local)
+          }
+          let live=false
+          try {
+            const active=json(join(entry.directory,'active.json')),now=this.now()
+            live=active.userId===owner && typeof active.at==='number' && now>=active.at && now-active.at<15000
+          } catch { /* Historical timing is still readable, but the clock must not run. */ }
+          if(turns.size) return {sessionId:task.session_id,homeKey,turns,live}
+        } catch { /* No verified local binding: cloud timing remains the only source. */ }
+        finally {db?.close()}
+      }
+    } catch { /* A disconnected source is not permission to search other chats. */ }
+    return undefined
+  }
   annotate(owner: number, team: string, tasks: TeamCodexTask[]): TeamCodexTask[] {
     const health = new Map<string, NonNullable<TeamCodexTask['captureHealth']>>()
     try {

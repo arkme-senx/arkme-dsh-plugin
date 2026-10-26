@@ -3,6 +3,15 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('Arrangement Host operations', () => {
+  it('keeps deleted reads separate, bounded, cancellable, and account-owned', async () => {
+    const deletedArrangements = vi.fn(async () => ({items:[]})), deletedArrangementDetail = vi.fn(async () => ({}))
+    const service = {deletedArrangements,deletedArrangementDetail} as unknown as ArkmeService
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service,'arrangements.deleted.list',{limit:999,offset:-2,userId:88},undefined,undefined,undefined,undefined,signal)
+    await dispatchArkmeHostOperation(service,'arrangements.deleted.detail',{arrangementRef:'opaque',uid:'ignored',userId:88},undefined,undefined,undefined,undefined,signal)
+    expect(deletedArrangements).toHaveBeenCalledWith({limit:50,offset:0,signal})
+    expect(deletedArrangementDetail).toHaveBeenCalledWith('opaque',signal)
+  })
   it.each([{dateContext:null}, {dateContext:[]}, {dateContext:'2026-10-20'}, {dueAtMillis:1792458000000}])('rejects malformed or legacy creation dates before any write: %j', async params => {
     const createArrangement = vi.fn()
     await expect(dispatchArkmeHostOperation({createArrangement} as unknown as ArkmeService, 'arrangements.create', {requestId:'test',texts:['开会'],...params})).rejects.toMatchObject({code:'arrangement-create-invalid'})

@@ -13,6 +13,7 @@ import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { MediaService } from '../src/services/media-service.js'
 import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
+import { assertRecordForwardInput } from './fixtures/record-forward-input.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary, ArkmeSourceItem,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -1192,6 +1193,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageTextAnchorsV1: true,
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
@@ -5923,6 +5925,7 @@ describe('ArkmeService', () => {
     let version = 1
     let title = '初始标题'
     let textContent = '初始正文'
+    let textFormat: 'plain' | 'markdown' = 'plain'
     let editDurationMillis = 0
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
@@ -5934,10 +5937,13 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
-      if (url.endsWith('/api/v1/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      if (url.endsWith('/api/v1/records/create')) {
+        assertRecordForwardInput(body)
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
       if (url.endsWith('/api/v1/records/detail')) return json({ code: 0, data: { record_core: {
         record_uid: 'article-1', owner_user_id: 10001, creator_user_id: 10001,
-        template_kind: 1, display_kind: 1, title, text_content: textContent,
+        template_kind: 1, display_kind: 1, title, text_content: textContent, text_format: textFormat,
         record_duration_millis: 3200, edit_duration_millis: editDurationMillis,
         send_at: 100, update_at: 200, status: 1, version,
       } } })
@@ -5960,8 +5966,23 @@ describe('ArkmeService', () => {
       title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
     })
 
+    // Pending automatic edits must keep their original CAS version, even if the
+    // server changes before the next opening. Never migrate them onto a newer base.
+    await service.putLongArticleDraft({ sourceRef: source.sourceRef, itemUid: 'article-1', autoPublish: true,
+      title: '待发布', textContent: '本地修改', textFormat: 'plain', baseVersion: 1, durationMillis: 50, updatedAtMillis: 1 })
+    version = 2
+    await expect(service.getLongArticleDraft(source.sourceRef, 'article-1')).resolves.toMatchObject({ autoPublish: true, baseVersion: 1, textContent: '本地修改' })
+    await service.removeLongArticleDraft(source.sourceRef, 'article-1')
+    version = 1
+
     await expect(service.longArticleDetail(source.sourceRef, 'article-1')).resolves.toMatchObject({
       itemUid: 'article-1', editable: true, version: 1, thinkingDurationMillis: 3200,
+    })
+    const actionsBefore = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(actionsBefore.messageActionRef).toMatch(/^arkme-message-action-v1\./)
+    const { openRecordDeletionRef } = await import('../src/record-deletion-ref.js')
+    expect(openRecordDeletionRef(actionsBefore.recordDeletionRef!, await state.uniqueCode())).toMatchObject({
+      recordUid: 'article-1', recordVersion: 1, sourceKind: 'send_to_self', userId: 10001,
     })
     await expect(service.updateLongArticle(source.sourceRef, 'article-1', {
       title: '更新标题', textContent: '更新正文', version: 1, editDurationMillis: 1400,
@@ -5969,10 +5990,21 @@ describe('ArkmeService', () => {
       itemUid: 'article-1', title: '更新标题', textContent: '更新正文', version: 2,
       thinkingDurationMillis: 4600,
     })
+    const actionsAfter = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(openRecordDeletionRef(actionsAfter.recordDeletionRef!, await state.uniqueCode()).recordVersion).toBe(2)
+    expect(actionsAfter.textContent).toBe('更新正文')
     expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
       record_uid: 'article-1', template_kind: 1, version: 1,
       record_duration_millis: 3200, edit_duration_millis: 1400,
     })
+    textFormat = 'markdown'
+    textContent = '# 完整长文\n' + '**正文**'.repeat(5000)
+    const completeArticle = await service.longArticleDetail(source.sourceRef, 'article-1')
+    await service.forwardSourceMessages(source.sourceRef, [completeArticle.actionItem!.messageActionRef!], { recordUid: 'forwarded-article', relationUid: 'forwarded-relation' })
+    const forwardBody = calls.filter(call => call.url.endsWith('/api/v1/records/create')).at(-1)!.body
+    const payload = forwardBody.content_payload as { forward_records: { items: Array<Record<string, unknown>> } }
+    expect(payload.forward_records.items[0]).toMatchObject({ text: textContent, text_format: 'markdown', template_kind: 1 })
+    expect(payload.forward_records.items[0]).not.toHaveProperty('display_kind')
   })
 
   it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {

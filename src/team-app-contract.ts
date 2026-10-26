@@ -1,14 +1,19 @@
 import type { ArkmeTeam, ArkmeTeamMember } from './types.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
+import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
 
 /** Built-in App UI contract, deliberately absent from the public SDK and model Tools. */
 export type TeamAppOperation = `team.app.${
-  'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
+  'external.list' | 'external.mine' | 'external.share' | 'external.unshare' | 'external.page' | 'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'official.membership' | 'open' | 'conversations' | 'timeline'
   | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
-  | 'visitor.private.open' | 'person.private.open' | 'people.remarks'
+  | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
+  | 'group.context' | 'group.join' | 'group.directory'
+  | 'internal-group.prepare'
+  | 'public-card' | 'member-candidates' | 'members.add'
+  | 'world.view' | 'world.prepare'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
@@ -62,7 +67,7 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
-  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
   avatarState?: 'pending' | 'ready' | 'unavailable'
 }

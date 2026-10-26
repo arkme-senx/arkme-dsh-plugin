@@ -188,6 +188,30 @@ describe('Arkme WeChat login ownership', () => {
   })
 
   it.each([
+    ['startup gate', () => <LoginAfterLogout t={defaultArkmeLoginTranslate} />, 'phone'],
+    ['startup gate', () => <LoginAfterLogout t={defaultArkmeLoginTranslate} />, 'password'],
+    ['sidebar', () => <ArkmeSurface ownsQrLogin />, 'phone'],
+    ['sidebar', () => <ArkmeSurface ownsQrLogin />, 'password'],
+  ] as const)('preserves the selected login method in the %s across foreground revalidation (%s)', async (_surface, renderSurface, mode) => {
+    testState.jiwoScanLoginEnabled = true
+    arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
+    await act(async () => { renderer = create(renderSurface()) })
+    await act(async () => { renderer!.root.findByType(ArkmeLogin).props.onModeChange(mode) })
+    if (mode === 'password') {
+      await act(async () => {
+        const fields = renderer!.root.findByType(ArkmeLogin).props.passwordLogin
+        fields.onAccountChange('review-fixture'); fields.onPasswordChange('synthetic-password')
+      })
+    }
+    for (let index = 0; index < 2; index++) {
+      await act(async () => { await arkmeAuthStore.refresh() })
+      const props = renderer!.root.findByType(ArkmeLogin).props
+      expect(props.mode).toBe(mode)
+      if (mode === 'password') expect(props.passwordLogin).toMatchObject({ account: 'review-fixture', password: 'synthetic-password' })
+    }
+  })
+
+  it.each([
     ['zh', defaultArkmeLoginTranslate, '登录即我'],
     ['en', english, 'Sign in to Arkme'],
   ] as const)('keeps the selected %s login language after the Chinese account settings log out', async (locale, t, title) => {

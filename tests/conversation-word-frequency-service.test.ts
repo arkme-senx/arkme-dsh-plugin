@@ -80,9 +80,9 @@ describe('Chat-owner word frequency adapter', () => {
   })
   it('checks source against exact snapshot, conversation, and current availability', async () => {
     const f = fixture()
-    const source = { ...env, available: true, result_id: 'r1', source_ref: 'opaque', message_uid: 'm1', send_at: 100 }
+    const source = { ...env, available: true, result_id: 'r1', source_ref: 'opaque', record_owner_user_id: '1001', message_uid: 'm1', send_at: 100 }
     f.post.mockResolvedValue(source)
-    expect(await f.service.source({ ...q, resultId: 'r1', messageSourceRef: 'opaque' })).toEqual({ messageUid: 'm1', sendAtMillis: 100 })
+    expect(await f.service.source({ ...q, resultId: 'r1', messageSourceRef: 'opaque' })).toEqual({ messageUid: 'm1', sendAtMillis: 100, recordOwnerUserId: 1001 })
     for (const patch of [{ available: false }, { result_id: 'old' }, { source_ref: 'wrong' }, { chat_session_uid: 'another' }]) {
       f.post.mockResolvedValueOnce({ ...source, ...patch })
       await expect(f.service.source({ ...q, resultId: 'r1', messageSourceRef: 'opaque' })).rejects.toThrow()

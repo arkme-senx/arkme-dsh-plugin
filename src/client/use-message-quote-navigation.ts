@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeTimelineExtensionParent, ArkmeTimelineItem } from '../types.js'
-import { quoteHighlightRange } from './message-quote-selection.js'
+import { messageSelectionTarget } from './ArkmeMessageTextSelection.js'
+import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 
 /** Reuses the timeline's around/locate lifecycle. No polling or second history cache. */
 export function useMessageQuoteNavigation(scope: string) {
@@ -27,9 +28,15 @@ export function useMessageQuoteNavigation(scope: string) {
     let cancelled = false
     const toggle = row.querySelector<HTMLButtonElement>('[data-arkme-text-toggle][aria-expanded="false"]')
     toggle?.click()
-    const frame = requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => { void (async () => {
       if (cancelled) return
       const element = row.querySelector<HTMLElement>('[data-arkme-text-selection]')
+      const source = element ? messageSelectionTarget(element) : undefined
+      if (!source || await quoteDigest(source.item) !== parent.quote!.sourceDigest) {
+        if (!cancelled) setNotice('已找到原消息，原文发生变化，无法准确高亮引用')
+        return
+      }
+      if (cancelled) return
       const range = element ? quoteHighlightRange(element, parent.quote!) : undefined
       if (!range) { setNotice('已找到原消息，原文发生变化，无法准确高亮引用'); return }
       // A long message may be centered while the actual quotation is still off screen.
@@ -50,7 +57,7 @@ export function useMessageQuoteNavigation(scope: string) {
       const remove = () => { api.CSS?.highlights?.delete(name); style.remove() }
       const timer = setTimeout(remove, 3_000)
       cleanup.current = () => { cancelled = true; clearTimeout(timer); remove() }
-    })
+    })() })
     cleanup.current = () => { cancelled = true; cancelAnimationFrame(frame) }
   }, [])
   return { begin, located, back: back?.scope === scope ? back.item : undefined, notice, clear: () => { cleanup.current?.(); pending.current = undefined; setBack(undefined); setNotice('') } }

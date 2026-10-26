@@ -4,6 +4,7 @@ export interface LocationMapSession {
   account: string; key: string; element: HTMLDivElement
   map?: BaiduMap; sdk?: BaiduMaps
   scope?: string
+  darkTheme?: boolean
   points: Map<string, BaiduPoint>
   ready: boolean; initialized: boolean; interacted: boolean; fitted: boolean; active: boolean; disposed: boolean
   timer?: ReturnType<typeof setTimeout> | undefined

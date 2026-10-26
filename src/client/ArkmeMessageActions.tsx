@@ -1,3 +1,7 @@
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import type { WorldPublishOrigin } from '../world-publish-source.js'
+import { openWorldPublish } from './world-publish-entry.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { tr } from './locale.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
 import { ArkmeForwardSearch } from './ArkmeForwardSearch.js'
@@ -22,6 +26,7 @@ export interface ArkmeMessageSelectionItem {
 }
 
 export interface ArkmeMessageActionViewItem extends ArkmeMessageSelectionItem {
+  worldOrigin?: WorldPublishOrigin
   actionRef: string
   conversationRef: string
   copyLinkAvailable: boolean
@@ -163,6 +168,8 @@ interface PickerState {
 
 export function useArkmeMessageActions(input: {
   scopeKey: string
+  /** Personal/chat records use the established source operations, distinct from Agent/Bot refs. */
+  sourceActions?: boolean
   items: readonly ArkmeMessageActionViewItem[]
   /** Visible selection facts, independent of the signed action capabilities. */
   selectionItems?: readonly ArkmeMessageSelectionItem[]
@@ -204,6 +211,7 @@ export function useArkmeMessageActions(input: {
     setBusy(undefined)
     setStatus('')
     requestIdsRef.current = undefined
+    return () => { revisionRef.current += 1 }
   }, [input.scopeKey])
 
   useEffect(() => {
@@ -224,10 +232,10 @@ export function useArkmeMessageActions(input: {
   }, [busy])
 
   const enter = useCallback((item: ArkmeMessageActionViewItem) => {
-    if (item.actionRef.trim() === '' || busy !== undefined) return
+    if ((input.selectionItems === undefined && item.actionRef.trim() === '') || busy !== undefined) return
     setMenu(undefined)
     setSelectedIds(new Set([item.id]))
-  }, [busy])
+  }, [busy, input.selectionItems])
 
   const toggle = useCallback((item: ArkmeMessageSelectionItem) => {
     if (busy !== undefined || !selectable.some(value => value.id === item.id)) return
@@ -273,8 +281,8 @@ export function useArkmeMessageActions(input: {
     const controller = new AbortController()
     const timeout = window.setTimeout(() => { controller.abort() }, MESSAGE_ACTION_REQUEST_TIMEOUT_MS)
     try {
-      const result = await callArkme<ArkmeMessageCopyLinkResult>('message-actions.copy-link', {
-        conversationRef,
+      const result = await callArkme<ArkmeMessageCopyLinkResult>(input.sourceActions ? 'source.message-copy-link' : 'message-actions.copy-link', {
+        ...(input.sourceActions ? { sourceRef: conversationRef } : { conversationRef }),
         actionRefs: items.map(item => item.actionRef),
       }, controller.signal)
       if (revision !== revisionRef.current) return
@@ -288,7 +296,7 @@ export function useArkmeMessageActions(input: {
       window.clearTimeout(timeout)
       if (revision === revisionRef.current) setBusy(undefined)
     }
-  }, [busy, showStatus])
+  }, [busy, showStatus, input.sourceActions])
 
   const openForward = useCallback(async (items: readonly ArkmeMessageActionViewItem[]) => {
     const revision = revisionRef.current
@@ -344,8 +352,8 @@ export function useArkmeMessageActions(input: {
           commentRecordUid: crypto.randomUUID(),
           sendAtMillis: Date.now(),
         }
-        const result = await callArkme<ArkmeSourceSendResult>('message-actions.forward', {
-          conversationRef,
+        const result = await callArkme<ArkmeSourceSendResult>(input.sourceActions ? 'source.forward-messages' : 'message-actions.forward', {
+          ...(input.sourceActions ? { sourceRef: conversationRef, relationUid: identity.commentRecordUid, expectedUserId: arkmeAuthStore.getSnapshot().auth?.userId } : { conversationRef }),
           targetSourceRef: target.sourceRef,
           actionRefs: forwardedItems.map(item => item.actionRef),
           requestId: `arkme-forward-${identity.requestId}`,
@@ -418,6 +426,12 @@ export function useArkmeMessageActions(input: {
         { id: 'link', label: '复制链接', icon: <MessageActionIcon kind="link" size={16} />, disabled: !menuItem.copyLinkAvailable, onSelect: () => { void copyLink([menuItem]) } },
         { id: 'select', label: '多选', icon: <MessageActionIcon kind="select" size={16} />, onSelect: () => enter(menuItem) },
         { id: 'forward', label: '转发', icon: <MessageActionIcon kind="forward" size={16} />, disabled: !menuItem.forwardAvailable, onSelect: () => { void openForward([menuItem]) } },
+        ...(menuItem.worldOrigin ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => {
+          const auth = arkmeAuthStore.getSnapshot().auth
+          if (auth?.status !== 'authenticated' || !auth.userId) { showStatus('请先登录'); return }
+          try { openWorldPublish({ accountKey: `${auth.environment}:${auth.userId}`, origin: menuItem.worldOrigin! }); setMenu(undefined) }
+          catch (error) { showStatus(errorMessage(error)) }
+        } }] : []),
       ]} />}
     {status !== '' && <div style={styles.status} role="status">{status}</div>}
     {picker !== undefined && <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget && busy !== 'forward') setPicker(undefined) }}>
@@ -457,5 +471,9 @@ export function useArkmeMessageActions(input: {
     <button data-arkme-feedback="neutral" type="button" style={{ ...styles.selectButton, ...(busy === undefined ? {} : messageSelectionStyles.selectBarButtonDisabled) }} disabled={busy !== undefined} onClick={() => { setSelectedIds(undefined); requestIdsRef.current = undefined }} aria-label={tr("退出多选")}><span style={styles.icon}><ArkmeSelectActionIcon kind="close" size={18} /></span><span style={messageSelectionStyles.selectBarLabel}>{tr("退出多选")}</span></button>
   </div></>
 
-  return { selectMany, canSelectMany: input.selectionItems !== undefined && busy === undefined && picker === undefined, selecting: selectedIds !== undefined, selectedIds: selectedIds ?? new Set<string>(), openMenu, toggle, overlay, selectionBar }
+  return { copyLink, openForward, busy, dialogOpen: picker !== undefined, dismissOverlay: () => {
+    if (!picker && !menu) return false
+    if (!busy) { setPicker(undefined); setMenu(undefined) }
+    return true
+  }, selectMany, canSelectMany: input.selectionItems !== undefined && busy === undefined && picker === undefined, selecting: selectedIds !== undefined, selectedIds: selectedIds ?? new Set<string>(), openMenu, toggle, overlay, selectionBar }
 }

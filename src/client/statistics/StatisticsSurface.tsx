@@ -29,7 +29,7 @@ function Change({ value }: { value: number | null | undefined }) {
 const palette = { '--stats-bg': theme.base, '--stats-layer': theme.layer1, '--stats-text': theme.text, '--stats-muted': theme.secondary,
   '--stats-border': theme.border, '--stats-accent': theme.info, '--stats-soft': theme.accentSoft, '--stats-hover': theme.hover } as CSSProperties
 
-export function StatisticsSurface({ accountScope, initialMonth }: { accountScope: string; initialMonth?: string | undefined }) {
+export function StatisticsSurface({ accountScope, initialMonth, embedded = false }: { accountScope: string; initialMonth?: string | undefined; embedded?: boolean }) {
   useArkmeLocale()
   const [month, setMonth] = useState(initialMonth ?? ''), [revision, setRevision] = useState(0)
   const [view, setView] = useState<'day' | 'week'>('day'), [keyword, setKeyword] = useState<StatisticsKeyword>(), [showAll, setShowAll] = useState(false)
@@ -41,6 +41,7 @@ export function StatisticsSurface({ accountScope, initialMonth }: { accountScope
   const enabled = !month || paid
   const query = useMemo(() => statisticsQuery(accountScope, month), [accountScope, month, revision])
   const overview = useStatistics<StatisticsDetail>('detail', query, enabled, revision)
+  const keywords = useStatistics<import('../../analytics-contract.js').PersonalKeywordSummary>('keywords', query, enabled, revision)
   const active = useStatistics<StatisticsPoint[]>('active', query, enabled, revision)
   const records = useStatistics<StatisticsRecordPage>('long', query, enabled, revision)
   const currentMonth = statisticsDateKey(new Date()).slice(0, 7)
@@ -58,8 +59,8 @@ export function StatisticsSurface({ accountScope, initialMonth }: { accountScope
     } catch (error) { if (!c.signal.aborted) setSourceError(statisticsError(error)) }
     finally { if (!c.signal.aborted) setOpening('') }
   }
-  return <section className="arkme-statistics" style={palette} aria-label={tr('统计与分析')}>
-    <header className="stats-header"><div className="stats-title"><ChartBar size={23}/><div><h1>{tr('统计与分析')}</h1><small>{tr('个人快记 · 沿用移动端统计口径')}</small></div></div>
+  return <section className="arkme-statistics" data-embedded={embedded || undefined} style={palette} aria-label={tr('统计与分析')}>
+    <header className="stats-header">{!embedded && <div className="stats-title"><ChartBar size={23}/><div><h1>{tr('统计与分析')}</h1><small>{tr('个人快记 · 沿用移动端统计口径')}</small></div></div>}
       <div className="stats-controls"><div className="stats-switch" aria-label={tr('统计范围')}><button aria-pressed={!month} onClick={() => selectMonth('')}>{tr('全部')}</button><button aria-pressed={!!month} onClick={() => selectMonth(month || currentMonth)}>{tr('按月')}</button></div>
       {month && <div className="stats-month"><button title={tr('上个月')} aria-label={tr('上个月')} disabled={!!earliest && month <= earliest} onClick={() => stepMonth(-1)}><CaretLeft/></button><input type="month" aria-label={tr('统计月份')} value={month} max={currentMonth} onInput={e => { if (e.currentTarget.value) selectMonth(e.currentTarget.value) }} onChange={e => { if (e.target.value) selectMonth(e.target.value) }}/><button title={tr('下个月')} aria-label={tr('下个月')} disabled={month >= currentMonth} onClick={() => stepMonth(1)}><CaretRight/></button></div>}
       <button className="stats-icon" aria-label={tr('刷新统计')} title={tr('刷新统计')} onClick={retry}><ArrowClockwise size={18}/></button></div>
@@ -76,7 +77,7 @@ export function StatisticsSurface({ accountScope, initialMonth }: { accountScope
       <StatisticsHeatmap key={`${accountScope}:${month}`} accountScope={accountScope} month={month} revision={revision} firstRecordAt={overview.value?.firstRecordAt ?? null}/>
       <div className="stats-columns"><section className="stats-card"><header><div><h2>{tr('活跃时间分布')}</h2><small>{tr('每个点代表一次记录 · 纵轴为记录用时')}</small></div><div className="stats-switch"><button aria-pressed={view === 'day'} onClick={() => setView('day')}>{tr('一天内')}</button><button aria-pressed={view === 'week'} onClick={() => setView('week')}>{tr('每周')}</button></div></header>
         {view === 'week' && !paid ? <p className="stats-status">{tr(memberReady ? '每周分布为会员权益' : membership.state.status === 'error' ? '会员状态读取失败' : '正在确认会员状态…')}{membership.state.status === 'error' && <button onClick={membership.refresh}>{tr('重试')}</button>}</p> : <Resource resource={active} retry={retry}>{points => <ActivityChart points={points} weekly={view === 'week'}/>}</Resource>}
-      </section><StatisticsKeywords resource={overview} onSelect={item => { setShowAll(false); setShowKeywordList(false); setKeyword(item); setSourceError('') }} onRetry={retry} onOpenList={() => { setShowAll(false); setKeyword(undefined); setShowKeywordList(true); setSourceError('') }}/></div>
+      </section><StatisticsKeywords resource={keywords} onSelect={item => { setShowAll(false); setShowKeywordList(false); setKeyword(item); setSourceError('') }} onRetry={retry} onOpenList={() => { setShowAll(false); setKeyword(undefined); setShowKeywordList(true); setSourceError('') }}/></div>
       <section className="stats-card"><header><div><h2>{tr('耗时较久的记录')}</h2><small>{tr('按记录用时排序')}</small></div><button onClick={() => setShowAll(true)}>{tr('查看全部')} <CaretRight size={12}/></button></header>
         <Resource resource={records} retry={retry}>{page => <RecordRows items={page.items.slice(0, 5)} opening={opening} onOpen={openRecord}/>}</Resource>
       </section>
@@ -85,9 +86,9 @@ export function StatisticsSurface({ accountScope, initialMonth }: { accountScope
     {showAll && <LongRecords key={JSON.stringify(query)} query={query} initial={records.value} opening={opening} onOpen={openRecord} onClose={() => setShowAll(false)} sourceError={sourceError}/>}
     {showKeywordList && <ArkmeDetailShell className="stats-keyword-detail" open={!keyword} title={tr('关键词词频')} label={tr('词频详情')} subtitle={`${month || tr('全部')} · ${tr('个人快记')}`} style={{ top: 0 }} onClose={() => setShowKeywordList(false)}>
       <p className="stats-status">{tr('按出现次数排序 · 点击查看相关快记')}</p>
-      <Resource resource={overview} retry={retry}>{data => data.keywords ? <StatisticsKeywordList items={data.keywords} onSelect={item => { setKeyword(item); setSourceError('') }}/> : <p className="stats-status">{tr('关键词词频尚未接通')}</p>}</Resource>
+      <Resource resource={keywords} retry={retry}>{data => data.keywords ? <StatisticsKeywordList items={data.keywords} onSelect={item => { setKeyword(item); setSourceError('') }}/> : <p className="stats-status">{tr('关键词词频尚未接通')}</p>}</Resource>
     </ArkmeDetailShell>}
-    {keyword && <KeywordRecords key={`${accountScope}:${keyword.text}:${month}`} keyword={keyword.text} from={query.fromStamp} to={query.toStamp} userId={userId} onClose={() => { setKeyword(undefined); setShowKeywordList(false) }} onBack={showKeywordList ? () => setKeyword(undefined) : undefined} onOpen={openRecord} sourceError={sourceError}/>}
+    {keyword && <KeywordRecords key={`${accountScope}:${keyword.text}:${month}`} keyword={keyword} query={query} onClose={() => { setKeyword(undefined); setShowKeywordList(false) }} onBack={showKeywordList ? () => setKeyword(undefined) : undefined} onOpen={openRecord} sourceError={sourceError}/>}
     {detail && <ArkmeTimelineDetailDrawer item={detail} canExtend={false} showOriginal={original} onToggleOriginal={() => setOriginal(v => !v)} onClose={() => setDetail(undefined)}/>}
   </section>
 }
@@ -151,13 +152,13 @@ function LongRecords({ query, initial, opening, sourceError, onOpen, onClose }: 
   useEffect(() => { if (!initial) void load(); return () => controller.current?.abort() }, [])
   return <ArkmeDetailShell title={tr('耗时较久的记录')} label={tr('耗时记录列表')} onClose={onClose} style={{ width: 'min(760px, 100%)', top: 0 }}><RecordRows items={page?.items ?? []} opening={opening} onOpen={onOpen}/>{sourceError && <p role="alert">{sourceError}</p>}{error && <p role="alert">{error}</p>}{(!page || page.nextOffset !== null || error) && <button className="stats-more" disabled={loading} onClick={() => void load()}>{tr(loading ? '正在加载…' : error ? '重试' : '加载更多')}</button>}</ArkmeDetailShell>
 }
-function KeywordRecords({ keyword, from, to, userId, sourceError, onClose, onBack, onOpen }: { keyword: string; from: number; to: number; userId: number; sourceError: string; onClose(): void; onBack?: (() => void) | undefined; onOpen(uid: string): void }) {
-  const [result, setResult] = useState<ArkmeRecordSearchResult>(), [error, setError] = useState(''), [loading, setLoading] = useState(true), [revision, setRevision] = useState(0)
+function KeywordRecords({ keyword, query, sourceError, onClose, onBack, onOpen }: { keyword: StatisticsKeyword; query: import('../../statistics-contract.js').StatisticsQuery; sourceError: string; onClose(): void; onBack?: (() => void) | undefined; onOpen(uid: string): void }) {
+  const [result, setResult] = useState<import('../../analytics-contract.js').PersonalKeywordRecords>(), [error, setError] = useState(''), [loading, setLoading] = useState(true), [revision, setRevision] = useState(0)
   useEffect(() => { const c = new AbortController(); setLoading(true); setError('')
-    void withArkmeReadDeadline(signal => callArkme<ArkmeRecordSearchResult>('search.records', { query: keyword, limit: 50, ...(result?.nextCursor && revision ? { cursor: result.nextCursor } : {}) }, signal), c.signal)
+    void withArkmeReadDeadline(signal => callArkme<import('../../analytics-contract.js').PersonalKeywordRecords>('statistics.keyword-records', { ...query, keywordId: keyword.keywordId, snapshotId: keyword.snapshotId, ...(result?.nextCursor && revision ? { cursor: result.nextCursor } : {}) }, signal), c.signal)
       .then(next => { if (!c.signal.aborted) setResult(old => ({ ...next, items: [...old?.items ?? [], ...next.items.filter(i => !old?.items.some(p => p.recordUid === i.recordUid))] })) }).catch(e => { if (!c.signal.aborted) setError(statisticsError(e)) }).finally(() => { if (!c.signal.aborted) setLoading(false) })
     return () => c.abort()
-  }, [keyword, revision])
-  const items = result?.items.filter(i => [1, 2].includes(i.sourceKind) && i.recordOwnerUserId === userId && i.sendAtMillis >= from && i.sendAtMillis <= to) ?? []
-  return <ArkmeDetailShell title={keyword} label={tr('关键词相关快记')} onClose={onClose} {...(onBack ? { onBack } : {})} backLabel={tr('返回词频列表')} style={{ top: 0 }}><p className="stats-status">{tr('当前时间范围内的个人快记搜索结果')}<small className="stats-keyword-note">{tr('搜索结果条数与词语出现次数不同。')}</small></p>{items.map(item => <button className="stats-keyword-record" key={item.recordUid} onClick={() => onOpen(item.recordUid)}>{item.title || item.snippet || item.textContent}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></button>)}{!loading && !error && !items.length && <p>{tr('当前已检索记录中暂无匹配')}</p>}{(error || sourceError) && <p role="alert">{error || sourceError}</p>}{(loading || error || result?.hasMore) && <button className="stats-more" disabled={loading} onClick={() => setRevision(v => v + 1)}>{tr(loading ? '正在读取…' : error ? '重试' : '继续查找')}</button>}</ArkmeDetailShell>
+  }, [keyword.keywordId, keyword.snapshotId, revision])
+  const items = result?.items ?? []
+  return <ArkmeDetailShell title={keyword.text} label={tr('关键词相关快记')} onClose={onClose} {...(onBack ? { onBack } : {})} backLabel={tr('返回词频列表')} style={{ top: 0 }}><p className="stats-status">{tr('当前时间范围内的个人快记搜索结果')}<small className="stats-keyword-note">{tr('搜索结果条数与词语出现次数不同。')}</small></p>{items.map(item => <button className="stats-keyword-record" key={item.recordUid} onClick={() => onOpen(item.recordUid)}>{item.title || item.textContent}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></button>)}{!loading && !error && !items.length && <p>{tr('当前已检索记录中暂无匹配')}</p>}{(error || sourceError) && <p role="alert">{error || sourceError}</p>}{(loading || error || result?.hasMore) && <button className="stats-more" disabled={loading} onClick={() => setRevision(v => v + 1)}>{tr(loading ? '正在读取…' : error ? '重试' : '继续查找')}</button>}</ArkmeDetailShell>
 }

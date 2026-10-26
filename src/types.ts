@@ -200,6 +200,7 @@ export type ArkmeTeamJoinRejectReason = 'team_not_found'
 export type ArkmeTeamMembershipState = 'joined' | 'already_member' | 'owner'
 
 export interface ArkmeTeam {
+  key?: string
   profileRevision?: number
   canEditProfile?: boolean
   avatar?: ArkmeTeamAvatar
@@ -805,6 +806,9 @@ export interface ArkmeWorldExtensionPublication {
 }
 
 export interface ArkmeWorldFeedItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
+  /** Account-bound private annotation target; never a public reaction/share capability. */
+  localReactionTarget?: import('./reaction-contract.js').ReactionTargetRef
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
   authorRef?: string
@@ -827,6 +831,12 @@ export interface ArkmeWorldFeedItem {
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
+export interface ArkmeWorldShareResult {
+  url: string
+  title: string
+  previewText: string
+}
+
 export interface ArkmeWorldFeedPage {
   items: ArkmeWorldFeedItem[]
   total: number
@@ -838,6 +848,7 @@ export interface ArkmeWorldFeedPage {
 export interface ArkmeWorldAuthorLabel {
   authorRef: string
   authorName: string
+  memberType?: ArkmeSourceItem['peerMemberType']
 }
 
 export interface ArkmeWorldVoiceprintAvailabilityItem {
@@ -889,6 +900,7 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  memberType?: ArkmeSourceItem['peerMemberType']
   isSelf?: boolean
   interactionRef: string
   parentRef: string
@@ -1065,6 +1077,10 @@ export interface ArkmeArrangementPage {
 
 export type ArkmeArrangementDetail = ArkmeArrangementItem
 
+/** Read-only deleted owner projection; deliberately excluded from live mutations. */
+export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }
+export type ArkmeDeletedArrangementPage = Omit<ArkmeArrangementPage, 'items'> & { items: ArkmeDeletedArrangementItem[] }
+
 /** Reminder-event identity is intentionally separate from Arrangement identity. */
 export interface ArkmeArrangementReminderEvent {
   eventRef: string
@@ -1176,6 +1192,7 @@ export interface ArkmeCachedQueryResult {
 }
 
 export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+export type ArkmeLongArticleBrowseScope = 'recent' | 'shared_by_me' | 'shared_with_me'
 
 export interface ArkmeSearchQueryGuard {
   state: string
@@ -1469,6 +1486,8 @@ export interface ArkmeProviderCapabilities {
   environment: ArkmeEnvironment
   features: {
     authStatus: true
+    /** Interactive preset-account login; passwords must never enter model tools. */
+    passwordLogin?: true
     cachedSnapshot: true
     remoteRefresh: true
     search: true
@@ -1479,6 +1498,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+    analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
@@ -1497,6 +1517,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamProfiles?: true
+    teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
     dshAccountSessions?: true
@@ -1525,6 +1546,7 @@ arkoImagesV1?:true
     imageCacheRead?: true
     selfRoles?: true
     directMessageAdmission?: true
+    messageTextAnchorsV1?: true
     reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
@@ -2010,6 +2032,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
+  localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
   timelineEventId?: string
   /** Chat's native-message tie order, shared by confirmed tail and unified pages. */
@@ -2487,6 +2511,9 @@ export interface ArkmeLongArticleUpdateInput {
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
+  /** Verified current record and account-bound action capabilities; never inferred by the reader. */
+  actionItem?: ArkmeTimelineItem
+  createdAtMillis?: number
   contentBlocks?: ArkmeContentBlock[]
   sourceRef: string
   itemUid: string
@@ -2504,6 +2531,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  /** Pending automatic publication; composer attachment drafts never set this. */
+  autoPublish?: boolean
   baseVersion?: number
   document?: Record<string, unknown>
   images?: ArkmeLongArticleImage[]
@@ -4063,7 +4092,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4167,11 +4196,13 @@ export type ArkmePluginOperation =
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
+  | 'source.message-anchor.capture'
   | 'source.message-underline.capabilities'
   | 'source.message-underline.list'
   | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
+  | 'dictation.transcribe'
   | 'auth.status'
   | 'auth.config'
   | 'auth.begin'
@@ -4180,6 +4211,7 @@ export type ArkmePluginOperation =
   | 'auth.app.poll'
   | 'auth.app.cancel'
   | 'auth.test.login'
+  | 'auth.password.login'
   | 'auth.email.send'
   | 'auth.email.bind'
   | 'auth.phone.send'
@@ -4200,6 +4232,7 @@ export type ArkmePluginOperation =
   | 'user-ban.unban'
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
+  | 'team.external'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
@@ -4208,6 +4241,7 @@ export type ArkmePluginOperation =
   | 'team.codex.entry-availability'
   | 'team.codex.invite'
   | 'team.codex.events'
+  | 'team.codex.image'
   | 'team.codex.change'
   | 'team.create'
   | 'team.join-by-jotmo-id'
@@ -4283,6 +4317,8 @@ export type ArkmePluginOperation =
   | 'calendar.day-review.reconcile'
   | 'calendar.day-review.resume'
   | 'calendar.day-review.evidence'
+  | 'statistics.keywords'
+  | 'statistics.keyword-records'
   | 'statistics.detail'
   | 'statistics.active'
   | 'statistics.long'
@@ -4317,6 +4353,8 @@ export type ArkmePluginOperation =
   | 'image.read'
   | 'images.list'
   | 'world.record.read'
+  | 'world.share'
+  | 'world.forward'
   | 'world.feed'
   | 'world.mine'
   | 'world.user'
@@ -4325,6 +4363,9 @@ export type ArkmePluginOperation =
   | 'chat.official-author.profile'
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
+  | 'world.reactions.prepare'
+  | 'world.reactions'
+  | 'world.reactions.local'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
@@ -4342,6 +4383,8 @@ export type ArkmePluginOperation =
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'
   | 'arrangements.list'
+  | 'arrangements.deleted.list'
+  | 'arrangements.deleted.detail'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.source.open'
@@ -4380,6 +4423,8 @@ export type ArkmePluginOperation =
   | 'source.member-event.profile'
   | 'source.member-event.private.open'
   | 'source.member-records'
+  | 'source.person-records.sources'
+  | 'source.person-records.capabilities'
   | 'source.mark-read'
   | 'source.message-preparing.report'
   | 'source.message-preparing.cancel'
@@ -4398,6 +4443,8 @@ export type ArkmePluginOperation =
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'
+  | 'self-note.quote.send'
+  | 'selected-text.forward'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
   | 'related-recordings.share'
@@ -4435,6 +4482,7 @@ export type ArkmePluginOperation =
   | 'user.card'
   | 'chat.private.open'
   | 'chat.member.private.open'
+  | 'chat.member.world-target'
   | 'source.send-rich'
   | 'favorite-stickers.list'
   | 'reactions'
@@ -4463,6 +4511,9 @@ export type ArkmePluginOperation =
   | 'source.long-article.draft.get'
   | 'source.long-article.draft.put'
   | 'source.long-article.draft.delete'
+  | 'world.source-draft'
+  | 'world.arko-source-draft'
+  | 'world.message-source-draft'
   | 'source.record-reedit.detail'
   | 'source.record-reedit.draft.put'
   | 'source.record-reedit.draft.delete'
@@ -4640,6 +4691,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'app.migration.cancel'
   | 'app.migration.install' | 'app.migration.reveal'
   | 'app.migration.dismiss'
+  | 'codex.forward'
+  | 'codex.local-mark.capabilities'
+  | 'codex.local-mark.list'
+  | 'codex.local-mark.change'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
   | 'native-chat.annotations'

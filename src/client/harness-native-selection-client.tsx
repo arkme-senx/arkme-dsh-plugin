@@ -1,3 +1,8 @@
+import { HarnessDictationInput } from './HarnessDictationInput.js'
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import { callArkme } from './api.js'
+import type { ArkmeAuthSnapshot } from '../types.js'
+import { openWorldPublish } from './world-publish-entry.js'
 import { HarnessTextSelection } from './HarnessTextSelection.js'
 import type { NativeTextInputActions } from './harness-text-selection.js'
 import { NativeCopyLinkAction } from './NativeCopyLinkAction.js'
@@ -11,12 +16,12 @@ import { Component, useEffect, useLayoutEffect, useReducer, useRef, useState, ty
 import { createPortal } from 'react-dom'
 import { ArkmeMessageSelectionControl, ArkmeSelectActionIcon, messageSelectionStyles } from './message-selection-presentation.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { EMPTY_NATIVE_SELECTION, nativeSelectionCopyText, nativeSelectionReducer, observeSelectedNativeNodes, readNativeChat, type NativeChat } from './harness-native-selection.js'
+import { EMPTY_NATIVE_SELECTION, nativeWorldPublishOrigin, nativeSelectionCopyText, nativeSelectionReducer, observeSelectedNativeNodes, readNativeChat, type NativeChat } from './harness-native-selection.js'
 import { watchNativeSelectionGeometry, nativeSelectionActionOverlayCss, observeNativeChatPresence, nativeSelectionMessageRow, nativeSelectionPointerRow, nativeSelectionHighlightSelector, type NativeSelectionLayout } from './harness-native-selection-geometry.js'
 import type {} from './harness-slots-contract.js'
 
 const SLOT = 'conversation.session.header.actions'
-const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], cramped: false, viewport: null }
+const EMPTY_LAYOUT: NativeSelectionLayout = { seats: [], viewport: null }
 type HeaderProps = {
   sessionId: string
   useChat?: SnapshotSelectorHook<unknown>
@@ -93,6 +98,23 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
   const layer = useRef<HTMLDivElement>(null)
   const entry = useRef<HTMLElement | null>(null)
   const [menu, setMenu] = useState<{ key: string; row: HTMLElement; x: number; y: number; autoFocus: boolean } | null>(null)
+  const [worldError, setWorldError] = useState('')
+  const worldRequest = useRef<AbortController>()
+  useEffect(() => () => worldRequest.current?.abort(), [sessionId])
+  const publish = async (key: string) => {
+    worldRequest.current?.abort()
+    const controller = new AbortController(); worldRequest.current = controller
+    try {
+      const origin = nativeWorldPublishOrigin(chatRef.current!, sessionId, key)
+      const auth = await callArkme<ArkmeAuthSnapshot>('auth.status', {}, controller.signal)
+      controller.signal.throwIfAborted()
+      if (auth.status !== 'authenticated' || !auth.userId) throw new Error('请先登录')
+      if (JSON.stringify(nativeWorldPublishOrigin(chatRef.current!, sessionId, key)) !== JSON.stringify(origin)) throw new Error('原内容已变化，请重新选择')
+      openWorldPublish({ accountKey: `${auth.environment}:${auth.userId}`, origin }, controller.signal)
+      setMenu(null); setWorldError('')
+    } catch (error) { if (!controller.signal.aborted) setWorldError(error instanceof Error ? error.message : '暂时无法打开发世界') }
+  }
+
   const restoreFocus = useRef(false)
   const watcher = useRef<ReturnType<typeof watchNativeSelectionGeometry> | undefined>(undefined)
   const fail = () => { setMenu(null); dispatch({ type: 'exit' }); setLayout(EMPTY_LAYOUT); setFailed(true) }
@@ -215,7 +237,9 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
             if (target?.key === menu.key) dispatch({ type: 'enter', key: menu.key })
           } catch { fail() }
         } },
+        ...(menu && (chat.nodes.get(menu.key) as { kind?: string } | undefined)?.kind === 'user' ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => { void publish(menu.key) } }] : []),
       ]} />, doc.body)}
+    {worldError && createPortal(<div role="status" style={{ position: 'fixed', bottom: 120, left: 20, zIndex: 1800, padding: 10, borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text }}>{worldError}<button type="button" onClick={() => setWorldError('')}>{tr('关闭')}</button></div>, doc.body)}
     {state.active && <NativeForwardAction chat={chat} keys={state.keys} sessionId={sessionId} doc={doc} onComplete={exit}>{forwardButton => actionTarget && createPortal(<div data-arkme-native-selection="actions" role="group" aria-label={tr("多选操作")} onKeyDown={escape}
       style={{ ...messageSelectionStyles.selectBar, flexWrap: 'wrap', alignContent: 'center', rowGap: 8,
         ...(fallbackBounds ? { position: 'fixed', left: fallbackBounds.left, width: fallbackBounds.width,
@@ -225,7 +249,6 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
       <style>{nativeSelectionActionOverlayCss}</style>
       <div data-arkme-native-selection="summary" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, maxWidth: '100%', color: arkmeTheme.text, fontSize: 12 }}>
         <span role="status" aria-live="polite" style={{ whiteSpace: 'nowrap' }}>{tr("已选")} {state.keys.size} {tr("条")}</span>
-        {layout.cramped && <span role="status" style={{ color: arkmeTheme.secondary }}>{tr("请扩大窗口以勾选消息")}</span>}
       </div>
       <div data-arkme-native-selection="action-buttons" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '100%', gap: messageSelectionStyles.selectBar.gap }}>
       <NativeCopyTextAction key={state.keys.size === 1 ? [...state.keys][0] : 'no-single-selection'} chat={chat} selectedKey={state.keys.size === 1 ? [...state.keys][0] : undefined} doc={doc} />
@@ -240,8 +263,10 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
     {state.active && layout.viewport && createPortal(<div ref={layer} data-arkme-native-selection="controls" onKeyDown={escape}
       style={{ position: 'relative', width: 0, height: 0, overflowAnchor: 'none', pointerEvents: 'none', zIndex: 20 }}>
       <style>{'[data-arkme-native-selection] button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8); outline-offset: 2px; }'}</style>
-      {!layout.cramped && layout.seats.map(seat => <div key={seat.key} data-arkme-native-selection-key={seat.key}
-        style={{ position: 'absolute', left: `calc(${seat.left}px - var(--arkme-selection-origin-x, 0px))`, top: `calc(${seat.top}px - var(--arkme-selection-origin-y, 0px))`, pointerEvents: 'auto' }}>
+      {layout.seats.map(seat => <div key={seat.key} data-arkme-native-selection-key={seat.key} data-arkme-selection-placement={seat.overlay ? 'inside' : 'gutter'}
+        style={{ position: 'absolute', left: `calc(${seat.left}px - var(--arkme-selection-origin-x, 0px))`, top: `calc(${seat.top}px - var(--arkme-selection-origin-y, 0px))`, pointerEvents: 'auto',
+          ...(seat.overlay ? { borderRadius: 999, background: arkmeTheme.menu, boxShadow: `0 0 0 2px ${arkmeTheme.menu}` } : {}),
+        }}>
         <ArkmeMessageSelectionControl anchor="card-center" checked={state.keys.has(seat.key)} disabled={false} onToggle={() => {
           try {
             if (watcher.current?.valid(seat)) dispatch({ type: 'toggle', key: seat.key })
@@ -256,7 +281,7 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
 /** Register through a public additive slot; never replace native message renderers. */
 export function install(ctx: ClientContext, doc: Document = document): () => void {
   if (typeof ctx.slots?.spec !== 'function') return () => {}
-  return ctx.slots.inject(SLOT, () => {
+  const stopHeader = ctx.slots.inject(SLOT, () => {
     try {
       const spec = ctx.slots.spec(SLOT)
       if (spec?.kind !== 'list' || spec.scope !== 'session') return () => {}
@@ -267,4 +292,10 @@ export function install(ctx: ClientContext, doc: Document = document): () => voi
       return () => {}
     }
   })
+  const stopInput = ctx.slots.inject('conversation.input.left', () => {
+    const spec = ctx.slots.spec('conversation.input.left')
+    if (spec?.kind !== 'list' || spec.scope !== 'session') return () => {}
+    return ctx.slots.register({ name: 'conversation.input.left', id: 'arkme-dictation', order: 100 }, HarnessDictationInput)
+  })
+  return () => { stopHeader(); stopInput() }
 }

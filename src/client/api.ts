@@ -113,6 +113,7 @@ export async function lookupArkmeRecordingImport(importPath: string, taskId: str
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
+  | 'dictation.transcribe'
   | 'emoji.recent.list'
   | 'conversation.viewport.read'
   | 'conversation.viewport.write'
@@ -252,6 +253,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
+  | 'source.message-anchor.capture'
   | 'source.message-underline.capabilities'
   | 'source.message-underline.list'
   | 'source.message-underline.change'
@@ -262,6 +264,10 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.forward-messages'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
+  | 'codex.forward'
+  | 'codex.local-mark.capabilities'
+  | 'codex.local-mark.list'
+  | 'codex.local-mark.change'
   | 'native-chat.forward'
   | 'native-chat.copy-link'
   | 'native-chat.annotations'

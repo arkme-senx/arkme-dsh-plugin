@@ -241,7 +241,7 @@ it('reuses Arkme checkboxes, preserves native clicks, and clears on session swit
   expect(down.defaultPrevented).toBe(false)
 })
 
-it('rejects stale click positions, pauses for narrow space, and retains the selected key', async () => {
+it('rejects stale click positions and keeps narrow controls clickable across resize and scroll', async () => {
   const s = await setup()
   await s.enterEmpty(); await s.flush()
   s.move(80, 160)
@@ -250,11 +250,20 @@ it('rejects stale click positions, pauses for narrow space, and retains the sele
   await s.flush(); await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 1 条')
   s.move(32, 160); s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
-  expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
-  expect(s.doc.body.textContent).toContain('请扩大窗口')
+  expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
+  const inset = s.doc.querySelector<HTMLElement>('[data-arkme-selection-placement="inside"]')!
+  expect(inset.style.background).not.toBe('')
+  expect(inset.querySelector<HTMLElement>('button')?.style.width).toBe('32px')
+  expect(s.doc.body.textContent).not.toContain('请扩大窗口')
+  expect(s.doc.body.textContent).toContain('已选 1 条')
+  await s.click('[role="checkbox"]')
+  expect(s.doc.body.textContent).toContain('已选 0 条')
+  s.move(0, 200); s.viewport.dispatchEvent(new s.win.Event('scroll')); await s.flush()
+  await s.click('[role="checkbox"]')
   expect(s.doc.body.textContent).toContain('已选 1 条')
   s.move(80, 160); s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
+  expect(s.doc.querySelector('[data-arkme-selection-placement="inside"]')).toBeNull()
   await act(async () => { s.surface.dataset.arkmeVisible = 'false' })
   expect(s.doc.querySelector('[data-arkme-native-selection="controls"]')).toBeNull()
   expect(s.callbacks.size).toBe(0)
@@ -405,13 +414,13 @@ it('disables ambiguous duplicate anchors instead of selecting the wrong row', as
 })
 
 
-it('reports unavailable gutter space when native controls cover every safe seat', async () => {
+it('does not cover native controls and restores selection when the obstruction is gone', async () => {
   const s = await setup()
   const handle = s.doc.createElement('div'); s.doc.body.append(handle)
   s.doc.elementsFromPoint = () => [handle, s.viewport]
   await s.enterEmpty(); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')).toBeNull()
-  expect(s.doc.body.textContent).toContain('请扩大窗口')
+  expect(s.doc.body.textContent).not.toContain('请扩大窗口')
   s.doc.elementsFromPoint = () => [s.viewport]
   s.win.dispatchEvent(new s.win.Event('resize')); await s.flush()
   expect(s.doc.querySelector('[role="checkbox"]')).not.toBeNull()

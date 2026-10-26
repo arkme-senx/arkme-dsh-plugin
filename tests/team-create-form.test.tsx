@@ -34,7 +34,8 @@ it('explains invalid input locally and only submits an available Team ID', async
   await check()
   expect(submit().props.disabled).toBe(false)
   await act(async () => {root.root.findByType('form').props.onSubmit({preventDefault(){}}); await tick()})
-  expect(call).toHaveBeenCalledWith('team.app.create', {name:'测试团队',jotmoId:'studio_1',requestUid:expect.any(String)},expect.any(AbortSignal))
+  expect(call).toHaveBeenCalledWith('team.app.create.check', {expectedAccountKey:'account',jotmoId:'studio_1'},expect.any(AbortSignal))
+  expect(call).toHaveBeenCalledWith('team.app.create', {expectedAccountKey:'account',name:'测试团队',jotmoId:'studio_1',requestUid:expect.any(String)},expect.any(AbortSignal))
 })
 
 it('discards an old availability result after typing a different ID', async () => {

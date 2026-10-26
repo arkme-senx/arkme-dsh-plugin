@@ -625,6 +625,26 @@ export class RecordService {
     }
   }
 
+  async worldPublishSource(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<import('../world-publish-source.js').WorldPublishSourceDraft> {
+    const session = await this.runtime.requireSession()
+    signal?.throwIfAborted()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (!['send_to_self', 'default_category', 'topic', 'private_chat', 'group_chat'].includes(source.kind)) throw new ArkmePluginError('world-source-invalid', '仅支持将自己发出的内容发到世界', false, 403)
+    const owner = await this.recordReeditOwnerSnapshot(sourceRef, itemUid, session, source, signal)
+    const blocks = await this.recordReeditMediaBlocks(owner, session)
+    const attachments = await this.recordReeditAttachmentViews(owner, recordReeditMediaGroups(owner.contentPayload).map(group => ({ fileAssetUid: group.fileAssetUid })), blocks)
+    const voiceUid = stringValue(objectValue(owner.contentPayload?.voice).source_file_asset_uid)
+    if (voiceUid && !attachments.some(item => item.asset?.fileAssetUid === voiceUid)) {
+      const block = blocks.find(item => item.fileAssetUid === voiceUid)
+      attachments.push({ selection: { fileAssetUid: voiceUid }, asset: { fileAssetUid: voiceUid, fileName: block?.fileName ?? '语音', mimeType: block?.mimeType ?? 'audio/mpeg', fileKind: 2, size: block?.size ?? 0 }, ...(block ? { block } : {}), ...(block ? {} : { unavailable: true }) })
+    }
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新打开发布窗口', false, 409)
+    return { sourceRef, itemUid: owner.itemUid, sourceLabel: source.displayName, version: owner.version, title: owner.title, textContent: owner.textContent,
+      textFormat: arkmeRecordTextFormat(owner.contentPayload), sendAtMillis: owner.sendAtMillis, attachments }
+  }
+
   async recordReeditEditor(sourceRefInput: string, itemUidInput: string): Promise<ArkmeRecordReeditEditorSnapshot> {
     const session = await this.runtime.requireSession()
     return (await this.loadRecordReeditEditor(sourceRefInput.trim(), itemUidInput.trim(), session)).view
@@ -916,6 +936,9 @@ export class RecordService {
     const recordDurationMillis = Math.max(0, Math.trunc(numberValue(core.record_duration_millis)))
     const editDurationMillis = Math.max(0, Math.trunc(numberValue(core.edit_duration_millis)))
     return {
+      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId), contentBlocks,
+        recordOwnerUserId: numberValue(core.owner_user_id) },
+      ...(numberValue(core.create_at ?? core.created_at) > 0 ? { createdAtMillis: numberValue(core.create_at ?? core.created_at) } : {}),
       sourceRef,
       itemUid: recordUid,
       title: stringValue(core.title),
@@ -989,7 +1012,7 @@ export class RecordService {
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
     const richDraft = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid)
-    if (uid === undefined || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
+    if (uid === undefined || richDraft?.autoPublish === true || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
     const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
     const current = await this.runtime.stateStore.getRecordReeditDraft(session.userId, sourceIdentityKey, uid)
     this.assertLongArticleDraftHasNoAttachmentChanges(current)
@@ -1021,7 +1044,7 @@ export class RecordService {
     if (draft.title.length > 100 || draft.textContent.length > 40000 || draft.durationMillis < 0) {
       throw new ArkmePluginError('long-article-draft-invalid', '长文草稿内容无效', false)
     }
-    if (itemUid === undefined || draft.textFormat === 'markdown' || draft.images !== undefined) {
+    if (itemUid === undefined || draft.autoPublish === true || draft.textFormat === 'markdown' || draft.images !== undefined) {
       if (itemUid !== undefined && (!Number.isSafeInteger(draft.baseVersion) || (draft.baseVersion ?? 0) <= 0)) throw new ArkmePluginError('long-article-draft-base-version-required', '缺少草稿原版本，无法安全恢复，请保留内容后重新加载', false, 409)
       const persist = async () => await this.runtime.stateStore.putLongArticleDraft(session.userId, {
         ...draft,
@@ -1115,10 +1138,11 @@ export class RecordService {
     itemUid: string,
     session: ArkmeSessionCredentials,
     openedSource?: ArkmeSourceRefPayload,
+    signal?: AbortSignal,
   ): Promise<RecordReeditOwnerSnapshot> {
     const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/detail', { record_uid: itemUid }, session,
+      '/api/v1/records/detail', { record_uid: itemUid }, session, signal,
     )
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid).trim() !== itemUid) {
@@ -1584,7 +1608,7 @@ export class RecordService {
         key: `dsh-agent-input:${normalizedUid}`,
       },
     )
-    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
+    // The facade refreshes the Record projection; persisting input is not an account transition.
     return {
       recordUid: stringValue(data.record_uid) || normalizedUid,
       status: numberValue(data.status),
@@ -1709,8 +1733,10 @@ export class RecordService {
         send_at: Date.now(),
       },
       session,
+      undefined,
+      quote === undefined ? {} : { trackWriteOutcome: true },
     )
-    if (quote !== undefined && JSON.stringify(readMessageQuote(data.quote_reply)) !== JSON.stringify(readMessageQuote(quote))) {
+    if (quote !== undefined && data.accepted !== true) {
       throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
     }
     const createdRecordUid = stringValue(data.record_uid).trim() || normalizedUid
@@ -1885,7 +1911,11 @@ export class RecordService {
         numberValue(item.send_at ?? core.send_at), this.media)
     const contentBlocks = this.media.richContentBlocks(raw, userId, options.displayItems)
     const callRecord = projectCallRecord(raw, userId)
+    const localSelfQuote = (options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId) && numberValue(item.status ?? core.status) === 1
+      ? this.runtime.stateStore?.selfNoteQuotes?.project(`${this.runtime.config.environment}:${userId}`,
+        stringValue(item.record_uid ?? core.record_uid).trim(), stringValue(item.text_content ?? core.text_content)) : undefined
     return {
+      ...(localSelfQuote === undefined ? {} : { localSelfQuote }),
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       ...recordSenderSnapshot(raw),
       ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),

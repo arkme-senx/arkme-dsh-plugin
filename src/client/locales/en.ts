@@ -1,5 +1,26 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+停止听写|Stop dictation
+正在识别语音|Recognizing speech
+正在开启麦克风…|Starting microphone…
+正在听写，停顿后文字会陆续出现|Listening. Text appears after a pause.
+正在识别剩余语音…|Recognizing remaining speech…
+听写已停止|Dictation stopped
+重试识别|Retry recognition
+复制识别结果|Copy recognized text
+关闭听写提示|Close dictation notice
+请先将光标放到可编辑的正文中|Place the cursor in editable text first.
+
+标记|Highlight
+取消标记|Remove highlight
+共享标记|Shared highlight
+标记（仅此电脑）|Highlight (this computer)
+取消标记（仅此电脑）|Remove highlight (this computer)
+标记范围|Highlight visibility
+会话成员可见|Visible to chat members
+仅此电脑可见|Only on this computer
+在我的设备间同步|Sync across my devices
+标记范围：{v0}|Highlight visibility: {v0}
 同步失败，已有内容仍可阅读|Sync failed. Existing content is still available.
 尚未开启分析|Analysis is off
 暂时无法确认分析设置|Analysis settings are temporarily unavailable
@@ -1413,6 +1434,25 @@ AI 润色设置|AI polish settings
 请输入正文内容|Enter content
 长文正文|Article content
 长文快速查找|Find articles
+长文库|Article library
+长文工作区|Article workspace
+所有长文|All articles
+展开长文列表|Expand article list
+收起长文列表|Collapse article list
+文章大纲|Article outline
+大纲|Outline
+展开大纲|Expand outline
+收起大纲|Collapse outline
+标题导航|Heading navigation
+关闭侧栏|Close sidebar
+关闭长文库|Close article library
+新建长文|New article
+长文分类|Article categories
+最近|Recent
+我共享的|Shared by me
+共享给我的|Shared with me
+准备中…|Preparing…
+后端接口开发中，开发完成后此功能完整可用。|The backend API is under development. This feature will be fully available once it is ready.
 复制扩展链接|Copy extension link
 扩展详情|Extension details
 扩展统计|Extension statistics

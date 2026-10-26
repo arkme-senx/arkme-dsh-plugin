@@ -26,9 +26,14 @@ export function baiduToWgs84(point: BaiduPoint): BaiduPoint {
   return { lng: lng-dlng, lat: lat-dlat }
 }
 export function locationQueryBounds(sw: BaiduPoint, ne: BaiduPoint): LocationBounds {
-  const points = [sw, ne, {lng:sw.lng,lat:ne.lat}, {lng:ne.lng,lat:sw.lat}].map(baiduToWgs84)
+  const world = Math.abs(ne.lng - sw.lng) >= 360 || sw.lng === ne.lng
+  const wrap = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
+  const west = sw.lng >= -180 && sw.lng <= 180 ? sw.lng : wrap(sw.lng)
+  const east = ne.lng >= -180 && ne.lng <= 180 ? ne.lng : wrap(ne.lng)
+  const points = [{lng:west,lat:sw.lat}, {lng:east,lat:ne.lat}, {lng:west,lat:ne.lat}, {lng:east,lat:sw.lat}].map(baiduToWgs84)
+  const crossesDateLine = !world && west > east
   // A small margin covers inverse-conversion rounding at the viewport edge.
   return { swLat: Math.max(-85,Math.min(...points.map(p=>p.lat))-.0002), neLat: Math.min(85,Math.max(...points.map(p=>p.lat))+.0002),
-    swLon: sw.lng >= ne.lng ? -180 : Math.max(-180,Math.min(...points.map(p=>p.lng))-.0002),
-    neLon: sw.lng >= ne.lng ? 180 : Math.min(180,Math.max(...points.map(p=>p.lng))+.0002) }
+    swLon: world ? -180 : Math.max(-180,Math.min(...(crossesDateLine ? [points[0]!.lng,points[2]!.lng] : points.map(p=>p.lng)))-.0002),
+    neLon: world ? 180 : Math.min(180,Math.max(...(crossesDateLine ? [points[1]!.lng,points[3]!.lng] : points.map(p=>p.lng)))+.0002) }
 }

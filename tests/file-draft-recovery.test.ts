@@ -8,7 +8,7 @@ describe('local file draft recovery', () => {
     const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value } }
     const key = arkmeSourceComposerDraftKey(42, { kind: 'group_chat', sourceRef: 'source' })!
     const store = new ArkmeComposerDraftStore(storage)
-    store.appendAttachments(key, [{ localFile: { fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001', fileName: 'a.md', mimeType: 'text/markdown', size: 10, fileKind: 4 } }])
+    store.appendAttachments(key, [{ clientId: 'attachment:transient-tile', localFile: { fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001', fileName: 'a.md', mimeType: 'text/markdown', size: 10, fileKind: 4 } }])
     store.setText(key, '文件消息')
     const identity = store.beginFileSend(key)
     expect(store.beginFileSend(key)).toEqual(identity)

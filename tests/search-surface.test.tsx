@@ -448,13 +448,21 @@ describe('Arkme search surface', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
+    expect(renderer.root.findAllByType('button').some(button => content(button.props.children) === '位置')).toBe(false)
     for (const label of ['图片', '语音', '外部链接', '文件', '长文']) {
       const entry = renderer.root.findAllByType('button').find(button => content(button.props.children) === label)
       expect(entry).toBeDefined()
       await act(async () => { entry!.props.onClick(); await vi.advanceTimersByTimeAsync(1) })
       expect(content(renderer.toJSON())).not.toContain('AI 视频')
-      expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '外部链接', '文件', '长文', '位置'])
-      await act(async () => { renderer.root.findByProps({ 'aria-label': '返回搜索' }).props.onClick() })
+      if (label === '长文') {
+        expect(renderer.root.findByProps({'aria-label':'长文库'}).props.role).toBe('dialog')
+        expect(renderer.root.findAllByProps({role:'tab'}).map(tab=>content(tab.props.children))).toEqual(['最近','我共享的','共享给我的'])
+        expect(renderer.root.findAllByProps({'aria-label':'返回搜索'})).toHaveLength(0)
+        await act(async()=>renderer.root.findByProps({'aria-label':'关闭长文库'}).props.onClick())
+      } else {
+        expect(renderer.root.findAllByType('header').flatMap(header => header.findAllByType('button')).map(button => content(button.props.children))).toEqual(['', '图片库', '语音', '外部链接', '文件', '长文'])
+        await act(async () => { renderer.root.findByProps({ 'aria-label': '返回搜索' }).props.onClick() })
+      }
       expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props.value).toBe('')
     }
     expect(mocks.callArkme.mock.calls.map(([operation]) => operation)).toEqual(['search.history', 'images.list', 'search.scene', 'search.scene', 'files.search', 'search.scene'])

@@ -20,6 +20,7 @@ export class MessageUnderlineSession {
   readonly controller = new AbortController()
   readonly snapshots = new Map<string, MessageUnderlineSnapshot>()
   readonly pending = new Set<string>()
+  private accessEpoch = 0
   private epochs = new Map<string, number>()
   private failures = new Map<string, { notice: string; retry: () => Promise<void> }>()
   private loading = false
@@ -28,6 +29,7 @@ export class MessageUnderlineSession {
   notice = ''
   retry: (() => Promise<void>) | undefined
   constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud', private transport?: MessageMarkTransport) {}
+  invalidate() { this.accessEpoch++; this.snapshots.clear(); this.failures.clear(); this.notice = ''; this.retry = undefined; this.publish() }
   subscribe(invalidate: () => void) { return this.transport?.subscribe?.(invalidate) }
   dispose() { this.queuedTargets = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
   private publish() {
@@ -67,7 +69,7 @@ export class MessageUnderlineSession {
   private async readTargets(targets: MessageSelectionTarget[]) {
     const unique = new Map(targets.filter(target => target.sourceRef === this.sourceRef && messageSelectionReference(target)).map(target => [messageSelectionReference(target)!, target]))
     if (!unique.size) return
-    const epochs = new Map(this.epochs)
+    const epochs = new Map(this.epochs), accessEpoch = this.accessEpoch
     try {
       const refs = [...unique.keys()]
       for (let i = 0; i < refs.length; i += 40) {
@@ -78,7 +80,7 @@ export class MessageUnderlineSession {
           const target = unique.get(row.actionRef)
           if (!target) continue
           const key = underlineTargetKey(target)
-          if (row.snapshot.accessible && (epochs.get(key) ?? 0) !== (this.epochs.get(key) ?? 0)) continue
+          if (row.snapshot.accessible && (accessEpoch !== this.accessEpoch || (epochs.get(key) ?? 0) !== (this.epochs.get(key) ?? 0))) continue
           const next = acceptUnderlineSnapshot(this.snapshots.get(key), row.snapshot, this.pending.has(key))
           if (next) this.snapshots.set(key, next)
         }
@@ -87,8 +89,12 @@ export class MessageUnderlineSession {
       }
     } catch (error) {
       if (!this.controller.signal.aborted) {
-        // No stale annotation content after authorization loss.
-        if (accessLost(error)) this.snapshots.clear()
+        // A failed cloud lookup cannot confirm source visibility. Invalidate
+        // pending completions too: rollback must not restore the cleared text.
+        if (this.storage === 'cloud' || accessLost(error)) {
+          this.accessEpoch++
+          this.snapshots.clear()
+        }
         this.notice = error instanceof Error ? error.message : '标记同步失败'
         this.retry = () => this.read(targets)
         this.publish()
@@ -104,6 +110,7 @@ export class MessageUnderlineSession {
     if (change.kind === 'remove' && !before?.items.some(item => item.id === change.annotationId && item.mine)) throw new Error('只能取消自己的标记')
     if (change.kind === 'add' && change.anchor.text.length > this.capability.maxLength) throw new Error(`标记最多 ${this.capability.maxLength} 个字符`)
     if (change.kind === 'add' && before?.items.some(item => item.mine && JSON.stringify(item.anchor) === JSON.stringify(change.anchor))) return
+    const accessEpoch = this.accessEpoch
     this.pending.add(key)
     this.failures.delete(key)
     this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1)
@@ -116,16 +123,42 @@ export class MessageUnderlineSession {
         : callArkme<MessageUnderlineSnapshot>(this.storage === 'local' ? 'source.local-message-mark.change' : 'source.message-underline.change', { sourceRef: this.sourceRef, messageActionRef: reference, change }, this.controller.signal))
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
-      if (current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
+      if ((!result.accessible || accessEpoch === this.accessEpoch) && current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
       this.failures.delete(key); this.notice = this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
     } catch (error) {
-      if (this.controller.signal.aborted) return
-      if (accessLost(error)) this.snapshots.clear()
-      else if (this.snapshots.get(key)?.accessible !== false) {
+      if (this.controller.signal.aborted || accessEpoch !== this.accessEpoch) return
+      if (this.storage === 'cloud' || accessLost(error)) {
+        this.accessEpoch++
+        this.snapshots.clear()
+      }
+      else if (accessEpoch === this.accessEpoch && this.snapshots.get(key)?.accessible !== false) {
         if (before) this.snapshots.set(key, before); else this.snapshots.delete(key)
       }
-      this.notice = error instanceof Error ? error.message : '标记同步失败，已恢复'
-      this.retry = () => this.change(target, change) // Stable idempotency key for uncertain writes.
+      this.notice = error instanceof Error ? error.message : '标记同步失败，请重试'
+      this.retry = async () => {
+        // Reconfirm access after clearing cloud text; preserve the original
+        // operation ID when the owner allows the same command to be retried.
+        if (this.storage === 'cloud') {
+          await this.read([target])
+          const confirmed = this.snapshots.get(key)
+          if (!confirmed?.accessible || this.pending.has(key)) return
+          // A lost response may already have completed. A complete owner read
+          // can confirm the desired state without another write or stale error.
+          const completed = change.kind === 'remove'
+            ? !confirmed.items.some(item => item.id === change.annotationId)
+            : confirmed.items.some(item => item.mine
+              && item.anchor.sourceDigest === change.anchor.sourceDigest
+              && item.anchor.start === change.anchor.start && item.anchor.end === change.anchor.end
+              && (change.anchor.recordVersion === undefined || item.anchor.recordVersion === change.anchor.recordVersion))
+          if (completed) {
+            this.failures.delete(key)
+            this.notice = this.pending.size ? '正在同步标记…' : ''; this.retry = undefined
+            this.publish()
+            return
+          }
+        }
+        await this.change(target, change)
+      }
       this.failures.set(key, { notice: this.notice, retry: this.retry })
     } finally {
       this.pending.delete(key); this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1); this.publish()

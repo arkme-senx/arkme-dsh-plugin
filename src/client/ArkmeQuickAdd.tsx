@@ -2,7 +2,10 @@ import { tr, useArkmeLocale } from './locale.js'
 import { IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
+import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
+import { createPortal } from 'react-dom'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeNewLongArticleDialog } from './ArkmeNewLongArticleDialog.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
@@ -18,7 +21,7 @@ import { directRecordingStore } from './recordings/direct-recording-store.js'
 import { arkmeUi } from './ui-controller.js'
 
 
-type QuickAddDialogKind = 'group' | 'call' | 'bot'
+type QuickAddDialogKind = 'group' | 'call' | 'bot' | 'article'
 
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
@@ -77,7 +80,7 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
   }
 }
 
-export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
+export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, onAddLongArticle, error,
   anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor, recordingAction,
 }: {
   onContactAdd(): void
@@ -85,6 +88,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
   onStartCall?: () => void
   onAddBot(): void
   onNewDshSession?: (() => void) | undefined
+  onAddLongArticle?: (() => void) | undefined
   error?: string
   open?: boolean
   anchor?: ReactNode
@@ -102,6 +106,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
       {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
         onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutlineMedium />, onSelect: onNewDshSession },
+        onAddLongArticle !== undefined && { id: 'article', label: '添加长文', icon: <FileText size={16} aria-hidden />, onSelect: onAddLongArticle },
         { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
         { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
@@ -118,6 +123,7 @@ export function ArkmeQuickAddButton({
   onSourceCreated,
   onBotCreated,
   onNewDshSession,
+  longArticleAccountKey,
   recordingAccountKey,
   notificationActivationRevision = 0,
   onBlockingOverlayChange,
@@ -126,6 +132,8 @@ export function ArkmeQuickAddButton({
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
   onNewDshSession?: (() => void) | undefined
+  /** Conversation-directory shortcut; the destination is always send-to-self. */
+  longArticleAccountKey?: string | undefined
   /** Offered by the conversation directory, using its authenticated account scope. */
   recordingAccountKey?: string | undefined
   notificationActivationRevision?: number
@@ -212,7 +220,7 @@ export function ArkmeQuickAddButton({
       open={menuOpen} onClose={closeMenu}
       hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
       anchor={<button data-arkme-feedback="neutral"
-        ref={triggerRef} type="button" aria-label={`${onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'}${recordingAccountKey ? '、开始录音' : ''}`} title={tr("添加")}
+        ref={triggerRef} type="button" aria-label={`${onNewDshSession ? '新建 DSH 会话、' : ''}${longArticleAccountKey ? '添加长文、' : ''}添加联系人、群聊、发起通话或添加 Bot${recordingAccountKey ? '、开始录音' : ''}`} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
         // A click pins an already-hovered menu as well as opening a closed one.
         // Removing hoverAnchor also cancels any pending hover-close timer.
@@ -231,6 +239,7 @@ export function ArkmeQuickAddButton({
         try { onNewDshSession(); setMenuError(''); closeMenu() }
         catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }
       }}
+      onAddLongArticle={longArticleAccountKey === undefined ? undefined : () => { chooseDialog('article') }}
       onContactAdd={() => {
         closeMenu()
         onContactAdd()
@@ -241,6 +250,12 @@ export function ArkmeQuickAddButton({
     />
   return <div ref={anchorRef} style={style.anchor}>
     {menu}
+    {dialogKind === 'article' && longArticleAccountKey && (() => {
+      const dialog = <ArkmeNewLongArticleDialog accountKey={longArticleAccountKey} onClose={() => {
+        restoreCallFocus.current = true; setDialogKind(undefined)
+      }} />
+      return typeof document !== 'undefined' && document.body ? createPortal(dialog, document.body) : dialog
+    })()}
     {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
       pendingNotificationDismissRef.current = false
       restoreCallFocus.current = true

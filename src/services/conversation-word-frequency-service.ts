@@ -1,3 +1,4 @@
+import { recordOwnerId } from '../record-owner-id.js'
 import { assertConversationWordsEnvelope, conversationWordsEnvelope, parseConversationWordMessages, parseConversationWordParticipants, parseConversationWordsQuery, parseConversationWordsState, unavailableConversationWords, wordObject, wordText } from '../conversation-word-frequency.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { SourceService } from './source-service.js'
@@ -73,8 +74,9 @@ export class ConversationWordFrequencyService {
     const c = await this.context(input, signal), v = wordObject(input), resultId = wordText(v.resultId), sourceRef = wordText(v.messageSourceRef, 4096)
     const data = wordObject(await this.request('source', { ...c.body, result_id: resultId, source_ref: sourceRef }, c.session, signal)); await c.guard()
     assertConversationWordsEnvelope(data, c.q, c.source.ownerRef)
-    if (data.available !== true || data.result_id !== resultId || data.source_ref !== sourceRef || typeof data.send_at !== 'number' || !Number.isSafeInteger(data.send_at) || data.send_at <= 0)
+    const owner = recordOwnerId(data.record_owner_user_id)
+    if (owner === 0 || data.available !== true || data.result_id !== resultId || data.source_ref !== sourceRef || typeof data.send_at !== 'number' || !Number.isSafeInteger(data.send_at) || data.send_at <= 0)
       throw new ArkmePluginError('chat-words-source-unavailable', '原消息已变化或不可查看，请更新词频后重试', false, 409)
-    return { messageUid: wordText(data.message_uid), sendAtMillis: data.send_at }
+    return { messageUid: wordText(data.message_uid), sendAtMillis: data.send_at, recordOwnerUserId: owner }
   }
 }

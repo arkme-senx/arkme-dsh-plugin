@@ -1,3 +1,9 @@
+import { ArkmeDictationButton } from './ArkmeDictationButton.js'
+import { useWorldPublishHost } from './WorldPublishHost.js'
+import { openWorldPublish } from './world-publish-entry.js'
+import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
+import {SharePrivateChat} from './TeamExternalChats.js'
+import { cancelConversationFollow } from './conversation-bottom-follow.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -15,6 +21,7 @@ import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js
 import { OfflineContextCandidates, OfflineContextConnected, offlineRelinkOptions } from './offline-context/OfflineContextConnected.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { StatisticsSurface } from './statistics/StatisticsSurface.js'
+import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
@@ -46,7 +53,7 @@ import { afterReactionLayout, afterMessageVisible } from './reaction-locate-layo
 import { reactionNotifications } from './reaction-notifications.js'
 import { ArkmeReactionPreview, ReactionAddIcon, ArkmeReactionSelections } from './ArkmeReactionPreview.js'
 import { reactionPreview } from './reaction-preview-store.js'
-import { CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
+import { SELF_CONVERSATION_HEADER_COLUMNS } from './conversation-header-layout.js'
 import { conversationSending, withConversationSend } from './conversation-window-sync.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { createNativeCopyLinkEntry, NATIVE_COPY_LINK_ENTRY, type NativeCopyLinkWindow } from './native-copy-link-entry.js'
@@ -62,6 +69,7 @@ import { useComposerPasteFocus } from './composer-paste-focus.js'
 import { ArkmeComposerScreenshotButton } from './ArkmeComposerScreenshotButton.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
+import { TeamGroupIdentityPicker } from './TeamGroupControls.js'
 import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { useSelfCalendarNavigation } from './use-self-calendar-navigation.js'
@@ -107,6 +115,7 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { openTeamOutbound } from './team-outbound.js'
 import {
   IconCheckOutlineMedium, IconLoadingOutlineMedium, IconWarningOutlineMedium, IconPaperclipOutlineMedium, IconEditOutlineMedium, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -194,10 +203,15 @@ import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRetainedCallPage } from './ArkmeRetainedCallPage.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
+import { ArkmeComposerCard } from './ArkmeComposerCard.js'
+import { canPublishSelfNote } from '../world-publish-source.js'
+import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
+import { TeamWorldSurface } from './TeamWorldSurface.js'
 import {
   ArkmeMediaPreview, ArkmeMessageContent, arkmeContentMediaUrl, arkmeRelatedRecordingItemFromSharedRecording,
   arkmeRelatedRecordingItemFromSharedRecordingPreview,
 } from './ArkmeRichContent.js'
+import { attachmentPreparationHint, prepareComposerAttachments } from './attachment-preparation.js'
 import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
@@ -271,7 +285,7 @@ import {
   insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeComposerAtomicDeletion,
   arkmeComposerCanSend,
   arkmeComposerDraftStore,
-  arkmeAttachmentId,
+  arkmeAttachmentId, arkmeAttachmentsPending,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
   serializeArkmeComposerDraft,
@@ -279,7 +293,7 @@ import {
   type ArkmeComposerEmoji,
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
-import { arkmeConversationComposerBorder, arkmeConversationComposerFocusStyle, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -332,7 +346,8 @@ import {
 } from './ArkmeRelatedQuickNotes.js'
 import { arkmeUi } from './ui-controller.js'
 import { useConversationDraftPresence } from './conversation-draft-presence.js'
-import { arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
+import { arkmeConfiguredLoginMode, arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
+import { usePasswordLogin } from './use-password-login.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
   RelatedRecordingsPanel, shouldShowPrivateChatActions,
@@ -1456,6 +1471,7 @@ export function MessageAvatar(props: {
   label?: string
   member?: ArkmeConversationMemberItem
   profileEnabled: boolean
+  hoverEnabled?: boolean | undefined
   onOpen: (member: ArkmeConversationMemberItem) => void
   onContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement) => void) | undefined
@@ -1506,7 +1522,7 @@ export function MessageAvatar(props: {
       if (props.profileEnabled) props.onOpen(member)
     }}
     onPointerEnter={event => {
-      if (props.profileEnabled && event.pointerType === 'mouse' && event.buttons === 0) props.onHover?.(member, event.currentTarget)
+      if ((props.hoverEnabled ?? props.profileEnabled) && event.pointerType === 'mouse' && event.buttons === 0) props.onHover?.(member, event.currentTarget)
     }}
     onKeyDown={event => {
       if (event.key !== 'ArrowDown') return
@@ -2145,6 +2161,7 @@ export function ArkmeSurface({
 
   const conversationKey = source === undefined ? '' : arkmeSourceIdentityKey(source)
   const notificationActivationRevision = ui.notificationActivationRevision ?? 0
+  const [dictationBusy, setDictationBusy] = useState(false)
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
@@ -2297,7 +2314,8 @@ export function ArkmeSurface({
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useArkmeComposerInputTimePreference()
   const composerExtensionTarget = composerDraft.extensionTarget
-  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId)
+  const [messageMarkStorage, setMessageMarkStorage] = useState<'local' | 'cloud'>('cloud')
+  const messageUnderlines = useMessageUnderlines(`${authenticatedAccountKey}:${conversationKey}`, activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined, authenticatedUserId, undefined, messageMarkStorage)
   const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote, sourceIsChat ? '回复' : '延展')
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
@@ -2655,24 +2673,24 @@ export function ArkmeSurface({
   useEffect(() => { setDraftPreview(undefined) }, [authenticatedUserId])
   useEffect(() => () => { for (const controller of stageControllers.current) controller.abort() }, [authenticatedUserId])
   const [busy, setBusy] = useState(false)
-  const preparingFiles = composerDraftKey !== undefined && preparingKeys.has(composerDraftKey)
+  const preparingFiles = arkmeAttachmentsPending(attachments)
   const preparingReeditFiles = activeRecordReeditComposer !== undefined
     && preparingKeys.has(arkmeRecordReeditPreparationKey(activeRecordReeditComposer))
   const composerFilesDisabled = activeRecordReeditComposer === undefined
-    ? preparingFiles || directAdmission.blocked
+    ? directAdmission.blocked
     : activeRecordReeditComposer.snapshot === undefined || preparingReeditFiles
       || activeRecordReeditComposer.loading || activeRecordReeditComposer.busy
   const composerFileAddingDisabled = composerFilesDisabled || activeRecordReeditComposer?.snapshot?.maxAttachments === 0
   const messagePreparing = useMessagePreparing({
     source, accountScope: authenticatedAccountKey,
-    enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles && !directAdmission.blocked,
+    enabled: activeConversation && activeRecordReeditComposer === undefined && !directAdmission.blocked,
     focused: composerInputFocused,
   })
   // Transport is per message.  It must never lock the next draft while a previous
   // message waits for the server, otherwise fast keyboard input is dropped.
   const archiveReadOnly = isArkmeDSHInputTopic(source) || isArkmeDSHInputTopic(selectedSource)
   useSyncExternalStore(conversationSending.subscribe, conversationSending.getRevision, conversationSending.getRevision)
-  const canSend = (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
+  const canSend = !dictationBusy && (activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote || quoteReplySupport.ready) && !conversationSending.has(composerDraftKey) && (activeRecordReeditComposer === undefined
     ? !archiveReadOnly && !directAdmission.blocked && (pendingArticle ? !pendingArticle.sending : arkmeComposerCanSend(draft, attachments.length + (composerDraftKey !== undefined && preparingKeys.has(composerDraftKey) ? 1 : 0), preparingFiles))
     : activeRecordReeditComposer.snapshot !== undefined
       && !activeRecordReeditComposer.loading
@@ -2791,6 +2809,14 @@ export function ArkmeSurface({
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
   const [messageWithdrawalItem, setMessageWithdrawalItem] = useState<ArkmeTimelineItem>()
+  const worldPublishLayer = useWorldPublishHost({ accountKey: authenticatedAccountKey, navigationKey: `${ui.mode}:${conversationKey}:${ui.selectedBot?.botRef ?? ''}:${JSON.stringify(ui.codexTarget)}`,
+    actorName: selfProfile?.displayName || selfProfile?.nickname || '我', actorAvatarRef: selfProfile?.avatarRef,
+    onPublished: message => showMessageActionStatus(message) })
+  useEffect(() => {
+    if (!ui.composerFocusRevision || ui.mode !== 'source' || !source || !isArkmeSelfWorkspaceSource(source)) return
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [ui.composerFocusRevision, ui.mode, source?.sourceRef])
 
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -2816,7 +2842,7 @@ export function ArkmeSurface({
   useEffect(() => { setTopicAssignment(undefined) }, [topicAssignmentScopeKey])
 
   type NativeForwardRequest = {
-    preview: ReturnType<typeof nativeForwardPreview>
+    preview: LocalForwardPreview
     delivery: NativeForwardDelivery
     signal: AbortSignal
     finish(result: NativeForwardResult): void
@@ -2855,6 +2881,8 @@ export function ArkmeSurface({
   const loadedBotRecords = useMemo(() => botRecords === undefined || timelineStateKey !== conversationKey
     ? [] : arkmeLoadedBotRecords(items, botRecords.identity.directoryKey, botRecords.mode),
   [botRecords, conversationKey, items, timelineStateKey])
+  const memberWorldAbortRef = useRef<AbortController>()
+  useEffect(() => () => { memberWorldAbortRef.current?.abort(); memberWorldAbortRef.current = undefined }, [activeConversation, authenticatedAccountKey, conversationKey])
   const privateChatAbortRef = useRef<AbortController>()
   const [privateChatBusy, setPrivateChatBusy] = useState(false)
 
@@ -3005,7 +3033,7 @@ export function ArkmeSurface({
   const qrRequestStartedRef = useRef(false)
   const qrFlowRevisionRef = useRef(0)
   const currentJiwoAttemptRef = useRef<string>()
-  const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
+  const selectedLoginModeRef = useRef<ArkmeLoginMode>()
   const [viewportPersistence] = useState(() => new ConversationViewportPersistence(undefined, {
     read: (accountKey, surface, signal) => callArkme('conversation.viewport.read', { accountKey, surface }, signal),
     write: (accountKey, surface, entries) => callArkme('conversation.viewport.write', { accountKey, surface, entries }, AbortSignal.timeout(5000)),
@@ -3080,6 +3108,7 @@ export function ArkmeSurface({
     revision: number
     momentId?: string
     contextRef?: string
+    systemRef?: string
     transientHighlight?: boolean
   }>()
   const interwovenRequestRef = useRef<AbortController>()
@@ -3202,8 +3231,15 @@ export function ArkmeSurface({
     if (authView === 'login') setError('')
   }, [authView, localeId])
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const [sharePrivateChatOpen,setSharePrivateChatOpen]=useState(false)
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [selfCalendarOpen, setSelfCalendarOpen] = useState(false)
+  const [selfHeaderPanel, setSelfHeaderPanel] = useState<'search' | 'statistics'>()
+  const openSelfHeaderPanel = (panel: 'search' | 'statistics', open: boolean) => {
+    if (open) { setRelatedMenuOpen(false); setSelfMenuOpen(false); setSelfCalendarOpen(false) }
+    setSelfHeaderPanel(current => open ? panel : current === panel ? undefined : current)
+  }
+  useEffect(() => { setSelfHeaderPanel(undefined) }, [authenticatedAccountKey, conversationOverlayKey])
   const [conversationExport, setConversationExport] = useState<{
     sourceKey: string
     sourceName: string
@@ -3306,6 +3342,7 @@ export function ArkmeSurface({
   }, [active])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
+    if (snapshot.status === 'authenticated' || snapshot.status === 'binding-required') selectedLoginModeRef.current = undefined
     const previous = arkmeAuthStore.getSnapshot().auth
     const accountChanged = arkmeAuthenticatedAccountChanged(previous, snapshot)
     arkmeAuthStore.setAuth(snapshot)
@@ -3351,11 +3388,7 @@ export function ArkmeSurface({
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
     setJiwoScanLoginEnabled(authStoreSnapshot.config.jiwoScanLoginEnabled)
     if (!phoneBindingRequired && (auth?.status === 'logged-out' || auth?.status === 'expired')) {
-      const selectedMode = pendingLoginModeSelectionRef.current
-      pendingLoginModeSelectionRef.current = undefined
-      setLoginMode(selectedMode ?? (authStoreSnapshot.config.jiwoScanLoginEnabled
-        ? 'jiwo'
-        : authStoreSnapshot.config.testLoginEnabled ? 'test' : 'wechat'))
+      setLoginMode(arkmeConfiguredLoginMode(selectedLoginModeRef.current, authStoreSnapshot.config))
     }
   }, [auth?.status, authStoreSnapshot.config, phoneBindingRequired])
   useEffect(() => {
@@ -3376,9 +3409,7 @@ export function ArkmeSurface({
         setJiwoScanLoginEnabled(config.jiwoScanLoginEnabled)
       }
       if (!['authenticated', 'binding-required'].includes(snapshot.status)) {
-        setLoginMode(config?.jiwoScanLoginEnabled === true
-          ? 'jiwo'
-          : config?.testLoginEnabled === true ? 'test' : 'wechat')
+        setLoginMode(arkmeConfiguredLoginMode(selectedLoginModeRef.current, config))
       }
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) }
     finally { setBusy(false) }
@@ -4071,8 +4102,8 @@ export function ArkmeSurface({
     }
     // Recover the acceptance boundary after a page refresh without producing a second send.
     const current = arkmeComposerDraftStore.get(composerDraftKey)
-    const refs = current.attachments.map(arkmeAttachmentId)
-    if ((current.fileSendIdentity !== undefined || arkmeComposerDraftStore.isRestored(composerDraftKey)) && refs.length > 0 && fileTasks.tasks.some(task =>
+    const refs = current.attachments.flatMap(item => item.localFile ? [item.localFile.fileRef] : [])
+    if ((current.fileSendIdentity !== undefined || arkmeComposerDraftStore.isRestored(composerDraftKey)) && refs.length > 0 && refs.length === current.attachments.length && fileTasks.tasks.some(task =>
       (current.fileSendIdentity === undefined || current.fileSendIdentity.recordUid === task.recordUid) &&
       task.content.textContent === serializeArkmeComposerDraft(current).text.trim() && JSON.stringify(task.fileRefs) === JSON.stringify(refs))) {
       arkmeComposerDraftStore.clear(composerDraftKey)
@@ -4109,8 +4140,9 @@ export function ArkmeSurface({
       arkmeUi.consumeConversationTarget(target.revision)
       return
     }
-    if (target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
-      || !target.contextRef && items.some(item => item.itemUid === target.itemUid)
+    if (target.systemRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.eventId === target.itemUid)
+      || target.contextRef && conversationCacheRef.current.getTimeline(conversationKey)?.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef)
+      || !target.systemRef && !target.contextRef && items.some(item => item.itemUid === target.itemUid)
       || target.momentId && recordOwnerId(target.recordOwnerUserId) === 0) {
       if (pendingConversationTargetLocateRef.current?.revision === target.revision) return
       let animationFrame = 0
@@ -4143,10 +4175,11 @@ export function ArkmeSurface({
           pendingViewportRestoreRef.current = undefined
           viewportRestoreIntentRef.current = false
           const calendarLocate = ownsCalendarNavigation(target.revision)
+          cancelConversationFollow(body)
           body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
             // Virtual context chunks can change height while mounting. Match the
             // around-page path: establish the viewport before releasing its anchor.
-            behavior: calendarLocate || target.contextRef ? 'auto' : 'smooth' })
+            behavior: calendarLocate || target.contextRef || target.systemRef ? 'auto' : 'smooth' })
           conversationTargetLocatedRevisionRef.current = target.revision
           const calendarFinished = finishCalendarNavigation(target.revision)
           highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
@@ -4166,7 +4199,7 @@ export function ArkmeSurface({
       return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
-      && (target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
+      && (target.systemRef || target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
       && !conversationTargetPagingRef.current.aroundRequested) {
       conversationTargetPagingRef.current.aroundRequested = true
       const generation = timelineGenerationRef.current
@@ -4180,10 +4213,10 @@ export function ArkmeSurface({
       let readStartDeltas = new Map<string, ArkmeTimelineItem>()
       void withArkmeReadDeadline(signal => retryArkmeRead(() => {
         readStartDeltas = new Map(arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).items.map(item => [item.itemUid, item]))
-        if (target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
-          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', contextRef: target.contextRef, limit: 40 } },
+        if (target.systemRef || target.contextRef) return callArkme<ArkmeTimelinePage>('source.timeline', {
+          sourceRef: source.sourceRef, cursor: { unified: { mode: 'around', ...(target.systemRef ? { systemRef: target.systemRef } : { contextRef: target.contextRef }), limit: 40 } },
         }, signal).then(page => {
-          if (!page.unified) throw new Error('线下交流定位暂不可用')
+          if (!page.unified) throw new Error(target.systemRef ? '系统通知定位暂不可用' : '线下交流定位暂不可用')
           return { ...page, anchorItemUid: target.itemUid, anchorIndex: -1, anchorSequence: 0,
             olderHasMore: page.unified.olderHasMore, newerHasMore: page.unified.newerHasMore,
             ...(page.unified.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: page.unified.olderCursor } } } : {}),
@@ -4206,7 +4239,7 @@ export function ArkmeSurface({
         const delta = sourceIsChat ? arkmeChatTimelineDelta.getSnapshotForSource(conversationKey) : undefined
         const items = page.unified ? page.items : reconcileTimelinePage(cached?.items ?? [],
           delta, page.items, readStartDeltas)
-        if (target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
+        if (target.systemRef ? !page.unified?.events.some(event => event.eventId === target.itemUid) : target.contextRef ? !page.unified?.events.some(event => event.kind === 'offline-context' && event.entryRef === target.contextRef) : !items.some(item => item.itemUid === target.itemUid)) throw new Error(target.systemRef ? '该系统通知已不可用，请刷新后重试' : target.contextRef ? '该线下交流已不可用，请刷新后重试' : '未找到要定位的快记')
         timelineRequestsRef.current.get('initial')?.controller.abort()
         timelineRequestsRef.current.delete('initial')
         timelineWindowRevisionRef.current += 1
@@ -4242,6 +4275,7 @@ export function ArkmeSurface({
           transientHighlight: target.transientHighlight === true,
           ...(target.momentId ? { momentId: target.momentId } : {}),
           ...(target.contextRef ? { contextRef: target.contextRef } : {}),
+          ...(target.systemRef ? { systemRef: target.systemRef } : {}),
         }
         setTimelineView({
           sourceKey: conversationKey,
@@ -4977,6 +5011,8 @@ export function ArkmeSurface({
   }, [])
 
   const changeLoginMode = (mode: ArkmeLoginMode) => {
+    if (submitBusy) return
+    selectedLoginModeRef.current = mode
     qrFlowRevisionRef.current += 1
     const attemptId = currentJiwoAttemptRef.current
     currentJiwoAttemptRef.current = undefined
@@ -4984,7 +5020,6 @@ export function ArkmeSurface({
       void callArkme('auth.app.cancel', { attemptId }).catch(() => undefined)
     }
     if (auth?.status === 'pending') {
-      pendingLoginModeSelectionRef.current = mode
       arkmeAuthStore.setAuth({ status: 'logged-out', environment: auth.environment })
     }
     setLoginMode(mode)
@@ -4992,6 +5027,11 @@ export function ArkmeSurface({
     setError('')
     qrRequestStartedRef.current = false
   }
+
+  const passwordLogin = usePasswordLogin({
+    active: authView === 'login' && loginMode === 'password' && !phoneBindingRequired,
+    agreed, busy, t, setBusy, setSubmitBusy, setError, acceptAuthSnapshot,
+  })
 
   const uploadFavoriteSticker = async (file: File): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
@@ -5017,6 +5057,17 @@ export function ArkmeSurface({
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     if (targetDraftKey === undefined || targetUserId === undefined) return
+    if (reeditTarget === undefined) {
+      setAddMenuOpen(false)
+      setError('')
+      syncComposerUserInput(true)
+      const picked = Array.from(files)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      try { prepareComposerAttachments(targetDraftKey, targetUserId, picked) }
+      catch (error) { setError(errorMessage(error)) }
+      if (!pasted) textareaRef.current?.focus()
+      return
+    }
     const preparationKey = reeditTarget === undefined ? targetDraftKey : arkmeRecordReeditPreparationKey(reeditTarget)
     if (reeditTarget !== undefined && (reeditTarget.snapshot === undefined || reeditTarget.loading
       || reeditTarget.busy || preparationJobs.current.has(preparationKey))) return
@@ -5162,6 +5213,7 @@ export function ArkmeSurface({
     if (preparationSucceeded === false) return
     if (!sameTargetAccount()) return
     const readyDraft = arkmeComposerDraftStore.get(targetDraftKey)
+    if (arkmeAttachmentsPending(readyDraft.attachments)) return
     const extensionTarget = readyDraft.extensionTarget
     if (extensionTarget?.quote && (!quoteReplySupport.ready || extensionTarget.quote.text.length > quoteReplySupport.maxQuoteLength)) {
       if (sameTargetComposer()) setError(quoteReplySupport.ready ? `引用最多 ${quoteReplySupport.maxQuoteLength} 个字符，请缩小选区` : quoteReplySupport.message)
@@ -5763,7 +5815,7 @@ export function ArkmeSurface({
 
   const personalExtensionParents = usePersonalExtensionParents(
     `${authenticatedAccountKey}:${conversationKey}:${sourceProjectionRevision}`,
-    activeConversation && source !== undefined && isArkmeSelfWorkspaceSource(source) ? source.sourceRef : undefined, items,
+    activeConversation && source !== undefined && (isArkmeSelfWorkspaceSource(source) || source.kind === 'private_chat' || source.kind === 'group_chat') ? source.sourceRef : undefined, items, source?.sourceKey, source?.kind === 'private_chat' || source?.kind === 'group_chat',
   )
   const detailRawRow = items.find(item => item.itemUid === detailItemUid)
   const detailRow = detailRawRow && source ? recordMutations.project(detailRawRow, source, selfSources) : detailRawRow
@@ -6030,7 +6082,7 @@ export function ArkmeSurface({
     })
   }, [])
   const openMemberHover = useCallback((member: ArkmeConversationMemberItem, anchor: HTMLElement, preferredSide?: 'left') => {
-    if (source?.kind !== 'group_chat' || !anchor.isConnected || document.querySelector('[aria-modal="true"]')) return
+    if ((source?.kind !== 'group_chat' && (source?.kind !== 'private_chat' || member.isSelf)) || !anchor.isConnected || document.querySelector('[aria-modal="true"]')) return
     const rect = anchor.getBoundingClientRect()
     const host = panelRef.current?.getBoundingClientRect()
     const side = preferredSide ?? (host && rect.left > host.left + host.width / 2 ? 'left' : 'right')
@@ -6317,9 +6369,25 @@ export function ArkmeSurface({
     }
     return sendToSelfSource
   }, [aggregateSource, authenticatedUserId])
+  const openWorldForMember = useCallback((member: ArkmeConversationMemberItem) => {
+    if (!source || member.isSelf || !authenticatedAccountKey) return
+    memberWorldAbortRef.current?.abort()
+    const controller = new AbortController()
+    memberWorldAbortRef.current = controller
+    setMemberMenu(undefined)
+    setError('')
+    void callArkme<{ userId: number }>('chat.member.world-target', { sourceRef: source.sourceRef, memberRef: member.memberRef }, controller.signal)
+      .then(result => {
+        if (controller.signal.aborted || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) return
+        arkmeUi.showUserWorld({ userId: result.userId, displayName: member.displayName, ...(member.avatarRef ? { avatarRef: member.avatarRef } : {}) })
+      })
+      .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught) || '暂时无法打开TA的世界') })
+      .finally(() => { if (memberWorldAbortRef.current === controller) memberWorldAbortRef.current = undefined })
+  }, [authenticatedAccountKey, source])
   const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
     if (source === undefined || privateChatBusy || privateChatAbortRef.current !== undefined) return
     setPrivateChatBusy(true)
+    setMemberMenu(undefined)
     setError('')
     if (arkmeMemberConversationAction(member) === 'send_to_self') {
       const controller = new AbortController()
@@ -6664,6 +6732,7 @@ export function ArkmeSurface({
     pendingConversationTargetLocateRef.current = undefined
     pendingViewportRestoreRef.current = undefined
     viewportRestoreIntentRef.current = false
+    cancelConversationFollow(body)
     body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'), behavior: 'auto' })
     const highlightUid = pending.momentId ? `moment:${pending.momentId}` : pending.itemUid
     conversationTargetLocatedRevisionRef.current = pending.revision
@@ -7713,6 +7782,24 @@ export function ArkmeSurface({
       nativeForwardRequestRef.current?.finish({ completed: false })
     }
   }, [authenticatedAccountKey, authenticatedUserId])
+  useEffect(() => registerLocalSnapshotForward(async (content, signal) => {
+    if (signal.aborted || !authenticatedAccountKey || authenticatedUserId !== content.userId || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) throw new Error('账号已变化，请重新选择')
+    if (nativeForwardRequestRef.current || forwardPickerScopeRef.current || forwardSubmissionScopeRef.current.sending) throw new Error('请先完成当前转发')
+    return new Promise<NativeForwardResult>(resolve => {
+      let finished = false
+      const cancel = () => { request.finish({ completed: false }); setForwardTargetPicker(current => current?.native === request ? undefined : current) }
+      const request: NativeForwardRequest = { preview: content.preview, signal, delivery: content.delivery, finish(result) {
+        if (finished) return
+        finished = true; signal.removeEventListener('abort', cancel)
+        if (nativeForwardRequestRef.current === request) nativeForwardRequestRef.current = undefined
+        resolve(result)
+      } }
+      nativeForwardRequestRef.current = request
+      signal.addEventListener('abort', cancel, { once: true })
+      forwardPickerScopeRef.current = new AbortController()
+      setForwardTargetPicker({ native: request, sourceKey: '', items: [], itemUids: [], selectedTargetKeys: [], keyword: '', commentText: content.delivery.comment ?? '', sendError: '' })
+    })
+  }), [authenticatedAccountKey, authenticatedUserId])
   useEffect(() => {
     const request = nativeForwardRequestRef.current
     if (request && forwardTargetPicker?.native !== request) request.finish({ completed: false })
@@ -8132,6 +8219,7 @@ export function ArkmeSurface({
                       ...(avatarRef === undefined ? {} : { avatarRef }),
                     } })}
                     profileEnabled={source?.kind === 'group_chat'}
+                    hoverEnabled={source.kind === 'group_chat' || (source.kind === 'private_chat' && messageMember?.isSelf === false)}
                     onOpen={(...args) => timelineActions.current.openMemberProfile(...args)}
                     onContextMenu={(...args) => timelineActions.current.openMemberMenu(...args)}
                     onHover={(...args) => timelineActions.current.openMemberHover(...args)}
@@ -8439,8 +8527,8 @@ export function ArkmeSurface({
               </ul>
               {forwardDirectory.error !== '' && <div role="alert" style={styles.forwardTargetStatus}>{forwardDirectory.error}</div>}
             </div>
-            {forwardSelectedTargets.length > 0 && <footer style={styles.forwardTargetFooter}>
-              <div style={styles.forwardTargetRecipients}>
+            {(forwardSelectedTargets.length > 0 || forwardTargetPicker.native?.preview.quote) && <footer style={styles.forwardTargetFooter}>
+              {forwardSelectedTargets.length > 0 && <div style={styles.forwardTargetRecipients}>
                 <span>{tr("发送给：")}</span>
                 <span style={styles.forwardTargetAvatarStack}>
                   {forwardSelectedTargets.slice(0, 6).map(target => <ArkmeDirectorySourceAvatar
@@ -8450,8 +8538,9 @@ export function ArkmeSurface({
                   />)}
                 </span>
               </div>
+              }
               <div style={styles.forwardTargetFooterDivider} />
-              <div style={styles.forwardTargetPreview}>
+              {!forwardTargetPicker.native?.preview.quote && <div style={styles.forwardTargetPreview}>
                 <span style={styles.forwardTargetPreviewIcon}><ArkmeForwardLinearIcon size={18} /></span>
                 <span style={styles.forwardTargetPreviewText}>
                   <span style={styles.forwardTargetPreviewTitle}><ArkmeRichText text={forwardTargetPicker.native?.preview.title ?? arkmeForwardPreviewTitle(forwardPickerMessageItems, source)} presentation="preview" /></span>
@@ -8465,6 +8554,12 @@ export function ArkmeSurface({
                   onClick={() => { if (messageActionBusy !== 'forward') setForwardTargetPicker(undefined) }}
                 ><ArkmeForwardCloseBorderIcon /></button>
               </div>
+              }
+              {forwardTargetPicker.native?.preview.quote && <div data-arkme-selected-forward-preview style={{ margin: '8px 2px', padding: '6px 10px', borderLeft: `2px solid ${arkmeTheme.accent}`, background: arkmeTheme.extensionSource, borderRadius: 4 }}>
+                <div style={{ whiteSpace: 'pre-wrap', color: arkmeTheme.secondary, fontSize: 11 }}>{forwardTargetPicker.native.preview.title}</div>
+                <blockquote style={{ margin: '5px 0 0', maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{forwardTargetPicker.native.preview.quote.text}</blockquote>
+                <div style={{ marginTop: 5, fontSize: 11, color: arkmeTheme.tertiary }}>引用样式仅本机显示，接收方及其他设备显示分段文本。</div>
+              </div>}
               {forwardTargetPicker.sendError !== '' && <div role="alert" style={styles.forwardTargetSendError}>{forwardTargetPicker.sendError}</div>}
               <div style={styles.forwardTargetComposer}>
                 <textarea
@@ -8490,9 +8585,9 @@ export function ArkmeSurface({
                   type="button"
                   style={{
                     ...styles.forwardTargetSend,
-                    ...(messageActionBusy === 'forward' ? styles.forwardTargetSendDisabled : {}),
+                    ...(messageActionBusy === 'forward' || forwardSelectedTargets.length === 0 ? styles.forwardTargetSendDisabled : {}),
                   }}
-                  disabled={messageActionBusy === 'forward'}
+                  disabled={messageActionBusy === 'forward' || forwardSelectedTargets.length === 0}
                   aria-label={messageActionBusy === 'forward' ? '转发中' : '发送转发'}
                   onClick={() => { void confirmForwardTargets() }}
                 >
@@ -8539,8 +8634,11 @@ export function ArkmeSurface({
     {messageUnderlines.layer}
     {ui.mode !== 'arko' && ui.mode !== 'team' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
       replySourceRef={activeConversation && source && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) ? source.sourceRef : undefined}
+      selfNote={{ sourceLabel: source?.displayName || '发给自己', ...(authenticatedAccountKey ? { accountKey: authenticatedAccountKey } : {}) }}
       replyLabel={sourceIsChat ? '回复' : '延展'}
-      markStorage="local"
+      markStorage={messageMarkStorage}
+      onMarkStorageChange={setMessageMarkStorage}
+      markAudience={sourceIsChat ? 'conversation' : 'self'}
       onUnderline={messageUnderlines.mark}
       getMarks={messageUnderlines.getMarks}
       onRemoveMark={messageUnderlines.remove}
@@ -8649,7 +8747,7 @@ export function ArkmeSurface({
         {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header data-arkme-window-drag-region="conversation" className="arkme-conversation-header"
           data-arkme-centered-header={selfWorkspaceSelected ? 'self' : undefined}
           style={{ ...styles.header, ...(selfWorkspaceSelected ? {
-            display: 'grid', gridTemplateColumns: CONVERSATION_HEADER_COLUMNS, paddingLeft: 20, paddingRight: 20,
+            display: 'grid', gridTemplateColumns: SELF_CONVERSATION_HEADER_COLUMNS, paddingLeft: 20, paddingRight: 20,
           } : {}) }}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeDirectorySourceAvatar source={source} size={34} />
@@ -8682,8 +8780,8 @@ export function ArkmeSurface({
             interactions={source.kind === 'private_chat' ? { moments: interwovenMoments, state: interwovenCalendarState,
               retry: () => setInterwovenRefreshRevision(value => value + 1) } : undefined}
             onSelect={calendarNavigation.select} onOpen={calendarNavigation.cancel} />}
-          {authenticated && activeConversation && source !== undefined && (sourceIsChat || isArkmeSelfWorkspaceSource(source)) && <ArkmeConversationSearch
-            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} hideTrigger={!sourceIsChat} />}
+          {authenticated && activeConversation && source !== undefined && sourceIsChat && <ArkmeConversationSearch
+            key={`chat-search:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} />}
           {authenticated && activeConversation && sourceIsChat && source !== undefined && <ConversationAnalysis
             key={`chat-words:${authenticatedAccountKey}:${conversationOverlayKey}`} source={source} host={panelRef}
             accountScope={authenticatedAccountKey ?? ''}
@@ -8727,6 +8825,7 @@ export function ArkmeSurface({
               onClick={() => {
                 setRelatedMenuOpen(false)
                 setSelfMenuOpen(false)
+                setSelfHeaderPanel(undefined)
                 if (!selfCalendarOpen) calendarNavigation.cancel()
                 setSelfCalendarOpen(value => !value)
               }}
@@ -8745,6 +8844,11 @@ export function ArkmeSurface({
                 arkmeUi.showConversationTarget(source, item.recordUid, item.sendAtMillis)
               }}
             />
+            <ArkmeConversationSearch key={`self-search:${authenticatedAccountKey}:${conversationOverlayKey}`}
+              source={source} host={panelRef} accountKey={authenticatedAccountKey ?? ''} label={tr('搜索发给自己')}
+              open={selfHeaderPanel === 'search'} onOpenChange={open => openSelfHeaderPanel('search', open)} />
+            <SelfConversationStatistics host={panelRef} accountScope={authenticatedAccountKey ?? ''}
+              open={selfHeaderPanel === 'statistics'} onOpenChange={open => openSelfHeaderPanel('statistics', open)} />
             <ConversationActionsMenu
               items={[conversationExportActionItem({
                 busy: conversationExport?.status === 'downloading',
@@ -8760,6 +8864,7 @@ export function ArkmeSurface({
                 onOpenChange: open => {
                   setRelatedMenuOpen(false)
                   setSelfCalendarOpen(false)
+                  if (open) setSelfHeaderPanel(undefined)
                   setSelfMenuOpen(open)
                 },
               }}
@@ -8769,7 +8874,8 @@ export function ArkmeSurface({
             ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
             visibility: relatedPanelOpen ? 'hidden' : 'visible',
           }}>
-            <ConversationActionsMenu items={[...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
+            <ConversationActionsMenu items={[{id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
@@ -8827,6 +8933,7 @@ export function ArkmeSurface({
           submitBusy={submitBusy}
           error={error}
           phone={phone}
+          passwordLogin={passwordLogin}
           smsCode={smsCode}
           smsCountdown={smsCountdown}
           testLoginEnabled={testLoginEnabled}
@@ -8863,9 +8970,14 @@ export function ArkmeSurface({
           />
           : ui.mode === 'statistics' ? <StatisticsSurface key={`statistics:${auth?.environment}:${auth?.userId}:${ui.statisticsMonth ?? ''}`} accountScope={`${auth?.environment}:${auth?.userId}`} initialMonth={ui.statisticsMonth} />
           : ui.mode === 'explore' ? <ExploreSurface key={`explore:${auth?.environment}:${auth?.userId}:${ui.exploreModule}`} module={ui.exploreModule ?? 'profile'} accountScope={`${auth?.environment}:${auth?.userId}`} />
+          : ui.mode === 'world' && ui.worldTeamTarget && authenticatedAccountKey ? <TeamWorldSurface
+            accountKey={authenticatedAccountKey} target={ui.worldTeamTarget}
+            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
+            onBack={() => arkmeUi.backFromWorld()} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
+            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
             {...(ui.worldInteractionRef === undefined ? {} : { notificationRef: ui.worldInteractionRef })}
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
@@ -9116,7 +9228,7 @@ export function ArkmeSurface({
             {activeRecordReeditComposer === undefined && composerExtensionTarget?.quote && !quoteReplySupport.ready && <div role="status" data-arkme-quote-support style={{ padding: '6px 10px', fontSize: 12, color: arkmeTheme.secondary }}>
               {quoteReplySupport.message} <button type="button" onClick={quoteReplySupport.retry} style={{ font: 'inherit', color: arkmeTheme.text, border: 0, background: 'transparent', cursor: 'pointer' }}>重新检查</button>
             </div>}
-            <div
+            <ArkmeComposerCard focused={composerInputFocused} hasTarget={composerHasTarget} highlighted={composerResize.highlighted} borderColor={colors.border}
               ref={composerRef}
               className="arkme-conversation-composer-inner"
               data-arkme-primary-composer="true"
@@ -9124,8 +9236,6 @@ export function ArkmeSurface({
               data-arkme-composer-resize-highlighted={composerResize.highlighted ? 'true' : undefined}
               style={{
               ...styles.composerInner,
-              ...arkmeConversationComposerFocusStyle(composerInputFocused),
-              ...arkmeConversationComposerBorder(composerInputFocused || composerHasTarget ? colors.border : 'transparent', composerHasTarget, composerResize.highlighted),
               }}
             >
             {composerResize.handle}
@@ -9339,10 +9449,10 @@ export function ArkmeSurface({
                 }
               }} />
             </div>
-            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{(activeRecordReeditComposer === undefined ? preparingFiles : preparingReeditFiles) ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
+            <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
               key={`emoji-picker:${authenticatedAccountKey}:${conversationOverlayKey}`}
               accountKey={authenticatedAccountKey}
-              disabled={activeSelectMode !== undefined || preparingFiles || directAdmission.blocked || activeRecordReeditComposer !== undefined}
+              disabled={activeSelectMode !== undefined || directAdmission.blocked || activeRecordReeditComposer !== undefined}
               scopeKey={composerDraftKey}
               {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
               getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
@@ -9370,7 +9480,7 @@ export function ArkmeSurface({
               }}
               onFile={file => selectFiles([file], true)}
               onError={message => setError(message)}
-            />}</div><div style={styles.composerSendArea}>
+            />}<ArkmeDictationButton key={`dictation:${composerDraftKey}:${activeRecordReeditComposer?.item.itemUid ?? ''}`} scopeKey={composerDraftKey} active={activeConversation && activeSelectMode === undefined} disabled={composerFilesDisabled || directAdmission.blocked} getTarget={() => textareaRef.current?.createDictationTarget?.()} onBusyChange={setDictationBusy} /></div><div style={styles.composerSendArea}>
               {authenticatedUserId !== undefined && authenticatedAccountKey !== undefined
                 && source !== undefined && isArkmeSelfWorkspaceSource(source)
                 && activeRecordReeditComposer === undefined && <ArkmeSelfRolePicker
@@ -9381,10 +9491,17 @@ export function ArkmeSurface({
                   selfAvatarRef={selfProfile?.avatarRef}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
+              {authenticatedAccountKey !== undefined && source?.kind === 'group_chat'
+                && activeRecordReeditComposer === undefined && <TeamGroupIdentityPicker
+                  key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
+                  accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
+                  selfName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
+                  disabled={composerFilesDisabled || activeSelectMode !== undefined}
+                />}
               <ArkmeComposerSendButton
                 disabled={!canSend}
                 ariaLabel={activeRecordReeditComposer === undefined ? pendingArticle ? '发送长文' : tr("发送消息") : '保存重新编辑'}
-                shortcutHint={tr("Enter发送 / Shift+Enter换行")}
+                shortcutHint={attachmentPreparationHint(visibleComposerAttachments) ?? tr("Enter发送 / Shift+Enter换行")}
                 onClick={() => { void send() }}
               />
             </div></div>
@@ -9392,7 +9509,7 @@ export function ArkmeSurface({
               owner={recordInputCaptureOwner}
               draftKey={composerDraftKey}
             />}
-          </div>
+          </ArkmeComposerCard>
           </div></footer>}
           {activeSelectMode !== undefined && selectedMessageCount > 0 && !selectedMessagesSupportSnapshotBatch && <div
             role="status" style={{ padding: '6px 16px', color: arkmeTheme.secondary, fontSize: 12 }}
@@ -9426,6 +9543,7 @@ export function ArkmeSurface({
         </ArkmeInterwovenReadProvider>
         </ArkmeWideConversation>}
         {forwardDialog}
+        {worldPublishLayer}
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeMessageContextMenu
           selectedText={messageMenu.selectedText} copyIcon={<ArkmeMessageActionIcon kind="copy" />}
           onCopySelection={text => { void copyMessageTextValue(text) }} onCopyMessage={() => { void copyMessageText(messageMenuItem) }}
@@ -9442,6 +9560,10 @@ export function ArkmeSurface({
             source !== undefined && isArkmeSelfWorkspaceSource(source) && { id: 'assign', label: '指定主题', icon: <ArkmeSelectActionIcon kind="assign" size={16} />, disabled: !canAssignRecordTopics([messageMenuItem]), onSelect: () => openRecordTopicAssignment([messageMenuItem], messageMenu.anchor) },
             { id: 'select', label: ARKME_MESSAGE_ACTION_MENU_LABELS[3], icon: <ArkmeMessageActionIcon kind="select" />, onSelect: () => enterMessageSelectMode(messageMenuItem) },
             { id: 'forward', label: ARKME_MESSAGE_ACTION_MENU_LABELS[4], icon: <ArkmeMessageActionIcon kind="forward" />, disabled: arkmeTimelineMessageActionRef(messageMenuItem) === '', onSelect: () => openForwardTargetPicker([messageMenuItem]) },
+            canPublishSelfNote(source, messageMenuItem) && authenticatedAccountKey !== undefined && { id: 'world', label: '发到世界', icon: <Globe size={16} />, onSelect: () => {
+              if (!source) return
+              openWorldPublish({ accountKey: authenticatedAccountKey, origin: { sourceRef: source.sourceRef, itemUid: messageMenuItem.itemUid } }); closeMessageMenu()
+            } },
             { id: 'ask-dsh', label: askDsh.busy ? '准备中' : '问 DSH', icon: <AskDshIcon size={20} />,
               disabled: source === undefined || arkmeTimelineMessageActionRef(messageMenuItem) === '' || messageMenuItem.quickNoteDetailsSupported === false || messageActionBusy !== undefined,
               onSelect: () => {
@@ -9502,6 +9624,8 @@ export function ArkmeSurface({
           hoverAnchor={memberMenu.hoverAnchor}
           hoverSide={memberMenu.hoverSide}
           onMention={() => { insertMemberMention(memberMenu.member) }}
+          onPrivateChat={() => { openPrivateChatForMember(memberMenu.member) }}
+          onWorld={() => { openWorldForMember(memberMenu.member) }}
           onRecords={mode => { openMemberRecords(memberMenu.member, mode) }}
           canRemove={source.kind === 'group_chat' && groupSelfRole === 'owner' && !memberMenu.member.isSelf && !memberMenu.member.isOwner}
           onRemove={() => { setMemberRemovalTarget(memberMenu.member); closeMemberMenu() }}
@@ -9550,6 +9674,13 @@ export function ArkmeSurface({
           busy={privateChatBusy}
           onClose={closeMemberProfile}
           onSend={() => { openPrivateChatForMember(memberProfile) }}
+          onContactAsTeam={!conversationWindowRequested() && !memberProfile.isSelf && source && authenticatedAccountKey ? () => {
+            closeMemberProfile()
+            openTeamOutbound({ accountKey: authenticatedAccountKey, person: {
+              recipient: { kind: 'chat-member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef },
+              displayName: memberProfile.displayName, avatarRef: memberProfile.avatarRef,
+            } })
+          } : undefined}
         />}
         {activeConversation && source !== undefined && authenticatedAccountKey !== undefined && botProfile !== undefined && <ArkmeBotAvatarProfileCard
           key={`${authenticatedAccountKey}:${source.sourceRef}:${botProfile.identity.itemUid}`}
@@ -9569,6 +9700,10 @@ export function ArkmeSurface({
             onOpen={result => { setMemberEventProfile(undefined); activateSource(result.source) }}
           />}
         {activeConversation && source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
+          accountKey={authenticatedAccountKey}
+          sourceName={source.kind === 'private_chat' ? tr('与TA的私聊') : source.displayName}
+          source={source}
+          onOpenOrigin={(item, origin) => { setMemberRecords(undefined); arkmeUi.showConversationTarget(origin ?? source, item.itemUid, item.sendAtMillis, item.recordOwnerUserId) }}
           sourceRef={source.sourceRef}
           sourceIdentityKey={conversationKey}
           member={memberRecords.member}
@@ -9772,6 +9907,7 @@ export function ArkmeSurface({
       {activeConversation && longArticleCreating && source !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeLongArticleDialog
           sourceRef={source.sourceRef}
+          sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
             pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport: undefined }

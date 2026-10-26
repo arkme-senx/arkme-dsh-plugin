@@ -1,8 +1,9 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
+import { ArkmeLongArticleActions } from '../src/client/ArkmeLongArticleActions.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call, ArkmeClientError: class extends Error {} }))
 let renderer: ReactTestRenderer | undefined
 beforeEach(() => {
   vi.stubGlobal('document', { activeElement: null })
@@ -34,7 +35,7 @@ it.each(['pending', 'disabled', 'failed'])('does not publish restored image draf
       images: [{ fileRef: 'arkme-file-v1.11111111-1111-1111-1111-111111111111' }],
     }
   })
-  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source" onClose={() => {}} />); await Promise.resolve() })
+  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source" sendOnConfirm onClose={() => {}} />); await Promise.resolve() })
   const publish = renderer!.root.find(node => node.type === 'button' && node.children.some(value => typeof value === 'string' && value.includes('发布')))
   expect(publish.props.disabled).toBe(true)
   await act(async () => { publish.props.onClick(); await Promise.resolve() })
@@ -47,12 +48,9 @@ it('keeps the original draft version and refuses to overwrite newer content', as
     if (operation === 'source.long-article.draft.get') return { title: '旧草稿', textContent: '旧正文', textFormat: 'plain', baseVersion: 1, durationMillis: 0 }
   })
   await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source" item={{ itemUid: 'record' } as never} onClose={() => {}} />) })
-  const edit = renderer!.root.find(node => node.type === 'button' && node.children.some(value => typeof value === 'string' && value.includes('编辑')))
-  await act(async () => { edit.props.onClick() })
   const restore = renderer!.root.find(node => node.type === 'button' && node.children.includes('恢复草稿'))
   await act(async () => { restore.props.onClick() })
-  const publish = renderer!.root.find(node => node.type === 'button' && node.children.some(value => typeof value === 'string' && value.includes('发布')))
-  await act(async () => { publish.props.onClick() })
+  await act(async () => { await expect(renderer!.root.findByType(ArkmeLongArticleActions).props.beforeAction()).rejects.toThrow() })
   expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.long-article.update')).toBe(false)
-  expect(JSON.stringify(renderer!.toJSON())).toContain('此草稿基于旧版本')
+  expect(JSON.stringify(renderer!.toJSON())).toContain('长文已在其他位置更新')
 })

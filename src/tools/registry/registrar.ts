@@ -17,9 +17,10 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_arko_change_lifecycle',
   'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
+  'arkme_conversation_words_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
-  'arkme_team_profile_update',
+  'arkme_team_profile_update', 'arkme_team_external_chat_share',
   'arkme_reactions_write',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
@@ -91,12 +92,14 @@ function cleanArgument(value: unknown, maxLength: number): string {
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
   if (name === 'arkme_arko_change_lifecycle') return `是否${args.action === 'restore' ? '恢复' : '删除'}刚才选定的 ${Array.isArray(args.message_refs) ? args.message_refs.length : 0} 条 Arko 消息？删除后 30 天内可恢复，已创建的快记和安排会保留。`
+  if (name === 'arkme_conversation_words_generate') return '是否按刚才指定的对话、人员和日期范围开始或更新词频统计？这不会调用大模型或扣除 AI 积分。'
   if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
   if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
   if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
+  if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'

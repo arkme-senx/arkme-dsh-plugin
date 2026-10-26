@@ -7,10 +7,22 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 
-export type ArkmeComposerAttachment = ({ asset: ArkmeUploadedAsset; localFile?: never } | { localFile: ArkmeLocalFile; asset?: never }) & { previewUrl?: string }
+export interface ArkmeAttachmentPreparation extends Omit<ArkmeLocalFile, 'fileRef'> {
+  id: string
+  state: 'queued' | 'preparing' | 'failed'
+  error?: string
+  retry(): void
+  cancel(): void
+}
+export type ArkmeComposerAttachment = (
+  | { asset: ArkmeUploadedAsset; localFile?: never; preparation?: never }
+  | { localFile: ArkmeLocalFile; asset?: never; preparation?: never }
+  | { preparation: ArkmeAttachmentPreparation; asset?: never; localFile?: never }
+) & { previewUrl?: string; clientId?: string }
 
-export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.localFile?.fileRef ?? item.asset!.fileAssetUid }
-export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): ArkmeUploadedAsset | ArkmeLocalFile { return item.localFile ?? item.asset! }
+export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.clientId ?? item.preparation?.id ?? item.localFile?.fileRef ?? item.asset!.fileAssetUid }
+export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): Omit<ArkmeLocalFile, 'fileRef'> { return item.preparation ?? item.localFile ?? item.asset! }
+export function arkmeAttachmentsPending(attachments: readonly ArkmeComposerAttachment[]): boolean { return attachments.some(item => item.preparation !== undefined) }
 
 export interface ArkmeComposerMention {
   originalIndex?: number
@@ -334,6 +346,7 @@ export function arkmeArkoComposerDraftKey(userId: number | undefined): string | 
 }
 
 export function releaseArkmeComposerAttachment(attachment: ArkmeComposerAttachment): void {
+  attachment.preparation?.cancel()
   if (attachment.previewUrl === undefined || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') return
   URL.revokeObjectURL(attachment.previewUrl)
 }
@@ -358,7 +371,8 @@ export class ArkmeComposerDraftStore {
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
   beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
     const draft = this.get(key)
-    const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(arkmeAttachmentId)])
+    // The tile ID is transient; send idempotency must survive draft restoration.
+    const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(item => item.localFile?.fileRef ?? item.asset?.fileAssetUid ?? arkmeAttachmentId(item))])
     const current = draft.fileSendIdentity
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
@@ -598,6 +612,13 @@ export class ArkmeComposerDraftStore {
     }
     if (retained.length === current.attachments.length) return
     this.store(key, { ...current, attachments: retained })
+  }
+
+  /** Preparation updates the existing tile without changing its selection order. */
+  updateAttachments(key: string, update: (items: readonly ArkmeComposerAttachment[]) => readonly ArkmeComposerAttachment[]): void {
+    const current = this.get(key)
+    const attachments = update(current.attachments)
+    if (attachments !== current.attachments) this.storeOrDelete(key, { ...current, attachments })
   }
 
   removeAttachment(key: string | undefined, fileAssetUid: string): void {

@@ -19,7 +19,7 @@ export class TimelineTokenCodec {
       if (token.length > 32768) throw new Error('size')
       const [prefix, nonce, data, tag, extra] = token.split('.')
       if (prefix !== 'atw1' || !nonce || !data || !tag || extra !== undefined) throw new Error('shape')
-      const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(nonce, 'base64url'))
+      const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(nonce, 'base64url'), { authTagLength: 16 })
       decipher.setAuthTag(Buffer.from(tag, 'base64url'))
       const value: unknown = JSON.parse(Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8'))
       if (!Array.isArray(value) || value.length !== 3 || value[0] !== this.scope || value[1] !== purpose || typeof value[2] !== 'string' || !value[2]) throw new Error('scope')

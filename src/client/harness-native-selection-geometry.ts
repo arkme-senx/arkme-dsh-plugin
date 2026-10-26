@@ -4,9 +4,9 @@ const ROW = '[data-chat-anchor-key][data-chat-flow-kind]'
 const FLOW = '[data-chat-flow]'
 const HIT = 32
 const GAP = 10
-export interface SelectionPosition { left: number; top: number }
+export interface SelectionPosition { left: number; top: number; overlay?: boolean }
 export interface NativeSelectionSeat extends SelectionPosition { key: string; row: HTMLElement }
-export interface NativeSelectionLayout { seats: readonly NativeSelectionSeat[]; cramped: boolean; viewport: HTMLElement | null; highlight?: { left: number; right: number }; actionDock?: HTMLElement }
+export interface NativeSelectionLayout { seats: readonly NativeSelectionSeat[]; viewport: HTMLElement | null; highlight?: { left: number; right: number }; actionDock?: HTMLElement }
 
 /** New Harness versions also use flows inside reasoning/tool groups. Only the
  * unique outer conversation owns selectable messages and their gutter. */
@@ -56,25 +56,29 @@ export function measureNativeSelection(viewport: HTMLElement, flow: HTMLElement,
   const clip = viewportBounds(viewport)
   const column = flow.getBoundingClientRect()
   const box = row.getBoundingClientRect()
-  let left = column.left - HIT - GAP
+  const edge = Math.max(0, clip.left)
+  const right = Math.min(row.ownerDocument.defaultView!.innerWidth, clip.right)
+  const gutter = column.left - HIT - GAP
   if (!row.isConnected || row.hidden || box.width <= 0 || box.height <= 0
-    || left < Math.max(0, clip.left) || left + HIT > Math.min(row.ownerDocument.defaultView!.innerWidth, clip.right) || box.top < Math.max(0, clip.top)
+    || right - edge < HIT || box.top < Math.max(0, clip.top)
     || box.top + HIT > Math.min(row.ownerDocument.defaultView!.innerHeight, clip.bottom)) return
-  // Keep native resize handles/composer/menu hit areas usable. The outer gutter
-  // is a second seat only when it still preserves the minimum text gap.
-  if (typeof row.ownerDocument.elementsFromPoint === 'function') {
-    const clear = (candidate: number) => [[candidate + 1, box.top + 1], [candidate + HIT / 2, box.top + HIT / 2], [candidate + HIT - 1, box.top + HIT - 1]].every(([x, y]) => {
+  // Prefer the existing gutter, then an outer gutter seat. When neither fits,
+  // keep the full-size control inside the visible message instead of hiding it.
+  // Hit testing still protects native resize handles, composers and popovers.
+  const clear = (candidate: number) => {
+    if (candidate < edge || candidate + HIT > right) return false
+    if (typeof row.ownerDocument.elementsFromPoint !== 'function') return true
+    return [[candidate + 1, box.top + 1], [candidate + HIT / 2, box.top + HIT / 2], [candidate + HIT - 1, box.top + HIT - 1]].every(([x, y]) => {
       const underlying = row.ownerDocument.elementsFromPoint(x!, y!).find(element => !element.closest('[data-arkme-native-selection]'))
       return underlying && viewport.contains(underlying) && (underlying === viewport || underlying.contains(flow) || underlying === flow || row.contains(underlying))
     })
-    if (!clear(left)) {
-      const edge = Math.max(0, clip.left)
-      const outer = [edge + 8, edge].find(candidate => candidate <= left && clear(candidate))
-      if (outer === undefined) return
-      left = outer
-    }
   }
-  return { left, top: box.top }
+  const outside = [gutter, edge + 8, edge].find(candidate => candidate <= gutter && clear(candidate))
+  if (outside !== undefined) return { left: outside, top: box.top }
+  // Reuse any remaining left margin before covering prose. If a native handle
+  // occupies that edge, move inward without crossing the visible viewport.
+  const inside = [edge, edge + 8, Math.min(Math.max(edge + 8, box.left), right - HIT)].find(clear)
+  if (inside !== undefined) return { left: inside, top: box.top, overlay: true }
 }
 
 export function sameSelectionPosition(a: SelectionPosition, b: SelectionPosition | undefined): boolean {
@@ -153,7 +157,6 @@ export function watchNativeSelectionGeometry(options: {
     }
     const seats: NativeSelectionSeat[] = []
     const seen = new Set<string>()
-    let blocked = false
     for (const row of visible) {
       const key = messageRowKey(row, flow)
       if (!key) { subscriptions.get(row)?.unsubscribe(); subscriptions.delete(row); continue }
@@ -167,17 +170,12 @@ export function watchNativeSelectionGeometry(options: {
       seen.add(key)
       const position = measureNativeSelection(viewport, flow, row)
       if (position) seats.push({ key, row, ...position })
-      else {
-        const box = row.getBoundingClientRect(); const clip = viewportBounds(viewport)
-        if (box.width > 0 && box.height > 0 && box.top >= Math.max(0, clip.top) && box.top + HIT <= Math.min(win.innerHeight, clip.bottom)) blocked = true
-      }
     }
     seats.sort((a, b) => a.top - b.top)
-    const cramped = flow.getBoundingClientRect().left - viewportBounds(viewport).left < HIT + GAP
     const column = flow.getBoundingClientRect()
     const bounds = viewportBounds(viewport)
     const docks = doc.querySelectorAll<HTMLElement>('[data-slot="conversation.input.dock"]')
-    options.publish({ seats, cramped: cramped || (blocked && seats.length === 0), viewport,
+    options.publish({ seats, viewport,
       highlight: { left: Math.max(0, column.left - bounds.left - 8), right: Math.max(0, bounds.right - column.right - 8) },
       ...(docks.length === 1 && docks[0]!.nextElementSibling?.matches('[data-slot="conversation.composer.bar"]') ? { actionDock: docks[0]! } : {}),
     })

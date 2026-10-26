@@ -1,3 +1,4 @@
+import { darkLocationMapStyle } from './location-map-theme.js'
 import { useEffect, useRef, useState } from 'react'
 import { Crosshair } from '@phosphor-icons/react/dist/icons/Crosshair'
 import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
@@ -39,7 +40,7 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
   const [error, setError] = useState(''), [ready, setReady] = useState(false), [revision, setRevision] = useState(0)
   const [, redraw] = useState(0)
   useEffect(() => {
-    let disposed = false, map: BaiduMap | undefined, resize: ResizeObserver | undefined
+    let disposed = false, map: BaiduMap | undefined, resize: ResizeObserver | undefined, themeObserver: MutationObserver | undefined
     let timer: ReturnType<typeof setTimeout> | undefined, viewportTimer: ReturnType<typeof setTimeout> | undefined, frame = 0
     if (previousRevision.current !== revision && session.current) discardLocationMapSession(session.current)
     previousRevision.current = revision
@@ -69,12 +70,28 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
       canvas.current.appendChild(retained.element)
       map = retained.map ?? new sdk.Map(retained.element, { minZoom: 3, maxZoom: 19, enableMapClick: false, enableRotate: false, enableTilt: false })
       retained.map = map; retained.sdk = sdk
+      map.addEventListener('tilesloaded', loaded)
+      map.addEventListener('style_loaded_error', failed); map.addEventListener('style_loaded_timeout', failed)
+      const applyTheme = () => {
+        if (disposed || !map) return
+        const dark = document.body.hasAttribute('data-ds-dark-theme')
+        if (dark === retained.darkTheme) return
+        retained.ready = false; setReady(false)
+        clearTimeout(timer); timer = setTimeout(failed, 20_000)
+        map.setMapStyle({ styleJson: dark ? darkLocationMapStyle : [] })
+        retained.darkTheme = dark
+      }
+      // Apply before centering/first tiles, including a retained canvas whose
+      // theme changed while detached. Theme updates must not reinitialize it.
+      applyTheme()
+      themeObserver = new MutationObserver(applyTheme)
+      themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
       map.enableScrollWheelZoom()
       const bounds = initial.current.bounds
       const isWorld = bounds.swLon === -180 && bounds.neLon === 180
-      const position = isWorld ? { lng: 105, lat: 35 } : { lng: (bounds.swLon+bounds.neLon)/2, lat: (bounds.swLat+bounds.neLat)/2 }
-      map.addEventListener('tilesloaded', loaded)
-      map.addEventListener('style_loaded_error', failed); map.addEventListener('style_loaded_timeout', failed)
+      let longitude = (bounds.swLon + bounds.neLon + (bounds.swLon > bounds.neLon ? 360 : 0)) / 2
+      if (longitude > 180) longitude -= 360
+      const position = isWorld ? { lng: 105, lat: 35 } : { lng: longitude, lat: (bounds.swLat+bounds.neLat)/2 }
       if (!retained.initialized || recenter) {
         const [center] = await convertBaiduPoints(sdk, [position], retained.points, controller.signal)
         if (disposed || retained.disposed) return
@@ -83,14 +100,14 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
       }
       map.addEventListener('moving', update); map.addEventListener('zooming', update)
       map.addEventListener('moveend', viewport); map.addEventListener('zoomend', viewport)
-      if (retained.ready) loaded(); else timer = setTimeout(failed, 20_000)
+      if (retained.ready) loaded(); else { clearTimeout(timer); timer = setTimeout(failed, 20_000) }
       resize = new ResizeObserver(() => { map?.checkResize(); update() }); resize.observe(canvas.current)
       map.checkResize()
       setRuntime({ sdk, map })
     }).catch(reason => { if (!disposed) setError(reason instanceof Error ? reason.message : '百度地图加载失败') })
     return () => {
       locationRequest.current?.abort(); locationRequest.current = undefined
-      disposed = true; controller.abort(); clearTimeout(timer); clearTimeout(viewportTimer); cancelAnimationFrame(frame); resize?.disconnect()
+      disposed = true; controller.abort(); clearTimeout(timer); clearTimeout(viewportTimer); cancelAnimationFrame(frame); resize?.disconnect(); themeObserver?.disconnect()
       if (map && !retained.disposed) {
         map.removeEventListener('tilesloaded', loaded); map.removeEventListener('style_loaded_error', failed); map.removeEventListener('style_loaded_timeout', failed)
         map.removeEventListener('moving', update); map.removeEventListener('zooming', update); map.removeEventListener('moveend', viewport); map.removeEventListener('zoomend', viewport)
@@ -148,8 +165,8 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
   }
   const currentPixel = runtime && currentLocation?.map === runtime.map ? runtime.map.pointToPixel(currentLocation.point) : undefined
   return <div className="arkme-location-map" role="region" aria-label={tr('历史位置地图')}
-    onPointerDown={() => { if (session.current) session.current.interacted = true }} onWheel={() => { if (session.current) session.current.interacted = true }}>
-    <div className="arkme-location-canvas" ref={canvas} />
+    onPointerDownCapture={() => { if (session.current) session.current.interacted = true }} onWheelCapture={() => { if (session.current) session.current.interacted = true }}>
+    <div className="arkme-location-canvas" data-map-ready={ready} ref={canvas} />
     {currentPixel && Number.isFinite(currentPixel.x) && Number.isFinite(currentPixel.y) && <div
       className="arkme-location-current-position" role="img" aria-label={tr('当前位置')}
       style={{ left: currentPixel.x, top: currentPixel.y }} />}

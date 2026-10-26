@@ -228,7 +228,7 @@ it('offers right-click Ask DSH after forwarding for either author and passes onl
     const entries = menu.props.actions.filter(Boolean)
     const entry = entries.find((item: { id: string }) => item.id === 'ask-dsh')
     expect(entry).toBeDefined()
-    expect(entries.indexOf(entry)).toBe(entries.findIndex((item: { id: string }) => item.id === 'forward') + 1)
+    expect(entries.indexOf(entry)).toBe(entries.findIndex((item: { id: string }) => item.id === (entries.some((item: { id: string }) => item.id === 'world') ? 'world' : 'forward')) + 1)
     expect(entry.disabled).toBe(index === 2)
     if (index !== 2) {
       await act(async () => entry.onSelect())

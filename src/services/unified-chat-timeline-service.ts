@@ -1,3 +1,4 @@
+import { systemTimelineAnchorCodec } from './system-timeline-anchor.js'
 import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
 import { reconcileUnifiedTimeline } from '../unified-timeline-reconcile.js'
@@ -210,9 +211,10 @@ export class UnifiedChatTimelineService {
       || ['older', 'newer'].includes(mode) && !query.cursor
       || mode === 'refresh' && !query.cursor && !query.windowTokens?.length
       || (query.messageRef !== undefined || query.contextRef !== undefined) && !this.offlineContexts
+      || query.systemRef !== undefined && (mode !== 'around' || typeof query.systemRef !== 'string' || !query.systemRef || query.systemRef.length > 32768 || query.contextRef !== undefined || query.messageRef !== undefined || query.itemUid !== undefined || query.recordOwnerUserId !== undefined)
       || query.messageRef !== undefined && (mode !== 'around' || typeof query.messageRef !== 'string' || !query.messageRef || query.messageRef.length > 32768 || query.contextRef !== undefined || query.itemUid !== undefined || query.recordOwnerUserId !== undefined)
       || query.contextRef !== undefined && (mode !== 'around' || typeof query.contextRef !== 'string' || !query.contextRef || query.contextRef.length > 32768 || query.itemUid !== undefined || query.recordOwnerUserId !== undefined)
-      || mode === 'around' && !query.contextRef && !query.messageRef && (typeof query.itemUid !== 'string' || !query.itemUid.trim() || !recordOwnerId(query.recordOwnerUserId))) {
+      || mode === 'around' && !query.systemRef && !query.contextRef && !query.messageRef && (typeof query.itemUid !== 'string' || !query.itemUid.trim() || !recordOwnerId(query.recordOwnerUserId))) {
       throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     }
     const key = await this.runtime.stateStore.uniqueCode()
@@ -285,9 +287,10 @@ export class UnifiedChatTimelineService {
     const body = { chat_session_uid: source.ownerRef, mode, limit: pageQuery.limit ?? 40,
       ...(pageQuery.cursor ? { cursor: codec.open(pageQuery.cursor, mode) } : {}),
       ...(pageQuery.windowTokens ? { window_tokens: pageQuery.windowTokens.map(token => codec.open(token, 'window')) } : {}),
+      ...(mode === 'around' && pageQuery.systemRef ? systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId, source.ownerRef).open(pageQuery.systemRef) : {}),
       ...(mode === 'around' && pageQuery.contextRef ? { anchor_source: 'offline_context', anchor_id: await this.offlineContexts?.timelineAnchor(pageQuery.contextRef, source.ownerRef) } : {}),
       ...(mode === 'around' && pageQuery.messageRef ? await this.offlineContexts?.messageAnchor(pageQuery.messageRef, source.ownerRef) : {}),
-      ...(mode === 'around' && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
+      ...(mode === 'around' && !pageQuery.systemRef && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {

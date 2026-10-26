@@ -14,7 +14,7 @@ export function ArkmeLocationMapFrame(props: {
   account: string; browserAk: string; scope?: string; markers: LocationMarker[]; initialViewport: LocationViewport
   selectedKey?: string; onViewport(viewport: LocationViewport): void; onSelect(marker: LocationMarker): void
   sources: LocationSource[]; onSourcesChange(sources: LocationSource[]): void; availableSources?: readonly LocationSource[]
-  summary: ReactNode; recordTitle?: string; recordCount?: number; children?: ReactNode
+  toolbar?: ReactNode; summary: ReactNode; recordTitle?: string; recordCount?: number; children?: ReactNode
   onCloseRecords(): void; recordPanelRef?: RefObject<HTMLElement>; fitWhileLoading?: boolean
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -27,7 +27,7 @@ export function ArkmeLocationMapFrame(props: {
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [filtersOpen])
-  return <section className="arkme-location-view" aria-label={tr('位置快速查找')} style={{ color: arkmeTheme.text, background: arkmeTheme.base }}
+  return <section className="arkme-location-view" aria-label={tr('位置地图')} style={{ color: arkmeTheme.text, background: arkmeTheme.base }}
     onKeyDown={event => {
       if (event.key !== 'Escape' || (!filtersOpen && !props.selectedKey)) return
       event.preventDefault(); event.stopPropagation()
@@ -39,6 +39,7 @@ export function ArkmeLocationMapFrame(props: {
         {...(props.scope ? { scope: props.scope } : {})} {...(props.fitWhileLoading ? { fitWhileLoading: true } : {})}
         {...(props.selectedKey ? { selectedKey: props.selectedKey } : {})} onViewport={props.onViewport}
         onSelect={marker => { setFiltersOpen(false); props.onSelect(marker); requestAnimationFrame(() => panel.current?.focus({ preventScroll: true })) }} />
+      <div className="arkme-location-toolbar">
       <div className="arkme-location-filter-control" ref={filter}>
         <button className="arkme-location-filter-trigger" type="button" aria-label={tr('位置来源')} aria-expanded={filtersOpen}
           title={tr('筛选位置来源')} onClick={() => setFiltersOpen(value => !value)}>
@@ -49,6 +50,8 @@ export function ArkmeLocationMapFrame(props: {
             props.onSourcesChange(props.sources.includes(source) ? props.sources.filter(s => s !== source) : [...props.sources, source])
           }}><span className="arkme-location-dot" data-source={source} /><span>{tr(labels[source])}</span><span aria-hidden>{props.sources.includes(source) ? '✓' : ''}</span></button>)}
         </div>}
+      </div>
+      {props.toolbar}
       </div>
       {!props.selectedKey && <div className="arkme-location-summary" role="status">{props.summary}</div>}
       {props.selectedKey && <aside className="arkme-location-records" aria-label={tr('该地点的记录')} tabIndex={-1} ref={panel}>

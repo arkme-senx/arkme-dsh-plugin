@@ -1,5 +1,11 @@
 import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
 export type * from '../arko-lifecycle-contract.js'
+export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
+export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
+
+export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
+export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
+export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
 import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
 import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
@@ -782,6 +788,10 @@ export class ArkmeSdk {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
 
+  async externalChats<O extends import('../team-external-chat-contract.js').ExternalChatOperation>(operation: O, params: import('../team-external-chat-contract.js').ExternalChatParameters[O], signal?: AbortSignal): Promise<import('../team-external-chat-contract.js').ExternalChatResults[O]> {
+    if ((await this.capabilities(signal)).features.teamExternalChats !== true) throw new Error('当前 Provider 不支持对外私聊')
+    return await this.call<import('../team-external-chat-contract.js').ExternalChatResults[O]>('team.external', { operation, params }, signal)
+  }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}
@@ -1019,6 +1029,17 @@ export class ArkmeSdk {
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
+  }
+
+  /** User-entered credentials only: never persist them or pass them to model tools. */
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    if (account.trim() === '' || account.trim().length > 254 || password === '' || password.length > 1024) {
+      throw new TypeError('Account and password must be non-empty and within the supported length')
+    }
+    if ((await this.capabilities(signal)).features.passwordLogin !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号密码登录，请升级', retryable: false })
+    }
+    return await this.call('auth.password.login', { account: account.trim(), password }, signal)
   }
 
   /** Read recent call history through Browser-safe opaque call references. */
@@ -2315,6 +2336,31 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  private async requireMessageTextAnchors(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.messageTextAnchorsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持同步标记与局部引用，请升级', retryable: false })
+  }
+  async messageMarkCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.capabilities', { sourceRef }, signal)
+  }
+  async messageMarks(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../message-annotations.js').MessageUnderlineSnapshot }[]> {
+    await this.requireMessageTextAnchors(signal)
+    if (actionRefs.length < 1 || actionRefs.length > 40) throw new TypeError('Expected 1-40 signed message action references')
+    return this.call('source.message-underline.list', { sourceRef, actionRefs }, signal)
+  }
+  async changeMessageMark(sourceRef: string, messageActionRef: string, change: import('../message-annotations.js').MessageUnderlineChange, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineSnapshot> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.change', { sourceRef, messageActionRef, change }, signal)
+  }
+  async captureMessageQuote(sourceRef: string, messageActionRef: string, start: number, end: number, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeMessageQuote> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-anchor.capture', { sourceRef, messageActionRef, start, end }, signal)
+  }
+  async messageQuoteCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeQuoteReplyCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-extension.capabilities', { sourceRef }, signal)
+  }
+
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
@@ -2334,6 +2380,7 @@ export class ArkmeSdk {
     textContent: string,
     options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
       throw new TypeError('Arkme source message extension requires a target and text or attachments')
@@ -2645,6 +2692,19 @@ export class ArkmeSdk {
   }
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
+  private async requireAnalytics(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.analyticsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统计能力 v1', retryable: false })
+  }
+  async personalKeywords(query: import('../statistics-contract.js').StatisticsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordSummary> { await this.requireAnalytics(signal); return this.call('statistics.keywords', { ...query }, signal) }
+  async personalKeywordRecords(query: import('../analytics-contract.js').PersonalKeywordRecordsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordRecords> { await this.requireAnalytics(signal); return this.call('statistics.keyword-records', { ...query }, signal) }
+  async conversationWordsState(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.state', { ...query }, signal) }
+  async conversationWordsCreate(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.create', { ...query }, signal) }
+  async conversationWordParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.participants', { ...query }, signal) }
+  async conversationWordMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; wordKey: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordMessages> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.messages', { ...query }, signal) }
+  async conversationActivity(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityState> { await this.requireAnalytics(signal); return this.call('chat.activity.read', { ...query }, signal) }
+  async conversationActivityParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.activity.participants', { ...query }, signal) }
+  async conversationActivityMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; hour: number; weekday: number | null; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityMessages> { await this.requireAnalytics(signal); return this.call('chat.activity.messages', { ...query }, signal) }
+
   async calendarChatStatistics(options: {
     sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
@@ -2855,3 +2915,5 @@ export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem 
 
 export type { ArkmeDshInputOrigin } from '../types.js'
 export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
+
+export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline } from '../team-external-chat-contract.js'

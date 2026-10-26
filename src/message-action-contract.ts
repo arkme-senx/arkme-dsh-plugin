@@ -54,7 +54,8 @@ export interface NativeMessageSnapshot {
   senderUserId: number
   senderName: string
 }
-export type MessageActionSource = MessageActionReference | NativeMessageSnapshot
+export interface CodexMessageSnapshot extends Omit<NativeMessageSnapshot, 'ownerKind'> { ownerKind: 'codex'; taskTitle: string }
+export type MessageActionSource = MessageActionReference | NativeMessageSnapshot | CodexMessageSnapshot
 
 export interface AgentMessageActionConversation {
   version: 2
@@ -89,7 +90,7 @@ export interface MessageActionGateway {
   maxTextLength(): number
   openTarget(targetSourceRef: string, userId: number): Promise<MessageActionTarget>
   createCopyLink(
-    references: readonly (MessageActionReference | NativeMessageSnapshot)[],
+    references: readonly MessageActionSource[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult>

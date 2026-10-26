@@ -1,3 +1,4 @@
+import { ArkmeDictationButton, textareaDictationTarget } from './ArkmeDictationButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeMessageSelectionControl } from './message-selection-presentation.js'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
@@ -105,6 +106,7 @@ export function ArkmeBotConversationSurface({
   useArkmeLocale()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const [messages, setMessages] = useState<ArkmeBotConversationMessage[]>([])
+  const [dictationBusy, setDictationBusy] = useState(false)
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -129,10 +131,11 @@ export function ArkmeBotConversationSurface({
         actionRef: message.messageActionRef,
         conversationRef: bot.botRef,
         copyText: message.content,
+        ...(message.role === 'user' ? { worldOrigin: { kind: 'action' as const, sourceRef: bot.botRef, itemUid: message.messageId, actionRef: message.messageActionRef, hasAttachments: message.attachments.length > 0 } } : {}),
         copyLinkAvailable: message.messageActionCapabilities?.copyLink === true,
         forwardAvailable: message.messageActionCapabilities?.forward === true,
       }]
-  )), [messages])
+  )), [messages, bot.botRef])
   const messageActions = useArkmeMessageActions({ scopeKey: bot.botRef, items: messageActionItems })
 
   useEffect(() => {
@@ -207,6 +210,7 @@ export function ArkmeBotConversationSurface({
     : privateChatInboundOnly ? '暂无消息，等待外部系统推送' : tr("和 {v0} 打个招呼吧", { v0: bot.name })
 
   const send = async () => {
+    if (dictationBusy) return
     const content = draft.trim()
     if (privateChatUnavailable || privateChatInboundOnly || content === '' || sendInFlightRef.current) return
     sendInFlightRef.current = true
@@ -277,8 +281,8 @@ export function ArkmeBotConversationSurface({
         }}
       />
       <div style={styles.tools}>
-        <span aria-hidden style={{ width: 34, height: 34 }} />
-        <button type="button" aria-label={sending ? '正在发送' : tr("发送消息")} title={tr("发送消息")} disabled={sending || draft.trim() === ''} style={{ ...styles.send, ...(sending || draft.trim() === '' ? { opacity: .4, cursor: 'default' } : {}) }} onClick={() => { void send() }}>
+        <ArkmeDictationButton scopeKey={bot.botRef} disabled={sending} getTarget={() => textareaDictationTarget(inputRef.current, setDraft)} onBusyChange={setDictationBusy} />
+        <button type="button" aria-label={sending ? '正在发送' : tr("发送消息")} title={tr("发送消息")} disabled={sending || dictationBusy || draft.trim() === ''} style={{ ...styles.send, ...(sending || draft.trim() === '' ? { opacity: .4, cursor: 'default' } : {}) }} onClick={() => { void send() }}>
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
             <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
           </svg>

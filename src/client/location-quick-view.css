@@ -1,9 +1,12 @@
 .arkme-location-view{height:100%;min-height:360px;display:flex;flex-direction:column;container-type:inline-size;font-size:13px}
 .arkme-location-view button{font:inherit;color:inherit;cursor:pointer}
 .arkme-location-view button:disabled{opacity:.45;cursor:default}
-.arkme-location-filter-control{position:absolute;top:12px;left:12px;z-index:7}
-.arkme-location-filter-trigger{display:flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--dsw-alias-border-l2,#e6e7eb);border-radius:10px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 2px 10px #0001}
-.arkme-location-filters{display:flex;flex-direction:column;gap:3px;padding:6px;margin-top:6px;min-width:190px;border:1px solid var(--dsw-alias-border-l2,#e6e7eb);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 5px 24px #0002}
+.arkme-location-toolbar{position:absolute;top:12px;left:12px;right:60px;z-index:7;display:grid;grid-template-columns:160px 140px;align-items:start;gap:8px;pointer-events:none}
+.arkme-location-toolbar>*{pointer-events:auto}
+.arkme-location-filter-control,.arkme-location-date-control{position:relative;min-width:0}
+.arkme-location-filter-trigger{width:100%;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--dsw-alias-border-l2,#e6e7eb);border-radius:10px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 2px 10px #0001}
+.arkme-location-filter-trigger>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.arkme-location-filter-trigger>svg{flex:none}
+.arkme-location-filters{position:absolute;top:calc(100% + 6px);left:0;z-index:1;box-sizing:border-box;display:flex;flex-direction:column;gap:3px;padding:6px;width:204px;max-width:calc(100cqw - 24px);border:1px solid var(--dsw-alias-border-l2,#e6e7eb);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 5px 24px #0002}
 .arkme-location-filters button{border:0;border-radius:7px;padding:9px;background:transparent;display:flex;align-items:center;gap:9px;opacity:.55;text-align:left}
 .arkme-location-filters button>span:nth-child(2){flex:1}
 .arkme-location-filters button[aria-pressed=true]{opacity:1}
@@ -15,10 +18,10 @@
 .arkme-location-view [data-source=received_group]{--location-color:#8660c4}
 .arkme-location-stage{position:relative;flex:1;min-width:0;min-height:360px;border-radius:14px;overflow:hidden;background:var(--dsw-alias-bg-layer-1,#f4f5f7)}
 .arkme-location-map,.arkme-location-canvas{position:absolute;inset:0;overflow:hidden}
-.arkme-location-map{isolation:isolate}.arkme-location-canvas{z-index:0}
+.arkme-location-map{isolation:isolate}.arkme-location-canvas{z-index:0;background:var(--dsw-alias-bg-layer-1,#f4f5f7)}
 .arkme-location-pin{z-index:1}.arkme-location-controls{z-index:3}.arkme-location-map-status{z-index:4}
 .arkme-location-pin{position:absolute;transform:translate(-50%,-100%);border:2px solid var(--location-color);border-radius:14px;background:var(--location-color);color:#fff!important;box-shadow:0 2px 7px #0002;display:flex;align-items:center;gap:5px;min-width:30px;min-height:30px;padding:4px 9px;white-space:nowrap}
-.arkme-location-pin[aria-pressed=true]{background:#fff;color:var(--location-color)!important;z-index:2;box-shadow:0 0 0 3px #ffffff99}
+.arkme-location-pin[aria-pressed=true]{background:var(--dsw-alias-bg-layer-3,#fff);color:var(--location-color)!important;z-index:2;box-shadow:0 0 0 3px var(--dsw-alias-bg-base,#fff)}
 .arkme-location-pin small{max-width:130px;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 .arkme-location-controls{position:absolute;right:12px;bottom:45px;display:flex;flex-direction:column;gap:4px}
 .arkme-location-controls button{background:var(--dsw-alias-bg-base,#fff);border:1px solid var(--dsw-alias-border-l2,#ddd);width:32px;height:32px;border-radius:8px;font-size:20px}
@@ -46,13 +49,19 @@
 .arkme-location-message{padding:18px 12px;text-align:center;opacity:.7;line-height:1.7}
 .arkme-location-fallback{display:flex;flex-wrap:wrap;gap:5px;max-height:120px;overflow:auto;margin-top:8px}.arkme-location-fallback button{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .arkme-location-more{display:block;margin:12px auto;padding:7px 20px;border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;background:transparent}
-@container (max-width:700px){.arkme-location-stage{border-radius:10px}.arkme-location-records{left:6px;right:6px;bottom:10px;max-height:48%}.arkme-location-filter-control{top:10px;left:10px}}
+@container (max-width:700px){.arkme-location-stage{border-radius:10px}.arkme-location-records{left:6px;right:6px;bottom:10px;max-height:48%}.arkme-location-toolbar{top:12px;left:12px}}
 @container (max-width:700px){.arkme-location-stage:has(.arkme-location-records) .arkme-location-controls{bottom:calc(48% + 20px)}}
 .arkme-location-browser{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;box-sizing:border-box}
 .arkme-location-browser>.arkme-location-view{flex:1;min-height:0}
-.arkme-location-date-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:2px 0 10px;font-size:12px;flex-shrink:0}
-.arkme-location-date-toolbar label{display:flex;align-items:center;gap:6px}
-.arkme-location-date-toolbar input{font:inherit;color:inherit;border:1px solid var(--dsw-alias-border-l2,#ddd);background:var(--dsw-alias-bg-base,#fff);border-radius:7px;padding:5px 7px;min-width:128px}
-.arkme-location-date-toolbar button{font:inherit;color:inherit;background:transparent;border:0;border-radius:6px;padding:6px 8px;cursor:pointer}
-.arkme-location-date-toolbar button:hover{background:var(--dsw-alias-bg-layer-1,#f5f5f7)}
-.arkme-location-date-toolbar small{opacity:.65;font-size:11px}
+.arkme-location-date-menu{position:absolute;top:calc(100% + 6px);left:auto;right:0;display:flex;flex-direction:column;gap:10px;width:270px;max-width:calc(100cqw - 24px);box-sizing:border-box;padding:12px;border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 5px 24px #0002}
+.arkme-location-date-menu label{display:flex;align-items:center;gap:10px}
+.arkme-location-date-menu input{min-width:0;flex:1;font:inherit;color:inherit;border:1px solid var(--dsw-alias-border-l2,#ddd);background:var(--dsw-alias-bg-base,#fff);border-radius:7px;padding:7px}
+.arkme-location-date-menu button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-1,#f5f5f7);border:0;border-radius:7px;padding:8px;cursor:pointer}
+.arkme-location-date-menu small{opacity:.65;font-size:11px;line-height:1.6}
+@container(max-width:360px){.arkme-location-filter-trigger{gap:5px;padding:8px}.arkme-location-filter-trigger>svg:last-child{display:none}.arkme-location-map-status,.arkme-location-locate-error{top:100px}}
+
+body[data-ds-dark-theme] .arkme-location-pin[aria-pressed=true]{color:var(--dsw-alias-label-primary,#eee)!important}
+@container(max-width:380px){.arkme-location-toolbar{grid-template-columns:160px}.arkme-location-date-menu{left:0;right:auto}.arkme-location-map-status,.arkme-location-locate-error{top:100px}}
+
+/* Keep the SDK’s default light canvas hidden until the themed tiles are ready. */
+.arkme-location-canvas[data-map-ready=false]{opacity:0}

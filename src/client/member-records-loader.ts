@@ -10,10 +10,12 @@ export function mergeRecordItems(current: readonly ArkmeTimelineItem[], incoming
 /** Read an owner-provided page range; never publish a partially refreshed window. */
 export async function readMemberRecordWindow(
   readPage: (beforeSequence?: number) => Promise<ArkmeConversationMemberRecordPage>,
-  options: { beforeSequence?: number; refresh: boolean; loadedCursor?: number; signal: AbortSignal },
+  options: { beforeSequence?: number; refresh: boolean; loadedCursor?: number; signal: AbortSignal; onPage?: (page: ArkmeConversationMemberRecordPage) => void },
 ): Promise<ArkmeConversationMemberRecordPage> {
   let page = await readPage(options.beforeSequence)
+  options.signal.throwIfAborted()
   let items = page.items
+  options.onPage?.(page)
   let previousCursor: number | undefined
   while (options.refresh && page.hasMore) {
     options.signal.throwIfAborted()
@@ -24,7 +26,9 @@ export async function readMemberRecordWindow(
     if (options.loadedCursor !== undefined && next <= options.loadedCursor) break
     previousCursor = next
     page = await readPage(next)
+    options.signal.throwIfAborted()
     items = mergeRecordItems(items, page.items)
+    options.onPage?.({ ...page, items })
   }
   options.signal.throwIfAborted()
   return { ...page, items }

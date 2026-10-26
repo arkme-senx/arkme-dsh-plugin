@@ -54,13 +54,14 @@ import { requirePhoneForSocialAction } from './social-action-guard.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { createArkmeSdk } from '../sdk/index.js'
-import { ArkmeAttachmentStrip, ArkmeFilePreparingIndicator } from './ArkmeAttachmentStrip.js'
+import { attachmentPreparationHint, AttachmentPreparationQueue } from './attachment-preparation.js'
+import { ArkmeAttachmentStrip } from './ArkmeAttachmentStrip.js'
 import {
   arkmeComposerAtomicDeletion,
   insertArkmeComposerMentionToken,
   reconcileArkmeComposerEmojis,
   reconcileArkmeComposerMentions,
-  releaseArkmeComposerAttachment,
+  releaseArkmeComposerAttachment, arkmeAttachmentsPending,
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
   type ArkmeComposerEmoji,
@@ -247,11 +248,11 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     return () => controller.abort()
   }, [sourceRef])
   const [attachments, setAttachments] = useState<ArkmeComposerAttachment[]>([])
-  const [preparing, setPreparing] = useState(false)
+  const preparing = arkmeAttachmentsPending(attachments)
   const [sending, setSending] = useState(false)
   const [draftPreview, setDraftPreview] = useState<ArkmeComposerAttachment>()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const stageAbortRef = useRef<AbortController>()
+  const preparationQueue = useRef<AttachmentPreparationQueue>()
   const sendAbortRef = useRef<AbortController>()
   const sendPromiseRef = useRef<Promise<unknown>>()
   const generationRef = useRef(0)
@@ -273,7 +274,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
   emojisRef.current = emojis
   useEffect(() => {
     generationRef.current += 1
-    stageAbortRef.current?.abort()
+    preparationQueue.current?.dispose(); preparationQueue.current = undefined
     attachmentsRef.current = []
     sendAbortRef.current = undefined
     sendPromiseRef.current = undefined
@@ -281,12 +282,11 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined)
     setMentionTrigger(undefined)
     setAttachments([])
-    setPreparing(false)
     setSending(false)
     setDraftPreview(undefined)
     return () => {
       generationRef.current += 1
-      stageAbortRef.current?.abort()
+      preparationQueue.current?.dispose(); preparationQueue.current = undefined
       const pending = attachmentsRef.current
       const pendingSend = sendPromiseRef.current
       attachmentsRef.current = []
@@ -320,7 +320,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     })
   }, [])
   const updateText = (value: string, nextEmojis?: readonly ArkmeComposerEmoji[]) => {
-    if (messageCreationBlocked || preparing || sending) return
+    if (messageCreationBlocked || sending) return
     const previousText = textRef.current
     setText(value)
     setMentions(reconcileArkmeComposerMentions(previousText, value, mentionsRef.current))
@@ -375,59 +375,25 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     return deletion.caretIndex
   }, [])
   const selectFiles = async (files: FileList | readonly File[] | null) => {
-    if (messageCreationBlocked || files === null || files.length === 0 || preparing || sending) return
-    const controller = new AbortController()
-    stageAbortRef.current?.abort()
-    stageAbortRef.current = controller
-    setPreparing(true)
-    const next: ArkmeComposerAttachment[] = []
-    let appended = false
-    try {
-      const sdk = createArkmeSdk()
-      const policy = await sdk.fileCapabilities(controller.signal)
-      const selected = Array.from(files)
-      const failures: string[] = []
-      for (const file of selected) {
-        controller.signal.throwIfAborted()
-        if (attachments.length + next.length >= policy.maxAttachments) {
-          failures.push(tr("最多添加 {v0} 个附件：{v1}", { v0: String(policy.maxAttachments), v1: file.name }))
-          continue
-        }
-        const limit = file.type.startsWith('image/') ? policy.maxImageBytes : policy.maxFileBytes
-        if (file.size <= 0 || file.size > limit) {
-          failures.push(tr("{v0} 为空或超过 {v1} MiB", { v0: file.name, v1: String(Math.floor(limit / 1024 / 1024)) }))
-          continue
-        }
-        try {
-          const localFile = await sdk.stageFile(file, { signal: controller.signal })
-          const previewUrl = localFile.fileKind === 1 && typeof URL.createObjectURL === 'function'
-            ? URL.createObjectURL(file) : undefined
-          next.push({ localFile, ...(previewUrl === undefined ? {} : { previewUrl }) })
-        } catch (caught) {
-          if (controller.signal.aborted) throw caught
-          failures.push(caught instanceof Error ? `${file.name}：${caught.message}` : tr("{v0}：附件准备失败", { v0: file.name }))
-        }
-      }
-      if (!controller.signal.aborted && next.length > 0) {
-        const combined = [...attachmentsRef.current, ...next]
-        attachmentsRef.current = combined
-        appended = true
-        setAttachments(combined)
-      }
-      if (failures.length > 0) onError(failures.join('；'))
-    } catch (caught) {
-      if (!controller.signal.aborted) onError(caught instanceof Error ? caught.message : '附件准备失败')
-    } finally {
-      if (stageAbortRef.current === controller) {
-        stageAbortRef.current = undefined
-        setPreparing(false)
-      }
-      if (fileInputRef.current !== null) fileInputRef.current.value = ''
-      if (!appended && next.length > 0) {
-        void removeDetailExtensionAttachments(next)
-      }
+    if (messageCreationBlocked || !files?.length || sending) return
+    const picked = Array.from(files)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (!preparationQueue.current) {
+      const sdk = createArkmeSdk(), generation = generationRef.current
+      const selectedAccount = accountKey
+      preparationQueue.current = new AttachmentPreparationQueue({
+        get: () => attachmentsRef.current,
+        update: change => { const next = [...change(attachmentsRef.current)]; attachmentsRef.current = next; setAttachments(next) },
+        current: () => { const current = arkmeAuthStore.getSnapshot().auth; return generationRef.current === generation && current?.status === 'authenticated' && `${current.environment}:${current.userId}` === selectedAccount },
+        policy: signal => sdk.fileCapabilities(signal),
+        stage: (file, signal) => sdk.stageFile(file, { signal, ...(auth?.status === 'authenticated' ? { expectedUserId: auth.userId } : {}) }),
+        discard: file => sdk.removeLocalFile(file.fileRef),
+      })
     }
+    try { preparationQueue.current.add(picked) }
+    catch (error) { onError(error instanceof Error ? error.message : tr('附件准备失败，请重试')) }
   }
+
   const send = async () => {
     const serializedDraft = serializeArkmeComposerDraft({
       text,
@@ -440,7 +406,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     const humanMentions = detailHumanMentionInputs(serializedDraft.mentions)
     const botMentions = detailBotMentionInputs(serializedDraft.mentions)
     const fileRefs = attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
-    if (messageCreationBlocked || sending || preparing || (normalizedText === '' && fileRefs.length === 0)) return
+    if (messageCreationBlocked || sending || arkmeAttachmentsPending(attachmentsRef.current) || (normalizedText === '' && fileRefs.length === 0)) return
     const roleAtSendStart = selfRoleSelection?.selectedRole
     const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs, serializedDraft.textFormat ?? 'plain', humanMentions, botMentions, roleAtSendStart?.roleId ?? 'me'])
     const recordUid = submissionRef.current?.fingerprint === fingerprint
@@ -526,7 +492,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       if (generationRef.current === generation) setSending(false)
     }
   }
-  const disabled = messageCreationBlocked || preparing || sending
+  const disabled = messageCreationBlocked || sending
   const canSend = (markdown?.source ?? text).trim() !== '' || attachments.length > 0
   return <div style={styles.extensionComposer}
     onDragOver={event => { if (!disabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
@@ -563,7 +529,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       />}
       <div className="arkme-detail-extension-input-shell" style={styles.extensionInputWrap}>
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.extensionTool, opacity: disabled ? .4 : 1 }} aria-label={tr("添加延展附件")} disabled={disabled}
-          onClick={() => { fileInputRef.current?.click() }}>{preparing ? <ArkmeFilePreparingIndicator /> : <FileTextIcon size={18} />}</button>
+          onClick={() => { fileInputRef.current?.click() }}><FileTextIcon size={18} /></button>
         <ArkmeRichComposerInput ref={inputRef} style={styles.extensionInput!} ariaLabel={tr("延展此快记")} placeholder={tr("延展此快记...")} value={text} disabled={disabled}
           mentions={mentions} emojis={emojis} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
           onTextChange={updateText} onMarkdownChange={(value, nextText, nextMentions, nextEmojis) => {
@@ -622,8 +588,8 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
         />}
         <ArkmeComposerSendButton
           ariaLabel={tr("发送延展")}
-          disabled={disabled || !canSend}
-          shortcutHint={tr("Enter发送 / Shift+Enter换行")}
+          disabled={disabled || preparing || !canSend}
+          shortcutHint={attachmentPreparationHint(attachments) ?? tr("Enter发送 / Shift+Enter换行")}
           onClick={() => { void send() }}
         />
       </div>

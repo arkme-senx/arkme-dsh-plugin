@@ -11,6 +11,17 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === '
 const title = (value: unknown): value is string => typeof value === 'string' && !!value.trim()
   && Buffer.byteLength(value) <= MAX_TITLE_BYTES && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
 
+export type CodexThreadVisibility = 'user' | 'internal' | 'pending'
+interface DesktopTasks { names: Map<string, string>; visibility: Map<string, CodexThreadVisibility> }
+const snapshot = (): DesktopTasks => ({ names: new Map(), visibility: new Map() })
+function threadVisibility(row: Record<string, unknown>): CodexThreadVisibility {
+  // Persistent root tasks include user-requested tasks created through the app tools.
+  if (typeof row.agent_path === 'string' && !['', '/', '/root', 'root'].includes(row.agent_path)) return 'internal'
+  if (typeof row.source === 'string' && (row.source === 'subagent' || row.source.includes('"subagent"'))) return 'internal'
+  if (typeof row.thread_source === 'string' && !['', 'user', 'agent_created_thread'].includes(row.thread_source)) return 'pending'
+  return 'user'
+}
+
 /** Read-only desktop compatibility, not a public Codex API. Never reads rollout/first-message text.
  * `threads.name` is the display name; `threads.title` may still contain the first prompt.
  * Undefined homeKey is reserved for an already-bound legacy single-session connection.
@@ -20,26 +31,35 @@ export class TeamCodexDesktopTitleReader {
   constructor(private readonly home = process.env.CODEX_HOME || join(homedir(), '.codex')) {}
 
   read(homeKey: string | undefined, sessions: readonly string[]): Map<string, string> {
-    const wanted = new Set(sessions.filter(validId))
-    if (!wanted.size) return new Map()
-    try {
-      if (lstatSync(this.home).isSymbolicLink()) return new Map()
-      const home = realpathSync(this.home)
-      if (homeKey !== undefined && createHash('sha256').update(home).digest('hex') !== homeKey) return new Map()
-      const names = this.databaseNames(home, wanted)
-      // An unreadable/live database must not be replaced with a potentially stale index name.
-      if (names === null) return new Map()
-      const remaining = new Set([...wanted].filter(id => !names.has(id)))
-      if (remaining.size) for (const [id, name] of this.indexNames(home, remaining)) names.set(id, name)
-      return names
-    } catch { return new Map() }
+    return this.inspect(homeKey, sessions)?.names ?? new Map()
   }
 
-  private databaseNames(home: string, sessions: ReadonlySet<string>): Map<string, string> | null {
+  /** Undefined means unavailable, not an empty directory. Never infer identity from a title. */
+  inspect(homeKey: string | undefined, sessions: readonly string[]): DesktopTasks | undefined {
+    const wanted = new Set(sessions.filter(validId))
+    if (!wanted.size) return snapshot()
+    try {
+      if (lstatSync(this.home).isSymbolicLink()) return undefined
+      const home = realpathSync(this.home)
+      if (homeKey !== undefined && createHash('sha256').update(home).digest('hex') !== homeKey) return undefined
+      const result = this.databaseNames(home, wanted)
+      // An unreadable/live database must not be replaced with a potentially stale index name.
+      if (result === null) return undefined
+      const remaining = new Set([...wanted].filter(id => !result.names.has(id) && result.visibility.get(id) !== 'internal'))
+      if (remaining.size) for (const [id, name] of this.indexNames(home, remaining)) {
+        result.names.set(id, name)
+        if (!result.visibility.has(id)) result.visibility.set(id, 'user')
+      }
+      for (const id of wanted) if (!result.visibility.has(id)) result.visibility.set(id, 'pending')
+      return result
+    } catch { return undefined }
+  }
+
+  private databaseNames(home: string, sessions: ReadonlySet<string>): DesktopTasks | null {
     const path = join(home, 'state_5.sqlite')
     let stat: ReturnType<typeof lstatSync>
     try { stat = lstatSync(path); this.sawDatabase = true }
-    catch (error) { return missing(error) && !this.sawDatabase ? new Map() : null }
+    catch (error) { return missing(error) && !this.sawDatabase ? snapshot() : null }
     if (!stat.isFile() || stat.isSymbolicLink()) return null
     let db: DatabaseSync | undefined
     try {
@@ -58,16 +78,20 @@ export class TeamCodexDesktopTitleReader {
       if (db.prepare("SELECT type FROM sqlite_master WHERE name='threads'").get()?.type !== 'table') return null
       const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row.name))
       if (!columns.has('id')) return null
-      if (!columns.has('name')) return new Map() // Older versions use the name-only session index.
-      const query = db.prepare('SELECT CASE WHEN length(CAST(name AS BLOB))<=? THEN name ELSE NULL END AS name FROM threads WHERE id=?')
-      const names = new Map<string, string>()
+      const fields = ['source', 'thread_source', 'agent_path'].map(key => columns.has(key) ? key : `NULL AS ${key}`)
+      const name = columns.has('name') ? `CASE WHEN length(CAST(name AS BLOB))<=${MAX_TITLE_BYTES} THEN name ELSE NULL END` : 'NULL'
+      const query = db.prepare(`SELECT ${name} AS name,${fields.join(',')} FROM threads WHERE id=?`)
+      const result = snapshot()
       for (const id of sessions) {
-        const name = query.get(MAX_TITLE_BYTES, id)?.name
-        if (title(name)) names.set(id, name)
+        const row = query.get(id)
+        if (!row) continue
+        const visibility = threadVisibility(row)
+        result.visibility.set(id, visibility)
+        if (visibility === 'user' && title(row.name)) result.names.set(id, row.name)
       }
       const after = lstatSync(path)
       if (after.isSymbolicLink() || after.ino !== stat.ino || after.dev !== stat.dev) return null
-      return names
+      return result
     } catch { return null }
     finally { db?.close() }
   }
