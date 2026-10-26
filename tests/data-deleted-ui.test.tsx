@@ -33,6 +33,24 @@ beforeEach(() => {
   })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
+it('focuses the existing recovery confirmation in a long list, including repeated selection', async () => {
+  messages = Array.from({ length: 45 }, (_, index) => ({ ...message(), messageRef: `opaque-${index}`, messageKey: `88:${index + 1}`,
+    message: { text: index === 0 ? '恢复定位目标' : `其他已删除消息 ${index}`, createdAtMillis: 2000 - index } }))
+  await open()
+  expect(host.querySelectorAll('li')).toHaveLength(46)
+  await select('恢复定位目标')
+  const confirmation = host.querySelector('[aria-label="确认恢复记录"]')!
+  expect(document.activeElement).toBe(confirmation)
+  expect(confirmation.textContent).toContain('恢复定位目标')
+  expect(writes()).toHaveLength(0)
+  const restore = host.querySelector('li button') as HTMLButtonElement
+  restore.focus()
+  await select('恢复定位目标')
+  expect(document.activeElement).toBe(confirmation)
+  await click('取消')
+  expect(host.querySelector('[aria-label="确认恢复记录"]')).toBeNull()
+  expect(writes()).toHaveLength(0)
+})
 it('reuses existing rows and confirmation while routing identical keys to the correct owner', async () => {
   await open()
   expect(host.querySelectorAll('.arkme-data-deleted-list')).toHaveLength(1)

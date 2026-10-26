@@ -3,7 +3,7 @@ import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedIt
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
@@ -68,6 +68,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [confirm, setConfirm] = useState<DeletedItem>()
+  const confirmation = useRef<HTMLDivElement>(null)
   const [recovering, setRecovering] = useState(false)
   const mounted = useRef(true)
   const recoveryController = useRef<AbortController>()
@@ -76,6 +77,8 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
   const deletedGeneration = page === 'deleted' ? lifecycleGeneration : 0
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; recoveryController.current?.abort() } }, [])
   useEffect(() => { setError(''); setNotice(''); setConfirm(undefined) }, [page, revision])
+  // Focus also brings the existing confirmation into view below a long list.
+  useLayoutEffect(() => { if (confirm) confirmation.current?.focus() }, [confirm?.key])
   useEffect(() => {
     if (page !== 'deleted' && page !== 'export') { setLoading(false); return }
     const controller = new AbortController()
@@ -143,9 +146,9 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
           <details><summary>{item.title || item.text.slice(0, 80) || '无文字记录'}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></summary>
             <p>{item.text || '此记录无文字内容，附件请在恢复后查看。'}</p>
           </details>
-          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError('') }}>{tr("恢复")}</button>
+          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError(''); if (confirm?.key === item.key) confirmation.current?.focus() }}>{tr("恢复")}</button>
         </li>)}</ul>
-        {confirm && <div className="arkme-data-panel" role="group" aria-label={tr("确认恢复记录")}><p>{tr("恢复“")}{confirm.title || confirm.text.slice(0, 40) || '无文字记录'}”？</p>
+        {confirm && <div ref={confirmation} tabIndex={-1} className="arkme-data-panel" role="group" aria-label={tr("确认恢复记录")}><p>{tr("恢复“")}{confirm.title || confirm.text.slice(0, 40) || '无文字记录'}”？</p>
           <button type="button" disabled={recovering} onClick={() => { void recover() }}>{recovering ? '正在恢复…' : '确认恢复'}</button>
           <button type="button" disabled={recovering} onClick={() => setConfirm(undefined)}>{tr("取消")}</button>
         </div>}
