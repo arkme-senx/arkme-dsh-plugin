@@ -1004,6 +1004,17 @@ export class ArkmeSdk {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
   }
 
+  /** User-entered credentials only: never persist them or pass them to model tools. */
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    if (account.trim() === '' || account.trim().length > 254 || password === '' || password.length > 1024) {
+      throw new TypeError('Account and password must be non-empty and within the supported length')
+    }
+    if ((await this.capabilities(signal)).features.passwordLogin !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号密码登录，请升级', retryable: false })
+    }
+    return await this.call('auth.password.login', { account: account.trim(), password }, signal)
+  }
+
   /** Read recent call history through Browser-safe opaque call references. */
   async callHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
     const limit = options.limit === undefined ? undefined : Math.trunc(options.limit)

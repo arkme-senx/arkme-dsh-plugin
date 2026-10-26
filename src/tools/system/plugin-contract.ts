@@ -26,6 +26,13 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       service: 'ctx.arkmeData',
     },
     features: capabilities.features,
+    ...(capabilities.features.passwordLogin === true ? {
+      passwordLogin: {
+        interaction: 'human-only', sdkMethod: 'loginByPassword',
+        entry: '登录即我 → 手机号登录 → 账号密码登录',
+        instruction: 'Ask the human to enter credentials in the login UI. Never request, accept, store, or submit passwords through model tools.',
+      },
+    } : {}),
     availableMethods: [
       'dayReviewState', 'createDayReview', 'reconcileDayReview', 'resumeDayReview', 'dayReviewResult', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence',
       'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',

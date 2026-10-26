@@ -1096,6 +1096,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       environment: this.config.environment,
       features: {
         authStatus: true,
+        passwordLogin: true,
         cachedSnapshot: true,
         remoteRefresh: true,
         search: true,
@@ -2806,6 +2807,10 @@ arkoImagesV1:true,
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {
     return await this.auth.testLogin(userId)
+  }
+
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.loginByPassword(account, password, signal)
   }
 
   async sendEmailBindCode(expectedUserId: number, email: string): Promise<{ sent: true }> {
