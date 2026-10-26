@@ -16,6 +16,7 @@ export interface ArkmeUnifiedTimelineQuery {
   windowTokens?: string[]
   limit?: number
   messageRef?: string
+  systemRef?: string
   contextRef?: string
   itemUid?: string
   recordOwnerUserId?: number | string

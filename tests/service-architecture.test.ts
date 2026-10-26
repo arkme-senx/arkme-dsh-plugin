@@ -18,7 +18,7 @@ const expectedPublicMethods = [
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
   'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
-  'statisticsRead',
+  'statisticsRead', 'personalKeywordsRead', 'personalKeywordRecords', 'analyticsRead',
   'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
   'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
   'automaticCapabilities', 'updateAutomaticCapability',
@@ -126,6 +126,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
+  'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
   'conversation-activity-service.ts',
   'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
@@ -168,7 +169,7 @@ const expectedServiceFiles = [
   'calendar-day-review-service.ts',
   'people-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
-  'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'unified-chat-timeline-service.ts',
+  'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',

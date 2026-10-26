@@ -65,7 +65,7 @@ export interface ArkmeUiState {
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
-  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; transientHighlight?: boolean; openDetail?: boolean }
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; systemRef?: string; transientHighlight?: boolean; openDetail?: boolean }
   recordingTarget?: ArkmeRecordingTarget
   recordingReturnDateStamp?: number
   searchTarget?: { revision: number; query: string }
@@ -613,7 +613,7 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
-  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false, contextRef?: string): void {
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number, recordOwnerUserId?: RecordOwnerId, momentId?: string, transientHighlight = false, openDetail = false, contextRef?: string, systemRef?: string): void {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
@@ -631,6 +631,7 @@ export class ArkmeUiController {
         itemUid: normalizedItemUid,
         ...(momentId ? { momentId } : {}),
         ...(contextRef ? { contextRef } : {}),
+        ...(systemRef ? { systemRef } : {}),
         sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
         ...(recordOwnerId(recordOwnerUserId) !== 0
           ? { recordOwnerUserId: recordOwnerId(recordOwnerUserId) }

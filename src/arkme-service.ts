@@ -1,6 +1,7 @@
 import { NativeAnnotationsService, type NativeAnnotationSource } from './services/native-annotations-service.js'
 import type { NativeAnnotationRequest } from './native-annotations.js'
 import { NativeLocalMarks } from './services/native-local-marks.js'
+import { PersonalKeywordService } from './services/personal-keyword-service.js'
 import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoContextQuery } from './arko-history-contract.js'
 import { GENERATED_ARTIFACT_PREFIX } from './generated-artifacts.js'
 import { normalizeLocalDirectoryPreferences } from './local-directory-preferences.js'
@@ -395,6 +396,7 @@ export class ArkmeService {
   private readonly calendar: CalendarService
   private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
+  private readonly personalKeywords: PersonalKeywordService
   private readonly statistics: StatisticsService
   private readonly people: PeopleService
   private readonly explore: ExploreService
@@ -466,6 +468,22 @@ export class ArkmeService {
     if (operation === 'team.app.send.retry-task') return await this.teamDelivery.retry(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     if (operation === 'team.app.send.cancel-task') return await this.teamDelivery.cancel(String(params.conversationRef ?? ''), String(params.taskRef ?? ''))
     return await this.teamApp.execute(operation, params, signal)
+  }
+  async personalKeywordsRead(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, false, signal) as Promise<import('./analytics-contract.js').PersonalKeywordSummary> }
+  async personalKeywordRecords(input: unknown, signal?: AbortSignal) { return this.personalKeywords.read(input, true, signal) as Promise<import('./analytics-contract.js').PersonalKeywordRecords> }
+  async analyticsRead(input: import('./analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown> {
+    if (input.kind === 'personal_keywords') return input.action === 'state' ? this.personalKeywordsRead(input.query, signal) : this.personalKeywordRecords(input.query, signal)
+    if (input.kind === 'conversation_words') {
+      if (input.action === 'state') return this.conversationWordsState(input.query, signal)
+      if (input.action === 'participants') return this.conversationWordsParticipants(input.query, signal)
+      return this.conversationWordsMessages(input.query, signal)
+    }
+    if (input.kind === 'conversation_activity') {
+      if (input.action === 'state') return this.conversationActivityRead(input.query, signal)
+      if (input.action === 'participants') return this.conversationActivityParticipants(input.query, signal)
+      return this.conversationActivityMessages(input.query, signal)
+    }
+    throw new Error('统计能力不支持此操作')
   }
   async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
 
@@ -733,6 +751,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
+    this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
     this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
@@ -1110,6 +1129,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+        analyticsV1: true,
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,

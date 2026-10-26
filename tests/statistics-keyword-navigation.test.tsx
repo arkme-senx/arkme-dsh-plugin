@@ -13,32 +13,30 @@ vi.mock('../src/client/arkme-theme.js', () => ({ arkmeTheme: {} }))
 vi.mock('../src/client/ArkmeDetailShell.js', () => ({ ArkmeDetailShell: (p: any) => <aside hidden={p.open === false} aria-label={p.label}>{p.onBack && <button onClick={p.onBack}>{p.backLabel}</button>}<button onClick={p.onClose}>关闭</button>{p.children}</aside> }))
 vi.mock('../src/client/ArkmeNoteDetails.js', () => ({ ArkmeTimelineDetailDrawer: ({ item }: any) => <div aria-label="原文">{item.recordUid}</div> }))
 const content = (node: ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : content(child)).join('')
-const sample = { text: '完整关键词', occurrenceCount: 5, recordCount: 2 }
+const sample = { keywordId: 'keyword1', snapshotId: 'snapshot1', text: '完整关键词', occurrenceCount: 5, recordCount: 2 }
 
 beforeEach(() => {
   call.mockReset().mockImplementation(async (op: string, payload: any) => {
+    if (op === 'statistics.keywords') return { keywords: [sample], snapshotId: 'snapshot1', algorithmVersion: 'test', coverage: { complete: true, records: 2, candidateLimit: 50, returned: 1 } }
     if (op === 'statistics.detail') return { recordCount: 2, days: 1, keywords: [sample] }
     if (op === 'statistics.active') return []
     if (op === 'statistics.long') return { items: [], nextOffset: null }
     if (op === 'calendar.buckets') return { days: [] }
-    if (op === 'search.records') return { hasMore: false, items: [
-      { recordUid: 'own', recordOwnerUserId: 7, sourceKind: 1, sendAtMillis: Date.now() - 1000, title: '个人快记' },
-      { recordUid: 'someone', recordOwnerUserId: 8, sourceKind: 1, sendAtMillis: Date.now() - 1000, title: '其他人内容' },
-      { recordUid: 'chat', recordOwnerUserId: 7, sourceKind: 3, sendAtMillis: Date.now() - 1000, title: '聊天内容' },
-    ] }
+    if (op === 'statistics.keyword-records') return { total: 1, hasMore: false, items: [{ recordUid: 'own', sendAtMillis: Date.now() - 1000, title: '个人快记', textContent: '', occurrenceCount: 5 }] }
     if (op === 'record.app.detail') return { recordUid: payload.recordUid }
     throw new Error(`unexpected operation ${op}`)
   })
 })
 
 describe('statistics keyword source navigation', () => {
-  it('opens the frequency drawer, searches the full keyword, filters personal records and opens original text', async () => {
+  it('opens the existing drawer, reads snapshot-bound exact sources and opens original text', async () => {
     let tree!: ReactTestRenderer
     await act(async () => { tree = create(<StatisticsSurface accountScope="prod:7"/>) })
     await act(async () => tree.root.findAllByType('button').find(b => content(b) === '查看词频')!.props.onClick())
     const list = tree.root.findByProps({ 'aria-label': '关键词词频列表' })
     await act(async () => list.findByType('button').props.onClick())
-    expect(call).toHaveBeenCalledWith('search.records', { query: '完整关键词', limit: 50 }, expect.anything())
+    expect(call).toHaveBeenCalledWith('statistics.keyword-records', expect.objectContaining({ keywordId: 'keyword1', snapshotId: 'snapshot1', accountScope: 'prod:7' }), expect.anything())
+    expect(call.mock.calls.some(c => c[0] === 'search.records')).toBe(false)
     let drawer = tree.root.findByProps({ 'aria-label': '关键词相关快记' })
     expect(content(drawer)).toContain('个人快记')
     expect(content(drawer)).not.toContain('其他人内容')
