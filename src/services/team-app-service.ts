@@ -201,6 +201,13 @@ export class TeamAppService {
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
   }
+  private async mediaItems(raw:unknown,actor:number,locator:Record<string,unknown>,version:number) {
+    return await Promise.all(list(raw).map(async f => {
+      const ref=await this.ref('media',{...locator,record_version:version,file_asset_uid:str(f.file_asset_uid),file_name:str(f.file_name),mime_type:str(f.mime_type),size:num(f.size)},actor)
+      return {key:await this.key(`media:${str(locator.message_uid)}:${version}:${str(f.file_asset_uid)}`,actor),ref,
+        url:`${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,name:str(f.file_name)||'附件',mimeType:str(f.mime_type),size:num(f.size),kind:num(f.file_kind)}
+    }))
+  }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
@@ -209,20 +216,14 @@ export class TeamAppService {
       ref: await this.ref('message', {conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},actor),
       key:await this.key(str(reply.message_uid),actor),seq:num(reply.seq),version:num(reply.record_version),
       state: ['available','edited'].includes(str(reply.state)) ? str(reply.state) as 'available'|'edited' : 'unavailable' as const,
+      title: ['available','edited'].includes(str(reply.state)) ? str(reply.title) : '',
+      media: ['available','edited'].includes(str(reply.state)) ? await this.mediaItems(reply.media,actor,{conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},num(reply.record_version)) : [],
       text: ['available','edited'].includes(str(reply.state)) ? str(reply.text) : '',sender:await this.identity(['available','edited'].includes(str(reply.state))?reply.sender:{},actor),
       ...(reply.state === 'available' && readMessageQuote(reply.quote) ? {quote:readMessageQuote(reply.quote)!} : {}),
     } : undefined
     const markContent = { title: str(content.title), textContent: str(content.text_content), textFormat: obj(content.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const }
     const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
-    const projectedMedia = await Promise.all(list(content.media).map(async f => {
-        const ref = await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type), size:num(f.size) }, actor)
-        return {
-          key: await this.key(`media:${uid}:${num(content.version)}:${str(f.file_asset_uid)}`, actor), ref,
-          // This local route reauthorizes every byte read, not an upstream signed URL.
-          url: `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,
-          name: str(f.file_name) || '附件', mimeType: str(f.mime_type), size: num(f.size), kind: num(f.file_kind),
-        }
-      }))
+    const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
     return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
@@ -775,6 +776,13 @@ export class TeamAppService {
         if(kind==='add'&&(!anchor||!str(change.operationId))||kind==='remove'&&!underlineId(change.annotationId))throw invalid()
         const data=await post('conversations/messages/annotations/change',{...context,audience,message_uid:targets[0]!.message_uid,action:kind,...(anchor?{operation_uid:change.operationId,anchor}:{annotation_uid:change.annotationId})})
         return readTeamUnderlineSnapshot(data)
+      }
+      case 'team.app.extensions': {
+        const context=await conversation(),target=await this.open('message',p.messageRef,actor)
+        if(target.conversation_uid!==context.conversation_uid||target.side!==context.side)throw invalid()
+        const data=await post('conversations/messages/extensions',{...context,message_uid:target.message_uid,after_seq:num(p.afterSeq),through_seq:num(p.throughSeq),limit:num(p.limit)||30},true)
+        return {message:await this.message(data.message,actor,context),items:await Promise.all(list(data.items).map(row=>this.message(row,actor,context))),
+          totalCount:num(data.total_count),hasMore:data.has_more===true,nextSeq:num(data.next_seq),throughSeq:num(data.through_seq)} satisfies import('../team-app-contract.js').TeamExtensionPage
       }
       case 'team.app.locate':
       case 'team.app.timeline': {

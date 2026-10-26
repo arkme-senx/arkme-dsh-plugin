@@ -41,9 +41,9 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
-const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn(), extensions: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload, fileCapabilities:async()=>({version:1,maxAttachments:9,maxFileBytes:1024,maxImageBytes:1024}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ readTeamExtensions: mocks.extensions, upload: mocks.upload, fileCapabilities:async()=>({version:1,maxAttachments:9,maxFileBytes:1024,maxImageBytes:1024}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
 import { TeamMessagingPanel, TeamConversationPane, TeamConversationRow } from '../src/client/TeamMessagingPanel.js'
 import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
@@ -77,6 +77,18 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('binds the focused nested extension when sending from its detail composer', async () => {
+    const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
+    const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}
+    mocks.extensions.mockImplementation(async (_conversation,ref) => ({message:ref==='child-ref'?child:source,items:ref==='child-ref'?[]:[child],totalCount:ref==='child-ref'?0:1,hasMore:false,nextSeq:2,throughSeq:2}))
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[source],hasMore:false,beforeSeq:0} : op === 'team.app.send.enqueue' ? accepted() : [])
+    await mount()
+    await act(async () => { renderer!.root.findByType(TeamConversationMessage).props.onDetail(); await tick() })
+    await act(async () => { renderer!.root.findByProps({'data-team-extension-item':'child'}).props.onClick(); await tick() })
+    await send()
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')?.[1].reply).toMatchObject({messageRef:'child-ref',messageKey:'child',version:1})
+  })
 
   it('opens the shared team introduction from the external conversation badge without changing its draft', async () => {
     await mount()

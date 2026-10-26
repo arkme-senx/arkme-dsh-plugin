@@ -48,3 +48,18 @@ it('SDK and Host keep one native or Team destination and immutable forward ident
  expect(await sdk.forwardTeamMessages(input)).toEqual(result)
  expect(service.forwardTeamMessages).toHaveBeenCalledWith(input,undefined)
 })
+
+it('SDK and Host share versioned extension reads and preserve paging/cancellation',async()=>{
+ const page={message:{key:'source'},items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:10}
+ const read=vi.fn(async()=>page)
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageExtensions:1}}),readTeamExtensions:read}
+ const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params,undefined,undefined,undefined,undefined,init?.signal??undefined)}))}) as typeof fetch
+ const controller=new AbortController(),sdk=new ArkmeSdk({fetchImpl})
+ expect(await sdk.readTeamExtensions('conversation-ref','message-ref',{afterSeq:3,throughSeq:10,limit:2},controller.signal)).toEqual(page)
+ expect(read).toHaveBeenCalledWith('conversation-ref','message-ref',{afterSeq:3,throughSeq:10,limit:2},controller.signal)
+})
+it('extension SDK rejects an older provider before executing any read',async()=>{
+ const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{teamMessageInteractions:1}}}))) as typeof fetch
+ await expect(new ArkmeSdk({fetchImpl}).readTeamExtensions('conversation','message')).rejects.toThrow('不支持')
+ expect(fetchImpl).toHaveBeenCalledOnce()
+})

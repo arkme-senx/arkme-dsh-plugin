@@ -1243,6 +1243,7 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.marks-read':return await service.readTeamMarks(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,params.markRefs as string[],requestSignal)
     case 'team.messages.marks-change':return await service.changeTeamMark(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,stringParam(params,'markRef'),params.change as import('./message-annotations.js').MessageUnderlineChange,requestSignal)
     case 'team.messages.conversations':return await service.listTeamConversations(params.side as import('./team-app-contract.js').TeamSide,params.options as {cursor?:string;limit?:number},requestSignal)
+    case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)

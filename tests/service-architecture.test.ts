@@ -39,7 +39,7 @@ const expectedPublicMethods = [
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
-  'listTeamConversations','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
   'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',

@@ -1,3 +1,4 @@
+import { arkmeExtensionDetailListStyles } from './extension-detail-list-styles.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -122,20 +123,7 @@ const styles: Record<string, CSSProperties> = {
     boxSizing: 'border-box', border: 0, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: arkmeTheme.border,
     background: 'transparent', textAlign: 'left', color: arkmeTheme.tertiary, font: 'inherit', fontSize: 13, lineHeight: '20px', cursor: 'pointer' },
   extensionParentText: { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', overflowWrap: 'anywhere' },
-  extensionContext: { marginTop: 28 },
-  extensionContextTitle: { marginBottom: 18, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
-  extensionContextList: { display: 'flex', flexDirection: 'column', gap: 10 },
-  extensionContextRow: { display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, padding: '6px 8px', boxSizing: 'border-box',
-    borderRadius: 12, background: 'transparent', cursor: 'pointer', outline: 0 },
-  extensionContextRowSelected: { background: arkmeTheme.subtle },
-  extensionContextBody: { flex: 1, minWidth: 0 },
-  extensionContextHead: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 },
-  extensionContextName: { flex: 1, minWidth: 0, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px', fontWeight: 500, overflowWrap: 'anywhere' },
-  extensionContextTime: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
-  extensionContextStatus: { display: 'flex', alignItems: 'center', gap: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '20px' },
-  extensionContextRetry: { padding: 0, border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit' },
-  extensionContextAvatarImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
-  extensionContextAvatarFallback: { width: 36, height: 36, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, overflow: 'hidden', background: arkmeTheme.layer2, color: arkmeTheme.secondary, fontSize: 13, fontWeight: 600 },
+  ...arkmeExtensionDetailListStyles,
   notice: { margin: '12px 0 0', fontSize: 12, color: arkmeTheme.tertiary, lineHeight: '20px' },
   toggle: { margin: '14px 0', border: 0, borderRadius: 8, padding: '6px 9px', background: arkmeTheme.hover, color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 12 },
 }
