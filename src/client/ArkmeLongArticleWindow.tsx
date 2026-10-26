@@ -50,7 +50,7 @@ export function ArkmeLongArticleWindow() {
     {error && <button onClick={() => { void bridge?.close() }}>{tr('关闭')}</button>}
   </div>
   if (target.article?.mode === 'snapshot') return <ArkmeLongArticleSnapshotDialog standalone windowMode={mode} item={target.article.item} onClose={() => { void bridge?.close() }} />
-  return <ArkmeLongArticleDialog sourceRef={target.sourceRef} windowMode={mode} {...(target.article ? { item: target.article.item } : {})}
-    onUpdated={async detail => { if (!await bridge?.published({ ...target.article!.item, ...detail, recordVersion: detail.version })) throw new Error('更新回执同步失败，请重新打开长文核对') }}
+  return <ArkmeLongArticleDialog sourceRef={target.sourceRef} windowMode={mode} sendOnConfirm {...(target.article ? { item: target.article.item } : {})}
+    onUpdated={async detail => { if (!await bridge?.published({ ...(target.article?.item ?? { senderName: '我', isMe: true, status: 1, templateKind: 8, displayKind: 1 }), ...detail, recordVersion: detail.version })) throw new Error('更新回执同步失败，请重新打开长文核对') }}
     onCreated={async item => { await bridge?.published(item) }} onClose={() => { void bridge?.close() }} />
 }

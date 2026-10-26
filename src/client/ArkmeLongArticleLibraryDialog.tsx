@@ -95,7 +95,7 @@ export function ArkmeLongArticleLibraryDialog({ onClose, returnFocusRef }: { onC
         sendAtMillis: item.sendAtMillis, title: item.title ?? '', textContent: item.textContent, snippet: '', templateKind: 8, displayKind: 1,
         ...(item.textFormat ? { textFormat: item.textFormat } : {}), sourceTitle: creating.displayName, targetSource: creating, media: [], files: [] })
       choose('recent'); arkmeUi.recordChanged()
-    }} />}
+    }} onUpdated={detail => { setCreated(previous => previous?.recordUid === detail.itemUid ? { ...previous, title: detail.title, textContent: detail.textContent } : previous); arkmeUi.recordChanged() }} />}
   </div>
   return typeof document === 'undefined' ? body : createPortal(body, document.body)
 }

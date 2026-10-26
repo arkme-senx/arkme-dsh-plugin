@@ -1012,7 +1012,7 @@ export class RecordService {
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
     const richDraft = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid)
-    if (uid === undefined || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
+    if (uid === undefined || richDraft?.autoPublish === true || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
     const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
     const current = await this.runtime.stateStore.getRecordReeditDraft(session.userId, sourceIdentityKey, uid)
     this.assertLongArticleDraftHasNoAttachmentChanges(current)
@@ -1044,7 +1044,7 @@ export class RecordService {
     if (draft.title.length > 100 || draft.textContent.length > 40000 || draft.durationMillis < 0) {
       throw new ArkmePluginError('long-article-draft-invalid', '长文草稿内容无效', false)
     }
-    if (itemUid === undefined || draft.textFormat === 'markdown' || draft.images !== undefined) {
+    if (itemUid === undefined || draft.autoPublish === true || draft.textFormat === 'markdown' || draft.images !== undefined) {
       if (itemUid !== undefined && (!Number.isSafeInteger(draft.baseVersion) || (draft.baseVersion ?? 0) <= 0)) throw new ArkmePluginError('long-article-draft-base-version-required', '缺少草稿原版本，无法安全恢复，请保留内容后重新加载', false, 409)
       const persist = async () => await this.runtime.stateStore.putLongArticleDraft(session.userId, {
         ...draft,

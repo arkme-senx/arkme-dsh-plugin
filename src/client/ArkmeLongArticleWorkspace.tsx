@@ -88,7 +88,7 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
     setUpdatedArticle({ sourceRef: selection.sourceRef, detail })
     // Existing callbacks refer to their opening message/window. Never apply a
     // navigated document's edit receipt to that different original message.
-    if (selection.sourceRef === initial.sourceRef && detail.itemUid === initial.item?.itemUid) await props.onUpdated?.(detail)
+    if (selection.sourceRef === initial.sourceRef && (initial.item === undefined || detail.itemUid === initial.item.itemUid)) await props.onUpdated?.(detail)
   }
   const mode = useMemo(() => props.windowMode ? { ...props.windowMode,
     displayName: selection.displayName ?? props.windowMode.displayName,
@@ -108,6 +108,8 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
     trailing: renderTrailing(), renderTrailing,
   }
   const minLevel = Math.min(...entries.map(entry => entry.level))
+  // First auto-publication acquires an identity without remounting the editor.
+  const selectedItem = selection.item ?? (updatedArticle?.sourceRef === selection.sourceRef ? updatedArticle.detail : undefined)
   return <div className="arkme-article-workspace-backdrop" data-standalone={standalone || !!props.windowMode} style={{ zIndex: props.overlayZIndex ?? 1200 }}
     onMouseDown={event => { if (event.target === event.currentTarget) requestExit() }}>
     <style>{css}</style>
@@ -123,9 +125,9 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
         <header><h3>{tr('长文')}</h3><button type="button" aria-label={tr('收起长文列表')} onClick={() => compact ? setMobile(undefined) : setLeft(false)}><SidebarSimple size={18} /></button></header>
         <div className="arkme-article-workspace-scroll" ref={directory}>
           {sameAccount ? <ArkmeLongArticleQuickView titleOnly active={hydrated && showLeft} initialPage={props.initialDirectoryPage} scrollRoot={directory}
-            currentArticle={selection.item ? { sourceRef: selection.sourceRef, itemUid: selection.item.itemUid,
-              ...(selection.sourceRef !== 'snapshot' && selection.item.recordOwnerUserId !== undefined ? { recordOwnerUserId: selection.item.recordOwnerUserId } : {}),
-              title: updatedArticle?.sourceRef === selection.sourceRef && updatedArticle.detail.itemUid === selection.item.itemUid ? updatedArticle.detail.title : selection.item.title ?? '' } : undefined}
+            currentArticle={selectedItem ? { sourceRef: selection.sourceRef, itemUid: selectedItem.itemUid,
+              ...(selection.sourceRef !== 'snapshot' && selection.item?.recordOwnerUserId !== undefined ? { recordOwnerUserId: selection.item.recordOwnerUserId } : {}),
+              title: updatedArticle?.sourceRef === selection.sourceRef && updatedArticle.detail.itemUid === selectedItem.itemUid ? updatedArticle.detail.title : selectedItem.title ?? '' } : undefined}
             onChooseArticle={choose} updatedArticle={updatedArticle} /> : <p role="status">{tr('账号已切换')}</p>}
         </div>
       </aside>

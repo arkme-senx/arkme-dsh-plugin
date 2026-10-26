@@ -5960,6 +5960,15 @@ describe('ArkmeService', () => {
       title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
     })
 
+    // Pending automatic edits must keep their original CAS version, even if the
+    // server changes before the next opening. Never migrate them onto a newer base.
+    await service.putLongArticleDraft({ sourceRef: source.sourceRef, itemUid: 'article-1', autoPublish: true,
+      title: '待发布', textContent: '本地修改', textFormat: 'plain', baseVersion: 1, durationMillis: 50, updatedAtMillis: 1 })
+    version = 2
+    await expect(service.getLongArticleDraft(source.sourceRef, 'article-1')).resolves.toMatchObject({ autoPublish: true, baseVersion: 1, textContent: '本地修改' })
+    await service.removeLongArticleDraft(source.sourceRef, 'article-1')
+    version = 1
+
     await expect(service.longArticleDetail(source.sourceRef, 'article-1')).resolves.toMatchObject({
       itemUid: 'article-1', editable: true, version: 1, thinkingDurationMillis: 3200,
     })

@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { ArkmeLongArticleActions } from '../src/client/ArkmeLongArticleActions.js'
 import { ArkmeLongArticleQuickView } from '../src/client/ArkmeLongArticleQuickView.js'
 
 const mocks=vi.hoisted(()=>({call:vi.fn()}))
@@ -20,7 +21,7 @@ beforeEach(()=>{
 })
 afterEach(async()=>{if(renderer)await act(async()=>renderer!.unmount());renderer=undefined;vi.unstubAllGlobals()})
 async function mount(windowMode?:typeof mode){await act(async()=>{renderer=create(<ArkmeLongArticleDialog sourceRef="source-A" item={{itemUid:'A',title:'文章A',textContent:'',sendAtMillis:1}} onClose={close} onUpdated={updated} {...(windowMode?{windowMode}:{})}/> )})}
-async function edit(){await act(async()=>button('✎ 编辑').props.onClick());act(()=>renderer!.root.findByProps({'aria-label':'长文正文'}).props.onChange({target:{value:'尚未发布的修改'}}))}
+async function edit(){act(()=>renderer!.root.findByProps({'aria-label':'长文正文'}).props.onChange({target:{value:'尚未发布的修改'}}))}
 it('keeps the original document when draft saving fails and permits a successful switch retry',async()=>{
   await mount();await edit()
   const original=mocks.call.getMockImplementation()!
@@ -34,40 +35,36 @@ it('keeps the original document when draft saving fails and permits a successful
   expect(text(renderer!.toJSON())).toContain('文章B')
   expect(mocks.call.mock.calls.filter(call=>call[0]==='source.long-article.detail').at(-1)?.[1].sourceRef).toBe('source-B')
 })
-it('clears a cancelled native navigation so a later window close cannot switch to the previous target',async()=>{
+it('flushes a native window navigation and subsequently closes the active document',async()=>{
   await mount(mode);await edit()
-  act(()=>choose('B'))
-  expect(renderer!.root.findAllByProps({role:'alertdialog'})).toHaveLength(1)
-  act(()=>renderer!.root.findByProps({'aria-label':'关闭草稿确认弹窗'}).props.onClick())
-  expect(cancelClose).toHaveBeenCalled()
-  expect(renderer!.root.findByProps({'aria-label':'长文标题'}).props.value).toBe('文章A')
-  act(()=>nativeClose())
-  await act(async()=>button('放弃修改').props.onClick())
+  await act(async()=>choose('B'))
+  expect(mocks.call.mock.calls.some(call=>call[0]==='source.long-article.update'&&call[1].itemUid==='A')).toBe(true)
+  expect(renderer!.root.findByProps({'aria-label':'长文标题'}).props.value).toBe('文章B')
+  await act(async()=>nativeClose())
   expect(close).toHaveBeenCalledOnce()
-  expect(mocks.call.mock.calls.some(call=>call[0]==='source.long-article.detail'&&call[1].itemUid==='B')).toBe(false)
 })
 it('does not apply a navigated article update receipt to the different opening message',async()=>{
   await mount();await act(async()=>choose('B'));await edit()
-  await act(async()=>button('发布').props.onClick())
+  await act(async()=>renderer!.root.findByType(ArkmeLongArticleActions).props.beforeAction())
   expect(mocks.call.mock.calls.find(call=>call[0]==='source.long-article.update')?.[1]).toMatchObject({sourceRef:'source-B',itemUid:'B'})
   expect(updated).not.toHaveBeenCalled()
 })
-it('handles Escape in the draft confirmation before an open compact sidebar',async()=>{
+it('handles Escape in an open compact sidebar before leaving and flushing the article',async()=>{
   Object.assign(window,{innerWidth:700})
   await mount(mode);await edit()
   act(()=>renderer!.root.findByProps({'aria-label':'展开长文列表'}).props.onClick())
-  act(()=>choose('B'))
-  expect(renderer!.root.findAllByProps({role:'alertdialog'})).toHaveLength(1)
-  const handler=vi.mocked(window.addEventListener).mock.calls.filter(call=>call[0]==='keydown').at(-1)![1] as (event:any)=>void
-  act(()=>handler({key:'Escape',stopPropagation:()=>{}}))
-  expect(renderer!.root.findAllByProps({role:'alertdialog'})).toHaveLength(0)
-  expect(cancelClose).toHaveBeenCalled()
+  const handler=()=>vi.mocked(window.addEventListener).mock.calls.filter(call=>call[0]==='keydown').at(-1)![1] as (event:any)=>void
+  await act(async()=>handler()({key:'Escape',stopPropagation:()=>{}}))
   expect(close).not.toHaveBeenCalled()
+  expect(mocks.call.mock.calls.some(call=>call[0]==='source.long-article.update')).toBe(false)
+  await act(async()=>handler()({key:'Escape',stopPropagation:()=>{}}))
+  expect(close).toHaveBeenCalledOnce()
+  expect(mocks.call.mock.calls.some(call=>call[0]==='source.long-article.update')).toBe(true)
 })
 it('replaces the snapshot close subscription when navigating to an editable document',async()=>{
   await act(async()=>{renderer=create(<ArkmeLongArticleSnapshotDialog standalone windowMode={mode} item={{itemUid:'copy',title:'转发副本',textContent:'副本',sendAtMillis:1}} onClose={close}/>)})
   await act(async()=>choose('B'));await edit()
-  act(()=>nativeClose())
-  expect(close).not.toHaveBeenCalled()
-  expect(renderer!.root.findAllByProps({role:'alertdialog'})).toHaveLength(1)
+  await act(async()=>nativeClose())
+  expect(close).toHaveBeenCalledOnce()
+  expect(mocks.call.mock.calls.find(call=>call[0]==='source.long-article.update')?.[1].itemUid).toBe('B')
 })

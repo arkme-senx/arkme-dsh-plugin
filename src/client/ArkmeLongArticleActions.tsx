@@ -22,9 +22,10 @@ import { tr } from './locale.js'
 import { articleExportFileName, downloadArticleBlob, exportArticleImages, exportArticleMarkdown, type ArticleExportContent } from './long-article-export.js'
 
 /** All modal state belongs to the currently viewed article, never the opening conversation. */
-export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRef, onBusyChange, onDeleted }: {
+export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRef, onBusyChange, onDeleted, beforeAction }: {
   sourceRef: string; detail?: ArkmeLongArticleDetail | undefined; snapshot?: ArkmeTimelineItem | undefined
   dismissRef: MutableRefObject<(() => boolean) | undefined>
+  beforeAction?(): Promise<ArkmeLongArticleDetail | undefined>
   onBusyChange?(busy: boolean): void
   onDeleted(itemUid: string): void
 }) {
@@ -62,6 +63,28 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     if (panel) { if (!busy) { setPanel(undefined); setError(''); request.current?.abort() }; return true }
     return busy
   }
+  const prepare = async () => {
+    assertAccount()
+    const current = await beforeAction?.() ?? detail
+    assertAccount()
+    return current
+  }
+  const openMenu = async () => {
+    if (menu) { setMenu(undefined); return }
+    setBusy(true); setError('')
+    try { await prepare(); if (mounted.current) setMenu('main') }
+    catch (caught) { setError(caught instanceof Error ? caught.message : '请先完成发布') }
+    finally { if (mounted.current) setBusy(false) }
+  }
+  const withCurrent = async (forward: boolean) => {
+    setMenu(undefined); setBusy(true); setError('')
+    try {
+      const latest = await prepare(), currentItem = latest?.actionItem ?? item
+      const items = currentItem?.messageActionRef ? [{ id: currentItem.itemUid, copyText: currentItem.textContent, actionRef: currentItem.messageActionRef, conversationRef: sourceRef, copyLinkAvailable: true, forwardAvailable: true }] : actionItems
+      if (forward) await actions.openForward(items); else await actions.copyLink(items)
+    } catch (caught) { setError(caught instanceof Error ? caught.message : '请先完成发布') }
+    finally { if (mounted.current) setBusy(false) }
+  }
   const choose = (kind: 'history' | 'snapshot' | 'delete') => { setMenu(undefined); setError(''); setPanel(kind) }
   useEffect(() => {
     if (panel !== 'snapshot' || !ref) return
@@ -82,7 +105,7 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     const timeout = setTimeout(() => controller.abort(), 120_000)
     setMenu(undefined); setBusy(true); setError(''); setProgress('正在准备导出…'); setPanel('images'); setImages([])
     try {
-      assertAccount()
+      const article = await prepare() ?? detail ?? snapshot ?? { title: '', textContent: '' }
       if (kind === 'md') {
         const blob = await exportArticleMarkdown(article, controller.signal); assertAccount(); controller.signal.throwIfAborted()
         downloadArticleBlob(blob, `${articleExportFileName(article.title)}.md`); setPanel(undefined)
@@ -98,8 +121,9 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     const controller = new AbortController(); request.current = controller
     setBusy(true); setError('')
     try {
-      assertAccount()
-      const result = await callArkme<ArkmeRecordDeletionResult>('source.record-delete', { sourceRef, deletionRefs: [item.recordDeletionRef] }, controller.signal)
+      const currentItem = (await prepare())?.actionItem ?? item
+      if (!currentItem?.recordDeletionRef) throw new Error('请重新打开长文核对删除权限')
+      const result = await callArkme<ArkmeRecordDeletionResult>('source.record-delete', { sourceRef, deletionRefs: [currentItem.recordDeletionRef] }, controller.signal)
       assertAccount()
       const deleted = result.items.find(value => value.recordUid === item.itemUid)
       if (deleted?.result !== 'deleted') throw new Error((deleted?.result === 'rejected' ? deleted.message : '') || '删除结果未确认，请关闭后重新打开长文核对，避免重复删除')
@@ -114,19 +138,20 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     <style>{'[role="menu"][aria-label="长文操作"] { z-index: 10280; min-width: 184px; background: var(--dsw-alias-bg-base, #fff); } [role="menu"][aria-label="长文操作"] [role="menuitem"] { min-height: 34px; font-size: 14px; }'}</style>
     <ArkmeActionMenu open={!!menu} label={tr('长文操作')} align="end" portal autoFocus onClose={() => setMenu(undefined)}
       anchor={<button ref={button} type="button" className="arkme-article-workspace-control" aria-label={tr('长文更多操作')}
-        aria-haspopup="menu" aria-expanded={!!menu} disabled={!ready || unavailable} onClick={() => setMenu(value => value ? undefined : 'main')}><DotsThree size={24} weight="bold" /></button>}
+        aria-haspopup="menu" aria-expanded={!!menu} disabled={!ready || unavailable} onClick={() => { void openMenu() }}><DotsThree size={24} weight="bold" /></button>}
       actions={menu === 'export' ? [
         { id: 'back', label: '‹ 返回', onSelect: () => setMenu('main') },
         { id: 'md', label: 'Markdown（.md）', onSelect: () => { void exportArticle('md') } },
         { id: 'image', label: '图片（手机阅读）', onSelect: () => { void exportArticle('image') } },
       ] : [
         { id: 'history', label: '编辑记录', icon: <ClockCounterClockwise size={18}/>, disabled: !ref, onSelect: () => choose('history') },
-        { id: 'link', label: '复制链接', icon: <Link size={18}/>, disabled: !ref, onSelect: () => { setMenu(undefined); void actions.copyLink(actionItems) } },
+        { id: 'link', label: '复制链接', icon: <Link size={18}/>, disabled: !ref, onSelect: () => { setMenu(undefined); void withCurrent(false) } },
         { id: 'export', label: '导出 ›', icon: <DownloadSimple size={18}/>, onSelect: () => setMenu('export') },
-        { id: 'forward', label: '转发', icon: <PaperPlaneTilt size={18}/>, disabled: !ref, onSelect: () => { setMenu(undefined); void actions.openForward(actionItems) } },
+        { id: 'forward', label: '转发', icon: <PaperPlaneTilt size={18}/>, disabled: !ref, onSelect: () => { setMenu(undefined); void withCurrent(true) } },
         { id: 'snapshot', label: '详情', icon: <Info size={18}/>, onSelect: () => choose('snapshot') },
         ...(item?.recordDeletionRef && !snapshot ? [{ id: 'delete-separator', type: 'separator' as const }, { id: 'delete', label: '删除长文', icon: <Trash size={18}/>, danger: true, onSelect: () => choose('delete') }] : []),
       ]} />
+    {error && !panel && <span role="alert" style={{ color: theme.danger, fontSize: 12 }}>{error}</span>}
     {typeof document !== 'undefined' && !!document.body && createPortal(<div style={{ position: 'relative', zIndex: 10_250 }}>{actions.overlay}</div>, document.body)}
     {panel === 'snapshot' && item && <ArkmeMessageSnapshotDialog item={item} previewText={article.title} createdAtMillis={detail?.createdAtMillis ?? 0} {...(metadata ? { detail: metadata } : {})}
       metadataUnavailable={!ref || !item.isMe ? '仅展示当前可见信息；原作者的私人位置与设备信息不公开' : undefined}

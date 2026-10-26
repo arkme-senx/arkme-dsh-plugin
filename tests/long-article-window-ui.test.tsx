@@ -17,36 +17,21 @@ beforeEach(() => {
 })
 afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; vi.unstubAllGlobals() })
 async function mount(close = vi.fn()) {
-  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="chat" windowMode={mode} onClose={close} />) })
+  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="chat" windowMode={mode} sendOnConfirm onClose={close} />) })
   act(() => { renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.onChange({ target: { value: '标题' } }); renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.onChange({ target: { value: '正文' } }) })
   return close
 }
 function button(label: string) { return renderer!.root.findAllByType('button').find(node => node.children.includes(label))! }
-it('shows the successful draft save time and hides it for unsaved or failed edits', async () => {
+it('keeps composer draft state in the compact metadata row without a duration clock', async () => {
   vi.useFakeTimers()
   try {
-    vi.setSystemTime(new Date(2026, 8, 29, 14, 32, 8))
     await mount()
-    const footer = () => renderer!.root.findByType('footer')
-    expect(footer().findAllByType('time')).toHaveLength(0)
     await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-    expect(footer().findByType('time').children).toEqual(['14:32:08'])
-    act(() => renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.onChange({ target: { value: '继续写正文' } }))
-    expect(footer().findAllByType('time')).toHaveLength(0)
-    mocks.call.mockRejectedValue(new Error('磁盘不可用'))
-    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-    expect(footer().findAllByType('time')).toHaveLength(0)
-    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿保存失败')
-    mocks.call.mockResolvedValue(undefined)
-    vi.setSystemTime(new Date(2026, 8, 29, 14, 33, 10))
-    act(() => renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.onChange({ target: { value: '再次编辑正文' } }))
-    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-    expect(footer().findByType('time').children).toEqual(['14:33:10'])
-  } finally {
-    if (renderer) await act(async () => renderer!.unmount())
-    renderer = undefined
-    vi.useRealTimers()
-  }
+    expect(JSON.stringify(renderer!.toJSON())).toContain('草稿已保存')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('◷')
+    act(() => renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.onChange({ target: { value: '继续编辑' } }))
+    expect(JSON.stringify(renderer!.toJSON())).toContain('未保存')
+  } finally { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; vi.useRealTimers() }
 })
 it('native close allows continuing to edit without deleting the draft', async () => {
   const close = await mount(); act(() => requestClose());
@@ -117,16 +102,15 @@ async function existing(editable: boolean, draft?: ArkmeLongArticleDraft) {
  await act(async () => { renderer = create(<ArkmeLongArticleWindow />) })
  return { close, updated }
 }
-it('opens an existing article for viewing and only edits after an explicit click', async () => {
+it('opens an owned article editing immediately and flushes on native close', async () => {
  const { close, updated } = await existing(true)
- expect(renderer!.root.findAllByProps({ 'aria-label': '长文标题' })).toHaveLength(0)
- expect(renderer!.root.findAllByProps({ 'aria-label': '长文正文' })).toHaveLength(0)
+ expect(renderer!.root.findAllByProps({ 'aria-label': '长文标题' })).toHaveLength(1)
+ expect(renderer!.root.findAllByProps({ 'aria-label': '长文正文' })).toHaveLength(1)
  expect(button('确认修改')).toBeUndefined()
- expect(JSON.stringify(renderer!.toJSON())).toContain('原正文')
- await act(async () => button('✎ 编辑').props.onClick())
+ expect(renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.value).toBe('原正文')
  expect(renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.value).toBe('原标题')
  act(() => renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.onChange({ target: { value: '修改后' } }))
- await act(async () => button('确认修改').props.onClick())
+ await act(async () => requestClose())
  expect(mocks.call).toHaveBeenCalledWith('source.long-article.update', expect.objectContaining({ itemUid: 'original', version: 4, title: '修改后' }))
  expect(mocks.call.mock.calls.some(([op]) => op === 'source.send-rich' || op === 'source.long-article.publish')).toBe(false)
  expect(updated).toHaveBeenCalledWith(expect.objectContaining({ version: 5 }))
@@ -141,10 +125,9 @@ it('keeps originals without edit permission read only', async () => {
 })
 it('retains original edits when saving fails', async () => {
  const { close } = await existing(true)
- await act(async () => button('✎ 编辑').props.onClick())
  mocks.call.mockRejectedValue(new Error('版本冲突'))
  act(() => renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.onChange({ target: { value: '本地修改' } }))
- await act(async () => button('确认修改').props.onClick())
+ await act(async () => requestClose())
  expect(close).not.toHaveBeenCalled()
  expect(renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.value).toBe('本地修改')
  expect(JSON.stringify(renderer!.toJSON())).toContain('版本冲突')
@@ -153,7 +136,6 @@ it('retains original edits when saving fails', async () => {
 const recoveryDraft: ArkmeLongArticleDraft = { sourceRef: 'chat', itemUid: 'original', baseVersion: 4, title: '草稿标题', textContent: '草稿正文', durationMillis: 5000, updatedAtMillis: new Date(2026, 8, 29, 11, 20, 30).getTime() }
 it('previews the saved draft without editing, then restores it explicitly', async () => {
  await existing(true, recoveryDraft)
- await act(async () => button('✎ 编辑').props.onClick())
  expect(renderer!.root.findByProps({ role: 'dialog', 'aria-label': '发现未发布的草稿' })).toBeDefined()
  expect(renderer!.root.findByType('time').children).toEqual(['2026-09-29 11:20:30'])
  act(() => renderer!.root.findByProps({ 'aria-label': '预览草稿' }).props.onClick())
@@ -167,18 +149,14 @@ it('previews the saved draft without editing, then restores it explicitly', asyn
 })
 it('cancels recovery without deleting the draft and can choose the published original', async () => {
  await existing(true, recoveryDraft)
- await act(async () => button('✎ 编辑').props.onClick())
  act(() => renderer!.root.findByProps({ 'aria-label': '关闭草稿恢复弹窗' }).props.onClick())
- expect(renderer!.root.findAllByProps({ 'aria-label': '长文正文' })).toHaveLength(0)
+ expect(renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.value).toBe('原正文')
  expect(mocks.call.mock.calls.some(([op]) => op === 'source.long-article.draft.delete' || op === 'source.long-article.draft.put')).toBe(false)
- await act(async () => button('✎ 编辑').props.onClick())
- await act(async () => button('编辑原文').props.onClick())
  expect(renderer!.root.findByProps({ 'aria-label': '长文正文' }).props.value).toBe('原正文')
 })
 it('previews Markdown and a local draft image without enabling the editor', async () => {
  const fileRef = 'arkme-file-v1.11111111-1111-1111-1111-111111111111'
  await existing(true, { ...recoveryDraft, textFormat: 'markdown', textContent: `**草稿加粗**\n\n![图片](arkme-local:${fileRef})`, images: [{ fileRef }] })
- await act(async () => button('✎ 编辑').props.onClick())
  act(() => renderer!.root.findByProps({ 'aria-label': '预览草稿' }).props.onClick())
  expect(renderer!.root.findByType('strong').findAll(node => node.children.includes('草稿加粗')).length).toBeGreaterThan(0)
  expect(renderer!.root.findByType('img').props.src).toContain(`/files/local?ref=${fileRef}`)
