@@ -482,12 +482,11 @@ export function ArkmeArkoSurface() {
   useEffect(() => () => { windowController.current?.abort(); historyController.current?.abort() }, [accountKey])
   historyViewRef.current = historyWindow !== undefined
   const lifecycleGeneration = useSyncExternalStore(arkoLifecycleSync.subscribe, arkoLifecycleSync.snapshot, arkoLifecycleSync.snapshot)
-  const [pendingDeletion, setPendingDeletion] = useState<Map<string, number>>(new Map())
   const [lifecycle, setLifecycle] = useState<Map<string, ArkmeArkoLifecycleItem>>(new Map())
   const allMessages = useMemo(() => historyWindow === undefined ? messages : mergeHistory([], historyWindow.items), [messages, historyWindow])
   const lifecycleRefs = useMemo(() => [...new Set([...messages, ...allMessages].flatMap(item => item.messageRef ? [item.messageRef] : []))], [messages, allMessages])
   const lifecycleRefKey = JSON.stringify(lifecycleRefs)
-  useEffect(() => { setLifecycle(new Map()); setPendingDeletion(new Map()) }, [accountKey])
+  useEffect(() => { setLifecycle(new Map()) }, [accountKey])
   useEffect(() => {
     if (!accountKey || !lifecycleRefs.length) return
     const controller = new AbortController()
@@ -504,18 +503,10 @@ export function ArkmeArkoSurface() {
     })().catch(() => undefined)
     return () => controller.abort()
   }, [accountKey, lifecycleGeneration, lifecycleRefKey])
-  useEffect(() => {
-    setPendingDeletion(current => {
-      const settled = [...current].filter(([key, version]) => { const fact = lifecycle.get(key); return fact && (fact.state !== 'active' || fact.version > version) })
-      if (!settled.length) return current
-      const next = new Map(current); for (const [key] of settled) next.delete(key); return next
-    })
-  }, [lifecycle])
   const visibleMessages = useMemo(() => allMessages.filter(item => {
-    if (pendingDeletion.has(`${item.sessionId}:${item.messageId}`)) return false
     const state = lifecycle.get(`${item.sessionId}:${item.messageId}`)
     return !state || state.state === 'active' || (item.lifecycleVersion ?? 0) > state.version
-  }), [allMessages, lifecycle, pendingDeletion])
+  }), [allMessages, lifecycle])
   const [locationTarget, setLocationTarget] = useState<number>()
   useLayoutEffect(() => {
     if (locationTarget === undefined) return
@@ -1317,7 +1308,6 @@ export function ArkmeArkoSurface() {
                 : <ArkmeArkoAvatar size={34} />}</span>
               <div style={{ ...styles.messageBody, ...(item.role === 'user' ? styles.messageBodyMe : {}) }}>
                 {item.role === 'assistant' && <span style={styles.sender}>{displayName}</span>}
-                {lifecycle.get(`${item.sessionId}:${item.messageId}`)?.relatedMessageDeleted && <small role="status" style={styles.sender}>{tr('关联内容已删除')}</small>}
                 {showThinking && <ArkoThinkingPanel
                   {...(item.reasoning === undefined ? {} : { reasoning: item.reasoning })}
                   {...(activity === undefined ? {} : { activity })}
@@ -1424,9 +1414,7 @@ export function ArkmeArkoSurface() {
       onSelect={selectModel} onClose={closeModelMenu}
     />}
 
-    {pendingDeletion.size > 0 && <p role="status">{tr('所选消息正在同步删除；结果未确认时请在确认窗口核对状态')}</p>}
-    {deletionRequest?.scope === deletionScope && <ArkoMessageDeletionDialog messageRefs={deletionRequest.refs} onClose={() => setDeletionRequest(undefined)} onPending={items => { setPendingDeletion(current => new Map([...current, ...items.map(item => [item.messageKey, item.version] as const)])) }} onFacts={(items, settledKeys = []) => {
-      setPendingDeletion(current => { const next = new Map(current); for (const key of settledKeys) next.delete(key); return next })
+    {deletionRequest?.scope === deletionScope && <ArkoMessageDeletionDialog messageRefs={deletionRequest.refs} onClose={() => setDeletionRequest(undefined)} onFacts={items => {
       setLifecycle(current => { const next = new Map(current); for (const item of items) if (item.version >= (next.get(item.messageKey)?.version ?? 0)) next.set(item.messageKey, item); return next })
     }} />}
     {clearConfirmOpen && <div style={styles.backdrop} onMouseDown={event => {

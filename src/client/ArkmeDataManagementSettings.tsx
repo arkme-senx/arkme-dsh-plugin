@@ -1,5 +1,6 @@
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
-import { ArkoDeletedMessagesNotice } from './ArkoMessageDeletion.js'
+import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedItemsPage } from './data-deleted-items.js'
+import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -8,10 +9,9 @@ import { ArrowSquareOut } from '@phosphor-icons/react/dist/icons/ArrowSquareOut'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
-import type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
+import type { ArkmeExportPreflight } from '../data-management.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeUi } from './ui-controller.js'
 import { copyText } from './clipboard-text.js'
 
 const OPEN_PLATFORM_DOCS_URL = 'https://openapi.jotmo.cc/docs'
@@ -62,40 +62,60 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
   useArkmeLocale()
   const [page, setPage] = useState<'home' | 'archived' | 'deleted' | 'import' | 'export'>('home')
   const [revision, setRevision] = useState(0)
-  const [deleted, setDeleted] = useState<ArkmeDeletedRecordPage>()
+  const [deleted, setDeleted] = useState<DeletedItemsPage>()
   const [preflight, setPreflight] = useState<ArkmeExportPreflight>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [confirm, setConfirm] = useState<ArkmeDeletedRecord>()
+  const [confirm, setConfirm] = useState<DeletedItem>()
   const [recovering, setRecovering] = useState(false)
   const mounted = useRef(true)
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const recoveryController = useRef<AbortController>()
+  const recovery = useRef<{ key: string; run: ReturnType<typeof deletedItemRecovery> }>()
+  const lifecycleGeneration = useSyncExternalStore(arkoLifecycleSync.subscribe, arkoLifecycleSync.snapshot, arkoLifecycleSync.snapshot)
+  const deletedGeneration = page === 'deleted' ? lifecycleGeneration : 0
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; recoveryController.current?.abort() } }, [])
+  useEffect(() => { setError(''); setNotice(''); setConfirm(undefined) }, [page, revision])
   useEffect(() => {
-    setError(''); setNotice(''); setConfirm(undefined)
     if (page !== 'deleted' && page !== 'export') { setLoading(false); return }
     const controller = new AbortController()
     setLoading(true); setDeleted(undefined); setPreflight(undefined)
     void (page === 'deleted'
-      ? callArkme<ArkmeDeletedRecordPage>('data.deleted', { expectedAccountScope: scope }, controller.signal)
-        .then(value => { if (controller.signal.aborted) return; if (value.accountScope !== scope) throw new Error('账号已切换'); setDeleted(value) })
+      ? readDeletedItems(scope, controller.signal)
+        .then(value => {
+          if (controller.signal.aborted) return
+          if (value.accountScope !== scope) throw new Error('账号已切换')
+          setDeleted(value)
+          setConfirm(current => current && value.items.some(item => item.key === current.key && item.version === current.version) ? current : undefined)
+        })
       : callArkme<ArkmeExportPreflight>('data.export.preflight', { expectedAccountScope: scope }, controller.signal)
         .then(value => { if (controller.signal.aborted) return; if (value.accountScope !== scope) throw new Error('账号已切换'); setPreflight(value) }))
       .catch(() => { if (!controller.signal.aborted) setError(page === 'deleted' ? '最近删除暂时无法读取，请重试或在手机端查看。' : '导出信息暂时无法读取，请重试或在手机端查看。') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [page, revision, scope])
+  }, [page, revision, scope, deletedGeneration])
+  useEffect(() => {
+    const deadlines = deleted?.items.flatMap(item => item.recoverableUntilMillis ? [item.recoverableUntilMillis] : []) ?? []
+    if (!deadlines.length) return
+    const timer = setTimeout(() => {
+      setDeleted(current => current ? { ...current, items: current.items.filter(item => !item.recoverableUntilMillis || item.recoverableUntilMillis > Date.now()) } : current)
+      setConfirm(current => current?.recoverableUntilMillis && current.recoverableUntilMillis <= Date.now() ? undefined : current)
+    }, Math.min(2_147_483_647, Math.max(0, Math.min(...deadlines) - Date.now())))
+    return () => clearTimeout(timer)
+  }, [deleted])
   const recover = async () => {
-    if (!confirm || recovering) return
+    if (!confirm || recoveryController.current) return
+    const controller = new AbortController(); recoveryController.current = controller
+    if (recovery.current?.key !== confirm.key) recovery.current = { key: confirm.key, run: deletedItemRecovery(scope, confirm) }
     setRecovering(true); setError('')
     try {
-      await callArkme('data.recover', { expectedAccountScope: scope, recordUid: confirm.recordUid, version: confirm.version })
-      if (!mounted.current) return
-      setDeleted(value => value ? { ...value, items: value.items.filter(item => item.recordUid !== confirm.recordUid) } : value)
-      setNotice('已恢复'); setConfirm(undefined); arkmeUi.recordChanged(); arkmeUi.chatChanged()
+      await recovery.current.run(controller.signal)
+      if (!mounted.current || controller.signal.aborted) return
+      setDeleted(value => value ? { ...value, items: value.items.filter(item => item.key !== confirm.key) } : value)
+      setNotice('已恢复'); setConfirm(undefined); recovery.current = undefined
     } catch (error) {
       if (mounted.current) setError(error instanceof Error ? error.message : '恢复失败，请刷新后重试')
-    } finally { if (mounted.current) setRecovering(false) }
+    } finally { if (mounted.current) { recoveryController.current = undefined; setRecovering(false) } }
   }
   return <section className="arkme-data-settings" data-arkme-settings-page="data" aria-label={tr("数据管理")}>
     <header>{page !== 'home' && <button type="button" className="arkme-data-back" disabled={recovering} onClick={() => setPage('home')}>{tr("‹ 数据管理")}</button>}
@@ -117,14 +137,13 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <button type="button" className="arkme-settings-link" disabled={loading || recovering} onClick={() => setRevision(value => value + 1)}>{loading ? tr("读取中…") : tr("刷新")}</button>
       {error && <p role="alert" className="arkme-data-error">{tr(error)}</p>}
       {notice && <p role="status">{notice}</p>}
-      {page === 'deleted' && <ArkoDeletedMessagesNotice />}
       {page === 'deleted' && deleted && <>
         <p className="arkme-data-hint">{deleted.items.length ? `本次显示 ${deleted.items.length} 条${deleted.mayHaveMore ? '，更多记录请在手机端查看' : ''}。` : deleted.unverifiedCount ? tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。') : deleted.mayHaveMore ? tr('本次读取范围内暂无可恢复记录，更多记录请在手机端查看。') : tr('暂无最近删除的记录。')}{deleted.items.length > 0 && !!deleted.unverifiedCount && tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。')}{tr('浏览不会自动清除数据。')}</p>
-        <ul className="arkme-data-deleted-list">{deleted.items.map(item => <li key={item.recordUid}>
+        <ul className="arkme-data-deleted-list">{deleted.items.map(item => <li key={item.key}>
           <details><summary>{item.title || item.text.slice(0, 80) || '无文字记录'}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></summary>
             <p>{item.text || '此记录无文字内容，附件请在恢复后查看。'}</p>
           </details>
-          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); setError('') }}>{tr("恢复")}</button>
+          <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError('') }}>{tr("恢复")}</button>
         </li>)}</ul>
         {confirm && <div className="arkme-data-panel" role="group" aria-label={tr("确认恢复记录")}><p>{tr("恢复“")}{confirm.title || confirm.text.slice(0, 40) || '无文字记录'}”？</p>
           <button type="button" disabled={recovering} onClick={() => { void recover() }}>{recovering ? '正在恢复…' : '确认恢复'}</button>

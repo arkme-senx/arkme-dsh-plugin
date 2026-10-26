@@ -205,7 +205,7 @@ it('deletes only after confirmation and removes confirmed messages', async () =>
   expect(bubble('我的问题')).toBeUndefined(); expect(bubble('完整回答')).toBeUndefined()
   expect(vi.mocked(callArkme).mock.calls.filter(([operation]) => operation === 'arko.lifecycle.change')).toHaveLength(1)
 })
-it('hides immediately and restores only a definitively failed target in its original position', async () => {
+it('keeps messages until confirmed and removes only the successful target without new status UI', async () => {
   const original = vi.mocked(callArkme).getMockImplementation()!
   let finish!: (value: unknown) => void
   vi.mocked(callArkme).mockImplementation((method, params, signal) => method === 'arko.lifecycle.change'
@@ -215,13 +215,14 @@ it('hides immediately and restores only a definitively failed target in its orig
   await click(bubble('完整回答'))
   await click(document.querySelector('[aria-label="删除"]')!)
   await click([...document.querySelectorAll('[data-arkme-confirm-dialog] button')].find(button => button.textContent === '确认删除')!)
-  expect(bubble('我的问题')).toBeUndefined(); expect(bubble('完整回答')).toBeUndefined()
+  expect(bubble('我的问题')).toBeDefined(); expect(bubble('完整回答')).toBeDefined()
   await act(async () => finish({items:[
     {messageRef:'ref-1',messageKey:'88:1',version:0,state:'active',result:'generating',deletedAtMillis:0,purgeAtMillis:0,lastOperationUid:''},
     {messageRef:'ref-2',messageKey:'88:2',version:1,state:'deleted',result:'applied',deletedAtMillis:1,purgeAtMillis:2,lastOperationUid:'operation'},
   ]}))
   expect(bubble('我的问题')).toBeDefined(); expect(bubble('完整回答')).toBeUndefined()
   expect(host.querySelector('[data-arko-selection-key="history:1"]')).not.toBeNull()
+  expect(host.textContent).not.toMatch(/同步删除|关联内容已删除|核对状态/)
 })
 it('closes the pending deletion confirmation on account change without mutating history', async () => {
   await act(async () => { bubble('我的问题').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
