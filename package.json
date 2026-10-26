@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "3.0.31",
+  "version": "3.0.32",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -73,10 +73,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 3.0.31 更新",
-      "summary": "发布共同对话、长文编辑与团队共享升级",
-      "publishedAt": "2026-10-26T04:06:49.731Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.31"
+      "title": "Arkme 插件 3.0.32 更新",
+      "summary": "fix: 发布媒体预览、对话滚动及团队消息升级",
+      "publishedAt": "2026-10-26T18:59:50.684Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.32"
     }
   },
   "scripts": {
