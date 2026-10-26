@@ -1,3 +1,4 @@
+import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
 import type { TeamChannel, TeamConversation, TeamPage, TeamSide, TeamConversationReadState } from '../team-app-contract.js'
@@ -49,7 +50,7 @@ export function startTeamDirectory(key: string): () => void {
               if (!state) throw new Error('阅读状态返回不完整')
               if (!state.accessible) return []
               if (state.lastSeq < c.lastSeq || state.myReadSeq < c.myReadSeq) return [c]
-              return [{...c, myReadSeq: state.myReadSeq, unread: state.unread}]
+              return [{...c, myReadSeq: state.myReadSeq, unread: state.unread, notificationPolicy:mergeTeamNotificationPolicy(c.notificationPolicy,state.notificationPolicy)}]
             })})
           }
           return
@@ -57,13 +58,14 @@ export function startTeamDirectory(key: string): () => void {
         if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
         let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
         if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
-        const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items].map(c => [c.key, c]))
+        const previousByKey=new Map(previous?.items.map(c=>[c.key,c])??[])
+        const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items.map(c=>({...c,notificationPolicy:mergeTeamNotificationPolicy(previousByKey.get(c.key)?.notificationPolicy,c.notificationPolicy)}))].map(c => [c.key, c]))
         const seen = new Set<string>()
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
           if (!page.nextCursor || seen.has(page.nextCursor)) throw new Error('消息分页异常，请重试')
           seen.add(page.nextCursor)
           page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, cursor: page.nextCursor }, controller.signal)
-          for (const c of page.items) items.set(c.key, c)
+          for (const c of page.items) items.set(c.key, {...c,notificationPolicy:mergeTeamNotificationPolicy(items.get(c.key)?.notificationPolicy,c.notificationPolicy)})
         }
         if (!controller.signal.aborted && account === key && token === revision) pages.set(side, { ...page, items: [...items.values()] })
       } catch (e) {
@@ -102,7 +104,7 @@ export function startTeamDirectory(key: string): () => void {
 
 export interface TeamConversationGroup {
   key: string; channel: TeamChannel; conversations: TeamConversation[]; latest: TeamConversation
-  unread: number; unreadExact: boolean
+  unread: number; attentionUnread: number; unreadExact: boolean
 }
 export function groupTeamConversations(conversations: readonly TeamConversation[], complete = true): TeamConversationGroup[] {
   const groups = new Map<string, Map<string, TeamConversation>>()
@@ -113,7 +115,7 @@ export function groupTeamConversations(conversations: readonly TeamConversation[
   }
   return [...groups].map(([key, group]) => {
     const rows = [...group.values()].sort((a,b)=>b.updatedAt-a.updatedAt || a.key.localeCompare(b.key)), latest = rows[0]!
-    return {key,channel:latest.channel,conversations:rows,latest,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),unreadExact:complete}
+    return {key,channel:latest.channel,conversations:rows,latest,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),attentionUnread:rows.reduce((count,c)=>count+(c.notificationPolicy?.muted?0:Math.max(0,c.unread)),0),unreadExact:complete}
   }).sort((a,b)=>b.latest.updatedAt-a.latest.updatedAt || a.key.localeCompare(b.key))
 }
 

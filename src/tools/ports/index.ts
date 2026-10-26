@@ -1,5 +1,6 @@
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
+import type { TeamNotificationPort } from '../../team-notification-contract.js'
 import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
 import type {ExploreQuery,ExplorePage,ExploreDetail} from '../../explore-contract.js'
 import type {ArkmeTeamProfileToolPort} from '../../team-profile-contract.js'
@@ -32,6 +33,7 @@ export interface ArkmeCoreToolPorts extends CodexWorkRecordsPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
+  TeamNotificationPort,
   ArkmeOfficialNotificationPort,
   ArkmeSelfRolePort,
   ArkmeArchivePort,

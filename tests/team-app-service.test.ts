@@ -833,7 +833,7 @@ it('projects scoped conversation cursor metadata without fetching bodies and rej
     : {channel,conversation})
   const opened=await open(f), ref=opened.conversation!.ref
   const data=await f.service.execute('team.app.read-states',{conversationRefs:[ref]})
-  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0}])
+  expect(data).toEqual([{key:opened.conversation!.key,accessible:true,lastSeq:2,myReadSeq:2,unread:0,notificationPolicy:{muted:false,policyVersion:0,notifyAfterSeq:0}}])
   expect(f.requests.at(-1)!.body).toEqual({side:'external',conversation_uids:[conversation.conversation_uid]})
   expect(JSON.stringify(data)).not.toContain(conversation.conversation_uid)
   broken=true
@@ -1041,6 +1041,20 @@ describe('team member candidate and pending add boundary', () => {
 describe('explicit external private chats', () => {
   const grant = {share_uid:'grant-secret',team_id:7,sharer_user_id:90,peer_user_id:91,chat_session_uid:'original-chat',sharer_name:'成员',peer_name:'客户'}
   const page = {items:[{relation:{rel_uid:'relation-secret',seq:4,display_name_snapshot:'客户',attach_at:1700000000000},record:{status:1,payload:{version:2,text_content:'共享正文',media_display_items:[{file_asset_uid:'asset-private',file_uid:'file-private',file_name:'photo.png',mime_type:'image/png',download_url:'https://userfiles.jotmo.cc/private-signed'}]}}}],has_more:false,next_before_seq:4}
+  it('projects sender direction from identity rather than names without granting message mutations', async () => {
+    const messages = [90, 91, undefined].map((sender, index) => ({...page.items[0], relation: {...page.items[0]!.relation,
+      rel_uid: `message-${index}`, sender_user_id: sender, display_name_snapshot: '同名用户'}}))
+    const f = fixture(path => path.endsWith('/page') ? {...page, items: messages} : {items: [grant]})
+    const mine = await f.service.execute('team.app.external.mine', {sourceRef: 'private-ref'}) as import('../src/team-external-chat-contract.js').ExternalChatDirectory
+    const result = await f.service.execute('team.app.external.page', {shareRef: mine.items[0]!.ref}) as import('../src/team-external-chat-contract.js').ExternalChatTimeline
+    expect(result.items.map(item => item.senderSide)).toEqual(['sharer', 'peer', 'unknown'])
+    expect(result.items.every(item => item.isMe === false)).toBe(true)
+    for (const item of result.items) {
+      expect(item).not.toHaveProperty('senderUserId')
+      expect(item).not.toHaveProperty('mutationTarget')
+      expect(item).not.toHaveProperty('ref')
+    }
+  })
   it.each([42, undefined])('returns reauthorized full media size %s for a partial download', async size => {
     const mediaPage = structuredClone(page)
     Object.assign(mediaPage.items[0]!.record.payload.media_display_items[0]!, { size })
@@ -1127,3 +1141,21 @@ describe('explicit external private chats', () => {
     expect(f.fetchImpl.mock.calls.length).toBe(before + 2)
   })
 })
+it('policy is explicit, shared across both views, monotonic, and never clears unread',async()=>{
+ let policy={muted:true,policy_version:4,notify_after_seq:10}
+ const f=fixture((path,body)=>path.endsWith('/notification-policy/get')||path.endsWith('/notification-policy/set')?policy:{channel,conversation:{...conversation,notification_policy:policy}})
+ const c=(await open(f)).conversation!
+ expect(c.unread).toBe(1);expect(c.attentionUnread).toBe(0)
+ const result=await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})
+ expect(result).toMatchObject({muted:true,policyVersion:4});expect(f.requests.at(-1)!.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',muted:true})
+ policy={muted:false,policy_version:3,notify_after_seq:0}
+ expect(await f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).toMatchObject({muted:true,policyVersion:4})
+ await expect(f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:'false'})).rejects.toThrow()
+ f.changeAccount();await expect(f.service.execute('team.app.notification-policy.get',{conversationRef:c.ref})).rejects.toThrow()
+})
+it('lost policy response is resolved by owner read and is never replayed as a toggle',async()=>{
+ const f=fixture(path=>path.endsWith('/notification-policy/set')?new Response('{}',{status:503}):path.endsWith('/notification-policy/get')?{muted:true,policy_version:1,notify_after_seq:3}:{channel,conversation})
+ const c=(await open(f)).conversation!
+ expect(await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})).toEqual({muted:true,policyVersion:1,notifyAfterSeq:3})
+ expect(f.requests.filter(r=>r.path.endsWith('/notification-policy/set'))).toHaveLength(1)
+},15000)

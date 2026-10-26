@@ -6,7 +6,7 @@ export type ReactionTargetRef = { id: string } & (
 )
 export interface ReactionSelection { key: string; expression: ReactionExpression; at: number }
 export interface ReactionState { revision: number; selections: ReactionSelection[] }
-export interface ReactionActor { memberRef?: string; presentationPending?: boolean; userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
+export interface ReactionActor { memberRef?: string; teamPersonKey?: string; presentationPending?: boolean; userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
 export interface ReactionGroup { actors?: ReactionActor[]; key: string; expression: ReactionExpression; count: number }
 export interface ReactionSnapshot { target_id: string; mine: ReactionState; groups: ReactionGroup[]; has_more: boolean; actors_visible: boolean; private: boolean }
 export interface ReactionLibrary { revision: number; items: ReactionExpression[] }

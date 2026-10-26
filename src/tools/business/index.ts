@@ -4,6 +4,7 @@ import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
+import {teamNotificationTools} from './contacts/team-notifications.js'
 import { nativeAnnotationTools } from './conversation/native-annotations.js'
 import { relationPagesTool } from './relations/pages.js'
 import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
@@ -78,6 +79,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamMessageTools,
   ...codexWorkRecordTools,
   codexImageTool,
+  ...teamNotificationTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

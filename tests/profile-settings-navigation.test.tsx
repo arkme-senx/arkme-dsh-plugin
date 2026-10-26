@@ -20,7 +20,7 @@ beforeEach(() => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 11 })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent === text)!
+const button = (text: string) => [...document.querySelectorAll('button')].find(b => b.textContent === text)!
 describe('profile/settings navigation', () => {
   it('opens mine explicitly every time and public World stays all', () => {
     const ui = new ArkmeUiController()

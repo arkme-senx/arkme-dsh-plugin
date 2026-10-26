@@ -6,6 +6,9 @@ import {prepareTeamAskDshNotes,canAskDshTeamMessage} from './team-ask-dsh.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { BellSlash } from '@phosphor-icons/react/dist/icons/BellSlash'
+import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
+import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
@@ -16,6 +19,7 @@ import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
 import { TeamMessageDetail } from './TeamMessageDetail.js'
 import { useTeamPersonNames } from './use-team-person-names.js'
+import { useTeamReactionActors } from './use-team-reaction-actors.js'
 import { TeamMessageContent, teamMessagePresentation, teamReplyPresentation } from './TeamMessageContent.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { copyText } from './clipboard-text.js'
@@ -147,6 +151,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
       {c.side === 'team'
         ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
         : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
+      {c.notificationPolicy?.muted && <BellSlash size={14} aria-label={tr('消息免打扰')}/>}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
@@ -171,12 +176,14 @@ export function TeamMessagingMount({ accountKey, active }: { accountKey: string;
     const stopMembership = startOfficialTeamMembership(accountKey)
     const stop = startTeamAttention(accountKey, value => {
       if (document.visibilityState === 'visible' && document.hasFocus()) return
-      const close = showBrowserNotification(tr('团队消息'), value.external || value.team ? tr('你有新的团队消息，点击查看') : tr('有待处理的团队加入申请'), `arkme-team-${accountKey}`, () => {
-        if (live) openTeamMessages({ kind: 'inbox', side: value.external ? 'external' : 'team' })
+      const close = showBrowserNotification(tr('团队消息'), tr('有待处理的团队加入申请'), `arkme-team-${accountKey}`, () => {
+        if (live) openTeamMessages({ kind: 'inbox', side: 'team' })
       })
       if (close) { for (const previous of notices) previous(); notices.clear(); notices.add(close) }
     })
-    return () => { live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close() }
+    return () => {
+      live = false; stop(); stopDirectory(); stopMembership(); for (const close of notices) close()
+    }
   }, [accountKey, active])
   return null
 }
@@ -358,7 +365,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     // A receipt read started before a new message cannot clear its unread count.
     if (!old || state.lastSeq < old.conversation.lastSeq || state.myReadSeq < Math.max(read.current,old.conversation.myReadSeq)) return
     read.current = state.myReadSeq
-    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread}}
+    const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread,notificationPolicy:mergeTeamNotificationPolicy(old.conversation.notificationPolicy,state.notificationPolicy)}}
     latest.current=next;setTimeline(next)
   }),[receiptStore])
   const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
@@ -383,7 +390,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         for (const message of data.messages) messages.set(message.key, message)
       }
       if (ctrl.current.signal.aborted || token !== generation.current) return
-      data = { ...data, conversation: head, messages: confirmed.current.merge(conversation.key, [...messages.values()].sort((a,b) => a.seq-b.seq)) }
+      data = { ...data, conversation: {...head,notificationPolicy:mergeTeamNotificationPolicy(latest.current?.conversation.notificationPolicy,head.notificationPolicy)}, messages: confirmed.current.merge(conversation.key, [...messages.values()].sort((a,b) => a.seq-b.seq)) }
       if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
       setTimeline(data)
@@ -673,6 +680,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }, [locatedKey])
   const selection = useTeamMessageSelection({ accountKey, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal, refresh, onChanged })
   const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
+  const reactionActors = useTeamReactionActors(accountKey,
+    [...displayedMessages.map(message => message.sender), ...(receiptState.value?.members ?? []).map(personName)],
+    displayedMessages.findLast(message => message.own)?.sender)
   const snapshot = displayedMessages.find(message => message.key === snapshotKey && message.own && message.state === 'published' && message.contentStatus === 'available')
   useEffect(() => { if (snapshotKey && !snapshot) setSnapshotKey(undefined) }, [snapshotKey, !!snapshot])
   const detail = displayedMessages.find(message => message.key === detailKey && message.state === 'published' && message.contentStatus === 'available')
@@ -800,11 +810,11 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       {!selection.busy && <button type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus}>×</button>}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-    <div ref={scroller} className="team-message-list" data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
+    <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
-        <TeamConversationMessage accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
+        <TeamConversationMessage reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
           avatar={current.side === 'team' && !selection.ids
             ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />, m.side === 'external' ? undefined : m.sender)
             : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}

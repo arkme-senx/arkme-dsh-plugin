@@ -12,6 +12,9 @@ import {execFileSync,spawn} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 const node=process.execPath;
+const reactionsOnly=process.env.ARKME_E2E_REACTIONS_ONLY==='1';
+let reactionRevision=0,reactionMine=false;
+const reactionExpression={text:'收到',color:'blue'},reactionKey=createHash('sha256').update(JSON.stringify(reactionExpression)).digest('hex');
 const cli=process.env.ARKME_OFFICIAL_DSH_CLI;
 if(!cli||!process.env.ARKME_PACKED_ARTIFACT||!process.env.PLAYWRIGHT_MODULE_ANCHOR)throw new Error('official DSH CLI, immutable tgz and Playwright module anchor required');
 assert.match(process.env.ARKME_PACKED_ARTIFACT,/\.tgz$/);
@@ -54,6 +57,11 @@ const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read
    if(live&&owner){const upstream=await fetch(owners[owner]+path,{method:req.method,headers:{'Content-Type':'application/json',Authorization:req.headers.authorization||'Bearer '+jwt},body:JSON.stringify(body)});const value=await upstream.text();call.response=JSON.parse(value);res.writeHead(upstream.status,{'content-type':'application/json'});res.end(value);return;}
    let data={items:[],users:[],has_more:false,total:0},code=200
    if(path.endsWith('/the-best-api-for-testing'))data={access_token:jwt,refresh_token:'isolated-team-interaction'}
+   else if(reactionsOnly&&path.endsWith('/reactions/library/query'))data={revision:1,items:[reactionExpression]};
+   else if(reactionsOnly&&path.endsWith('/reactions/team/query'))data={items:body.targets.map(target=>({target,mine:{revision:reactionRevision,selections:reactionMine?[{key:reactionKey,expression:reactionExpression,at:1}]:[]},groups:[{key:reactionKey,expression:reactionExpression,count:reactionMine?2:1,actor_user_ids:reactionMine?[actor,10002]:[10002]}],has_more:false,actors_visible:true,private:false}))};
+   else if(reactionsOnly&&path.endsWith('/reactions/team/set')){reactionMine=body.active;reactionRevision++;data={outcome:'updated',state:{revision:reactionRevision,selections:reactionMine?[{key:reactionKey,expression:reactionExpression,at:1}]:[]}};}
+   else if(reactionsOnly&&path.endsWith('/get-public-users-by-ids'))data={items:body.user_ids.map(user_id=>({user_id,nick_name:user_id===actor?'团队交互验收':'同事乙'}))};
+   else if(reactionsOnly&&path.endsWith('/chats/contacts/list'))data={items:[{user_id:10002,remark:'私人备注乙'}],has_more:false};
    else if(path.endsWith('/get-user-info'))data={user_id:actor,nick_name:'团队交互验收',phone:'13800000000',phone_binding_policy:{mode:'none'}}
    else if(path.endsWith('/conversations/list'))data={items:body.side==='team'?[conversation('source'),conversation('target')]:[],has_more:false}
    else if(path.endsWith('/conversations/timeline/page'))data={conversation:conversation(body.conversation_uid),messages:body.conversation_uid==='source'?[message]:[],has_more:false}
@@ -69,8 +77,9 @@ const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read
    else if(path.endsWith('/message-channel/get'))data=channel
    else if(path.endsWith('/join-requests/list'))data={items:[],has_more:false}
    else if(path.endsWith('/conversations/attention'))data={team:false,external:false,applications:false}
+   if(reactionsOnly&&path.startsWith('/api/v1/reactions/'))code=0;
    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({code,...(code!==200?{message:'record_version_conflict'}:{}),data}))
-  }catch(error){res.writeHead(500);res.end(JSON.stringify({error:String(error)}))}
+  }catch(error){console.error('TEAM_FIXTURE_ERROR',String(error));res.writeHead(500);res.end(JSON.stringify({error:String(error)}))}
  })
 let child,browser,page;
 try {
@@ -79,7 +88,7 @@ try {
  const artifact=resolve(process.env.ARKME_PACKED_ARTIFACT);
  execFileSync(node,[cli,'plugin','--profile','web','add','-w',artifact],{cwd:root,env,stdio:['ignore',await import('node:fs').then(m=>m.openSync(join(root,'install.log'),'w')), await import('node:fs').then(m=>m.openSync(join(root,'install.err.log'),'w'))],timeout:180000});
  const manifest=JSON.parse(await readFile(join(profile,'package.json'),'utf8'));manifest.dsh.profile.bundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@senguoyun/dsh-arkme'];await writeFile(join(profile,'package.json'),JSON.stringify(manifest,null,2));
- const probe=join(root,'login-probe.mjs');await writeFile(probe,`import {randomUUID} from 'node:crypto';export const name='visual-login-probe';export const inject=['arkmeData','agents','tools'];export function apply(ctx){void (async()=>{await ctx.get('loader').await();await ctx.arkmeData.testLogin(${actor});const handle=await ctx.agents.create({sessionId:'team-acceptance-'+randomUUID(),meta:{cwd:${JSON.stringify(root)}},agentOptions:{provider:'deepseek-official',model:'deepseek-v4-flash'}});try{for(const name of ['arkme_team_messages','arkme_team_message_forward','arkme_team_message_copy_link','arkme_team_message_report','arkme_team_mark_change','arkme_team_message_send']){if(!ctx.tools.get(name,handle.agent))throw new Error('Team tool unavailable: '+name)}const result=await ctx.tools.execute({callId:randomUUID(),name:'arkme_team_messages',arguments:{side:'team'},agent:handle.agent,signal:AbortSignal.timeout(15000)});if(result.isError||!JSON.stringify(result).includes('接待团队'))throw new Error('Team tool did not read the real owner');console.log('TEAM_OFFICIAL_TOOLS_READY')}finally{await handle.dispose()}console.log('TEAM_VISUAL_AUTH_READY')})().catch(e=>console.error(e));}`);
+ const probe=join(root,'login-probe.mjs');await writeFile(probe,`import {randomUUID} from 'node:crypto';export const name='visual-login-probe';export const inject=['arkmeData','agents','tools'];export function apply(ctx){void (async()=>{await ctx.get('loader').await();await ctx.arkmeData.testLogin(${actor});const handle=await ctx.agents.create({sessionId:'team-acceptance-'+randomUUID(),meta:{cwd:${JSON.stringify(root)}},agentOptions:{provider:'deepseek-official',model:'deepseek-v4-flash'}});try{for(const name of ['arkme_team_messages','arkme_team_message_forward','arkme_team_message_copy_link','arkme_team_message_report','arkme_team_mark_change','arkme_team_message_send']){if(!ctx.tools.get(name,handle.agent))throw new Error('Team tool unavailable: '+name)}const result=await ctx.tools.execute({callId:randomUUID(),name:'arkme_team_messages',arguments:{side:'team'},agent:handle.agent,signal:AbortSignal.timeout(15000)});if(result.isError||!JSON.stringify(result).includes('接待团队'))throw new Error('Team tool did not read the real owner');console.log('TEAM_OFFICIAL_TOOLS_READY');if(${reactionsOnly}){const rows=await ctx.arkmeData.listTeamConversations('team');const timeline=await ctx.arkmeData.readTeamMessages(rows.items[0].ref);const result=await ctx.tools.execute({callId:randomUUID(),name:'arkme_reactions_read',arguments:{request_json:JSON.stringify({action:'query',actorPresentation:'deferred',accountKey:'test:${actor}',targets:[{id:'probe',teamConversationRef:rows.items[0].ref,teamMessageRef:timeline.messages[0].ref}]})},agent:handle.agent,signal:AbortSignal.timeout(15000)});await (await import('node:fs/promises')).writeFile(${JSON.stringify(join(capture,'tool-result.json'))},JSON.stringify(result,null,2));if(result.isError||!JSON.stringify(result).includes('收到'))throw new Error('Reaction tool did not return Team facts');console.log('TEAM_REACTION_TOOL_READY')}}finally{await handle.dispose()}console.log('TEAM_VISUAL_AUTH_READY')})().catch(e=>console.error(e));}`);
  const config={environment:'test',stateDirectory:join(root,'state'),keychainServicePrefix:'com.senqisi.scene-'+randomUUID(),allowProduction:false,updateCheckEnabled:false,openApiMcpEnabled:false,dshRemoteFeatureEnabled:false,extensionShareDiscoveryEnabled:false,toolProfile:'business',shareWebsite:origin};for(const name of ['auth','subject','record','data','team','chat','bot','im','webrtc','world','relation','intelligent','audio','openApi','extensionPublish','updateService'])config[name+'BaseUrl']=origin;
  const net=await import('node:net');const port=await new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p))})});
  await writeFile(join(profile,'cordis.patch.yml'),JSON.stringify([{id:'webserver',config:{port,host:'127.0.0.1'}},{id:'arkme-self',config},{insert:[{id:'visual-login-probe',name:probe}]}]));
@@ -89,7 +98,7 @@ try {
  let fixtureTeamRef='team-fixture';await page.route('**/arkme-self/api',async route=>{const {operation,params={}}=route.request().postDataJSON();let value;
  if(operation==='directory.list'||operation==='team.app.directory')value={section:params.section??'teams',items:params.section&&params.section!=='teams'?[]:[{kind:'team',teamRef:fixtureTeamRef,displayName:'接待团队',publicId:'fixture_team',role:'owner'}],total:1,hasMore:false};
  else if(operation==='team.app.members')value={team:{teamRef:fixtureTeamRef,name:'接待团队',jotmoId:'fixture_team',currentUserRole:'owner',createdAtMillis:1,updatedAtMillis:1},items:[],totalCount:0,hasMore:false};
- else if(!live&&operation==='reactions')value=params.action==='library-query'?{revision:0,items:[]}:params.action==='query'?{items:params.targets.map(t=>({target_id:t.id,mine:{revision:0,selections:[]},groups:[],has_more:false,actors_visible:true,private:false}))}:{items:[],has_more:false};else {await route.continue();return;}await route.fulfill({json:{ok:true,value}})});
+ else if(!live&&!reactionsOnly&&operation==='reactions')value=params.action==='library-query'?{revision:0,items:[]}:params.action==='query'?{items:params.targets.map(t=>({target_id:t.id,mine:{revision:0,selections:[]},groups:[],has_more:false,actors_visible:true,private:false}))}:{items:[],has_more:false};else {await route.continue();return;}await route.fulfill({json:{ok:true,value}})});
  await page.goto(url);await page.waitForTimeout(2000);const initial=await page.evaluate(async()=>await fetch('/arkme-self/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation:'team.messages.conversations',params:{side:'team'}})}).then(r=>r.json()));fixtureTeamRef=(live?initial.value.items.find(c=>c.channel.name==='接待团队7'):initial.value.items[0]).channel.teamRef;await page.screenshot({path:join(capture,'00-start.png')});
  // A separate installed SDK consumer reads the same Host owner as UI and Tools.
  const installed=createRequire(join(profile,'package.json'));
@@ -100,6 +109,31 @@ try {
  assert.equal((await sdk.preflightTeamMessages(sdkSource.ref,[{messageRef:sdkSelected.ref,version:sdkSelected.version}]))[0].content.text_content,text);
  await page.getByRole('button',{name:'联系人',exact:true}).click();const directory=page.locator('[data-directory-section="teams"]');const toggle=directory.locator('.arkme-contact-directory-section-header');if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();await directory.getByRole('button',{name:/接待团队/}).click();await page.getByRole('button',{name:/团队消息通道/}).click();await page.getByRole('button',{name:/查看团队对话/}).click();await page.locator('[data-team-side="team"]').filter({hasText:live?/用户\s*2/:'验收来访者'}).click();
  const pane=page.locator('.team-conversation-pane');await pane.getByText(text,{exact:true}).first().waitFor();const menu=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await pane.locator('[data-team-message-key]').filter({hasText:text}).first().getByLabel('消息操作',{exact:true}).click({button:'right'})};
+ if(reactionsOnly){
+  const target={id:'sdk-team',teamConversationRef:sdkSource.ref,teamMessageRef:sdkSelected.ref};
+  const facts=await sdk.reactions({action:'query',actorPresentation:'deferred',accountKey:`test:${actor}`,targets:[target]});
+  assert.equal(facts.items[0].groups[0].count,1);assert.equal(facts.items[0].groups[0].actors[0].presentationPending,true);
+  const full=await sdk.reactions({action:'query',accountKey:`test:${actor}`,targets:[target]});assert.equal(full.items[0].groups[0].actors[0].displayName,'私人备注乙');
+  const bubble=pane.locator('.arkme-timed-bubble').filter({hasText:text}).first();
+  await bubble.getByRole('button',{name:'添加收到',exact:true}).waitFor();
+  assert.equal(await bubble.locator('[data-arkme-message-reactions]').count(),1);
+  const add=bubble.getByRole('button',{name:'继续表态',exact:true});
+  for(const visible of [true,false,true]){await add.click();assert.equal(await page.locator('[aria-label="表态面板"]').count(),Number(visible));}
+  await page.getByRole('button',{name:'收到',exact:true}).click();
+  await bubble.getByRole('button',{name:'取消我的收到',exact:true}).waitFor();
+  await bubble.getByRole('button',{name:'查看团队交互验收的资料',exact:true}).waitFor();
+  await page.screenshot({path:join(capture,'reaction-added.png')});
+  await bubble.getByRole('button',{name:'取消我的收到',exact:true}).click();
+  await bubble.getByRole('button',{name:'添加收到',exact:true}).waitFor();
+  await menu();await page.getByRole('menuitem',{name:'表态',exact:true}).click();
+  await page.getByRole('group',{name:'全部表情',exact:true}).waitFor();
+  await page.screenshot({path:join(capture,'reaction-picker.png')});
+  await page.setViewportSize({width:850,height:700});await page.waitForTimeout(400);
+  await page.screenshot({path:join(capture,'reaction-picker-narrow.png')});
+  assert.ok(readFileSync(log,'utf8').includes('TEAM_REACTION_TOOL_READY'));
+  await writeFile(join(capture,'reaction-acceptance.json'),JSON.stringify({passed:true,installedSdk:true,officialSessionToolRead:true,realHostTransport:true,upstream:'isolated synthetic HTTP',bubblePlacement:true,inlineToggle:true,addRemove:true,selfName:true,remark:true,artifact},null,2));
+  console.log('PASS: packaged Team reactions UI, SDK and real DSH session Tool share the Host owner');
+ }else{
  await menu();await page.screenshot({path:join(capture,'initial-menu.png')});await page.getByRole('menuitem',{name:'延展',exact:true}).click();await page.waitForTimeout(250);await page.screenshot({path:join(capture,'01-reply.png')});if(live){await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).fill('PC正式包引用回复');await pane.getByRole('button',{name:'发送',exact:true}).click();await poll(()=>ownerPost('team','/api/v1/team/conversations/timeline/page',{conversation_uid:sourceUID,side:'team'}),page=>page.messages.some(m=>m.record?.text_content==='PC正式包引用回复'&&m.reply?.message_uid===sourceMessageUID));await pane.getByText('PC正式包引用回复',{exact:true}).last().waitFor();await pane.locator('[data-team-message-key]').filter({hasText:'PC正式包引用回复'}).last().locator('[data-arkme-quote-preview]').getByText(text,{exact:true}).waitFor({timeout:15000});await page.screenshot({path:join(capture,'01-reply-sent.png')});}else await pane.getByRole('button',{name:'取消延展',exact:true}).click();
  const body=pane.locator('[data-team-message-key]').filter({hasText:text}).first().locator('[data-arkme-text-selection]').first();const selectText=async()=>await body.evaluate(node=>{node.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));const text=document.createTreeWalker(node,NodeFilter.SHOW_TEXT).nextNode(),range=document.createRange();range.setStart(text,5);range.setEnd(text,14);window.getSelection().removeAllRanges();window.getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}))});
  await selectText();await page.getByRole('toolbar',{name:'选中文字操作'}).getByRole('button',{name:'回复',exact:true}).click();
@@ -133,4 +167,5 @@ try {
  await writeFile(join(capture,'official-cli-acceptance.json'),JSON.stringify({passed:true,sessionCreated:true,attachmentName:result.files[0].name,containsCompleteSource:true,composerEmpty:true,staleReadDeniedBeforeDraft:live?"covered in synthetic failure run":true,realServices:live,uiWritesVerified:live,selectedTextReplyVerified:live,installedSdk:true,officialSessionToolRead:true,artifact},null,2));
  console.log(live?'PASS: installed SDK + official session Tool + six real-service UI flows and native attachment draft':'PASS: installed SDK + official session Tool + native attachment draft; stale read rejected before native preparation');
 
+ }
 } catch(error){if(page){await page.screenshot({path:join(capture,'failure.png')}).catch(()=>{});await writeFile(join(capture,'failure-body.txt'),await page.locator('body').innerText()).catch(()=>{})}await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));console.error(error);process.exitCode=1;} finally{await browser?.close();child?.kill('SIGTERM');server.closeAllConnections();server.close();}

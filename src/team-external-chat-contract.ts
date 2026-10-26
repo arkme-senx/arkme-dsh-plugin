@@ -2,7 +2,9 @@ import type { ArkmeTimelineItem } from './types.js'
 export type ExternalChatOperation = 'list' | 'mine' | 'share' | 'unshare' | 'page'
 export interface ExternalChatShare { ref: string; key: string; teamRef: string; teamKey: string; sharerKey: string; sharerName: string; peerName: string; own: boolean }
 export interface ExternalChatDirectory { items: ExternalChatShare[]; hasMore: boolean; nextCursor?: string }
-export interface ExternalChatTimeline { items: ArkmeTimelineItem[]; hasMore: boolean; beforeSeq: number; mediaUrls: Record<string,string> }
+/** Direction is relative to the sharing member, independent of the viewer. */
+export interface ExternalChatTimelineItem extends ArkmeTimelineItem { senderSide?: 'sharer' | 'peer' | 'unknown' }
+export interface ExternalChatTimeline { items: ExternalChatTimelineItem[]; hasMore: boolean; beforeSeq: number; mediaUrls: Record<string,string> }
 export interface ExternalChatParameters {
   list: { teamRef: string; cursor?: string }
   mine: { sourceRef: string }

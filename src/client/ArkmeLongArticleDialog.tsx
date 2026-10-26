@@ -1,3 +1,4 @@
+import { longArticleWindowBridge } from './long-article-window.js'
 import { ArticleAutoPublisher } from './article-auto-publisher.js'
 import { ArkmeLongArticleActions } from './ArkmeLongArticleActions.js'
 import { ArkmeDictationButton, textareaDictationTarget } from './ArkmeDictationButton.js'
@@ -504,6 +505,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       // confirmed-record draft. A failed migration keeps the original backup.
       if (firstPublish) await callArkme<void>('source.long-article.draft.delete', { sourceRef, expectedRecordUid: getIds().recordUid }).catch(() => {})
       setPublicationFailed(false)
+      if (windowMode && longArticleWindowBridge()?.version === 3) void longArticleWindowBridge()?.changed?.()
       if (!manualCompose) void Promise.resolve().then(() => onUpdated?.(updated)).catch(() => showImageNotice({ kind: 'error', message: '长文已发布，列表更新失败，请重新打开核对' }))
       if (manualCompose) { skipUnmountSaveRef.current = true; onClose() }
     } catch (caught) {
@@ -556,7 +558,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   </span>
   const moreActions = !manualCompose && <ArkmeLongArticleActions sourceRef={sourceRef} detail={detail} dismissRef={dismissActions} onBusyChange={setActionBusy}
     beforeAction={async () => { await publisher.current!.flush(); return publishedDetail.current }}
-    onDeleted={uid => { skipUnmountSaveRef.current = true; publisher.current!.stop(); onDeleted?.(uid); onClose() }} />
+    onDeleted={uid => { if (windowMode) void longArticleWindowBridge()?.changed?.(); skipUnmountSaveRef.current = true; publisher.current!.stop(); onDeleted?.(uid); onClose() }} />
   const publishAction = <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, ...(windowMode ? { background: theme.primaryAction, color: theme.onPrimaryAction, padding: '8px 18px', fontSize: 14 } : {}), opacity: submitting ? .55 : 1 }} disabled={dictationBusy || loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || closingDraft || closePrompt || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish().catch(caught => { setError(errorMessage(caught)) }) }}>{windowMode ? (creating ? (submitting ? tr('发送中…') : tr('发送')) : (submitting ? tr('正在保存…') : tr('确认修改'))) : creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : tr("发布"))}</button>
 
   return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}), ...(workspace ? { position: 'relative', inset: 'auto', display: 'flex', height: '100%', minHeight: 0, width: '100%', padding: 0, zIndex: 'auto', background: 'transparent' } : {}) }} role={workspace ? 'region' : 'dialog'} aria-modal={windowMode || workspace ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>

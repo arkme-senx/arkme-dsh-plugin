@@ -1,3 +1,4 @@
+import type { TeamNotificationPolicy } from '../team-notification-contract.js'
 import type { TeamMessage, TeamReceipts, TeamReceiptMember, TeamReceiptSummaryBatch } from '../team-app-contract.js'
 import { callArkme } from './api.js'
 
@@ -23,7 +24,7 @@ export class TeamReceiptStore {
   private states = new Map<string, TeamReceiptState>()
   private listeners = new Set<() => void>()
   private accessListeners = new Set<() => void>()
-  private readListeners = new Set<(state: {lastSeq: number; myReadSeq: number; unread: number}) => void>()
+  private readListeners = new Set<(state: {lastSeq: number; myReadSeq: number; unread: number; notificationPolicy?: TeamNotificationPolicy}) => void>()
   private visible = new Map<string, { message: TeamMessage; count: number }>()
   private details = new Map<string, {message: TeamMessage; count: number}>()
   private queue: Array<() => Promise<void>> = []
@@ -42,7 +43,7 @@ export class TeamReceiptStore {
   constructor(private accountKey: string) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   subscribeAccessLost = (listener: () => void) => { this.accessListeners.add(listener); return () => { this.accessListeners.delete(listener) } }
-  subscribeReadState = (listener: (state: {lastSeq:number; myReadSeq:number; unread:number}) => void) => { this.readListeners.add(listener); return () => { this.readListeners.delete(listener) } }
+  subscribeReadState = (listener: (state: {lastSeq:number; myReadSeq:number; unread:number; notificationPolicy?:TeamNotificationPolicy}) => void) => { this.readListeners.add(listener); return () => { this.readListeners.delete(listener) } }
   get = (key: string) => this.states.get(key) ?? emptyTeamReceipt
   private emit() { for (const listener of this.listeners) listener() }
   watch(message: TeamMessage) {

@@ -14,3 +14,7 @@
 .arkme-article-library-error{margin:0;padding:0 24px 12px;font-size:13px}
 .arkme-article-library button:focus-visible{outline:2px solid #4778f5;outline-offset:2px}
 @media(max-width:600px){.arkme-article-library-backdrop{padding:12px}.arkme-article-library-header{padding:16px 16px 8px;gap:8px}.arkme-article-library-tabs{padding:0 16px;gap:22px}.arkme-article-library-panel{padding:0 14px 12px}}
+
+.arkme-article-library-backdrop[data-native-window=true]{padding:0;background:transparent}
+.arkme-article-library-backdrop[data-native-window=true] .arkme-article-library{width:100%;max-height:none;border:0;border-radius:0;box-shadow:none}
+.arkme-article-library-backdrop[data-native-window=true] .arkme-article-library-header button:last-child{width:auto;padding:5px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb)}

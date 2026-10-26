@@ -257,6 +257,8 @@ describe('reaction review UI', () => {
       .toEqual({ left: 300, bottom: 508, maxHeight: 284 })
     expect(reactionPanelPosition({ left: 800, top: 40, bottom: 66 }, 340, { width: 900, height: 800 }))
       .toEqual({ left: 552, top: 74, maxHeight: 718 })
+    expect(reactionPanelPosition({ left: 300, top: 200, bottom: 226 }, 340, { width: 900, height: 800 }, 320))
+      .toEqual({ left: 300, top: 234, maxHeight: 558 })
   })
   it('anchors outgoing left and incoming right at the bottom without layout space', async () => {
     const box = { left: 200, right: 500, bottom: 300 }, parent = { left: 200, top: 100 }, edges = { left: 8, right: 900 }

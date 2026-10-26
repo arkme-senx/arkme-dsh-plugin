@@ -27,7 +27,7 @@ export function startTeamAttention(key: string, onNew: (value: TeamAttention) =>
         try {
           const value = await callArkme<TeamAttention>('team.app.attention', {}, controller.signal, { priority: 'background' })
           if (controller.signal.aborted || account !== key) return
-          const fresh = initialized && ((!snapshot.external && value.external) || (!snapshot.team && value.team) || (!snapshot.applications && value.applications))
+          const fresh = initialized && !snapshot.applications && value.applications === true
           snapshot = value; initialized = true; emit()
           if (fresh) onNew(value)
         } catch { /* Keep the last known badge on Team-only failure. */ }

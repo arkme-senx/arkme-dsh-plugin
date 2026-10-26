@@ -137,6 +137,20 @@ describe('registerArkmeTools', () => {
     expect(externalChats).toHaveBeenLastCalledWith('share',expect.objectContaining({teamRef:'team-ref',sourceRef:'source-ref'}),expect.any(AbortSignal))
     await registration.dispose()
   })
+  it('preserves shared message direction through the registered read tool', async () => {
+    const ctx = await setup()
+    const externalChats = vi.fn(async () => ({items:[{itemUid:'opaque-message',senderName:'用户',senderSide:'sharer',isMe:false,textContent:'共享正文'}],hasMore:false,beforeSeq:1,mediaUrls:{}}))
+    const registration = await mountArkmeTools(ctx, 'business', {...ports,externalChats} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([])
+    const agent = {id:SessionId('external-direction'),session:{get events(){return events}}} as unknown as Agent
+    const signal = new AbortController().signal
+    try {
+      const result = await ctx.tools.execute({callId:CallId('external-page'),name:'arkme_team_external_chats',arguments:{operation:'page',share_ref:'opaque-share'},agent,signal})
+      expect(result.isError).toBe(false)
+      expect(JSON.stringify(result)).toContain('sharer')
+      expect(externalChats).toHaveBeenCalledWith('page',expect.objectContaining({shareRef:'opaque-share'}),expect.any(AbortSignal))
+    } finally {await registration.dispose()}
+  })
   it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
     const ctx = await setup()
     const reactions = vi.fn(async () => ({ revision: 0, items: [] }))
@@ -226,6 +240,9 @@ describe('registerArkmeTools', () => {
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
       'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send', 'arkme_codex_work_records', 'arkme_codex_work_record_change',
+      'arkme_team_notification_conversations',
+      'arkme_team_notification_policy',
+      'arkme_team_notification_policy_set',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_device_lock_status',

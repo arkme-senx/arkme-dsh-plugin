@@ -41,3 +41,42 @@ it('falls back for existing articles on a create-only bridge', async () => {
  expect(await openLongArticleWindow(source, { mode: 'existing', item })).toBe(false)
  expect(open).not.toHaveBeenCalled()
 })
+
+it('uses v3 browsing targets and preserves location context while older clients fall back', async () => {
+  const { openBrowseWindow } = await import('../src/client/long-article-window.js')
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 7, environment: 'prod' })
+  const open = vi.fn(async () => true), account = vi.fn(async () => true)
+  vi.stubGlobal('arkmeLongArticle', { version: 2, open, account })
+  expect(await openBrowseWindow('location')).toBe(false)
+  expect(open).not.toHaveBeenCalled()
+  vi.stubGlobal('arkmeLongArticle', { version: 3, open, account })
+  const location = { initialDate: { bucketDate: '2026-10-26', timezone: 'Asia/Shanghai' } }
+  expect(await openBrowseWindow('location', location)).toBe(true)
+  expect(open).toHaveBeenCalledWith({ accountKey: 'prod:7', sourceKey: 'browse:location', sourceRef: 'browse:location', displayName: '位置', surface: 'location', location })
+})
+it('opens library articles without attempting to bind the main window account from a child', async () => {
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 7, environment: 'prod' })
+  vi.stubGlobal('location', { search: '?arkmeLongArticle=1' })
+  const open = vi.fn(async () => true), account = vi.fn(), active = vi.fn(async () => true)
+  vi.stubGlobal('arkmeLongArticle', { version: 3, open, account, active })
+  expect(await openLongArticleWindow(source, undefined, true)).toBe(true)
+  expect(account).not.toHaveBeenCalled()
+  expect(open).toHaveBeenCalledWith({ ...source, accountKey: 'prod:7', autoPublish: true })
+  active.mockResolvedValue(false)
+  await expect(openLongArticleWindow(source)).rejects.toThrow('账号已切换')
+})
+
+it('discards a queued navigation when its originating account is no longer current', async () => {
+  const { arkmeUi } = await import('../src/client/ui-controller.js')
+  const navigate = vi.spyOn(arkmeUi, 'showConversationTarget').mockImplementation(() => {})
+  let listener: any
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 7, environment: 'prod' })
+  vi.stubGlobal('arkmeLongArticle', { version: 3, account: async () => true,
+    onNavigate: (callback: unknown) => { listener = callback; return () => {} } })
+  const stop = bindLongArticleWindowAccount()
+  const value = { source, accountKey: 'prod:7', recordUid: 'record', sendAtMillis: 1 }
+  listener(value); expect(navigate).toHaveBeenCalledOnce()
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 8, environment: 'prod' })
+  listener(value); expect(navigate).toHaveBeenCalledOnce()
+  stop(); navigate.mockRestore()
+})
