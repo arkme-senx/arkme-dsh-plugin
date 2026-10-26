@@ -12,6 +12,7 @@ export interface SharedPersonSnapshot {
   items: PersonRecordItem[]; read: number; discovered: number; discovering: boolean; hasMore: boolean; error: string
 }
 export interface SharedPersonPort {
+  aggregate?(cursor?: string, knownEventRefs?: readonly string[], validateOnly?: boolean): Promise<import('../person-records.js').PersonRecordsPage>
   sources(cursor?: string): Promise<PersonRecordSourcesPage>
   records(source: PersonRecordSource, before?: number, limit?: number): Promise<ArkmeConversationMemberRecordPage>
 }
@@ -23,6 +24,11 @@ export class SharedPersonRecords {
   private discoveryDone = false
   private discoveryError = ''
   private pending = false
+  private validationQueued = false
+  private aggregateEnabled: boolean | undefined
+  private aggregateCursor: string | undefined
+  private aggregateMore = true
+  private aggregateItems = new Map<string, PersonRecordItem & { eventRef: string }>()
   constructor(private readonly entry: PersonRecordSource, private readonly port: SharedPersonPort, private readonly signal: AbortSignal, private readonly update: (value: SharedPersonSnapshot) => void) {
     this.add(entry)
   }
@@ -32,6 +38,11 @@ export class SharedPersonRecords {
     if (!this.streams.has(key)) this.streams.set(key, { ...value, more: true, attempted: false, frontier: Infinity })
   }
   snapshot(): SharedPersonSnapshot {
+    if (this.aggregateEnabled) {
+      const items = [...this.aggregateItems.values()].sort((a,b) => b.sendAtMillis-a.sendAtMillis)
+      const sources = new Set(items.map(item => item.personSource?.sourceKey ?? item.personSource?.sourceRef))
+      return { items, read: sources.size, discovered: sources.size, discovering: false, hasMore: this.aggregateMore, error: this.discoveryError }
+    }
     const streams = [...this.streams.values()]
     return { items: [...this.items.values()].sort((a, b) => b.sendAtMillis - a.sendAtMillis || personRecordKey(a).localeCompare(personRecordKey(b))),
       read: streams.filter(row => row.attempted && !row.failed).length, discovered: streams.length, discovering: !this.discoveryDone,
@@ -75,11 +86,53 @@ export class SharedPersonRecords {
       while (index < streams.length) { this.signal.throwIfAborted(); const stream = streams[index++]!; await this.read(stream, older || stream.attempted) }
     }))
   }
+  async revalidate(): Promise<void> {
+    if (!this.aggregateEnabled || !this.port.aggregate || this.aggregateItems.size === 0) return
+    if (this.pending) { this.validationQueued = true; return }
+    this.pending = true
+    try {
+      const page = await this.port.aggregate(undefined, [...this.aggregateItems.keys()], true)
+      this.signal.throwIfAborted()
+      if (!page.supported) throw new Error('人物内容权限验证暂不可用，请重试')
+      for (const ref of page.removedEventRefs) this.aggregateItems.delete(ref)
+      this.discoveryError = ''; this.emit()
+    } catch (error) {
+      this.signal.throwIfAborted()
+      if (error instanceof ArkmeClientError && !error.body.retryable) { this.aggregateItems.clear(); this.aggregateMore = false }
+      this.discoveryError = error instanceof Error ? error.message : '权限验证暂时失败，请重试'; this.emit()
+    } finally { this.pending = false; if (this.validationQueued) { this.validationQueued = false; await this.revalidate() } }
+  }
   async load(older = false): Promise<void> {
     if (this.pending) return
     this.pending = true
     try {
       this.signal.throwIfAborted()
+      if (this.port.aggregate && this.aggregateEnabled !== false) {
+        if (this.aggregateItems.size >= 500) {
+          this.aggregateMore = false; this.discoveryError = '已达本次阅读窗口上限，重新打开可继续查看最近内容。'; this.emit(); return
+        }
+        try {
+          const page = await this.port.aggregate(this.aggregateCursor, [...this.aggregateItems.keys()])
+          this.signal.throwIfAborted()
+          if (page.supported) {
+            if (page.hasMore && (!page.nextCursor || page.nextCursor === this.aggregateCursor)) throw new Error('人物内容分页未推进，请重试')
+            this.aggregateEnabled = true
+            for (const ref of page.removedEventRefs) this.aggregateItems.delete(ref)
+            for (const row of page.items) this.aggregateItems.set(row.eventRef, row)
+            this.aggregateMore = page.hasMore; this.aggregateCursor = page.nextCursor; this.discoveryError = ''; this.emit(); return
+          }
+          if (this.aggregateEnabled) throw new Error('人物内容汇总暂不可用，请重试')
+          this.aggregateEnabled = false
+        } catch (error) {
+          this.signal.throwIfAborted()
+          if (error instanceof ArkmeClientError && !error.body.retryable) {
+            this.aggregateItems.clear(); this.aggregateMore = false; this.emit(); throw error
+          }
+          this.discoveryError = error instanceof Error ? error.message : '汇总暂时失败，可重试'
+          if (this.aggregateEnabled) { this.emit(); return }
+          throw error
+        }
+      }
       const retry = [...this.streams.values()].filter(row => !row.attempted || row.failed)
       await this.reads(retry, false)
       // At most one discovery page per user-visible batch. Large directories
@@ -100,10 +153,10 @@ export class SharedPersonRecords {
           this.emit()
         }
       } else if (older && !retry.length) {
-        const streams = [...this.streams.values()].filter(row => row.more && !row.failed)
+    const streams = [...this.streams.values()].filter(row => row.more && !row.failed)
           .sort((a, b) => b.frontier - a.frontier).slice(0, 2)
         await this.reads(streams, true)
       }
-    } finally { this.pending = false }
+    } finally { this.pending = false; if (this.validationQueued) { this.validationQueued = false; await this.revalidate() } }
   }
 }

@@ -5937,6 +5937,8 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
+      if (url.endsWith('/api/v1/records/forward/capability')) return json({ code: 0, data: { protocol_version: 1, nested_display_kind: true, article_snapshot: true } })
+      if (url.endsWith('/api/v1/records/article-forward/create')) return json({ code: 0, data: { accepted: true, record_uid: body.record_uid, status: 1 } })
       if (url.endsWith('/api/v1/records/create')) {
         assertRecordForwardInput(body)
         return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
@@ -6001,10 +6003,10 @@ describe('ArkmeService', () => {
     textContent = '# 完整长文\n' + '**正文**'.repeat(5000)
     const completeArticle = await service.longArticleDetail(source.sourceRef, 'article-1')
     await service.forwardSourceMessages(source.sourceRef, [completeArticle.actionItem!.messageActionRef!], { recordUid: 'forwarded-article', relationUid: 'forwarded-relation' })
-    const forwardBody = calls.filter(call => call.url.endsWith('/api/v1/records/create')).at(-1)!.body
-    const payload = forwardBody.content_payload as { forward_records: { items: Array<Record<string, unknown>> } }
-    expect(payload.forward_records.items[0]).toMatchObject({ text: textContent, text_format: 'markdown', template_kind: 1 })
-    expect(payload.forward_records.items[0]).not.toHaveProperty('display_kind')
+    const forwardBody = calls.find(call => call.url.endsWith('/api/v1/records/article-forward/create'))!.body
+    expect(forwardBody).toMatchObject({ record_uid: 'forwarded-article', sources: [{ record_uid: 'article-1', record_owner_user_id: 10001 }] })
+    expect(forwardBody).not.toHaveProperty('content_payload')
+
   })
 
   it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {

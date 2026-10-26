@@ -693,6 +693,7 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
       (raw, session) => this.chat.calendarSharedRecordingPreview(raw, session))
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
+    this.search.articleActionRef = (raw, sourceRef, signal) => this.chat.articleSearchActionRef(raw, sourceRef, signal)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
@@ -1239,6 +1240,8 @@ arkoImagesV1:true,
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        personRecordsV1: true,
+        articleLibraryV1: true,
         relationPages: true,
         recordingEntities: true,
         recordingPersonReferences: true,
@@ -1981,6 +1984,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}) {
+    return this.chat.personRecordsPage(sourceRef, memberRef, options)
+  }
   async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
     return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
   }

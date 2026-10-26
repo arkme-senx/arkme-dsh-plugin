@@ -51,3 +51,19 @@ it('does not attribute another sender to the selected person',async()=>{
  const entry=source('entry');const reads=new SharedPersonRecords(entry,{sources:async()=>({items:[],hasMore:false}),records:async s=>page(s,[{...row('other-sender',1),memberRef:'another-person'}])},new AbortController().signal,()=>{})
  await reads.load();expect(reads.snapshot().items).toEqual([]);expect(reads.snapshot().error).toContain('可重试')
 })
+
+it('uses one aggregate page, retries its cursor, and removes explicitly revoked events', async () => {
+ const entry=source('entry');let fail=false;let calls=0
+ const aggregate=vi.fn(async(cursor?:string,known?:readonly string[])=>{
+  calls++;if(fail)throw Error('temporary')
+  return {version:1 as const,supported:true,items:[{...row(cursor?'same-record':'same-record',calls,100-calls),personSource:source(cursor?'other':'entry').source,eventRef:cursor?'event-b':'event-a'}],hasMore:!cursor,...(!cursor?{nextCursor:'global-cursor'}:{}),removedEventRefs:cursor?['event-a']:[],coverage:'current_chat_relations' as const}
+ })
+ const records=vi.fn(),sources=vi.fn();const read=new SharedPersonRecords(entry,{aggregate,records,sources},new AbortController().signal,()=>{})
+ await read.load();expect(read.snapshot().items).toHaveLength(1);expect(sources).not.toHaveBeenCalled();expect(records).not.toHaveBeenCalled()
+ fail=true;await read.load(true);expect(read.snapshot().items).toHaveLength(1);expect(read.snapshot().hasMore).toBe(true)
+ fail=false;await read.load(true);expect(aggregate.mock.calls.slice(1).map(([cursor])=>cursor)).toEqual(['global-cursor','global-cursor']);expect(read.snapshot().items).toHaveLength(1);expect(read.snapshot().items[0]?.personSource?.sourceRef).toBe('other')
+})
+it('falls back to existing composition only when the server explicitly lacks aggregation',async()=>{
+ const entry=source('entry');const aggregate=vi.fn(async()=>({version:1 as const,supported:false,items:[],hasMore:false,removedEventRefs:[],coverage:'current_chat_relations' as const}));const sources=vi.fn(async()=>({items:[],hasMore:false}));const records=vi.fn(async()=>page(entry,[row('entry',1)]))
+ const read=new SharedPersonRecords(entry,{aggregate,sources,records},new AbortController().signal,()=>{});await read.load();expect(read.snapshot().items).toHaveLength(1);expect(aggregate).toHaveBeenCalledTimes(1);expect(records).toHaveBeenCalledTimes(1)
+})

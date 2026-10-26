@@ -151,3 +151,11 @@ describe('long-article quick browse', () => {
     expect(content(renderer!.toJSON())).toContain('文章created')
   })
 })
+
+it('removes a deleted article by owner and uid while keeping another owners same uid', async()=>{
+ mocks.call.mockResolvedValue(page([item('same',{recordOwnerUserId:42}),item('same',{recordOwnerUserId:43})]));await mount();
+ act(()=>cards()[0]!.props.onClick({currentTarget:{}}));
+ const props=mocks.dialog.mock.lastCall![0] as ArkmeLongArticleDialogProps;
+ act(()=>props.onDeleted?.('same',42));expect(cards()).toHaveLength(1);
+ act(()=>cards()[0]!.props.onClick({currentTarget:{}}));expect((mocks.dialog.mock.lastCall![0] as ArkmeLongArticleDialogProps).item?.recordOwnerUserId).toBe(43);
+});

@@ -1,3 +1,4 @@
+import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -90,6 +91,8 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     return () => { generation.current += 1; request.current?.abort(); inFlight.current = false }
   }, [active, load])
 
+  useEffect(() => !active ? undefined : subscribeMessageQuoteInvalidations(() => { void load() }), [active, load])
+
   useEffect(() => {
     if (!created || scope !== 'recent') return
     setPage(previous => ({ ...previous, items: [created, ...(previous?.items ?? []).filter(item => identity(item) !== identity(created))],
@@ -151,12 +154,12 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     {selected?.targetSource !== undefined && typeof document !== 'undefined' && createPortal(
       <ArkmeLongArticleDialog
         sourceRef={selected.targetSource.sourceRef}
-        item={{ itemUid: selected.recordUid, title: selected.title, textContent: selected.textContent, sendAtMillis: selected.sendAtMillis,
+        item={{ itemUid: selected.recordUid, ...(selected.messageActionRef ? { messageActionRef: selected.messageActionRef } : {}), title: selected.title, textContent: selected.textContent, sendAtMillis: selected.sendAtMillis,
           ...(selected.recordOwnerUserId !== undefined ? { recordOwnerUserId: selected.recordOwnerUserId } : {}) }}
         overlayZIndex={10060}
         initialDirectoryPage={scope === 'recent' ? page : undefined}
         onClose={closeArticle}
-        onDeleted={uid => { setPage(current => current ? { ...current, items: current.items.filter(item => item.recordUid !== uid) } : current) }}
+        onDeleted={(uid, owner) => { setPage(current => current ? { ...current, items: current.items.filter(item => item.recordUid !== uid || String(item.recordOwnerUserId) !== String(owner ?? selected.recordOwnerUserId)) } : current) }}
         onUpdated={detail => {
           setPage(current => current === undefined ? current : { ...current, items: current.items.map(item => identity(item) !== identity(selected) ? item : { ...item, title: detail.title, textContent: detail.textContent, snippet: '', ...(detail.textFormat === undefined ? {} : { textFormat: detail.textFormat }) }) })
         }}

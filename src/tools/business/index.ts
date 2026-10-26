@@ -1,4 +1,5 @@
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
+import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
@@ -28,7 +29,7 @@ import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFav
 import { readSourceToolModule } from './conversation/read-source.js'
 import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
-import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
+import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
@@ -113,9 +114,11 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   readSourceToolModule,
   ...analyticsToolModules,
   copyLinkExtendToolModule,
+  articlesTool,
   sourceMembersToolModule,
   ...memberPageToolModules,
   sourceMemberRecordsToolModule,
+  personRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,

@@ -36,3 +36,14 @@ export function openPersonSourcesCursor(cursor: string, secret: string, context:
     || (value.directory !== undefined && (!value.directory || typeof value.directory !== 'object' || Array.isArray(value.directory)))) throw invalid()
   return value
 }
+
+/** Authorized global event page; references are current-account capabilities. */
+export interface PersonRecordsPage {
+  version: 1
+  supported: boolean
+  items: Array<import('./types.js').ArkmeTimelineItem & { personSource: ArkmeSourceItem; eventRef: string }>
+  hasMore: boolean
+  nextCursor?: string
+  removedEventRefs: string[]
+  coverage: 'current_chat_relations'
+}
