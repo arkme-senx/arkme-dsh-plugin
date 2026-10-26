@@ -27,4 +27,3 @@ export function externalChatWriteUncertain(error: unknown): boolean {
   return error instanceof ShareSaveTimeoutError || (error instanceof Error && error.name === 'AbortError')
     || code === 'local-network-unavailable' || code === 'local-response-invalid'
 }
-
