@@ -1,5 +1,9 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '恢复这条内容？': 'Restore this content?',
+  '恢复后可在原位置查看此内容。': 'The content will be available in its original location after restoration.',
+  '确认恢复': 'Restore',
+  '正在恢复…': 'Restoring…',
   "共享到团队": "Share with teams",
   "团队成员可只读查看全部历史和新消息。": "Team members can read the full history and new messages.",
   "已共享到 {count} 个团队": "Shared with {count} teams",
