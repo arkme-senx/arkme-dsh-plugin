@@ -20,11 +20,13 @@ const row: CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'cen
 
 export function reactionToolbarPosition(isMe: boolean, box: { left: number; right: number; bottom: number }, parent: { left: number; top: number }, edges: { left: number; right: number }, receipt?: { left: number; right: number; top: number }): CSSProperties {
   const receiptCenter = receipt ? (receipt.left + receipt.right) / 2 : 0
-  const aboveLeft = Math.min(receiptCenter - 13, box.left - 32)
-  if (isMe && receipt && aboveLeft >= edges.left) {
+  // Team messages expose incoming receipts too; mirror the group outgoing rule.
+  const aboveLeft = isMe ? Math.min(receiptCenter - 13, box.left - 32)
+    : Math.max(receiptCenter - 13, box.right + 6)
+  if (receipt && aboveLeft >= edges.left && aboveLeft + 26 <= edges.right) {
     return { left: aboveLeft - parent.left, top: receipt.top - parent.top - 32, paddingBottom: 6 }
   }
-  const beside = isMe ? box.left - 32 >= edges.left : box.right + 32 <= edges.right
+  const beside = !receipt && (isMe ? box.left - 32 >= edges.left : box.right + 32 <= edges.right)
   const left = beside ? (isMe ? box.left - parent.left - 32 : box.right - parent.left)
     : Math.max(0, (isMe ? box.left : box.right - 26) - parent.left)
   const top = box.bottom - parent.top - (beside ? 26 : 0)

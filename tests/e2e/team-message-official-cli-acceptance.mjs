@@ -117,6 +117,27 @@ try {
   const bubble=pane.locator('.arkme-timed-bubble').filter({hasText:text}).first();
   await bubble.getByRole('button',{name:'添加收到',exact:true}).waitFor();
   assert.equal(await bubble.locator('[data-arkme-message-reactions]').count(),1);
+  const reactionRow=bubble.locator('xpath=ancestor::*[@data-team-message-key]');
+  const receiptGeometry=[];
+  for(const width of [1280,850]){
+   await page.setViewportSize({width,height:860});
+   const indicator=reactionRow.locator('[data-arkme-read-receipt-indicator="partial-read"]');await indicator.waitFor();
+   await page.mouse.move(5,5);const before=await bubble.boundingBox();await bubble.hover();
+   const trigger=reactionRow.locator('.arkme-reaction-hover-trigger');
+   assert.equal(await trigger.evaluate(node=>getComputedStyle(node).opacity),'1');
+   const entry=await trigger.boundingBox(),receipt=await indicator.boundingBox(),after=await bubble.boundingBox();
+   assert.deepEqual(after,before,'hover must not move the message');
+   assert.ok(entry&&receipt&&after);
+   assert.ok(entry.y+entry.height<=receipt.y||entry.y>=receipt.y+receipt.height||entry.x+entry.width<=receipt.x||entry.x>=receipt.x+receipt.width,'reaction entry must not overlap the receipt');
+   assert.ok(await indicator.evaluate(node=>{const r=node.getBoundingClientRect();return !!document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest('[data-arkme-read-receipt]')}),'receipt center must still receive pointer clicks');
+   await page.screenshot({path:join(capture,`reaction-receipt-hover-${width}.png`)});
+   await page.mouse.click(receipt.x+receipt.width/2,receipt.y+receipt.height/2);
+   await page.getByRole('dialog',{name:'查看阅读状态',exact:true}).waitFor();
+   await page.keyboard.press('Escape');
+   await trigger.click();await page.getByRole('group',{name:'全部表情',exact:true}).waitFor();await trigger.click();
+   receiptGeometry.push({width,entry,receipt});
+  }
+  await page.setViewportSize({width:1280,height:860});
   const add=bubble.getByRole('button',{name:'继续表态',exact:true});
   for(const visible of [true,false,true]){await add.click();assert.equal(await page.locator('[aria-label="表态面板"]').count(),Number(visible));}
   await page.getByRole('button',{name:'收到',exact:true}).click();
@@ -131,7 +152,7 @@ try {
   await page.setViewportSize({width:850,height:700});await page.waitForTimeout(400);
   await page.screenshot({path:join(capture,'reaction-picker-narrow.png')});
   assert.ok(readFileSync(log,'utf8').includes('TEAM_REACTION_TOOL_READY'));
-  await writeFile(join(capture,'reaction-acceptance.json'),JSON.stringify({passed:true,installedSdk:true,officialSessionToolRead:true,realHostTransport:true,upstream:'isolated synthetic HTTP',bubblePlacement:true,inlineToggle:true,addRemove:true,selfName:true,remark:true,artifact},null,2));
+  await writeFile(join(capture,'reaction-acceptance.json'),JSON.stringify({passed:true,installedSdk:true,officialSessionToolRead:true,realHostTransport:true,upstream:'isolated synthetic HTTP',bubblePlacement:true,inlineToggle:true,addRemove:true,selfName:true,remark:true,receiptGeometry,artifact},null,2));
   console.log('PASS: packaged Team reactions UI, SDK and real DSH session Tool share the Host owner');
  }else{
  await menu();await page.screenshot({path:join(capture,'initial-menu.png')});await page.getByRole('menuitem',{name:'延展',exact:true}).click();await page.waitForTimeout(250);await page.screenshot({path:join(capture,'01-reply.png')});if(live){await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).fill('PC正式包引用回复');await pane.getByRole('button',{name:'发送',exact:true}).click();await poll(()=>ownerPost('team','/api/v1/team/conversations/timeline/page',{conversation_uid:sourceUID,side:'team'}),page=>page.messages.some(m=>m.record?.text_content==='PC正式包引用回复'&&m.reply?.message_uid===sourceMessageUID));await pane.getByText('PC正式包引用回复',{exact:true}).last().waitFor();await pane.locator('[data-team-message-key]').filter({hasText:'PC正式包引用回复'}).last().locator('[data-arkme-quote-preview]').getByText(text,{exact:true}).waitFor({timeout:15000});await page.screenshot({path:join(capture,'01-reply-sent.png')});}else await pane.getByRole('button',{name:'取消延展',exact:true}).click();
