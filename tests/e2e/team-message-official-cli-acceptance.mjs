@@ -13,7 +13,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 const node=process.execPath;
 const reactionsOnly=process.env.ARKME_E2E_REACTIONS_ONLY==='1';
-let reactionRevision=0,reactionMine=false;
+let reactionRevision=0,reactionMine=false,reactionOther=true;
 const reactionExpression={text:'收到',color:'blue'},reactionKey=createHash('sha256').update(JSON.stringify(reactionExpression)).digest('hex');
 const cli=process.env.ARKME_OFFICIAL_DSH_CLI;
 if(!cli||!process.env.ARKME_PACKED_ARTIFACT||!process.env.PLAYWRIGHT_MODULE_ANCHOR)throw new Error('official DSH CLI, immutable tgz and Playwright module anchor required');
@@ -36,7 +36,7 @@ let sourceUID,targetUID,sourceMessageUID;
 const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read();if(predicate(value))return value;await new Promise(r=>setTimeout(r,100))}throw new Error('owner result did not converge')};
  const text='这批订单请周五下午三点前送达，到了以后联系我。'+(live?' '+randomUUID():''),digest=createHash('sha256').update(JSON.stringify({text_content:text,text_format:'plain',content_payload:{}})).digest('hex')
  const channel={team_id:42,name:'接待团队',jotmo_id:'fixture_team',public_ref:'b'.repeat(32),enabled:true,revision:1,can_manage:true,can_pause:true}
- const conversation=uid=>({conversation_uid:uid,side:'team',channel,visitor:{nickname:uid==='source'?'验收来访者':'转发目标'},last_seq:1,revision:1,updated_at:1700000000000})
+ const conversation=uid=>({conversation_uid:uid,side:'team',channel,visitor:{nickname:uid==='source'?'验收来访者':'转发目标'},last_seq:1,revision:1,updated_at:1700000000000,notification_policy:{muted:uid==='source',policy_version:1,notify_after_seq:0}})
  const message={message_uid:'source-message',seq:1,side:'external',own:false,state:'published',created_at:1700000000000,sender:{nickname:'验收来访者'},record:{status:'available',version:3,text_content:text,template_kind:1,text_projection:{protocol:'arkme-text-v1',digest,canonical:text},media:[]}}
  const fixtureJwt=[{alg:'none'},{user_id:10001,client_id:20001,exp:Math.floor(Date.now()/1000)+3600}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url')).join('.')+'.fixture'
  const jwt=live?token(actor):fixtureJwt;
@@ -58,7 +58,7 @@ const poll=async(read,predicate)=>{for(let i=0;i<100;i++){const value=await read
    let data={items:[],users:[],has_more:false,total:0},code=200
    if(path.endsWith('/the-best-api-for-testing'))data={access_token:jwt,refresh_token:'isolated-team-interaction'}
    else if(reactionsOnly&&path.endsWith('/reactions/library/query'))data={revision:1,items:[reactionExpression]};
-   else if(reactionsOnly&&path.endsWith('/reactions/team/query'))data={items:body.targets.map(target=>({target,mine:{revision:reactionRevision,selections:reactionMine?[{key:reactionKey,expression:reactionExpression,at:1}]:[]},groups:[{key:reactionKey,expression:reactionExpression,count:reactionMine?2:1,actor_user_ids:reactionMine?[actor,10002]:[10002]}],has_more:false,actors_visible:true,private:false}))};
+   else if(reactionsOnly&&path.endsWith('/reactions/team/query'))data={items:body.targets.map(target=>({target,mine:{revision:reactionRevision,selections:reactionMine?[{key:reactionKey,expression:reactionExpression,at:1}]:[]},groups:reactionMine||reactionOther?[{key:reactionKey,expression:reactionExpression,count:Number(reactionMine)+Number(reactionOther),actor_user_ids:[...(reactionMine?[actor]:[]),...(reactionOther?[10002]:[])]}]:[],has_more:false,actors_visible:true,private:false}))};
    else if(reactionsOnly&&path.endsWith('/reactions/team/set')){reactionMine=body.active;reactionRevision++;data={outcome:'updated',state:{revision:reactionRevision,selections:reactionMine?[{key:reactionKey,expression:reactionExpression,at:1}]:[]}};}
    else if(reactionsOnly&&path.endsWith('/get-public-users-by-ids'))data={items:body.user_ids.map(user_id=>({user_id,nick_name:user_id===actor?'团队交互验收':'同事乙'}))};
    else if(reactionsOnly&&path.endsWith('/chats/contacts/list'))data={items:[{user_id:10002,remark:'私人备注乙'}],has_more:false};
@@ -119,6 +119,13 @@ try {
  }
  const pane=page.locator('.team-conversation-pane');await pane.getByText(text,{exact:true}).first().waitFor();const menu=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await pane.locator('[data-team-message-key]').filter({hasText:text}).first().getByLabel('消息操作',{exact:true}).click({button:'right'})};
  if(reactionsOnly){
+  if(!live){
+   const row=page.locator('.team-conversation-row').filter({hasText:'验收来访者'}).first();
+   const mute=row.getByRole('img',{name:'消息免打扰已开启',exact:true});await mute.waitFor();
+   assert.equal(await mute.getAttribute('width'),'15');assert.equal(await mute.getAttribute('viewBox'),'0 0 20 20');
+   assert.ok(await mute.evaluate(node=>!!node.closest('[data-arkme-conversation-content]')),'mute icon belongs at the preview end, outside the avatar');
+   await row.screenshot({path:join(capture,'team-mute-row.png')});
+  }
   const target={id:'sdk-team',teamConversationRef:sdkSource.ref,teamMessageRef:sdkSelected.ref};
   const facts=await sdk.reactions({action:'query',actorPresentation:'deferred',accountKey:`test:${actor}`,targets:[target]});
   assert.equal(facts.items[0].groups[0].count,1);assert.equal(facts.items[0].groups[0].actors[0].presentationPending,true);
@@ -132,18 +139,23 @@ try {
    await page.setViewportSize({width,height:860});
    const indicator=reactionRow.locator('[data-arkme-read-receipt-indicator="partial-read"]');await indicator.waitFor();
    await page.mouse.move(5,5);const before=await bubble.boundingBox();await bubble.hover();
-   const trigger=reactionRow.locator('.arkme-reaction-hover-trigger');
-   assert.equal(await trigger.evaluate(node=>getComputedStyle(node).opacity),'1');
+   const trigger=reactionRow.locator('[data-arkme-reaction-toggle]');
+   assert.equal(await reactionRow.locator('.arkme-reaction-hover-trigger:visible').count(),0,'inline add replaces the hover entry');
    const entry=await trigger.boundingBox(),receipt=await indicator.boundingBox(),after=await bubble.boundingBox();
    assert.deepEqual(after,before,'hover must not move the message');
    assert.ok(entry&&receipt&&after);
    assert.ok(entry.y+entry.height<=receipt.y||entry.y>=receipt.y+receipt.height||entry.x+entry.width<=receipt.x||entry.x>=receipt.x+receipt.width,'reaction entry must not overlap the receipt');
    assert.ok(await indicator.evaluate(node=>{const r=node.getBoundingClientRect();return !!document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest('[data-arkme-read-receipt]')}),'receipt center must still receive pointer clicks');
    await page.screenshot({path:join(capture,`reaction-receipt-hover-${width}.png`)});
+   if(width===1280)await reactionRow.screenshot({path:join(capture,'team-single-reaction-entry.png')});
    await page.mouse.click(receipt.x+receipt.width/2,receipt.y+receipt.height/2);
    await page.getByRole('dialog',{name:'查看阅读状态',exact:true}).waitFor();
    await page.keyboard.press('Escape');
-   await trigger.click();await page.getByRole('group',{name:'全部表情',exact:true}).waitFor();await trigger.click();
+   await trigger.click();await page.getByRole('group',{name:'全部表情',exact:true}).waitFor();
+   const panel=page.locator('[aria-label="表态面板"]'),panelBox=await panel.boundingBox();assert.ok(panelBox);
+   assert.ok(Math.abs(panelBox.x-Math.max(8,Math.min(entry.x,width-panelBox.width-8)))<1,'picker anchors to the visible inline entry');
+   await panel.getByRole('button').first().focus();await page.keyboard.press('Escape');
+   assert.ok(await trigger.evaluate(node=>document.activeElement===node),'Escape restores focus to the visible entry');
    receiptGeometry.push({width,entry,receipt});
   }
   await page.setViewportSize({width:1280,height:860});
@@ -153,15 +165,25 @@ try {
   await bubble.getByRole('button',{name:'取消我的收到',exact:true}).waitFor();
   await bubble.getByRole('button',{name:'查看团队交互验收的资料',exact:true}).waitFor();
   await page.screenshot({path:join(capture,'reaction-added.png')});
+  if(!live)reactionOther=false;
   await bubble.getByRole('button',{name:'取消我的收到',exact:true}).click();
-  await bubble.getByRole('button',{name:'添加收到',exact:true}).waitFor();
+  if(!live){
+   await bubble.locator('[data-arkme-message-reactions]').waitFor({state:'hidden'});await bubble.hover();
+   const hover=reactionRow.locator('.arkme-reaction-hover-trigger');await hover.waitFor();
+   assert.equal(await reactionRow.locator('[data-arkme-reaction-toggle]').count(),0);
+   const entry=await hover.boundingBox(),receipt=await reactionRow.locator('[data-arkme-read-receipt-indicator]').boundingBox();assert.ok(entry&&receipt);
+   assert.ok(entry.y+entry.height<=receipt.y||entry.y>=receipt.y+receipt.height||entry.x+entry.width<=receipt.x||entry.x>=receipt.x+receipt.width,'empty reactions keep the receipt unobstructed');
+   await page.screenshot({path:join(capture,'reaction-empty-hover.png')});
+   await hover.click();await page.getByRole('button',{name:'收到',exact:true}).click();await bubble.getByRole('button',{name:'取消我的收到',exact:true}).waitFor();
+   assert.equal(await reactionRow.locator('.arkme-reaction-hover-trigger:visible').count(),0);
+  }else await bubble.getByRole('button',{name:'添加收到',exact:true}).waitFor();
   await menu();await page.getByRole('menuitem',{name:'表态',exact:true}).click();
   await page.getByRole('group',{name:'全部表情',exact:true}).waitFor();
   await page.screenshot({path:join(capture,'reaction-picker.png')});
   await page.setViewportSize({width:850,height:700});await page.waitForTimeout(400);
   await page.screenshot({path:join(capture,'reaction-picker-narrow.png')});
   assert.ok(readFileSync(log,'utf8').includes('TEAM_REACTION_TOOL_READY'));
-  await writeFile(join(capture,'reaction-acceptance.json'),JSON.stringify({passed:true,installedSdk:true,officialSessionToolRead:true,realHostTransport:true,upstream:'isolated synthetic HTTP',bubblePlacement:true,inlineToggle:true,addRemove:true,selfName:true,remark:true,receiptGeometry,artifact},null,2));
+  await writeFile(join(capture,'reaction-acceptance.json'),JSON.stringify({passed:true,installedSdk:true,officialSessionToolRead:true,realHostTransport:true,upstream:'isolated synthetic HTTP',bubblePlacement:true,inlineToggle:true,addRemove:true,selfName:true,remark:true,singleVisibleEntry:true,inlineAnchorAndFocus:true,emptyEntryRecovery:!live,sharedMuteIcon:!live,receiptGeometry,artifact},null,2));
   console.log('PASS: packaged Team reactions UI, SDK and real DSH session Tool share the Host owner');
  }else{
  await menu();await page.screenshot({path:join(capture,'initial-menu.png')});await page.getByRole('menuitem',{name:'延展',exact:true}).click();await page.waitForTimeout(250);await page.screenshot({path:join(capture,'01-reply.png')});if(live){await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).fill('PC正式包引用回复');await pane.getByRole('button',{name:'发送',exact:true}).click();await poll(()=>ownerPost('team','/api/v1/team/conversations/timeline/page',{conversation_uid:sourceUID,side:'team'}),page=>page.messages.some(m=>m.record?.text_content==='PC正式包引用回复'&&m.reply?.message_uid===sourceMessageUID));await pane.getByText('PC正式包引用回复',{exact:true}).last().waitFor();await pane.locator('[data-team-message-key]').filter({hasText:'PC正式包引用回复'}).last().locator('[data-arkme-quote-preview], [data-arkme-extension-parent-preview]').getByText(text,{exact:true}).waitFor({timeout:15000});await page.screenshot({path:join(capture,'01-reply-sent.png')});}else await pane.getByRole('button',{name:'取消延展',exact:true}).click();
