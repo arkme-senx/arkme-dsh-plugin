@@ -24,6 +24,18 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 async function mount(scopeKey = 'one') { await act(async () => root.render(<ArkmeDictationButton scopeKey={scopeKey} getTarget={() => target} onBusyChange={busy} />)) }
+it('leaves microphone access untouched on mount, rerender and focus until the user starts dictation', async () => {
+  await mount()
+  await mount('two')
+  const mic = host.querySelector<HTMLButtonElement>('button[aria-label="语音输入"]')!
+  await act(async () => { mic.focus(); mic.blur() })
+  expect(mocks.capture).not.toHaveBeenCalled()
+  expect(mocks.connect).not.toHaveBeenCalled()
+
+  await act(async () => mic.click())
+  expect(mocks.capture).toHaveBeenCalledOnce()
+  expect(mocks.connect).toHaveBeenCalledOnce()
+})
 it('shows the live waveform, prevents double starts and streams text before stop', async () => {
   await mount(); const mic = host.querySelector<HTMLButtonElement>('button[aria-label="语音输入"]')!
   await act(async () => { mic.click(); mic.click() })
