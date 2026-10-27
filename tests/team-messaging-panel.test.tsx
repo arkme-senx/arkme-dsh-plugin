@@ -129,6 +129,108 @@ describe('Team send UI recovery', () => {
     expect(JSON.parse(localStorage.getItem(storageKey)!).reply).toBeUndefined()
     expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
   })
+  it('joins the Team extension target to the same input card shape as private chat', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({text:'下一条',assets:[],reply:{messageRef:'parent',messageKey:'parent',version:1,text:'原文',senderName:'同事'}}))
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />); await tick() })
+      const target = host.querySelector('[data-arkme-composer-extension-target]')!
+      const card = host.querySelector<HTMLElement>('[data-arkme-primary-composer]')!
+      expect(target.nextElementSibling).toBe(card)
+      expect(card.style.borderRadius).toBe('0 0 15px 15px')
+      expect(card.style.borderTopWidth).toBe('0px')
+      expect(card.style.borderColor).not.toBe('transparent')
+      await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="取消延展"]')!.click(); await tick() })
+      expect(host.querySelector('[data-arkme-composer-extension-target]')).toBeNull()
+      expect(card.style.borderRadius).toBe('15px')
+      expect(card.style.borderTopWidth).toBe('1px')
+      expect(host.querySelector('[contenteditable]')?.textContent).toBe('下一条')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it.each([['team',false],['external',false],['team',true],['external',true]] as const)('%s consumes the extension immediately and keeps it through a minimal sent ACK and delayed refresh (quote=%s)', async (side, quoted) => {
+    const current = {...conversation,side}
+    const quote = {version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:3,start:0,end:4,text:'延展原文',prefix:'',suffix:''}
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'延展原文',senderName:'同事',media:[],...(quoted ? {quote} : {})}
+    localStorage.setItem(storageKey,JSON.stringify({text:'本条延展',assets:[],reply}))
+    let release!: (value: unknown) => void
+    let tasks: ReturnType<typeof accepted>[] = []
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation:current,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.tasks') return tasks
+      if (op === 'team.app.send.enqueue') return new Promise(resolve => { release = resolve })
+      return []
+    })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={current} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await send()
+    const stored = () => JSON.parse(localStorage.getItem(storageKey)!)
+    expect(stored().reply).toBeUndefined()
+    expect(stored().attempt.reply).toEqual(reply)
+    expect(stored().text).toBe('')
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+    const outgoing = () => renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(outgoing().reply).toMatchObject({key:'parent',version:3,text:'延展原文'})
+    await act(async () => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条普通消息'))
+    await act(async () => {
+      tasks = [accepted({state:'sent',message:{key:'sent',ref:'sent-ref',seq:2,revision:1,side,sender:{nickname:''},own:false,state:'published',createdAt:0,version:0,contentStatus:'',media:[],canEdit:false,canDelete:false}})]
+      release(tasks[0]); await tick()
+    })
+    expect(outgoing().state).toBe('published')
+    expect(outgoing().own).toBe(true)
+    expect(outgoing().createdAt).toBeGreaterThan(0)
+    expect(outgoing().reply).toMatchObject({key:'parent',version:3,text:'延展原文'})
+    expect(outgoing().reply?.quote).toEqual(quoted ? quote : undefined)
+    expect(stored().text).toBe('下一条普通消息')
+    expect(stored().reply).toBeUndefined()
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    expect(outgoing().reply?.text).toBe('延展原文')
+  })
+
+  it('replaces a locally retained parent with the authoritative unavailable preview', async () => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'撤权前的原文',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'回复正文',assets:[],reply}))
+    const messages: TeamMessage[] = []
+    let tasks: ReturnType<typeof accepted>[] = []
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation,messages,hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.tasks') return tasks
+      if (op === 'team.app.send.enqueue') {
+        tasks = [accepted({state:'sent',message:{key:'sent',ref:'sent-ref',seq:2,revision:1,side:'external',sender:{nickname:''},own:false,state:'published',createdAt:0,version:0,contentStatus:'',media:[]}})]
+        return tasks[0]
+      }
+      return []
+    })
+    await mount(); await send()
+    const row = () => renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(row().reply?.text).toBe('撤权前的原文')
+    messages.push({...row(),version:1,contentStatus:'available',reply:{ref:'parent-ref',key:'parent',seq:1,version:3,state:'unavailable',text:'',sender:{nickname:''}}})
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    expect(row().reply).toMatchObject({state:'unavailable',text:''})
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('撤权前的原文')
+  })
+
+  it('restores the consumed extension and text on explicit rejection without dropping the next draft', async () => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'原文',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'待发送',assets:[],reply}))
+    let reject!: (reason: unknown) => void
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.enqueue') return new Promise((_resolve,fail) => { reject = fail })
+      return []
+    })
+    await mount(); await send()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+    await act(async () => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('继续输入'))
+    await act(async () => { reject({body:{code:'team-channel_paused'}}); await tick() })
+    const saved = JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.reply).toEqual(reply)
+    expect(saved.text).toBe('待发送\n\n继续输入')
+    expect(saved.attempt).toBeUndefined()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(1)
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+  })
+
   it('locates a bounded historical window and keeps background recovery in that window', async () => {
     const old: TeamMessage = {ref:'old-ref',key:'old',seq:10,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
     const head = {...old,key:'new',seq:100}, later = {...old,key:'later',seq:60}

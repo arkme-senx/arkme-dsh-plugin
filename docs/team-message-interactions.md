@@ -55,3 +55,19 @@ node tests/e2e/team-message-official-cli-acceptance.mjs
 后端部署顺序：先部署 jotmo-team 的 extensions 只读接口和独立索引，再部署客户端。旧 reply_to 和发送命令不变；不支持的新 Provider 明确提示升级。未修改插件版本号、根 README 或 DSH 源码。
 
 本次验证入口为 tests/team-extension-detail.test.tsx、team-extension-parity.test.tsx、team-message-sdk.test.ts、team-app-service.test.ts 和增强的官方 CLI acceptance；打包后在全新官方 0.2.1-rc.2 Profile 验证 UI/SDK/真实 Agent Session Tool。业务上游仍是隔离合成 HTTP，真实 Mongo 查询计划在 jotmo-team 独立验证；不等于线上多服务或 Windows/Linux 实机验收。具体运行结果见同任务 meta change c20261026-team-extension-ux/verification.md。
+
+## 2026-10-27 延展发送时序与输入框修复
+
+Team 输入区与私聊/群聊复用 ArkmeComposerCard：显式延展或重新编辑时输入区顶部收平，与目标预览共用完整边框；取消或接收发送后立即恢复普通圆角。
+
+发送先持久化冻结的 attempt（含原 reply、选区和稳定 UID），同一次状态更新消费当前输入区的 reply 并创建带父预览的待发气泡。等待 Host 入队时，继续输入属于下一条草稿。精简成功应答缺少父预览、本人归属与时间时，以当前账号已接受的任务补齐这些本地展示字段，沿用冻结任务的 reply，直到当前授权时间线替换本地投影；不可用的权威父预览优先，不恢复旧正文。明确拒绝仍恢复原回复目标与正文，并保留后续输入；网络应答不确定继续使用原 UID 重试。
+
+| 能力面 | 本轮范围 | 验证入口 |
+| --- | --- | --- |
+| UI | 既有输入框与发送状态修复 | team-messaging-panel.test.tsx 的慢入队、精简 ACK、选区、拒绝恢复、权威不可用覆盖；官方 CLI acceptance 的 ARKME_E2E_EXTENSION_SEND_ONLY=1 场景 |
+| Tools / SDK | N/A：未改变 Host 路由、查询、命令或权限；不为纯客户端展示与草稿时序增加 API | 既有发送/任务 owner 继续使用 TeamSendQueue |
+| Host owner | 既有 TeamSendQueue，业务语义保持原合同 | team-send-queue.test.ts |
+
+官方场景从新 tgz 安装到全新官方 DSH Profile，以延迟真实 Host 入队请求和精简合成业务应答验证输入清理、气泡连续性及两种窗口宽度。合成 HTTP 结果不代表真实账号或多设备验收。
+
+本轮最终相关回归 148 项通过，typecheck、build 与新 tgz 的官方宿主延迟应答验收通过（1280/850 宽度）。全量首次运行 14,227 通过、23 跳过、4 个录音/转发用例超时；这 4 项按原超时限制串行复验通过。该全量运行早于最后的精简 ACK 归属/时间补全，最后补全后已复跑上述受影响用例；不把串行复验或局部复验改写为一次全量全绿。
