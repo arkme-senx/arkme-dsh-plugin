@@ -7,6 +7,7 @@ import { prepareRecordingTranscriptComparison } from '../src/client/recordings/p
 import { RecordingTranscriptComparison } from '../src/client/recordings/RecordingTranscriptComparison.js'
 import { RecordingTranscriptForward } from '../src/client/recordings/RecordingTranscriptForward.js'
 import { createRecordingForwardAttempt } from '../src/client/recordings/recording-forward-client.js'
+import { RecordingComparisonMenu } from '../src/client/recordings/RecordingComparisonMenu.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const item = (id: string, sessionKey = 'session'): ArkmeRecordingWorkbenchItem => ({
@@ -80,18 +81,56 @@ describe('transcript comparison lifecycle', () => {
     expect(audios[1]?.pause).toHaveBeenCalled()
   })
 
-  it('opens an accepted task, polls only pending work and stops after completion', async () => {
+  it('views without submitting, starts only on the explicit button, then polls until completion', async () => {
     const initial = comparison(); initial.candidateCount = 1
     const pending = comparison(); pending.doubao.processingCount = 1
     const complete = comparison(); complete.doubao = section([item('complete')])
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 1, inFlightCount: 0, missingAudioCount: 1 }).mockResolvedValueOnce(pending).mockResolvedValue(complete)
     const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick() })
     expect(JSON.stringify(renderer.toJSON())).toContain('部分录音没有可用于豆包转写的音频')
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
     expect(mocks.call).toHaveBeenCalledTimes(4)
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(mocks.call).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not resubmit on double click and cancels a pending explicit submission on close', async () => {
+    const initial = comparison(); initial.candidateCount = 1
+    mocks.call.mockResolvedValueOnce(initial)
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    let resolve!: (value: unknown) => void
+    mocks.call.mockImplementationOnce(async () => new Promise(yes => { resolve = yes }))
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    const start = renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!
+    await act(async () => { start.props.onClick(); start.props.onClick() })
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'recordings.compare.start')).toHaveLength(1)
+    const signal = mocks.call.mock.calls.at(-1)![2] as AbortSignal
+    await act(async () => renderer.unmount())
+    expect(signal.aborted).toBe(true)
+    await act(async () => resolve({ queuedCount: 1, inFlightCount: 0, missingAudioCount: 0 }))
+    expect(mocks.call).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps formal results visible on explicit submission failure and allows retry', async () => {
+    const initial = comparison(); initial.candidateCount = 1
+    mocks.call.mockResolvedValueOnce(initial)
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    mocks.call.mockRejectedValueOnce(new Error('提交暂时失败'))
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    await act(async () => renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick())
+    expect(JSON.stringify(renderer.toJSON())).toContain('提交暂时失败')
+    expect(JSON.stringify(renderer.toJSON())).toContain('你好')
+    expect(renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.disabled).toBe(false)
+  })
+
+  it('can view an empty comparison without any processing candidate or submission', async () => {
+    mocks.call.mockResolvedValue(comparison())
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    expect(prepared.pending).toBe(false)
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.compare', { dateStamp: 0 }, expect.any(AbortSignal))
   })
 
   it('reports media failure without replacing enhanced audio with a nearby system clip', async () => {
@@ -108,7 +147,11 @@ describe('transcript comparison lifecycle', () => {
   it('reports unavailable material without assuming that retention expired', async () => {
     const initial = comparison(); initial.candidateCount = 1
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 0, inFlightCount: 0, missingAudioCount: 1 })
-    await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).rejects.toThrow('部分录音没有可用于豆包转写的音频')
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick() })
+    expect(JSON.stringify(renderer.toJSON())).toContain('部分录音没有可用于豆包转写的音频')
     expect(mocks.call).toHaveBeenCalledTimes(2)
   })
 
@@ -120,10 +163,11 @@ describe('transcript comparison lifecycle', () => {
     expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['recordings.compare'])
   })
 
-  it('does not abandon existing pending work when a new backfill fails', async () => {
+  it('reads existing pending work without submitting another backfill', async () => {
     const initial = comparison(); initial.candidateCount = 1; initial.doubao.processingCount = 1
     mocks.call.mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error('offline'))
     await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).resolves.toMatchObject({ pending: true })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
   })
 
   it('keeps text readable on polling failure and offers retry only for that failure', async () => {
@@ -388,7 +432,7 @@ it('does not open a comparison for a previously selected date when its response 
     throw new Error(operation)
   })
   await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
-  await act(async () => { renderer.root.findByProps({ 'aria-label': '转写对比' }).props.onClick() })
+  await act(async () => { renderer.root.findByType(RecordingComparisonMenu).props.onDoubao() })
   expect(renderer.root.findByProps({ 'aria-label': '正在准备转写对比' }).props.disabled).toBe(true)
   const signal = mocks.call.mock.calls.find(([op]) => op === 'recordings.compare')?.[2] as AbortSignal
   await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
@@ -397,4 +441,16 @@ it('does not open a comparison for a previously selected date when its response 
   expect(signal.aborted).toBe(true)
   expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
   expect(renderer.root.findByProps({ 'aria-label': '转写对比' }).props.disabled).toBe(false)
+})
+
+it('keeps comparison discovery available when a recording has no formal transcript text', async () => {
+  mocks.call.mockImplementation(async (operation, params) => {
+    if (operation === 'recordings.calendar') return { days: [] }
+    if (operation === 'recordings.summary-model-config') return { options: [] }
+    if (operation === 'recordings.day') return { dateStamp: params.dateStamp, transcript: section([]), summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } }
+    throw new Error(operation)
+  })
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+  expect(renderer.root.findByProps({ 'aria-label': '转写对比' }).props.disabled).toBe(false)
+  expect(mocks.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })

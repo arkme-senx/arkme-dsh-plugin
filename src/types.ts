@@ -1538,6 +1538,7 @@ arkoImagesV1?:true
     speakerPresence?: true
     recordingWorkflowV2?: true
     recordingStrategiesV1?: true
+    recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
     unifiedChatTimeline?: true

@@ -13,6 +13,10 @@ export interface RecordingStrategySources {
   items: Array<{ sourceRef: string; fileName: string; startAtMillis: number }>
   nextCursor?: string
 }
+export interface RecordingStrategyRecordings {
+  items: Array<{ sessionRef: string; startAtMillis: number; endAtMillis: number }>
+  nextCursor?: string
+}
 export interface RecordingStrategyOptions {
   strategies: Array<{ id: RecordingStrategy; name: string }>
   officialStrategy: RecordingStrategy
@@ -30,6 +34,7 @@ export interface RecordingStrategyPage {
 }
 export type RecordingStrategyRequest =
   | { action: 'catalog' }
+  | { action: 'recordings'; startAtMillis: number; endAtMillis: number; cursor?: string }
   | { action: 'preference'; expectedUserId?: number }
   | { action: 'preference-set'; strategy: RecordingStrategy; expectedUserId?: number }
   | { action: 'sources'; sessionRef: string; cursor?: string }
@@ -40,6 +45,7 @@ export type RecordingStrategyRequest =
   | { action: 'start'; sourceRef: string; strategy: RecordingStrategy }
 
 export type RecordingStrategyResponse<T extends RecordingStrategyRequest> =
+  T['action'] extends 'recordings' ? RecordingStrategyRecordings :
   T['action'] extends 'preference' | 'preference-set' ? RecordingProcessingPreference :
   T['action'] extends 'catalog' ? Array<{ id: RecordingStrategy; name: string }> :
   T['action'] extends 'sources' ? RecordingStrategySources :

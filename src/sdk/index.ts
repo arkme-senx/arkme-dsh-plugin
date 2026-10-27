@@ -720,7 +720,9 @@ export class ArkmeSdk {
   }
   async recordingStrategies<T extends import('../recording-strategy-contract.js').RecordingStrategyRequest>(input: T, signal?: AbortSignal): Promise<import('../recording-strategy-contract.js').RecordingStrategyResponse<T>> {
     const features = (await this.capabilities(signal)).features
-    if (input.action === 'preference' || input.action === 'preference-set') {
+    if (input.action === 'recordings') {
+      if (features.recordingStrategyRecordingsV1 !== true) throw new Error('当前 Provider 不支持按日期选择策略对比录音')
+    } else if (input.action === 'preference' || input.action === 'preference-set') {
       if (features.recordingProcessingPreferenceV1 !== true) throw new Error('当前 Provider 不支持统一录音处理设置')
     } else if (features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
     return this.call(input.action === 'start' ? 'recordings.strategies.start' : input.action === 'preference-set' ? 'recordings.strategies.preference.set' : 'recordings.strategies', { ...input }, signal)

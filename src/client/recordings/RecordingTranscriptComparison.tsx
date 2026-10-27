@@ -24,6 +24,10 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   const [playbackNotice, setPlaybackNotice] = useState('')
   const [pending, setPending] = useState(prepared.pending)
   const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [notice, setNotice] = useState(prepared.notice)
+  const submission = useRef<AbortController>()
+  useEffect(() => () => submission.current?.abort(), [])
   const [revision, setRevision] = useState(0)
   const columns = useRef<Array<HTMLDivElement | null>>([])
   const synchronizedScroll = useRef<{ element: HTMLDivElement; top: number }>()
@@ -60,6 +64,21 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
     else if (prepared.pending) timer = setTimeout(() => { void load() }, 3_000)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }, [dateStamp, prepared, revision])
+
+  const startEnhancement = async () => {
+    if (submission.current || pending) return
+    const controller = new AbortController(); submission.current = controller
+    setSubmitting(true); setError(''); setNotice('')
+    try {
+      const result = await callArkme<{ queuedCount: number; inFlightCount: number; missingAudioCount: number }>('recordings.compare.start', { dateStamp }, controller.signal)
+      if (controller.signal.aborted) return
+      const accepted = result.queuedCount + result.inFlightCount > 0
+      const warning = result.missingAudioCount > 0 ? '部分录音没有可用于豆包转写的音频' : ''
+      if (!accepted) { setNotice(warning || '没有新增可处理的音频'); return }
+      setPending(true); setNotice(warning); setRevision(value => value + 1)
+    } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '豆包转写提交失败') }
+    finally { if (submission.current === controller) { submission.current = undefined; if (!controller.signal.aborted) setSubmitting(false) } }
+  }
 
   const synchronize = (event: UIEvent<HTMLDivElement>, column: number) => {
     const element = event.currentTarget
@@ -98,14 +117,16 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
     </header>
     {error && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{error}<RecordingTranscriptButton onClick={() => { setRevision(value => value + 1) }} disabled={loading}>{tr("重试")}</RecordingTranscriptButton></div>}
     {(playbackNotice || player.error) && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{playbackNotice || player.error}</div>}
-    {prepared.notice !== '' && <div role="status" style={{ color: colors.secondary, padding: '8px 20px' }}>{prepared.notice}</div>}
+    {notice !== '' && <div role="status" style={{ color: colors.secondary, padding: '8px 20px' }}>{notice}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', flex: 1, minHeight: 0 }}>
       {(['system', 'doubao'] as const).map((source, index) => <section key={source} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, borderLeft: index === 1 ? `1px solid ${colors.border}` : undefined }}>
         <header style={{ height: 46, flex: 'none', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{source === 'system' ? '系统转写' : '豆包转写'}</h3>
           {source === 'system' && player.isPlaying && <RecordingTranscriptButton aria-label={tr("暂停播放")} onClick={player.pause} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
+          {source === 'doubao' && !pending && data.candidateCount > 0 && <RecordingTranscriptButton disabled={submitting} onClick={() => { void startEnhancement() }}>{submitting ? '正在提交…' : '开始豆包转写'}</RecordingTranscriptButton>}
           {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>{tr("豆包转写中…")}</small>}
         </header>
+        {source === 'doubao' && !pending && data.candidateCount > 0 && <p style={{ margin: '0 20px', fontSize: 12, color: colors.secondary }}>将处理当天尚未完成豆包转写的音频，正式结果不变。</p>}
         <div ref={element => { columns.current[index] = element }} onScroll={event => { synchronize(event, index); const pane = event.currentTarget; const pages = source === 'system' ? primaryPages : enhancedPages; if (pages.error === '' && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 400) void pages.next().catch(() => undefined) }} style={{ overflowY: 'auto', flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
           {data[source].items.map(item => {
             const active = player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis

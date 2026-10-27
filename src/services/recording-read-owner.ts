@@ -185,6 +185,26 @@ export class RecordingReadOwner {
     return facts
   }
 
+  /** Metadata only; comparison pickers must not load every transcript or upload history. */
+  async recordingChoices(window: RecordingReadWindow, session: ArkmeSessionCredentials, cursor: string, signal?: AbortSignal): Promise<{ items: Array<{ id: string; startAtMillis: number; endAtMillis: number }>; nextCursor: string }> {
+    validateWindow(window)
+    const row = record(await this.read('/api/v1/audio/recordings/query', {
+      start_at: window.startAt, end_at: window.endAt, order: 'asc', limit: 50,
+      ...(cursor ? { page_cursor: cursor } : {}),
+    }, session, signal))
+    if (!Array.isArray(row.items) || row.items.length > 50) return invalid()
+    const items = row.items.flatMap(value => {
+      const item = record(value)
+      if (item.status !== 'available') return invalid()
+      // A memory-owned transcript is readable, but only the uploader owns its source.
+      if (integer(item.uploader_user_id, 1) !== session.userId) return []
+      return [{ id: id(item.recording_uid), startAtMillis: integer(item.start_at), endAtMillis: integer(item.end_at ?? 0) }]
+    })
+    const next = nextCursor(row)
+    if (next && next === cursor) return invalid()
+    return { items, nextCursor: next }
+  }
+
   /** Assign an entire recording to its start day. The owner supplies complete
    * storage/input aggregates independently of the returned transcript page, so
    * totals never download historical transcript bodies or deduce asset paths. */

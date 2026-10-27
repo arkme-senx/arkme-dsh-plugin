@@ -354,6 +354,29 @@ export class RecordingService {
 
   async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     this.assertWorkbenchEnabled()
+    if (input.action === 'recordings') {
+      const start = input.startAtMillis, end = input.endAtMillis
+      if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0 || typeof end !== 'number'
+        || !Number.isSafeInteger(end) || end <= start || end - start > 27 * 3600_000) {
+        throw new ArkmePluginError('recording-strategy-invalid', '请选择一个录音日期', false, 400)
+      }
+      const session = await this.runtime.requireSession(), prefix = 'arkme-recording-choices-v1'
+      let cursor = ''
+      if (input.cursor !== undefined) {
+        if (typeof input.cursor !== 'string') throw new ArkmePluginError('recording-cursor-invalid', '录音分页引用无效', false, 400)
+        const previous = await this.openRecordingRef(prefix, input.cursor)
+        if (previous.start !== start || previous.end !== end || typeof previous.cursor !== 'string') throw new ArkmePluginError('recording-cursor-invalid', '录音日期已变化，请刷新重试', false, 409)
+        cursor = previous.cursor
+      }
+      const page = await this.readOwner.recordingChoices({ startAt: start, endAt: end }, session, cursor, signal)
+      const items = await Promise.all(page.items.map(async row => ({
+        sessionRef: await this.recordingImportSessionRef({ sessionId: row.id }, session.userId),
+        startAtMillis: row.startAtMillis, endAtMillis: row.endAtMillis,
+      })))
+      await this.ensureRecordingSession(session, signal)
+      return { items, ...(page.nextCursor ? { nextCursor: this.sealRecordingRefWithKey(prefix,
+        { version: 1, viewerUserId: session.userId, start, end, cursor: page.nextCursor }, await this.recordingRefKey(prefix)) } : {}) }
+    }
     if (input.action === 'sources' && typeof input.importRef === 'string') {
       if (input.sessionRef !== undefined) throw new ArkmePluginError('recording-strategy-invalid', '请提供一个录音引用', false, 400)
       const { userId, jobId } = await this.openRecordingImportRef(input.importRef)

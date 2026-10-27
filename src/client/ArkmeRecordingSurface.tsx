@@ -1,3 +1,4 @@
+import { RecordingComparisonMenu } from './recordings/RecordingComparisonMenu.js'
 import { RecordingProcessingSetting } from './recordings/RecordingProcessingSetting.js'
 import { recordingDayNeedsRefresh, recordingCaptureNotice } from '../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './recordings/useRecordingTranscriptPages.js'
@@ -1449,11 +1450,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <RecordingTranscriptSearch key={selectedDate.getTime()} query={transcriptSearch} position={transcriptMatches.length === 0 ? 0 : activeMatchIndex + 1} count={transcriptMatches.length} onChange={value => { setTranscriptSearch(value); setTranscriptMatchIndex(0) }} onFind={() => { setTranscriptMatchIndex(0); transcriptRootRef.current?.querySelector('[data-recording-match="0"]')?.scrollIntoView({ block: 'center' }) }} onPrevious={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + transcriptMatches.length - 1) % transcriptMatches.length) }} onNext={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + 1) % transcriptMatches.length) }} />
         <span style={styles.actionCluster}>
           {workbenchEnabled && <>
-            <Tooltip label={comparisonLoading ? tr('正在准备转写对比') : tr('转写对比')} side="bottom" delayMs={200}>
-            <button data-arkme-feedback="neutral" type="button" aria-label={comparisonLoading ? tr('正在准备转写对比') : tr('转写对比')}
-              style={styles.actionButton} disabled={dayLoading || comparisonLoading || transcriptItems.length === 0}
-              onClick={() => { void openComparison() }}><RecordingDesktopIcon name="compare" /></button>
-            </Tooltip>
+            <RecordingComparisonMenu key={`${entityAccount}:${selectedDate.getTime()}`} dateStamp={selectedDate.getTime()}
+              disabled={dayLoading || comparisonLoading} busy={comparisonLoading}
+              buttonStyle={styles.actionButton} mediaPath={recordingMediaPath} onDoubao={() => { void openComparison() }} onOpenResult={playback.stop} />
             {!selectionMode && <Tooltip label={tr('实体')} side="bottom" delayMs={200}>
               <button data-arkme-feedback="neutral" type="button" aria-label={tr('查看录音实体')} aria-expanded={entities.open}
                 style={{ ...styles.actionButton, ...(entities.open ? { background: colors.subtle, color: colors.text } : {}) }}

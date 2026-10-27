@@ -7,9 +7,9 @@ const button: CSSProperties = { padding: '6px 12px', border: `1px solid ${theme.
 const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hour12: false })
 
 /** Separate from Doubao enhancement: only the initial strategy is official. */
-export function RecordingStrategyComparison({ sessionRef, fileName, mediaPath, onClose }: {
-  sessionRef: string; fileName: string; mediaPath: string; onClose(): void
-}) {
+export function RecordingStrategyComparison({ sessionRef, initialSource, fileName, mediaPath, onClose }: {
+  fileName: string; mediaPath: string; onClose(): void
+} & ({ sessionRef: string; initialSource?: never } | { sessionRef?: never; initialSource: RecordingStrategySources["items"][number] })) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [sources, setSources] = useState<RecordingStrategySources>({ items: [] })
   const [sourceRef, setSourceRef] = useState('')
@@ -26,12 +26,14 @@ export function RecordingStrategyComparison({ sessionRef, fileName, mediaPath, o
     dialog.current?.showModal()
     setError(''); setOptions(undefined); setSourcesLoaded(false); setSources({ items: [] }); setSourceRef('')
     const controller = new AbortController(); request.current = controller
-    void callArkme<RecordingStrategySources>('recordings.strategies', { action: 'sources', sessionRef }, controller.signal).then(page => {
+    if (initialSource) {
+      setSourcesLoaded(true); setSources({ items: [initialSource] }); setSourceRef(initialSource.sourceRef)
+    } else void callArkme<RecordingStrategySources>('recordings.strategies', { action: 'sources', sessionRef }, controller.signal).then(page => {
       if (controller.signal.aborted) return
       setSourcesLoaded(true); setSources(page); setSourceRef(page.items[0]?.sourceRef ?? '')
     }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '加载失败') })
     return () => { controller.abort(); stopPlayback.current?.(); dialog.current?.close() }
-  }, [sessionRef, sourceRevision])
+  }, [sessionRef, initialSource?.sourceRef, sourceRevision])
   useEffect(() => {
     if (!sourceRef) return
     const controller = new AbortController()
