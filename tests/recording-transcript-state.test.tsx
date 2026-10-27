@@ -9,6 +9,7 @@ import { recordingOwnerResponse, type OwnerTestRecording } from './fixtures/reco
 
 const calls = vi.hoisted(() => ({ host: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: calls.host }))
+vi.mock('react-dom',()=>({createPortal:(node:unknown)=>node}))
 import { RecordingTranscriptComparison } from '../src/client/recordings/RecordingTranscriptComparison.js'
 
 const dateStamp = new Date(2026, 8, 18).getTime()

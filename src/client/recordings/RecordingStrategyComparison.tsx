@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type Ref, type UIEvent } from 'react'
 import { callArkme } from '../api.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import type { RecordingStrategy, RecordingStrategyOptions, RecordingStrategyPage, RecordingStrategySources } from '../../recording-strategy-contract.js'
 
-const button: CSSProperties = { padding: '6px 12px', border: `1px solid ${theme.border}`, borderRadius: 6, background: theme.base, color: theme.text, cursor: 'pointer' }
+import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
+import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
+import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow, useRecordingComparisonScroll } from './RecordingComparisonView.js'
 const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hour12: false })
 
 /** Separate from Doubao enhancement: only the initial strategy is official. */
 export function RecordingStrategyComparison({ sessionRef, initialSource, fileName, mediaPath, onClose }: {
   fileName: string; mediaPath: string; onClose(): void
 } & ({ sessionRef: string; initialSource?: never } | { sessionRef?: never; initialSource: RecordingStrategySources["items"][number] })) {
-  const dialog = useRef<HTMLDialogElement>(null)
+  const { columns, synchronize } = useRecordingComparisonScroll()
   const [sources, setSources] = useState<RecordingStrategySources>({ items: [] })
   const [sourceRef, setSourceRef] = useState('')
   const [options, setOptions] = useState<RecordingStrategyOptions>()
@@ -23,7 +25,6 @@ export function RecordingStrategyComparison({ sessionRef, initialSource, fileNam
   const stopPlayback = useRef<(() => void) | undefined>()
   const request = useRef<AbortController>()
   useEffect(() => {
-    dialog.current?.showModal()
     setError(''); setOptions(undefined); setSourcesLoaded(false); setSources({ items: [] }); setSourceRef('')
     const controller = new AbortController(); request.current = controller
     if (initialSource) {
@@ -32,7 +33,7 @@ export function RecordingStrategyComparison({ sessionRef, initialSource, fileNam
       if (controller.signal.aborted) return
       setSourcesLoaded(true); setSources(page); setSourceRef(page.items[0]?.sourceRef ?? '')
     }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '加载失败') })
-    return () => { controller.abort(); stopPlayback.current?.(); dialog.current?.close() }
+    return () => { controller.abort(); stopPlayback.current?.() }
   }, [sessionRef, initialSource?.sourceRef, sourceRevision])
   useEffect(() => {
     if (!sourceRef) return
@@ -72,37 +73,41 @@ export function RecordingStrategyComparison({ sessionRef, initialSource, fileNam
     } catch (e) { if (!request.current?.signal.aborted) setError(e instanceof Error ? e.message : '加载失败') }
     finally { setSourcesBusy(false) }
   }
-  return <dialog ref={dialog} aria-label="录音策略对比" onCancel={e => { e.preventDefault(); onClose() }} style={{ width: 'min(1200px, calc(100vw - 32px))', height: 'min(850px, calc(100dvh - 40px))', padding: 20, boxSizing: 'border-box', border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.text, background: theme.base }}>
-    <div style={{ display: 'flex', gap: 16, justifyContent: 'space-between' }}><h3 style={{ margin: 0 }}>策略对比 · {fileName}</h3><button style={button} onClick={onClose}>关闭</button></div>
-    <p style={{ fontSize: 13, color: theme.secondary }}>首次处理结果为正式结果。其他策略仅用于对比；两列的说话人编号各自独立，同号不表示同一个人。</p>
-    {sources.items.length > 1 && <select aria-label="选择音频源件" value={sourceRef} onChange={e => setSourceRef(e.target.value)} style={button}>{sources.items.map(row => <option key={row.sourceRef} value={row.sourceRef}>{row.fileName || clock(row.startAtMillis)}</option>)}</select>}
-    {sources.nextCursor && <button style={button} disabled={sourcesBusy} onClick={() => { void moreSources() }}>更多音频</button>}
-    {error && <p role="alert">{error} <button style={button} onClick={() => sourceRef ? setRevision(n => n + 1) : setSourceRevision(n => n + 1)}>重试</button></p>}
-    {!options && !error && <p role="status">{sourcesLoaded && sources.items.length === 0 ? '此录音暂无可对比的音频源件。' : '正在读取策略结果…'}</p>}
-    {options && <>
-      <p style={{ color: theme.secondary, fontSize: 12 }}>{!options.officialComplete ? '请等待正式结果处理完成。' : options.officialFailed ? '正式处理未全部成功；请在录音文件中重试原任务。' : options.canStart ? `原件可用于其他策略处理，截止 ${new Date(options.expiresAtMillis).toLocaleString('zh-CN')}。` : '原件不可用于新的策略处理，已有结果仍可查看和播放。'}</p>
-      <div style={{ display: 'flex', gap: 16, height: 'calc(100% - 155px)', minHeight: 240, overflowX: 'auto' }}>
-        {options.strategies.map(strategy => {
-          const official = strategy.id === options.officialStrategy
-          const result = options.results.find(row => row.strategy === strategy.id)
-          return <section key={strategy.id} style={{ flex: '1 0 280px', minWidth: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${theme.border}`, borderRadius: 8, padding: 12 }}>
-            <h4 style={{ margin: '0 0 12px' }}>{strategy.name} {official ? '· 正式结果' : '· 对比结果'}</h4>
-            {!official && !result ? options.canStart ? <button style={button} disabled={busy} onClick={() => { void start(strategy.id) }}>{busy ? '正在提交…' : '使用此策略处理'}</button> : <p>未生成此策略结果</p>
-              : <StrategyTranscript key={`${sourceRef}:${strategy.id}:${official ? options.officialComplete : result?.complete ?? false}`} sourceRef={sourceRef} strategy={strategy.id} mediaPath={mediaPath} stopPlayback={stopPlayback} processing={official ? !options.officialComplete : !result?.complete} failed={official ? options.officialFailed : result?.failed ?? false} />}
-          </section>
-        })}
-      </div>
-    </>}
-  </dialog>
+  const selectedName = sources.items.find(row => row.sourceRef === sourceRef)?.fileName || fileName
+  const strategies = options ? [...options.strategies].sort((a, b) => Number(b.id === options.officialStrategy) - Number(a.id === options.officialStrategy)) : []
+  return <RecordingComparisonView scope={`单个音频 · ${selectedName}`} onClose={onClose}
+    description={<span>两列说话人编号各自独立；对比不改变正式结果。</span>}
+    notices={<div style={{ padding: '0 20px', flex: 'none', fontSize: 12, color: theme.secondary }}>
+      {sources.items.length > 1 && <select aria-label="选择音频源件" title={selectedName} value={sourceRef} onChange={e => setSourceRef(e.target.value)} style={{ maxWidth: '100%', width: 320, minWidth: 0, textOverflow: 'ellipsis', padding: '6px 8px', marginTop: 8, border: `1px solid ${theme.border}`, borderRadius: 6, background: theme.base, color: theme.text }}>{sources.items.map(row => <option key={row.sourceRef} value={row.sourceRef}>{row.fileName || clock(row.startAtMillis)}</option>)}</select>}
+      {sources.nextCursor && <RecordingTranscriptButton disabled={sourcesBusy} onClick={() => { void moreSources() }}>更多音频</RecordingTranscriptButton>}
+      {error && <p role="alert" style={{ color: theme.danger }}>{error} <RecordingTranscriptButton onClick={() => sourceRef ? setRevision(n => n + 1) : setSourceRevision(n => n + 1)}>重试</RecordingTranscriptButton></p>}
+      {!options && !error && <p role="status">{sourcesLoaded && sources.items.length === 0 ? '此录音暂无可对比的音频源件。' : '正在读取策略结果…'}</p>}
+      {options && <p>{!options.officialComplete ? '请等待正式结果处理完成。' : options.officialFailed ? '正式处理未全部成功；请在录音文件中重试原任务。' : options.canStart ? `原件可用于其他策略处理，截止 ${new Date(options.expiresAtMillis).toLocaleString('zh-CN')}。` : '原件不可用于新的策略处理，已有结果仍可查看和播放。'}</p>}
+    </div>}>
+    {options && strategies.map((strategy, index) => {
+      const official = strategy.id === options.officialStrategy
+      const result = options.results.find(row => row.strategy === strategy.id)
+      const kind = official ? '正式结果' : '对比结果'
+      return !official && !result ? <RecordingComparisonColumn key={strategy.id} title={strategy.name} kind={kind}
+        actions={options.canStart && <RecordingTranscriptButton disabled={busy} onClick={() => { void start(strategy.id) }}>{busy ? '正在提交…' : '使用此策略处理'}</RecordingTranscriptButton>}>
+        <RecordingComparisonPane><p style={{ color: theme.secondary }}>未生成此策略结果</p></RecordingComparisonPane>
+      </RecordingComparisonColumn> : <StrategyTranscript key={`${sourceRef}:${strategy.id}:${official ? options.officialComplete : result?.complete ?? false}`}
+        title={strategy.name} kind={kind} paneRef={element => { columns.current[index] = element }} onScroll={event => synchronize(event, index)}
+        sourceRef={sourceRef} strategy={strategy.id} mediaPath={mediaPath} stopPlayback={stopPlayback}
+        processing={official ? !options.officialComplete : !result?.complete} failed={official ? options.officialFailed : result?.failed ?? false} />
+    })}
+  </RecordingComparisonView>
 }
-function StrategyTranscript({ sourceRef, strategy, mediaPath, stopPlayback, processing, failed }: { sourceRef: string; strategy: RecordingStrategy; mediaPath: string; stopPlayback: React.MutableRefObject<(() => void) | undefined>; processing: boolean; failed: boolean }) {
+
+function StrategyTranscript({ title, kind, paneRef, onScroll, sourceRef, strategy, mediaPath, stopPlayback, processing, failed }: { title: string; kind: '正式结果' | '对比结果'; paneRef: Ref<HTMLDivElement>; onScroll(event: UIEvent<HTMLDivElement>): void; sourceRef: string; strategy: RecordingStrategy; mediaPath: string; stopPlayback: React.MutableRefObject<(() => void) | undefined>; processing: boolean; failed: boolean }) {
   const [page, setPage] = useState<RecordingStrategyPage>({ items: [], complete: false, failed: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const controller = useRef<AbortController>()
   const player = useRef<HTMLAudioElement>()
+  const [activeItemRef, setActiveItemRef] = useState('')
   const playRequest = useRef<AbortController>()
-  const stop = () => { playRequest.current?.abort(); if (player.current) { player.current.pause(); player.current.removeAttribute('src'); player.current.load(); player.current = undefined } }
+  const stop = () => { playRequest.current?.abort(); setActiveItemRef(''); if (player.current) { player.current.onerror = null; player.current.onended = null; player.current.pause(); player.current.removeAttribute('src'); player.current.load(); player.current = undefined } }
   const load = async (cursor?: string) => {
     setBusy(true); setError('')
     try {
@@ -118,19 +123,24 @@ function StrategyTranscript({ sourceRef, strategy, mediaPath, stopPlayback, proc
       const media = await callArkme<{ playbackRef: string }>('recordings.strategies', { action: 'playback', itemRef }, request.signal)
       if (request.signal.aborted) return
       const audio = new Audio(`${mediaPath}?ref=${encodeURIComponent(media.playbackRef)}`); player.current = audio
-      audio.onerror = () => setError('播放失败，请重试')
+      audio.onerror = () => { if (player.current === audio) { stop(); setError('播放失败，请重试') } }
+      audio.onended = () => { if (player.current === audio) stop() }
       await audio.play()
-    } catch (e) { if (!request.signal.aborted) setError(e instanceof Error ? e.message : '播放失败') }
+      if (!request.signal.aborted) setActiveItemRef(itemRef)
+    } catch (e) { if (!request.signal.aborted) { stop(); setError(e instanceof Error ? e.message : '播放失败') } }
   }
-  return <div style={{ overflowY: 'auto', flex: 1 }}>
-    {processing && <p role="status">正在处理，完成后自动更新。</p>}
-    {(failed || page.failed) && <p role="alert">此策略处理未全部成功，已完成部分保留。</p>}
-    {page.items.map((item, index) => <div key={`${item.itemRef}:${index}`} style={{ padding: '8px 0', borderBottom: `1px solid ${theme.border}` }}>
-      <div style={{ fontSize: 12, color: theme.secondary }}>说话人 {item.speaker + 1} · {clock(item.startAtMillis)} <button style={button} aria-label={`播放 ${clock(item.startAtMillis)} 的发言`} onClick={() => { void play(item.itemRef) }}>播放</button></div>
-      <p style={{ margin: '6px 0', whiteSpace: 'pre-wrap' }}>{item.text}</p>
-    </div>)}
-    {page.complete && page.items.length === 0 && <p>没有可展示的转写内容</p>}
-    {error && <p role="alert">{error}</p>}
-    {(!page.complete || error) && <button style={button} disabled={busy} onClick={() => { void load(page.nextCursor) }}>{busy ? '加载中…' : page.nextCursor ? '加载更多' : '刷新结果'}</button>}
-  </div>
+  return <RecordingComparisonColumn title={title} kind={kind} actions={<>
+    {activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={stop} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
+    {processing && <small role="status" style={{ color: theme.secondary }}>正在处理，完成后自动更新。</small>}
+  </>}>
+    <RecordingComparisonPane paneRef={paneRef} onScroll={onScroll}>
+      {(failed || page.failed) && <p role="alert" style={{ color: theme.danger }}>此策略处理未全部成功，已完成部分保留。</p>}
+      {page.items.map((item, index) => <RecordingComparisonRow key={`${item.itemRef}:${index}`} speaker={`说话人 ${item.speaker + 1}`} colorIndex={item.speaker}
+        startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} active={activeItemRef === item.itemRef}
+        playLabel={`播放 ${clock(item.startAtMillis)} 的发言`} onPlay={() => { void play(item.itemRef) }} />)}
+      {page.complete && page.items.length === 0 && <p style={{ color: theme.secondary }}>没有可展示的转写内容</p>}
+      {error && <p role="alert" style={{ color: theme.danger }}>{error}</p>}
+      {(!page.complete || error) && <RecordingTranscriptButton disabled={busy} onClick={() => { void load(page.nextCursor) }}>{busy ? '加载中…' : page.nextCursor ? '加载更多' : '刷新结果'}</RecordingTranscriptButton>}
+    </RecordingComparisonPane>
+  </RecordingComparisonColumn>
 }

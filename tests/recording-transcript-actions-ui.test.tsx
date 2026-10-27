@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingComparison, ArkmeRecordingDay, ArkmeRecordingWorkbenchItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: mocks.call }))
+vi.mock('react-dom',()=>({createPortal:(node:unknown)=>node}))
 import { prepareRecordingTranscriptComparison } from '../src/client/recordings/prepare-recording-transcript-comparison.js'
 import { RecordingTranscriptComparison } from '../src/client/recordings/RecordingTranscriptComparison.js'
 import { RecordingTranscriptForward } from '../src/client/recordings/RecordingTranscriptForward.js'
