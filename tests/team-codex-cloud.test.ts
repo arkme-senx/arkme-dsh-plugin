@@ -1,3 +1,4 @@
+import {codexObjectFixture} from "./helpers/codex-object-fixture.js"
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexCloudJournal, type CloudBatch } from '../src/team-codex-cloud-journal.js'
@@ -6,7 +7,7 @@ import type { TeamCodexEvent, TeamCodexState, TeamCodexTask } from '../src/team-
 import { ArkmePluginError } from '../src/services/service.js'
 
 const databases: DatabaseSync[] = []
-afterEach(() => { for (const db of databases.splice(0)) db.close() })
+afterEach(() => { vi.unstubAllGlobals();for (const db of databases.splice(0)) db.close() })
 const db = () => { const value = new DatabaseSync(':memory:'); databases.push(value); return value }
 const member = { userRef: 'usr_v1_test', displayName: '我', role: 'member' as const, joinedAtMillis: 1, identityState: 'ready' as const }
 const task: TeamCodexTask = { id: 'local-task', installationId: 'local-installation', title: '开发任务', projectKey: 'project-key', projectName: '项目', cwd: '/private/path', branch: 'dev', status: 'active', state: 'finished', updatedAt: 2000, eventCount: 2, member }
@@ -26,6 +27,20 @@ function journalFixture() {
   const batch = () => journal.batch(11, 'opaque-team', active)!
   return { database, journal, reconcile, batch }
 }
+
+it('reopens an existing local outbox without losing prompt identities or creating unstable summaries',()=>{
+ const database=db()
+ database.exec(`CREATE TABLE codex_cloud_sources(id TEXT PRIMARY KEY,owner INTEGER,local_team TEXT,local_source TEXT,team TEXT,name TEXT);
+ CREATE TABLE codex_cloud_tasks(id TEXT PRIMARY KEY,local_id TEXT,source TEXT,payload TEXT,version INTEGER,ack INTEGER DEFAULT 0,blocked TEXT DEFAULT '');
+ CREATE TABLE codex_cloud_events(id TEXT PRIMARY KEY,task TEXT,slot TEXT,payload TEXT,version INTEGER,ack INTEGER DEFAULT 0,blocked TEXT DEFAULT '');
+ INSERT INTO codex_cloud_sources VALUES('source',11,'opaque-team','local-source','101','电脑');
+ INSERT INTO codex_cloud_tasks VALUES('task','local-task','source','{}',1,1,'');`)
+ database.prepare("INSERT INTO codex_cloud_events VALUES('event','task','turn:prompt',?,1,1,'')").run(JSON.stringify({turn_id:'turn',turn_seq:1,kind:'UserPromptSubmit',text:'保留本地原文',at:1000,truncated:false}))
+ const journal=new TeamCodexCloudJournal(database),summary=journal.contentSummary('task')
+ expect(summary).toMatchObject({version:1,event_count:1,latest_at:1000,state:'in_progress'})
+ expect(new TeamCodexCloudJournal(database).contentSummary('task')).toEqual(summary)
+ expect(database.prepare('SELECT id,payload,message_seq FROM codex_cloud_events').get()).toMatchObject({id:'event',message_seq:0})
+})
 
 describe('durable cloud upload ledger', () => {
   it('uploads title-only renames with stable IDs and a new metadata version, without resending events',()=>{
@@ -131,15 +146,18 @@ describe('durable cloud upload ledger', () => {
 
 function cloudFixture() {
   let user = 11, now = 10000
+  const objects=codexObjectFixture();vi.stubGlobal('fetch',objects.fetch)
   const post = vi.fn(async (_owner: number, path: string, body: Record<string, unknown>) => {
     if (path.endsWith('list-mine')) return { teams: [{ team_id: 101, jotmo_id: 'arkme_cn' }] }
+    if (path.endsWith('/content/prepare')) return objects.prepare(body.descriptor as Record<string,unknown>)
+    if (path.endsWith('/content/commit')) {const data=objects.body(body.descriptor as Record<string,unknown>);return {owner_ref:'11',event_results:(data.events as Record<string,unknown>[]).map(e=>({task_id:(body.descriptor as Record<string,unknown>).task_id,event_id:e.event_id,version:e.version,status:'saved'}))}}
     if (path.endsWith('/sync')) return ack(body as CloudBatch)
     return { items: [], page: body.page, has_more: false }
   })
   const selectedTeam = vi.fn(async () => ({ teamRef: 'opaque-team', name: '即我', jotmoId: 'arkme_cn', currentUserRole: 'member' as const, createdAtMillis: 1, updatedAtMillis: 1 }))
   const cloud = new TeamCodexCloud(db(), { post, selectedTeam } as TeamCodexCloudPort, async () => user, () => now)
   const local: TeamCodexState = { localOnly: true, self: member, installations: [], tasks: [task] }
-  return { cloud, post, selectedTeam, local, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
+  return { cloud, post, selectedTeam, local, objects, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
 }
 describe('cloud coordinator account/team boundaries', () => {
   it('drains acknowledged batches in one trigger but stops immediately if ACK makes no progress',async()=>{
@@ -148,7 +166,7 @@ describe('cloud coordinator account/team boundaries', () => {
     await f.cloud.sync(11,'opaque-team',[task],()=>many)
     const uploads=f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))
     expect(uploads).toHaveLength(4)
-    expect(JSON.stringify(uploads)).toContain('本机过程');expect(uploads.flatMap(c=>(c[2] as CloudBatch).tasks.flatMap(t=>t.events)).filter(e=>e.kind==='Progress')).toHaveLength(205)
+    expect(JSON.stringify(uploads)).not.toContain('本机过程');expect(f.objects.uploads.length).toBeGreaterThan(0);expect(f.objects.uploads.length).toBeLessThanOrEqual(32);expect(JSON.stringify(f.objects.uploads)).toContain('本机过程')
     f.post.mockImplementation(async()=>({owner_ref:'11',task_results:[],event_results:[]}) as never)
     f.post.mockClear()
     await f.cloud.sync(11,'opaque-team',[task],()=>[...many,{...events[0]!,turnId:'extra'}])
@@ -303,13 +321,14 @@ describe('cloud coordinator account/team boundaries', () => {
   it('cross-device reads need no installation and respect member/page filters', async () => {
     const f = cloudFixture(), original = f.post.getMockImplementation()!
     f.post.mockImplementation(async (owner, path, body) => path.endsWith('/tasks/list') ? {
-      items: [{ task_id: '22222222-2222-4222-8222-222222222222', source_id: '11111111-1111-4111-8111-111111111111', owner_ref: '22', team_ref: '101', display_name: '同事', identity_state: 'ready', project_name: '项目', project_key: 'key', task_title: '云任务', source_name: '另一台电脑', event_count: 2, latest_at: 2000, state: 'turn_ended' }], page: body.page, has_more: true,
+      items: [{ task_id: '22222222-2222-4222-8222-222222222222', source_id: '11111111-1111-4111-8111-111111111111', owner_ref: '22', team_ref: '101', display_name: '同事', identity_state: 'ready', project_name: '项目', project_key: 'key', task_title: '云任务', source_name: '另一台电脑', event_count: 2, latest_at: 2000, state: 'turn_ended' }], page: body.page, has_more: true,next_cursor:'next-page',
     } : original(owner, path, body))
+    await f.cloud.state(11,'opaque-team',{...f.local,tasks:[]},1,'22')
     const result = await f.cloud.state(11, 'opaque-team', { ...f.local, tasks: [] }, 2, '22')
     expect(result.tasks[0]).toMatchObject({ title: '云任务', state: 'finished', cloud: { remote: true, ownerRef: '22' }, member: { displayName: '同事' } })
     expect(result.tasks[0]!.queue).toBeUndefined()
     expect(result.cloud).toMatchObject({ page: 2, hasMore: true })
-    expect(f.post.mock.calls.at(-1)![2]).toEqual({protocol_version:2,view: 'team', team_ref: '101', page: 2, limit: 50, member_ref: '22' })
+    expect(f.post.mock.calls.at(-1)![2]).toEqual({protocol_version:2,view: 'team', team_ref: '101', page: 2,cursor:'next-page', limit: 50, member_ref: '22' })
   })
   it('permission loss drops cloud rows and preserves only local records', async () => {
     const f = cloudFixture()
@@ -320,9 +339,9 @@ describe('cloud coordinator account/team boundaries', () => {
   })
   it('reads events with server cursors and preserves independent event versions', async () => {
     const f = cloudFixture(), original = f.post.getMockImplementation()!
-    f.post.mockImplementation(async (owner, path, body) => path.endsWith('/events/list') ? {
-      items: [{ event_id: 'event', version: 2, turn_id: 'turn', turn_seq: 3, kind: 'Stop', text: '只有回答', at: 1000, truncated: true }], has_more: true, next_cursor: 'opaque_cursor',
-    } : original(owner, path, body))
+    f.post.mockImplementation(async (owner,path,body)=>path.endsWith('/content/list')?f.objects.page(String(body.source_id),String(body.task_id),[
+      {event_id:'event',version:2,turn_id:'turn',turn_seq:3,kind:'Stop',text:'只有回答',at:1000,truncated:true}
+    ],{has_more:true,next_cursor:'opaque_cursor'}):original(owner,path,body))
     const result = await f.cloud.events(11, 'opaque-team', '22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111')
     expect(result).toMatchObject({ nextCursor: 'opaque_cursor', items: [{ eventId: 'event', version: 2, text: '只有回答', sequence: 15, truncated: true }] })
   })
@@ -398,4 +417,12 @@ it('reads the same canonical progress on the source device with tuple pagination
  expect(window.items.find(e=>e.text==='late')?.messageSequence).toBe(455)
  expect(f.journal.readPage(22,'opaque-team',task.id)).toBeUndefined()
  expect(()=>f.journal.readPage(11,'opaque-team',task.id,'lc1_invalid')).toThrow()
+})
+
+it('checks the account again after private object downloads before exposing text',async()=>{
+ let owner=11;const objects=codexObjectFixture(),source='11111111-1111-4111-8111-111111111111',task='22222222-2222-4222-8222-222222222222'
+ const wire=objects.page(source,task,[{event_id:'input',version:1,turn_id:'turn',turn_seq:1,kind:'UserPromptSubmit',text:'private',at:1000,truncated:false}])
+ const cloud=new TeamCodexCloud(db(),{post:async()=>wire,selectedTeam:async()=>{throw Error('personal read needs no team')}} as never,async()=>owner)
+ vi.stubGlobal('fetch',async(url:URL|string|Request,input?:RequestInit)=>{owner=22;return objects.fetch(url,input)})
+ try{await expect(cloud.events(11,'self',task,source)).rejects.toMatchObject({code:'ACCOUNT_OR_DESTINATION_MISMATCH'})}finally{cloud.fence()}
 })

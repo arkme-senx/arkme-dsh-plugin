@@ -6,7 +6,8 @@ type TeamCodexRuntime = Pick<ServiceRuntime, 'config' | 'requireSession' | 'post
 export async function teamCodexPost<T>(runtime: TeamCodexRuntime, owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T> {
   if (![
     '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team-codex/sync',
-    '/api/v1/team-codex/tasks/list', '/api/v1/team-codex/events/list',
+    '/api/v1/team-codex/tasks/list',
+    '/api/v1/team-codex/content/prepare','/api/v1/team-codex/content/commit','/api/v1/team-codex/content/list',
     '/api/v1/team-codex/sources/confirm', '/api/v1/team-codex/connection/status',
     '/api/v1/team-codex/sources/settings/update','/api/v1/team-codex/annotations/capabilities','/api/v1/team-codex/annotations/list','/api/v1/team-codex/annotations/change','/api/v1/team-codex/images/prepare','/api/v1/team-codex/share/resolve',
   ].includes(path)) throw new ArkmePluginError('team-codex-disabled', '当前环境未配置团队云端同步', false, 403)

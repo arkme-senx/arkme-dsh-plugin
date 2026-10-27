@@ -406,6 +406,13 @@ export class TeamCodexService {
     }
   }
 
+  private localTaskTeam(owner:number,team:string,id:string):string {
+    if(team!=='self')return team
+    const own=this.db.prepare('SELECT i.team_ref FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? UNION SELECT team_ref FROM connections WHERE id=? AND user_id=?').get(id,owner,id,owner)
+    if(!own)fail('未找到本人记录',404)
+    return String(own.team_ref)
+  }
+
   /** Owned cached identity only; this is never permission to read a rollout file. */
   private collectedSource(owner:number,task:string,team=''):{sessionId:string;homeKey:string;native:boolean;active:boolean}|undefined {
     const row=this.db.prepare(`SELECT t.session_id,i.home_key,i.status,1 native FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
@@ -453,7 +460,7 @@ export class TeamCodexService {
       return this.imageReferences(userId,teamRef,id,sourceId,page)
     }
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) fail('分页标识无效')
-    if(teamRef==='self'){const own=this.db.prepare('SELECT i.team_ref FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? UNION SELECT team_ref FROM connections WHERE id=? AND user_id=?').get(id,userId,id,userId);if(!own)fail('未找到本人记录',404);teamRef=String(own.team_ref)}
+    teamRef=this.localTaskTeam(userId,teamRef,id)
     this.machine.assertReadableTask(userId,teamRef,id)
     const canonical=this.cloud?.localEvents(userId,teamRef,id,cursor,window)
     if(canonical){
@@ -624,6 +631,7 @@ export class TeamCodexService {
     const userId=await this.user(),generation=this.generation
     if(sourceId&&eventId&&this.cloud)return this.cloud.imageBytes(userId,sourceId,id,eventId,ref,full,signal)
     if(!['UserPromptSubmit','Stop'].includes(kind)) fail('图片不可访问',404)
+    if(!sourceId)teamRef=this.localTaskTeam(userId,teamRef,id)
     let source:CodexTimingSource|undefined
     if(sourceId) source=this.captureHealth.timingSource(userId,teamRef,id,sourceId,[turnId])
     else {

@@ -51,6 +51,7 @@ export interface TeamCodexTask {
   excluded?: boolean
   projectExcluded?: boolean
   queue?: TeamCodexQueueSnapshot
+  queueSummary?: Omit<TeamCodexQueueSnapshot,'items'> & {count:number;waitingCount:number}
   /** Set only after checking the cloud contract and row ownership; never authorizes dispatch. */
   queueCloud?: 'ready' | 'unsupported' | 'unavailable' | 'private'
   currentInput?: { turnId: string; text: string; at: number }
@@ -113,6 +114,8 @@ export interface TeamCodexEvent {
   privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'pending' | 'unavailable';imageRef?:string }[]
 }
 export interface TeamCodexEventPage {
+  queue?: TeamCodexQueueSnapshot
+  queueCloud?: TeamCodexTask['queueCloud']
   items: TeamCodexEvent[]
   nextBefore?: number
   latestCursor?:string

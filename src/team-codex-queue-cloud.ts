@@ -45,6 +45,7 @@ export class TeamCodexQueueCloud {
         }
       }
       const row=this.db.prepare('SELECT * FROM codex_cloud_queue_outbox WHERE task=?').get(mapping.taskId) as Row|undefined
+      if(row&&q.availability!=='ready'){const previous=JSON.parse(row.payload) as CodexCloudQueueSnapshot;const known=new Set(items.map(i=>i.request_id));items.push(...previous.items.filter(i=>!known.has(i.request_id)).slice(0,200-items.length))}
       const signature=JSON.stringify([q.availability,q.reason,items])
       const changed=!row||row.signature!==signature
       const snapshot:CodexCloudQueueSnapshot={schema_version:1,visibility:'owner',version:(row?.version??0)+(changed?1:0),
@@ -60,7 +61,8 @@ export class TeamCodexQueueCloud {
     const rows=this.db.prepare(`SELECT q.*,t.local_id,t.source,t.payload AS metadata,t.version AS metadata_version,s.team,s.name
       FROM codex_cloud_queue_outbox q JOIN codex_cloud_tasks t ON t.id=q.task JOIN codex_cloud_sources s ON s.id=t.source
       WHERE s.owner=? AND s.local_team=? AND t.blocked='' AND q.blocked='' AND (q.ack<q.version OR q.observed-q.ack_observed>=60000)
-      ORDER BY q.ack_observed,q.task`).all(owner,team) as unknown as (Row&{local_id:string;source:string;metadata:string;metadata_version:number;team:string;name:string})[]
+      AND t.local_id IN (SELECT value FROM json_each(?))
+      ORDER BY q.ack_observed,q.task LIMIT 50`).all(owner,team,JSON.stringify([...eligible])) as unknown as (Row&{local_id:string;source:string;metadata:string;metadata_version:number;team:string;name:string})[]
     let batch:CodexQueueBatch|undefined
     for(const row of rows) {
       if(!eligible.has(row.local_id)||batch&&batch.source_id!==row.source)continue
@@ -114,8 +116,11 @@ export class TeamCodexQueueCloud {
       const known=new Set(incoming.items.map(item=>item.id))
       incoming.items=[...incoming.items,...old.items.filter(item=>!known.has(item.id))].slice(0,200)
     }
-    this.db.prepare(`INSERT INTO codex_cloud_queue_cache VALUES(?,?,?,?,?) ON CONFLICT(owner,team,source,task) DO UPDATE SET payload=excluded.payload`)
+    this.db.prepare(`INSERT OR REPLACE INTO codex_cloud_queue_cache VALUES(?,?,?,?,?)`)
       .run(owner,team,source,task,JSON.stringify(codexCloudQueueWire(incoming)))
+    this.db.exec(`DELETE FROM codex_cloud_queue_cache WHERE rowid IN (SELECT rowid FROM (
+      SELECT rowid,ROW_NUMBER() OVER(ORDER BY rowid DESC) n,SUM(length(CAST(payload AS BLOB))) OVER(ORDER BY rowid DESC) bytes FROM codex_cloud_queue_cache
+    ) WHERE n>64 OR bytes>16777216)`)
     return incoming
   }
 }

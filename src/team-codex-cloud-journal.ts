@@ -59,6 +59,54 @@ export class TeamCodexCloudJournal {
     if (!taskColumns.has('classification')) db.exec("ALTER TABLE codex_cloud_tasks ADD COLUMN classification TEXT NOT NULL DEFAULT ''")
     if (!taskColumns.has('classification_ack')) db.exec('ALTER TABLE codex_cloud_tasks ADD COLUMN classification_ack INTEGER NOT NULL DEFAULT 0')
 
+    if(!taskColumns.has('content_revision')) {
+      db.exec(`ALTER TABLE codex_cloud_tasks ADD COLUMN content_revision INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE codex_cloud_tasks ADD COLUMN content_count INTEGER NOT NULL DEFAULT 0;
+        UPDATE codex_cloud_tasks SET content_count=(SELECT count(*) FROM codex_cloud_events WHERE task=codex_cloud_tasks.id);
+        UPDATE codex_cloud_tasks SET content_revision=content_count;`)
+    }
+    const eventColumns=new Set(db.prepare('PRAGMA table_info(codex_cloud_events)').all().map(row=>String(row.name)))
+    if(!eventColumns.has('turn_seq')){
+      db.exec(`ALTER TABLE codex_cloud_events ADD COLUMN turn_seq INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE codex_cloud_events ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+        ALTER TABLE codex_cloud_events ADD COLUMN message_seq INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE codex_cloud_events ADD COLUMN phase INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE codex_cloud_events ADD COLUMN at INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE codex_cloud_events ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0;
+        UPDATE codex_cloud_events SET turn_seq=json_extract(payload,'$.turn_seq'),kind=json_extract(payload,'$.kind'),message_seq=COALESCE(json_extract(payload,'$.message_seq'),0),
+          phase=CASE json_extract(payload,'$.kind') WHEN 'Progress' THEN 1 WHEN 'Interrupt' THEN 2 WHEN 'Stop' THEN 3 ELSE 0 END,
+          at=json_extract(payload,'$.at'),payload_bytes=length(CAST(payload AS BLOB));`)
+    }
+    if(!taskColumns.has('pending_count')){
+      db.exec(`ALTER TABLE codex_cloud_tasks ADD COLUMN pending_count INTEGER NOT NULL DEFAULT 0;
+       ALTER TABLE codex_cloud_tasks ADD COLUMN blocked_count INTEGER NOT NULL DEFAULT 0;
+       UPDATE codex_cloud_tasks SET pending_count=(SELECT count(*) FROM codex_cloud_events WHERE task=codex_cloud_tasks.id AND ack<version AND blocked=''),
+         blocked_count=(SELECT count(*) FROM codex_cloud_events WHERE task=codex_cloud_tasks.id AND blocked<>'');`)
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS codex_cloud_content_position ON codex_cloud_events(task,turn_seq,kind,message_seq);
+      CREATE INDEX IF NOT EXISTS codex_cloud_content_latest ON codex_cloud_events(task,turn_seq DESC,phase DESC,message_seq DESC);
+      CREATE INDEX IF NOT EXISTS codex_cloud_pending ON codex_cloud_events(task) WHERE ack<version AND blocked='';
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_content_insert AFTER INSERT ON codex_cloud_events BEGIN
+        UPDATE codex_cloud_tasks SET content_count=content_count+1,content_revision=content_revision+1,
+         pending_count=pending_count+(NEW.ack<NEW.version AND NEW.blocked=''),blocked_count=blocked_count+(NEW.blocked<>'') WHERE id=NEW.task; END;
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_content_update AFTER UPDATE OF payload ON codex_cloud_events BEGIN
+        UPDATE codex_cloud_tasks SET content_revision=content_revision+1 WHERE id=NEW.task; END;
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_counters_update AFTER UPDATE OF version,ack,blocked ON codex_cloud_events BEGIN
+        UPDATE codex_cloud_tasks SET pending_count=pending_count-(OLD.ack<OLD.version AND OLD.blocked='')+(NEW.ack<NEW.version AND NEW.blocked=''),
+         blocked_count=blocked_count-(OLD.blocked<>'')+(NEW.blocked<>'') WHERE id=NEW.task; END;
+      CREATE TABLE IF NOT EXISTS codex_cloud_budget(id INTEGER PRIMARY KEY CHECK(id=1),pending_bytes INTEGER NOT NULL);
+
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_budget_insert AFTER INSERT ON codex_cloud_events BEGIN
+       UPDATE codex_cloud_budget SET pending_bytes=pending_bytes+CASE WHEN NEW.ack<NEW.version THEN NEW.payload_bytes ELSE 0 END WHERE id=1;
+       SELECT CASE WHEN (SELECT pending_bytes FROM codex_cloud_budget WHERE id=1)>536870912 THEN RAISE(ABORT,'CODEX_OUTBOX_FULL') END; END;
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_budget_update AFTER UPDATE OF payload,version,ack ON codex_cloud_events BEGIN
+       UPDATE codex_cloud_budget SET pending_bytes=pending_bytes-CASE WHEN OLD.ack<OLD.version THEN OLD.payload_bytes ELSE 0 END+CASE WHEN NEW.ack<NEW.version THEN NEW.payload_bytes ELSE 0 END WHERE id=1;
+       SELECT CASE WHEN (SELECT pending_bytes FROM codex_cloud_budget WHERE id=1)>536870912 THEN RAISE(ABORT,'CODEX_OUTBOX_FULL') END; END;
+      CREATE TRIGGER IF NOT EXISTS codex_cloud_budget_delete AFTER DELETE ON codex_cloud_events BEGIN
+       UPDATE codex_cloud_budget SET pending_bytes=pending_bytes-CASE WHEN OLD.ack<OLD.version THEN OLD.payload_bytes ELSE 0 END WHERE id=1;
+       UPDATE codex_cloud_tasks SET content_count=content_count-1,pending_count=pending_count-(OLD.ack<OLD.version AND OLD.blocked=''),blocked_count=blocked_count-(OLD.blocked<>'') WHERE id=OLD.task; END;`)
+    if(!db.prepare('SELECT 1 FROM codex_cloud_budget WHERE id=1').get())db.exec('INSERT INTO codex_cloud_budget SELECT 1,COALESCE(SUM(payload_bytes),0) FROM codex_cloud_events WHERE ack<version')
+
   }
 
   source(owner: number, localTeam: string, team: string, localSource: string, sourceName = DEFAULT_CODEX_SOURCE_NAME): Source {
@@ -71,6 +119,26 @@ export class TeamCodexCloudJournal {
     const row: Source = { id: randomUUID(), owner, local_team: localTeam, local_source:localSource, team, name: sourceName.trim() }
     this.db.prepare('INSERT INTO codex_cloud_sources(id,owner,local_team,local_source,team,name) VALUES(?,?,?,?,?,?)').run(row.id, owner, localTeam, localSource, team, row.name)
     return row
+  }
+
+  contentBlock(task:string,event:CloudEvent):CloudEvent[]{
+    const controls=event.kind!=='Progress'&&event.kind!=='UserPromptSubmit'
+    const first=event.kind==='Progress'?Math.floor((Number(event.message_seq)-1)/4)*4+1:1
+    const rows=controls?this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind=? LIMIT 1`).all(task,event.turn_seq,event.kind)
+      :[
+        ...(first===1?this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='UserPromptSubmit' LIMIT 1`).all(task,event.turn_seq):[]),
+        ...this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='Progress' AND message_seq>=? AND message_seq<=? ORDER BY message_seq LIMIT 4`).all(task,event.turn_seq,first,first+3),
+      ]
+    return rows.map(row=>({...JSON.parse(String(row.payload)),event_id:String(row.id),version:Number(row.version)}))
+  }
+
+  contentSummary(task:string):{version:number;event_count:number;latest_at:number;state:string}{
+    const row=this.db.prepare('SELECT content_revision,content_count FROM codex_cloud_tasks WHERE id=?').get(task)!
+    const latest=this.db.prepare(`SELECT payload FROM codex_cloud_events WHERE task=? ORDER BY turn_seq DESC,
+      phase DESC,
+      message_seq DESC LIMIT 1`).get(task)
+    const event=latest?JSON.parse(String(latest.payload)) as CloudEvent:undefined
+    return {version:Number(row.content_revision),event_count:Number(row.content_count),latest_at:event?.at??Date.now(),state:event?.kind==='Stop'?'turn_ended':event?.kind==='Interrupt'?'interrupted':event?'in_progress':'empty'}
   }
 
   confirmationDue(source: string, now: number): boolean {
@@ -115,15 +183,15 @@ export class TeamCodexCloudJournal {
       if(!Array.isArray(raw)||raw.length!==6||raw[0]!==mapping.sourceId||raw[1]!==mapping.taskId||!Number.isSafeInteger(raw[2])||raw[2]<1||!Number.isSafeInteger(raw[3])||raw[3]<0||raw[3]>3||!Number.isSafeInteger(raw[4])||raw[4]<0||typeof raw[5]!=='string'||raw[5].length>128)throw Error('本机工作记录游标无效')
       return raw.slice(2) as Position
     }
-    const tuple=`(CAST(json_extract(payload,'$.turn_seq') AS INTEGER),CASE json_extract(payload,'$.kind') WHEN 'UserPromptSubmit' THEN 0 WHEN 'Progress' THEN 1 WHEN 'Interrupt' THEN 2 ELSE 3 END,CAST(json_extract(payload,'$.message_seq') AS INTEGER),id)`
+    const tuple=`(CAST(turn_seq AS INTEGER),phase,CAST(message_seq AS INTEGER),id)`
     const forward=!!(window?.after||window?.from||window?.through),where=['task=?'],args:(string|number)[]=[mapping.taskId]
     const bound=(value:string|undefined,operator:string)=>{if(value){where.push(`${tuple} ${operator} (?,?,?,?)`);args.push(...decode(value))}}
     bound(window?.after,'>');bound(window?.from,'>=');bound(window?.through,'<=');bound(cursor,forward?'>':'<')
     const order=forward?'ASC':'DESC'
     const rows=this.db.prepare(`SELECT id,payload,version FROM codex_cloud_events WHERE ${where.join(' AND ')} ORDER BY
-      CAST(json_extract(payload,'$.turn_seq') AS INTEGER) ${order},
-      CASE json_extract(payload,'$.kind') WHEN 'UserPromptSubmit' THEN 0 WHEN 'Progress' THEN 1 WHEN 'Interrupt' THEN 2 ELSE 3 END ${order},
-      CAST(json_extract(payload,'$.message_seq') AS INTEGER) ${order},id ${order} LIMIT 51`).all(...args)
+      CAST(turn_seq AS INTEGER) ${order},
+      phase ${order},
+      CAST(message_seq AS INTEGER) ${order},id ${order} LIMIT 51`).all(...args)
     const more=rows.length>50,visible=rows.slice(0,50)
     if(!forward)visible.reverse()
     const items=visible.map(row=>{
@@ -198,11 +266,11 @@ export class TeamCodexCloudJournal {
           const safe = codexImageSafeText(event.text)
           const sharedText = event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe
           const text = clipUtf8(sharedText, 256 * 1024)
-          const messageSeq=event.kind==='Progress'?(oldPayload?.message_seq??event.messageSequence??Number(this.db.prepare("SELECT COALESCE(MAX(json_extract(payload,'$.message_seq')),0)+1 n FROM codex_cloud_events WHERE task=? AND json_extract(payload,'$.turn_id')=? AND json_extract(payload,'$.kind')='Progress'").get(row.id,digest(localTurn))!.n)):0
+          const messageSeq=event.kind==='Progress'?(oldPayload?.message_seq??event.messageSequence??Number(this.db.prepare("SELECT COALESCE(MAX(message_seq),0)+1 n FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='Progress'").get(row.id,turn.seq)!.n)):0
           const eventPayload = JSON.stringify({ message_seq:messageSeq,...(event.timing?{timing:event.timing}:{}),turn_id: digest(localTurn), turn_seq: turn.seq, kind: event.kind,
             text, at: oldPayload?.at ?? event.at, truncated: event.truncated || text !== sharedText })
-          if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version) VALUES(?,?,?,?,1)').run(randomUUID(), row.id, slot, eventPayload)
-          else if (previous.payload !== eventPayload && !previous.blocked) this.db.prepare('UPDATE codex_cloud_events SET payload=?,version=version+1 WHERE id=?').run(eventPayload, previous.id)
+          if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version,turn_seq,kind,message_seq,phase,at,payload_bytes) VALUES(?,?,?,?,1,?,?,?,?,?,?)').run(randomUUID(), row.id, slot, eventPayload,turn.seq,event.kind,messageSeq,codexEventPhase(event.kind),event.at,bytes(eventPayload))
+          else if (previous.payload !== eventPayload && !previous.blocked) this.db.prepare('UPDATE codex_cloud_events SET payload=?,payload_bytes=?,version=version+1 WHERE id=?').run(eventPayload,bytes(eventPayload),previous.id)
         }
       }
       this.db.exec('COMMIT')
@@ -237,16 +305,15 @@ export class TeamCodexCloudJournal {
     return this.db.prepare(`SELECT t.* FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source
       WHERE s.owner=? AND (?='self' OR s.local_team=?) AND t.local_id IN (SELECT value FROM json_each(?))
       AND ((t.ack<t.version AND t.blocked='') OR EXISTS(SELECT 1 FROM codex_cloud_events e WHERE e.task=t.id AND e.ack<e.version AND e.blocked=''))
-      ORDER BY t.rowid`).all(owner,localTeam,localTeam,JSON.stringify([...eligible])) as unknown as TaskRow[]
+      ORDER BY (t.source=?),t.rowid LIMIT 100`).all(owner,localTeam,localTeam,JSON.stringify([...eligible]),this.previousSource) as unknown as TaskRow[]
   }
 
   counts(owner:number,team:string,eligible:ReadonlySet<string>):{pending:number;blocked:number} {
     const where=`s.owner=? AND (?='self' OR s.local_team=?) AND t.local_id IN (SELECT value FROM json_each(?))`
     const params=[owner,team,team,JSON.stringify([...eligible])] as const
-    const row=this.db.prepare(`SELECT COALESCE(SUM(blocked<>''),0) blocked,COALESCE(SUM(blocked='' AND ack<version),0) pending FROM (
-      SELECT t.ack,t.version,t.blocked FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE ${where}
-      UNION ALL SELECT e.ack,e.version,e.blocked FROM codex_cloud_events e JOIN codex_cloud_tasks t ON t.id=e.task JOIN codex_cloud_sources s ON s.id=t.source WHERE ${where}
-    )`).get(...params,...params)!
+    const row=this.db.prepare(`SELECT COALESCE(SUM((t.blocked<>'')+t.blocked_count),0) blocked,
+      COALESCE(SUM((t.blocked='' AND t.ack<t.version)+t.pending_count),0) pending
+      FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE ${where}`).get(...params)!
     const classification=this.db.prepare(`SELECT count(*) n FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source
       WHERE s.owner=? AND (?='self' OR s.local_team=?) AND t.classification<>'' AND t.classification_ack<json_extract(t.classification,'$.version')`).get(owner,team,team)
     return {pending:Number(row.pending)+Number(classification?.n??0),blocked:Number(row.blocked)}

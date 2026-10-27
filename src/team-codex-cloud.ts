@@ -6,7 +6,8 @@ import { ArkmePluginError } from './services/service.js'
 import { DEFAULT_CODEX_SOURCE_NAME, TeamCodexCloudJournal, validCodexSourceName } from './team-codex-cloud-journal.js'
 import { codexTurnTiming } from './team-codex-timing.js'
 import { TeamCodexQueueCloud } from './team-codex-queue-cloud.js'
-import { supportsCodexCloudQueue } from './team-codex-queue-wire.js'
+import { supportsCodexCloudQueue, parseCodexCloudQueue } from './team-codex-queue-wire.js'
+import { syncCodexContent, uploadCodexObject, readCodexContent } from './team-codex-content.js'
 
 export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
@@ -31,7 +32,7 @@ export class TeamCodexCloud {
   private readonly queues: TeamCodexQueueCloud
   private readonly queueCapabilities = new Map<number, {supported:boolean;until:number}>()
   private readonly queueRetries = new Map<string, {attempts:number;at:number}>()
-  private readonly lastReads = new Map<string, {tasks:TeamCodexTask[];hasMore:boolean}>()
+  private readonly lastReads = new Map<string, {tasks:TeamCodexTask[];hasMore:boolean;nextCursor:string|undefined}>()
   private controller = new AbortController()
   private readonly destinations = new Map<string, { id: string; until: number }>()
   private readonly failures = new Map<string, { state: CloudState; retryAt: number; attempts: number }>()
@@ -205,7 +206,7 @@ export class TeamCodexCloud {
         const batch=this.journal.batch(owner,localTeam,eligibleIds)
         if(!batch)break
         const before=this.journal.counts(owner,localTeam,eligibleIds).pending
-        const result=await this.post(owner,'/api/v1/team-codex/sync',batch,signal)
+        const result=await syncCodexContent(owner,this.post.bind(this),this.journal,batch,signal)
         signal.throwIfAborted()
         this.journal.acknowledge(batch,result)
         this.failures.delete(`${owner}:${localTeam}`)
@@ -235,7 +236,14 @@ export class TeamCodexCloud {
       for(let round=0;round<4;round++) {
         const batch=this.queues.batch(owner,team,ids)
         if(!batch){this.queueRetries.delete(key);return}
-        const result=await this.post(owner,'/api/v1/team-codex/sync',batch,signal)
+        const metadata={...batch,tasks:batch.tasks.map(({queue_snapshot,...task})=>task)}
+        const result=obj(await this.post(owner,'/api/v1/team-codex/sync',metadata,signal))
+        const queueResults:unknown[]=Array.isArray(result.queue_results)?[...result.queue_results]:[]
+        for(const task of batch.tasks){if(!task.queue_snapshot)continue
+          const committed=await uploadCodexObject(owner,this.post.bind(this),batch,task.task_id,'queue','current',{queue:task.queue_snapshot},signal)
+          if(Array.isArray(committed.queue_results))queueResults.push(...committed.queue_results)
+        }
+        result.queue_results=queueResults
         if(!this.queues.acknowledge(batch,result))throw new Error('QUEUE_ACK_PENDING')
       }
       this.queueRetries.delete(key)
@@ -259,7 +267,9 @@ export class TeamCodexCloud {
     try {
       const personal=localTeam==='self'
       const team = personal?null:await this.destination(owner, localTeam, signal)
-      const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { protocol_version:2,view: personal?'self':'team',...(personal?{}:{team_ref:team}),page, limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
+      const cursor=page>1?this.lastReads.get(JSON.stringify([owner,localTeam,page-1,memberRef,sourceId,projectKey]))?.nextCursor:undefined
+      if(page>1&&!cursor)throw new ArkmePluginError('team-codex-cursor-invalid','列表位置已变化，请刷新后继续',false,400)
+      const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { protocol_version:2,view: personal?'self':'team',...(personal?{}:{team_ref:team}),page, ...(cursor?{cursor}:{}), limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
       if (!Array.isArray(data.items) || data.items.length > 50 || data.page !== page || typeof data.has_more !== 'boolean') return invalid()
       if(Object.hasOwn(data,'capabilities'))this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
       const own = new Map<string, TeamCodexTask>()
@@ -286,13 +296,14 @@ export class TeamCodexCloud {
           identityState: row.identity_state === 'ready' ? 'ready' : row.identity_state === 'incomplete' ? 'incomplete' : 'unavailable',
         }
         // Team access to conversation text does not grant access to another member's queued inputs.
-        const queue=user===String(owner)?this.queues.read(owner,localTeam,sourceId,id,row.queue_snapshot,this.now()):undefined
-        const queueCloud:TeamCodexTask['queueCloud']=user!==String(owner)?'private':queue?'ready'
+        const summary=user===String(owner)&&Number.isSafeInteger(row.queue_count)&&Number(row.queue_count)>=0&&Number(row.queue_count)<=200?parseCodexCloudQueue({...obj(row.queue_snapshot),items:[]}):undefined
+        const queueSummary=summary?{...summary,items:undefined,count:Number(row.queue_count),waitingCount:Number(row.queue_waiting_count??0)}:undefined
+        const queueCloud:TeamCodexTask['queueCloud']=user!==String(owner)?'private':queueSummary?'ready'
           :this.queueCapabilities.get(owner)?.supported?'unavailable':'unsupported'
         remote.set(id, { id, title: str(row.task_title) || 'Codex', status: 'active',
           state: row.state === 'in_progress' ? 'working' : row.state === 'interrupted' ? 'interrupted' : row.state === 'turn_ended' ? 'finished' : 'waiting',
           updatedAt: Number(row.latest_at), eventCount: Number(row.event_count), member, projectKey: str(row.project_key), projectName: str(row.project_name), branch: str(row.branch),
-          cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true },queueCloud,...(queue?{queue}:{}) })
+          cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true },queueCloud,...(queueSummary?{queueSummary}:{}) })
       }
       if ([...remote.values()].some(task => task.cloud?.ownerRef === String(owner))) this.onConnectionEvidence(owner)
       // Local pending/excluded records remain on page one, never overwrite another member/device.
@@ -305,7 +316,7 @@ export class TeamCodexCloud {
       const reviewingTasks=0
       const visible=[...remote.values()]
       this.lastReads.delete(readKey)
-      this.lastReads.set(readKey,{tasks:visible.filter(task=>task.cloud?.remote),hasMore:data.has_more})
+      this.lastReads.set(readKey,{tasks:visible.filter(task=>task.cloud?.remote),hasMore:data.has_more,nextCursor:str(data.next_cursor)||undefined})
       if(this.lastReads.size>100)this.lastReads.delete(this.lastReads.keys().next().value!)
       return { ...local, localOnly: false, tasks: visible.sort((a, b) => b.updatedAt - a.updatedAt),
         // Successful list reads must not be discarded because an earlier upload failed.
@@ -319,7 +330,7 @@ export class TeamCodexCloud {
       const failure=this.failure(owner,localTeam,error)
       const cached=failure.status==='offline'?this.lastReads.get(readKey):undefined
       const retained=(cached?.tasks??[]).map(task=>({...task,
-        ...(task.queue?{queue:{...task.queue,availability:'stale' as const}}:{})}))
+        ...(task.queue?{queue:{...task.queue,availability:'stale' as const}}:{}),...(task.queueSummary?{queueSummary:{...task.queueSummary,availability:'stale' as const}}:{})}))
       if(failure.status!=='offline')this.lastReads.clear()
       const current=page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : []
       const currentIds=new Set(current.map(task=>this.journal.mapping(owner,localTeam,task.id)?.taskId??task.id))
@@ -383,7 +394,8 @@ export class TeamCodexCloud {
     const signal = this.controller.signal
     const personal=localTeam==='self'
     const team = personal?null:await this.destination(owner, localTeam, signal)
-    const data = obj(await this.post(owner, '/api/v1/team-codex/events/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal))
+    const data = obj(await readCodexContent(await this.post(owner, '/api/v1/team-codex/content/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal),sourceId,taskId,signal,owner))
+    await this.guard(owner,signal)
     if (!Array.isArray(data.items) || data.items.length > 50 || typeof data.has_more !== 'boolean' || (data.has_more && !str(data.next_cursor))) return invalid()
     const items = data.items.map(value => {
       const row = obj(value), kind = row.kind
@@ -393,6 +405,8 @@ export class TeamCodexCloud {
         ...(Array.isArray(row.private_images)?{privateImages:row.private_images.map(obj).map(im=>({ref:str(im.image_id),width:Number(im.width),height:Number(im.height),state:im.state==='ready'?'ready' as const:im.state==='pending'?'pending' as const:'unavailable' as const}))}:{}),
         ...(timing && (kind==='UserPromptSubmit'||kind==='Stop'&&timing.state==='finished'||kind==='Interrupt'&&timing.state==='interrupted')?{timing}:{}) }
     })
-    return { items,latestCursor:str(data.latest_cursor),firstCursor:items[0]?.cursor??'',...(data.has_more ? { nextCursor: str(data.next_cursor) } : {}) }
+    const queue=data.owner_view===true?this.queues.read(owner,localTeam,sourceId,taskId,data.queue_snapshot,this.now()):undefined
+    const queueCloud:NonNullable<TeamCodexTask['queueCloud']>=data.owner_view===true?queue?'ready':'unavailable':'private'
+    return { items,queueCloud,...(queue?{queue}:{}),latestCursor:str(data.latest_cursor),firstCursor:items[0]?.cursor??'',...(data.has_more ? { nextCursor: str(data.next_cursor) } : {}) }
   }
 }

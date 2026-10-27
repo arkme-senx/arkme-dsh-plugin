@@ -10,8 +10,9 @@ const freshness = (task:TeamCodexTask):number => task.cloud?.remote ? 90_000 : 1
 
 export function codexQueueAvailability(task: TeamCodexTask) {
   if (!isCodexTaskLive(task)) return 'paused'
-  if (!task.queue || !readable(task)) return 'unavailable'
-  return task.queue.availability === 'ready' && Date.now() - task.queue.checkedAt >= freshness(task) ? 'stale' : task.queue.availability
+  const queue=task.queue??task.queueSummary
+  if (!queue || !readable(task)) return 'unavailable'
+  return queue.availability === 'ready' && Date.now() - queue.checkedAt >= freshness(task) ? 'stale' : queue.availability
 }
 
 function queueWarning(task: TeamCodexTask): string {
@@ -32,6 +33,7 @@ export function codexQueueLabel(task: TeamCodexTask): string {
   const warning = queueWarning(task)
   if (warning) return warning
   const items = task.queue?.items ?? []
+  if(!task.queue&&task.queueSummary){const q=task.queueSummary;return q.count?tr(q.waitingCount<q.count?'待处理 {count} 条':'排队 {count} 条',{count:q.count}):tr('暂无排队请求')}
   if (items.some(item => !waiting(item))) return tr('待处理 {count} 条', { count: items.length })
   return items.length ? tr('排队 {count} 条', { count: items.length }) : tr('暂无排队请求')
 }

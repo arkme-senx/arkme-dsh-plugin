@@ -95,6 +95,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     let ref=''
     await vi.waitFor(async()=>{ref=(await f.service.events(teamRef,task.id)).items[0]?.privateImages?.[0]?.ref??'';expect(ref).not.toBe('')})
     expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
+    expect((await f.service.image('self',task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
     await expect(f.service.image(teamRef,task.id,'other_turn','UserPromptSubmit',ref)).rejects.toThrow()
     await expect(f.service.image(`team_v1_${'c'.repeat(32)}`,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
     f.setUser(22)
@@ -102,6 +103,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.setUser(11);f.service.close();rmSync(path)
     const restored=new TeamCodexService(f.options);services.push(restored)
     expect((await restored.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
+    expect((await restored.image('self',task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
   })
   it('attaches native timing to the exact captured turn and keeps it after restart and pause',async()=>{
     const f=fixture();await f.enroll();f.record();f.record('Stop');const task=await f.task()

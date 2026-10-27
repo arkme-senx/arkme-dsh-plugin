@@ -68,7 +68,7 @@ export const CodexMessageBody = memo(function CodexMessageBody({ text }: { text:
   }}>{text}</Markdown></div>
 })
 
-interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; children?: ReactNode }
+interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; children?: ReactNode|((detail:TeamCodexTask)=>ReactNode) }
 function visiblePrompt(raw: string) {
   const prompt = codexPromptPresentation(raw)
   return { text: codexImageSafeText(prompt.text), ...(prompt.replies ? {
@@ -95,6 +95,11 @@ export function TeamCodexConversation(props: CodexConversationProps) {
 }
 function CodexConversationReader({ teamRef, task, reading, inputName, children, account, userId }: CodexConversationProps & { account:string;userId:number|undefined }) {
   const [items, setItems] = useState(reading.items)
+  const [detailQueue,setDetailQueue]=useState<TeamCodexTask['queue']>()
+  const [detailQueueCloud,setDetailQueueCloud]=useState<TeamCodexTask['queueCloud']>()
+  const detailTask={...task}
+  if(detailQueueCloud){detailTask.queueCloud=detailQueueCloud;if(detailQueue)detailTask.queue=detailQueue;else delete detailTask.queue}
+
   const [before, setBefore] = useState(reading.before)
   const [cursor, setCursor] = useState(reading.cursor)
   const [busy, setBusy] = useState(false)
@@ -125,6 +130,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         ...(task.cloud?.remote ? { sourceId: task.cloud.sourceId } : {}),
         ...(typeof older==='string'?{cursor:older}:typeof older==='number'?{before:older}:{}),
       }, controller.signal)
+      if(page.queueCloud){setDetailQueue(page.queue);setDetailQueueCloud(page.queueCloud)}
       if((task.cloud?.remote||reading.items.some(event=>event.cursor?.startsWith('lc1_')||event.cursor?.startsWith('nl1_'))) && older===undefined && reading.items.length){
         const ordered=[...reading.items].sort(compareCodexEvents),first=ordered[0]?.cursor,last=ordered.at(-1)?.cursor
         const readRange=async (bounds:Record<string,string>)=>{
@@ -159,7 +165,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
       if (!live.current || controller.signal.aborted) return
       setError(failure instanceof Error ? failure.message : tr('工作动态加载失败，请重试'))
       // Explicit denial clears content; a transient network/service error retains the reading window.
-      if (task.cloud?.remote && codexAccessRevoked(failure)) { reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; setItems([]); setBefore(undefined); setCursor(undefined) }
+      if (task.cloud?.remote && codexAccessRevoked(failure)) {setDetailQueue(undefined);setDetailQueueCloud('private'); reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; setItems([]); setBefore(undefined); setCursor(undefined) }
     } finally {
       controllers.current.delete(controller); loading.current = false
       if (live.current && !controller.signal.aborted) setBusy(false)
@@ -239,7 +245,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     </div>
     {interactions.host}
     {interactions.feedback}
-    <div style={{position:'relative',flex:'none',minHeight:interactions.selecting?110:undefined}}><div style={{visibility:interactions.selecting?'hidden':undefined}} aria-hidden={interactions.selecting?true:undefined}>{children}</div>{interactions.dock}</div>
+    <div style={{position:'relative',flex:'none',minHeight:interactions.selecting?110:undefined}}><div style={{visibility:interactions.selecting?'hidden':undefined}} aria-hidden={interactions.selecting?true:undefined}>{typeof children==='function'?children(detailTask):children}</div>{interactions.dock}</div>
 
   </div>
 }
