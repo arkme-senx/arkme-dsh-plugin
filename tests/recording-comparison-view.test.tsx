@@ -39,6 +39,16 @@ it('preserves text selection on one click and uses explicit double click or keyb
   expect(row.textContent).toContain('<1秒')
 })
 
+it('includes collapsed processing details in the dialog keyboard loop', async () => {
+  await render(<RecordingComparisonView scope="当天录音" onClose={() => {}}><details><summary>处理详情</summary><p>已完成</p></details></RecordingComparisonView>)
+  const close = document.querySelector<HTMLButtonElement>('[aria-label="关闭转写对比"]')!
+  const summary = document.querySelector('summary')!
+  close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
+  expect(document.activeElement).toBe(summary)
+  summary.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+  expect(document.activeElement).toBe(close)
+})
+
 it('keeps keyboard dismissal and navigation working when a completed action removes the focused button', async () => {
   const close = vi.fn()
   const view = (processing: boolean) => <RecordingComparisonView scope="当天录音" onClose={close}>

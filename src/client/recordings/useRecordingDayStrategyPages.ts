@@ -3,7 +3,7 @@ import type { RecordingStrategy, RecordingStrategyPage } from '../../recording-s
 import { callArkme } from '../api.js'
 import { comparisonDayRange, comparisonError, comparisonSourceState, type DayComparisonSource } from './recording-comparison-day.js'
 
-type SourcePage = { items: RecordingStrategyPage['items']; cursor?: string | undefined; done: boolean; waiting: boolean; failed: boolean }
+export type SourcePage = { items: RecordingStrategyPage['items']; cursor?: string | undefined; done: boolean; waiting: boolean; failed: boolean }
 
 /** One bounded request per column. Completed/empty sources advance naturally;
  * a pending source never prevents later recordings from being read. */

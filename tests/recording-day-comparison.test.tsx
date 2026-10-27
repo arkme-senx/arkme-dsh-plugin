@@ -25,6 +25,7 @@ async function render(strategy: typeof current | typeof baseline = current) {
   await act(async () => root!.render(<RecordingDayStrategyComparison dateStamp={day} strategy={strategy} mediaPath="/media" onClose={() => {}} />))
 }
 beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   api.call.mockReset().mockImplementation(read)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.querySelectorAll('[data-transcript-time]').length * 80 })
@@ -154,4 +155,54 @@ it('retains submitted files after a partial failure and retries only the missing
  await act(async()=>start().click())
  expect(api.call.mock.calls.filter(([op,p])=>op.endsWith('.start')&&p.sourceRef==='one')).toHaveLength(1)
  expect(started.size).toBe(2)
+})
+
+it('keeps completed empty files out of the reading area and groups their status in collapsed details', async () => {
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'sources') return { items: Array.from({ length: 9 }, (_, index) => source(String(index), day + index * 3600_000)) }
+    if (p.action === 'options') return { ...options(), results: [{ strategy: current, complete: true, failed: false }] }
+    if (p.action === 'page') return { items: p.sourceRef === '8' ? [utterance('last', day + 8 * 3600_000)] : [], complete: true, failed: false }
+    return read(op, p)
+  })
+  await render()
+  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  expect(column.textContent).toContain('已完成 9 / 9')
+  expect(column.querySelector('details')?.open).toBe(false)
+  expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(1)
+  expect(column.querySelectorAll('[data-transcript-time]')).toHaveLength(1)
+  expect(column.textContent).not.toContain('当前日期没有可展示的转写内容。')
+  expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
+})
+
+it('summarizes pending, failed and missing sources without hiding completed text or offering to rerun existing results', async () => {
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'sources') return { items: ['ready', 'pending', 'failed', 'missing'].map((ref, index) => source(ref, day + index * 3600_000)) }
+    if (p.action === 'options') return { ...options(), results: p.sourceRef === 'missing' ? [] : [{ strategy: current, complete: p.sourceRef !== 'pending', failed: p.sourceRef === 'failed' }] }
+    if (p.action === 'page') return { items: p.sourceRef === 'ready' ? [utterance('kept')] : [], complete: p.sourceRef !== 'pending', failed: p.sourceRef === 'failed' }
+    return read(op, p)
+  })
+  await render()
+  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  expect(column.textContent).toContain('已完成 1 / 4')
+  expect(column.textContent).toContain('处理中 1')
+  expect(column.textContent).toContain('处理失败 1')
+  expect(column.textContent).toContain('未生成 1')
+  expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(1)
+  expect(column.textContent).toContain('正文 kept')
+  expect(column.textContent).toContain('处理当天未生成部分（1）')
+  expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
+})
+
+it('shows a single honest empty state only after all completed sources have been read', async () => {
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'options') return { ...options(), results: [{ strategy: current, complete: true, failed: false }] }
+    if (p.action === 'page') return { items: [], complete: true, failed: false }
+    return read(op, p)
+  })
+  await render()
+  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  expect(column.querySelectorAll('[data-comparison-empty]')).toHaveLength(1)
+  expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(0)
+  expect(column.textContent).toContain('已完成，当天没有可展示的转写内容')
+  expect(api.call.mock.calls.filter(([, p]) => p.action === 'page' && p.strategy === current)).toHaveLength(2)
 })

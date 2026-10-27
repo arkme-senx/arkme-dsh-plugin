@@ -23,7 +23,7 @@ export function RecordingComparisonView({ scope, description, notices, children,
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose() }
       if (event.key !== 'Tab' || !dialog.current) return
-      const controls = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),[tabindex="0"]'))
+      const controls = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),summary,[tabindex="0"]'))
       const outside = !dialog.current.contains(document.activeElement)
       if (event.shiftKey && (outside || document.activeElement === controls[0])) { event.preventDefault(); controls.at(-1)?.focus() }
       else if (!event.shiftKey && (outside || document.activeElement === controls.at(-1))) { event.preventDefault(); controls[0]?.focus() }
