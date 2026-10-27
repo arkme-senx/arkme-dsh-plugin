@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeLongArticleDialogProps } from '../src/client/ArkmeLongArticleDialog.js'
 import type { ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../src/types.js'
 import { ArkmeLongArticleQuickView } from '../src/client/ArkmeLongArticleQuickView.js'
+import { invalidateMessageQuoteSources } from '../src/client/message-quote-invalidations.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), dialog: vi.fn(), auth: { auth: { userId: 42, environment: 'test' } } }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -35,6 +36,73 @@ const scrollBottom=()=>intersect?.([{isIntersecting:true}])
 const cards = () => renderer!.root.findAllByProps({ 'data-arkme-long-article-result': 'true' })
 const button = (label: string) => renderer!.root.findAllByType('button').find(node => content(node.props.children) === label)!
 async function mount() { await act(async () => { renderer = create(<ArkmeLongArticleQuickView />, {createNodeMock:()=>({})}) }) }
+
+it('rechecks only affected loaded pages without losing older pages or advancing their cursor', async () => {
+  const a = item('a', { targetSource: { sourceRef: 'a', sourceKey: 'a', kind: 'group_chat', displayName: 'A', activeAtMillis: 1, unreadCount: 0 } })
+  const b = item('b', { targetSource: { sourceRef: 'b', sourceKey: 'b', kind: 'group_chat', displayName: 'B', activeAtMillis: 1, unreadCount: 0 } })
+  mocks.call.mockResolvedValueOnce(page([a], 'page2')).mockResolvedValueOnce(page([b], 'page3'))
+  await mount(); await act(async () => { scrollBottom() })
+  const before = mocks.call.mock.calls.length
+  await act(async () => { invalidateMessageQuoteSources('unrelated'); await vi.advanceTimersByTimeAsync(150) })
+  expect(mocks.call).toHaveBeenCalledTimes(before)
+  mocks.call.mockResolvedValueOnce(page([], 'page2'))
+  await act(async () => { invalidateMessageQuoteSources('a'); invalidateMessageQuoteSources('a'); await vi.advanceTimersByTimeAsync(150) })
+  expect(mocks.call).toHaveBeenCalledTimes(before + 1)
+  expect(cards()).toHaveLength(1)
+  expect(content(renderer!.toJSON())).toContain('文章b')
+  mocks.call.mockResolvedValueOnce(page([item('c')]))
+  await act(async () => { scrollBottom() })
+  expect(mocks.call.mock.calls.at(-1)![1].cursor).toBe('page3')
+  expect(cards()).toHaveLength(2)
+})
+
+it('retains all pages across a failed refresh, retries that page and defers hidden refresh work', async () => {
+  mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockResolvedValueOnce(page([item('2')], 'older'))
+  await mount(); await act(async () => { scrollBottom() })
+  mocks.call.mockRejectedValueOnce(new Error('refresh failed'))
+  await act(async () => { invalidateMessageQuoteSources('signed-source'); await vi.advanceTimersByTimeAsync(150) })
+  expect(cards()).toHaveLength(2)
+  mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockResolvedValueOnce(page([item('2')], 'older'))
+  await act(async () => { button('重试').props.onClick() })
+  expect(cards()).toHaveLength(2)
+  expect(mocks.call.mock.calls.at(-1)![1].cursor).toBe('next')
+  await act(async () => renderer!.update(<ArkmeLongArticleQuickView active={false} />))
+  const reads = mocks.call.mock.calls.length
+  await act(async () => { invalidateMessageQuoteSources(); await vi.advanceTimersByTimeAsync(150) })
+  expect(mocks.call).toHaveBeenCalledTimes(reads)
+  mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockResolvedValueOnce(page([item('2')], 'older'))
+  await act(async () => { renderer!.update(<ArkmeLongArticleQuickView />); })
+  await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+  expect(mocks.call).toHaveBeenCalledTimes(reads + 2)
+  expect(cards()).toHaveLength(2)
+})
+
+it('keeps the visible article anchored when a preceding article disappears', async () => {
+  const root = { scrollTop: 60, getBoundingClientRect: () => ({ top: 0 }), querySelectorAll: (): unknown[] => [] }
+  root.querySelectorAll = () => cards().map(card => {
+    const key = card.props['data-arkme-article-key']
+    return { dataset: { arkmeArticleKey: key }, getBoundingClientRect: () => {
+      const index = cards().findIndex(current => current.props['data-arkme-article-key'] === key)
+      return { top: index * 50 - root.scrollTop, bottom: (index + 1) * 50 - root.scrollTop }
+    } }
+  })
+  const scrollRoot = { current: root as unknown as HTMLElement }
+  mocks.call.mockResolvedValueOnce(page([item('1'), item('2')]))
+  await act(async () => { renderer = create(<ArkmeLongArticleQuickView scrollRoot={scrollRoot} />, {createNodeMock:()=>({})}) })
+  mocks.call.mockResolvedValueOnce(page([item('2')]))
+  await act(async () => { invalidateMessageQuoteSources(); await vi.advanceTimersByTimeAsync(150) })
+  expect(cards()).toHaveLength(1)
+  expect(root.scrollTop).toBe(10)
+})
+
+it('can repopulate an empty retained page after a global permission/content change', async () => {
+  mocks.call.mockResolvedValueOnce(page([]))
+  await mount()
+  mocks.call.mockResolvedValueOnce(page([item('restored')]))
+  await act(async () => { invalidateMessageQuoteSources(); await vi.advanceTimersByTimeAsync(150) })
+  expect(cards()).toHaveLength(1)
+  expect(content(renderer!.toJSON())).toContain('文章restored')
+})
 
 beforeEach(() => {
   vi.useFakeTimers()

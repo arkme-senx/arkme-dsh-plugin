@@ -44,7 +44,7 @@ it('revalidates open shared originals on invalidation and removes denied cached 
  host=document.createElement('div');document.body.append(host);root=createRoot(host);
  await act(async()=>root.render(<ArkmeLongArticleDialog sourceRef="chat" item={item} onClose={close}/>));
  expect(host.querySelector('img')).not.toBeNull();denied=true;
- await act(async()=>invalidateMessageQuoteSources());
+ await act(async()=>{invalidateMessageQuoteSources();await new Promise(resolve=>setTimeout(resolve,120))});
  expect(host.querySelector('img')).toBeNull();expect(host.querySelector('h1')).toBeNull();expect(close).toHaveBeenCalledOnce();expect(host.textContent).toContain('access revoked');
- denied=false;await act(async()=>invalidateMessageQuoteSources());expect(host.querySelector('img')).not.toBeNull();
+ denied=false;await act(async()=>{invalidateMessageQuoteSources();await new Promise(resolve=>setTimeout(resolve,120))});expect(host.querySelector('img')).not.toBeNull();
 });

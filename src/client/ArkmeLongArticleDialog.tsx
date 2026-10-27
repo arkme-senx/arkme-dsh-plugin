@@ -287,7 +287,11 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   }, [itemUid, sourceRef])
   useEffect(() => {
     if (editing || !itemUid || !item?.messageActionRef) return
-    return subscribeMessageQuoteInvalidations(() => { void loadDetail() })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stop = subscribeMessageQuoteInvalidations(() => {
+      if (timer === undefined) timer = setTimeout(() => { timer = undefined; void loadDetail() }, 100)
+    })
+    return () => { stop(); if (timer !== undefined) clearTimeout(timer) }
   }, [editing, itemUid, item?.messageActionRef, loadDetail])
 
   useEffect(() => arkmeAuthStore.subscribe(() => {

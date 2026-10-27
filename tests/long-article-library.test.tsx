@@ -97,7 +97,7 @@ it('keeps native category pages when the window regains focus and refreshes only
   await act(async()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('focus'))})
   expect(mocks.call).toHaveBeenCalledTimes(reads)
   expect(renderer.root.findAllByProps({'data-arkme-long-article-result':'true'})).toHaveLength(1)
-  await act(async()=>changed())
+  await act(async()=>{changed();await new Promise(resolve=>setTimeout(resolve,120))})
   expect(mocks.call).toHaveBeenCalledTimes(reads+1)
   act(()=>renderer.unmount())
   expect(stop).toHaveBeenCalledOnce()

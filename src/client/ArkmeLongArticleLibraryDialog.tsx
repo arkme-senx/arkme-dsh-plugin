@@ -14,6 +14,7 @@ import { tr, useArkmeLocale } from './locale.js'
 import { openBrowseWindow, openLongArticleWindow, longArticleWindowBridge } from './long-article-window.js'
 import css from './long-article-library.css?inline'
 import { longArticleSearchTimelineItem } from './long-article-search-item.js'
+import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
 
 const scopes: { key: ArkmeLongArticleBrowseScope; label: string }[] = [
   { key: 'recent', label: '最近' }, { key: 'shared_by_me', label: '我共享的' }, { key: 'shared_with_me', label: '共享给我的' },
@@ -35,10 +36,9 @@ export function ArkmeLongArticleLibraryDialog(props: LibraryProps) {
 }
 function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
   useArkmeLocale()
-  const [revision, setRevision] = useState(0)
   useEffect(() => {
     if (!standalone) return
-    const refresh = () => setRevision(value => value + 1)
+    const refresh = () => invalidateMessageQuoteSources()
     const stop = longArticleWindowBridge()?.onChanged?.(refresh)
     return () => { stop?.() }
   }, [standalone])
@@ -110,7 +110,7 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
       </div>
       {scopes.filter(item => visited.includes(item.key)).map(item => <div key={item.key} ref={panels[item.key]} id={`${id}-${item.key}-panel`} role="tabpanel"
         aria-labelledby={`${id}-${item.key}-tab`} className="arkme-article-library-panel" hidden={scope !== item.key}>
-        <ArkmeLongArticleQuickView key={`${item.key}:${revision}`} onChooseArticle={standalone ? item => {
+        <ArkmeLongArticleQuickView key={item.key} onChooseArticle={standalone ? item => {
           if (!item.targetSource) return
           void openLongArticleWindow({ ...item.targetSource, sourceKey: item.targetSource.sourceKey ?? item.targetSource.sourceRef }, { mode: 'existing', item: longArticleSearchTimelineItem(item) }).catch(reason => setError(reason instanceof Error ? reason.message : '无法打开长文'))
         } : undefined} scope={item.key} active={scope === item.key} scrollRoot={panels[item.key]} created={created} />

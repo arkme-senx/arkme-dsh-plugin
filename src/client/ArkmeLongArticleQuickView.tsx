@@ -1,6 +1,6 @@
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeLongArticleBrowseScope, ArkmeLongArticleDetail, ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
@@ -9,6 +9,7 @@ import { needsLongArticleSource, resolveLongArticleSource, longArticleSearchTime
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
+import { LongArticlePages, articleSourceMatches } from './long-article-pages.js'
 
 const styles: Record<string, CSSProperties> = {
   list: { display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 2px' },
@@ -53,6 +54,27 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
   const opener = useRef<HTMLButtonElement>()
   const current = useRef({ page, error }); current.current = { page, error }
   const latestCreated = useRef(created); latestCreated.current = created
+  const pages = useRef<LongArticlePages>(new LongArticlePages(initialPage))
+  const drainRefresh = useRef<() => void>()
+  const retryRefresh = useRef<() => void>()
+  const refreshOnActivate = useRef(false)
+  const scrollAnchor = useRef<{ key: string; top: number }>()
+  const publishPages = () => {
+    const root = scrollRoot?.current
+    if (root && typeof root.querySelectorAll === 'function' && !scrollAnchor.current) {
+      const top = root.getBoundingClientRect().top
+      const row = [...root.querySelectorAll<HTMLElement>('[data-arkme-article-key]')].find(node => node.getBoundingClientRect().bottom > top)
+      if (row) scrollAnchor.current = { key: row.dataset.arkmeArticleKey!, top: row.getBoundingClientRect().top - top }
+    }
+    setPage(pages.current.snapshot(scope === 'recent' ? latestCreated.current : undefined))
+  }
+  useLayoutEffect(() => {
+    const anchor = scrollAnchor.current; scrollAnchor.current = undefined
+    const root = scrollRoot?.current
+    if (!anchor || !root || typeof root.querySelectorAll !== 'function') return
+    const row = [...root.querySelectorAll<HTMLElement>('[data-arkme-article-key]')].find(node => node.dataset.arkmeArticleKey === anchor.key)
+    if (row) root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.top
+  }, [page, scrollRoot])
 
   const load = useCallback(async (cursor?: string) => {
     if (inFlight.current) return
@@ -73,10 +95,8 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
       const items = result.items.filter(item => item.templateKind === 8 || item.displayKind === 1)
       const nextCursor = result.nextCursor?.trim()
       const canContinue = result.hasMore && !!nextCursor && nextCursor !== cursor
-      setPage(current => ({
-        ...result, hasMore: canContinue,
-        items: [...new Map([...(cursor === undefined ? scope === 'recent' && latestCreated.current ? [latestCreated.current] : [] : current?.items ?? []), ...items].map(item => [identity(item), item])).values()],
-      }))
+      pages.current.put(cursor, { ...result, hasMore: canContinue, items })
+      setPage(pages.current.snapshot(scope === 'recent' ? latestCreated.current : undefined))
       if (result.hasMore && !canContinue) setError('后续分页暂不可用，请返回后重试')
     } catch (caught) {
       if (id === generation.current) {
@@ -85,7 +105,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
       }
     } finally {
       clearTimeout(timeout)
-      if (id === generation.current) { inFlight.current = false; setLoading(false) }
+      if (id === generation.current) { inFlight.current = false; setLoading(false); drainRefresh.current?.() }
     }
   }, [scope])
 
@@ -95,7 +115,68 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     return () => { generation.current += 1; request.current?.abort(); inFlight.current = false; openingRequest.current?.abort(); openingRequest.current = undefined }
   }, [active, load])
 
-  useEffect(() => !active ? undefined : subscribeMessageQuoteInvalidations(() => { void load() }), [active, load])
+  useEffect(() => {
+    if (!active) return subscribeMessageQuoteInvalidations(source => {
+      if (pages.current.cursors(source).length) refreshOnActivate.current = true
+    })
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined
+    const pending = new Set<string | undefined>()
+    const controllers = new Set<AbortController>()
+    const publish = publishPages
+    const drain = async () => {
+      if (stopped || inFlight.current || !pending.size) return
+      inFlight.current = true
+      const sources = [...pending]; pending.clear()
+      const cursors = [...new Set(sources.flatMap(source => pages.current.cursors(source)))]
+      setLoading(true); setError(''); setUnavailable(false)
+      let failed = false
+      try {
+        for (const cursor of cursors) {
+          if (stopped) return
+          const controller = new AbortController(); controllers.add(controller)
+          const timeout = setTimeout(() => controller.abort(), 20_000)
+          try {
+            const result = await callArkme<ArkmeRecordSearchResult>('search.scene', {
+              scene: 'long_article', limit: 20, ...(cursor ? { cursor } : {}),
+              ...(scope === 'recent' ? {} : { articleScope: scope }),
+            }, controller.signal)
+            if (stopped) return
+            if (controller.signal.aborted) throw new Error('加载超时，请重试')
+            const next = result.nextCursor?.trim()
+            if (result.hasMore && (!next || next === cursor)) throw new Error('后续分页暂不可用，请重试')
+            pages.current.put(cursor, { ...result, items: result.items.filter(item => item.templateKind === 8 || item.displayKind === 1) })
+            publish()
+          } finally { clearTimeout(timeout); controllers.delete(controller) }
+        }
+        retryRefresh.current = undefined
+      } catch (caught) {
+        if (stopped) return
+        failed = true
+        for (const source of sources) pending.add(source)
+        setError(caught instanceof Error ? caught.message : '读取失败，请重试')
+        retryRefresh.current = () => { void drain() }
+      } finally {
+        if (!stopped) { inFlight.current = false; setLoading(false); if (!failed && pending.size) schedule() }
+      }
+    }
+    const schedule = () => {
+      if (timer !== undefined) return
+      timer = setTimeout(() => { timer = undefined; void drain() }, 100)
+    }
+    drainRefresh.current = schedule
+    const stop = subscribeMessageQuoteInvalidations(source => {
+      if (!pages.current.cursors(source).length) return
+      if (source === undefined) pending.clear()
+      if (!pending.has(undefined)) pending.add(source)
+      schedule()
+    })
+    if (refreshOnActivate.current) { refreshOnActivate.current = false; pending.add(undefined); schedule() }
+    return () => {
+      stopped = true; stop(); if (timer !== undefined) clearTimeout(timer)
+      for (const controller of controllers) controller.abort()
+      drainRefresh.current = undefined; retryRefresh.current = undefined
+    }
+  }, [active, scope])
 
   useEffect(() => {
     if (!created || scope !== 'recent') return
@@ -106,8 +187,9 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
   useEffect(() => {
     if (!updatedArticle) return
     const { sourceRef, detail } = updatedArticle
-    setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.recordUid === detail.itemUid && item.targetSource?.sourceRef === sourceRef
-      ? { ...item, title: detail.title, textContent: detail.textContent, snippet: '' } : item) } : previous)
+    pages.current.mapItems(items => items.map(item => item.recordUid === detail.itemUid && item.targetSource?.sourceRef === sourceRef
+      ? { ...item, title: detail.title, textContent: detail.textContent, snippet: '' } : item))
+    setPage(pages.current.snapshot(scope === 'recent' ? latestCreated.current : undefined))
   }, [updatedArticle])
 
   useEffect(() => {
@@ -139,7 +221,8 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
       if (!controller.signal.aborted && openingRequest.current === controller) {
         setOpenError(caught instanceof Error ? caught.message : '无法打开长文，请重试')
         if ((caught as { body?: { retryable?: boolean } })?.body?.retryable === false) {
-          setPage(previous => previous ? { ...previous, items: previous.items.filter(row => identity(row) !== identity(item)) } : previous)
+          pages.current.mapItems(items => items.filter(row => identity(row) !== identity(item)))
+          publishPages()
         }
       }
     }).finally(() => { if (openingRequest.current === controller) { openingRequest.current = undefined; setOpening(false) } })
@@ -154,14 +237,13 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
 
   return <section aria-label={tr("长文快速查找")}>
     {openError !== '' && <p role="alert" style={styles.state}>{openError}</p>}
-    {opening && <p role="status" style={styles.state}>{tr('正在打开长文…')}</p>}
     <div style={titleOnly ? { display: 'flex', flexDirection: 'column', gap: 3, padding: '8px 0' } : styles.list}>
       {titleOnly && currentArticle && !page?.items.some(isCurrent)
         && <div className="arkme-article-directory-current" aria-current="page" title={currentArticle.title}>{currentArticle.title || tr('无标题长文')}</div>}
       {page?.items.map(item => {
         const text = item.snippet || item.textContent
         const summary = item.textFormat === 'markdown' ? arkmeMarkdownPlainText(text) : text
-        return <button key={identity(item)} type="button" data-arkme-feedback="neutral" data-arkme-long-article-result="true"
+        return <button key={identity(item)} type="button" data-arkme-feedback="neutral" data-arkme-long-article-result="true" data-arkme-article-key={identity(item)}
           {...(titleOnly ? { className: 'arkme-article-directory-item', title: item.title || tr('无标题长文'), 'aria-current': isCurrent(item) ? 'page' as const : undefined } : { style: styles.card })} disabled={opening} onClick={event => chooseArticle(item, event.currentTarget)}>
 
           {titleOnly ? <span>{item.title || tr('无标题长文')}</span> : <>
@@ -174,7 +256,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     </div>
     {!loading && !error && page?.items.length === 0 && <p style={styles.state}>{page.hasMore ? '正在查找更多长文…' : '暂无长文'}</p>}
     <div ref={sentinel} style={styles.state}>
-      {loading ? <span role="status">{tr("正在加载长文…")}</span> : error ? <span role={unavailable ? 'status' : 'alert'}>{tr(error)}{!unavailable && <button type="button" style={styles.retry} onClick={() => { void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button>}</span>
+      {loading ? <span role="status">{tr("正在加载长文…")}</span> : error ? <span role={unavailable ? 'status' : 'alert'}>{tr(error)}{!unavailable && <button type="button" style={styles.retry} onClick={() => { if (retryRefresh.current) retryRefresh.current(); else void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button>}</span>
         : null}
     </div>
     {selected?.targetSource !== undefined && typeof document !== 'undefined' && createPortal(
@@ -184,7 +266,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
         overlayZIndex={10060}
         initialDirectoryPage={scope === 'recent' ? page : undefined}
         onClose={closeArticle}
-        onDeleted={(uid, owner) => { setPage(current => current ? { ...current, items: current.items.filter(item => item.recordUid !== uid || String(item.recordOwnerUserId) !== String(owner ?? selected.recordOwnerUserId)) } : current) }}
+        onDeleted={(uid, owner) => { pages.current.mapItems(items => items.filter(item => item.recordUid !== uid || String(item.recordOwnerUserId) !== String(owner ?? selected.recordOwnerUserId))); publishPages() }}
         onUpdated={detail => {
           setPage(current => current === undefined ? current : { ...current, items: current.items.map(item => identity(item) !== identity(selected) ? item : { ...item, title: detail.title, textContent: detail.textContent, snippet: '', ...(detail.textFormat === undefined ? {} : { textFormat: detail.textFormat }) }) })
         }}
