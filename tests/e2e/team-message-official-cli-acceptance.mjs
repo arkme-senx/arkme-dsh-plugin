@@ -13,6 +13,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 const node=process.execPath;
 const reactionsOnly=process.env.ARKME_E2E_REACTIONS_ONLY==='1';
+const extensionSendOnly=process.env.ARKME_E2E_EXTENSION_SEND_ONLY==='1';
 let reactionRevision=0,reactionMine=false,reactionOther=true;
 const reactionExpression={text:'收到',color:'blue'},reactionKey=createHash('sha256').update(JSON.stringify(reactionExpression)).digest('hex');
 const cli=process.env.ARKME_OFFICIAL_DSH_CLI;
@@ -118,7 +119,58 @@ try {
   await details.getByText(replyText,{exact:true}).waitFor();await page.screenshot({path:join(capture,'00-extension-direct-send.png')});await details.getByRole('button',{name:'关闭详情',exact:true}).click();console.log('TEAM_EXTENSION_DEFAULT_SEND_READY');
  }
  const pane=page.locator('.team-conversation-pane');await pane.getByText(text,{exact:true}).first().waitFor();const menu=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await pane.locator('[data-team-message-key]').filter({hasText:text}).first().getByLabel('消息操作',{exact:true}).click({button:'right'})};
- if(reactionsOnly){
+ if(extensionSendOnly){
+  assert.equal(live,false,'latency scenario requires the isolated synthetic upstream');
+  await menu();await page.getByRole('menuitem',{name:'延展',exact:true}).click();
+  const target=pane.locator('[data-arkme-composer-extension-target]');
+  const card=pane.locator('[data-arkme-primary-composer]');
+  const editor=pane.getByRole('textbox',{name:'团队消息内容',exact:true});
+  const geometry=[];
+  for(const width of [1280,850]){
+   await page.setViewportSize({width,height:860});
+   await editor.fill('交付时间已确认');
+   await editor.focus();
+   const shape=await card.evaluate(node=>{
+    const style=getComputedStyle(node),parent=node.previousElementSibling;
+    return {radius:style.borderRadius,top:style.borderTopWidth,color:style.borderColor,
+     joined:Math.abs(node.getBoundingClientRect().top-parent.getBoundingClientRect().bottom)<1,
+     fits:node.getBoundingClientRect().right<=innerWidth};
+   });
+   assert.equal(shape.top,'0px');assert.equal(shape.radius,'0px 0px 15px 15px');
+   assert.ok(shape.joined&&shape.fits);geometry.push({width,...shape});
+   await page.screenshot({path:join(capture,`extension-compose-${width}.png`)});
+  }
+  let releaseAdmission,clientUid;
+  const admissionGate=new Promise(resolve=>{releaseAdmission=resolve});
+  await page.route('**/arkme-self/api',async route=>{
+   const body=route.request().postDataJSON();
+   if(body.operation!=='team.app.send.enqueue')return route.fallback();
+   clientUid=body.params.clientUid;
+   await admissionGate;
+   await route.continue();
+  });
+  await pane.getByRole('button',{name:'发送',exact:true}).click();
+  await poll(async()=>clientUid,Boolean);
+  assert.equal(await target.count(),0,'reply must leave the next draft before Host acknowledgement');
+  assert.equal((await editor.innerText()).trim(),'');
+  const reply=pane.locator('[data-team-message-key]').filter({hasText:'交付时间已确认'}).last();
+  await reply.locator('[data-arkme-extension-parent-preview]').getByText(text,{exact:true}).waitFor();
+  assert.equal(await reply.getAttribute('data-team-message-key'),clientUid);
+  await editor.fill('下一条普通消息');
+  await page.screenshot({path:join(capture,'extension-before-ack.png')});
+  releaseAdmission();
+  await poll(()=>reply.getAttribute('data-team-message-key'),key=>key&&key!==clientUid);
+  await reply.locator('[data-arkme-extension-parent-preview]').getByText(text,{exact:true}).waitFor();
+  assert.equal(await target.count(),0);
+  assert.equal((await editor.innerText()).trim(),'下一条普通消息');
+  assert.ok(calls.some(call=>call.path.endsWith('/conversations/messages/send')&&call.body.reply_to==='source-message'));
+  await page.screenshot({path:join(capture,'extension-after-minimal-ack.png')});
+  await writeFile(join(capture,'extension-send-acceptance.json'),JSON.stringify({passed:true,
+   installedArtifact:artifact,officialHost:true,upstream:'isolated synthetic HTTP',geometry,
+   targetConsumedBeforeHostAck:true,parentVisibleWhileSending:true,parentVisibleAfterMinimalAck:true,
+   nextDraftPreserved:true,timelineStillBehind:true},null,2));
+  console.log('PASS: packaged Team composer parity, immediate reply consumption and stable minimal-ACK presentation');
+ }else if(reactionsOnly){
   if(!live){
    const row=page.locator('.team-conversation-row').filter({hasText:'验收来访者'}).first();
    const mute=row.getByRole('img',{name:'消息免打扰已开启',exact:true});await mute.waitFor();
