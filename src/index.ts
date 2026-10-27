@@ -1,3 +1,4 @@
+import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
 import { arkmeDesktopBridgeConfigFromEnv } from './services/desktop-attention-bridge.js'
@@ -1042,6 +1043,11 @@ export function apply(ctx: Context, config: Config): void {
     const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/native-streams`, handler: carrier.handler })
     return () => { remove(); carrier.close() }
   }, 'dsh-arkme: native subscription carrier')
+  ctx.effect(() => {
+    const carrier = new RealtimeDictationSocket(service.realtimeDictationOwner, webPort)
+    const remove = ctx.webServer.registerUpgrade({ path: `${config.routePath}/dictation`, handler: carrier.handler })
+    return () => { remove(); carrier.close() }
+  }, 'dsh-arkme: realtime dictation carrier')
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 

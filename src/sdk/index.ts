@@ -3,6 +3,10 @@ export type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
 export type{CodexWatchRequest,CodexReadRequest,CodexWriteRequest,CodexWorkRequest,CodexWorkResult,CodexTaskLocator}from'../codex-work-records-port.js'
 export type{TeamCodexState,TeamCodexTask,TeamCodexEvent,TeamCodexEventPage,TeamCodexTurnTiming,TeamCodexQueueSnapshot}from'../team-codex-contract.js'
+import { connectRealtimeDictation, type RealtimeDictationOptions } from '../realtime-dictation-client.js'
+import type { RealtimeDictationRequest, RealtimeDictationSnapshot, RealtimeDictationHandle } from '../realtime-dictation-contract.js'
+export type * from '../realtime-dictation-contract.js'
+export type { RealtimeDictationOptions } from '../realtime-dictation-client.js'
 import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
 export type * from '../arko-lifecycle-contract.js'
 import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
@@ -534,6 +538,18 @@ export class ArkmeSdk {
   async codexWorkRecords(request:CodexWorkRequest,signal?:AbortSignal):Promise<CodexWorkResult>{
     if((await this.capabilities(signal)).features.codexWorkRecordsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持 Codex 工作记录',retryable:false})
     return this.call('codex.work-records',{request},signal)
+  }
+
+  private async requireRealtimeDictation(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.realtimeDictationV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持实时听写，请升级', retryable: false })
+  }
+  async realtimeDictation(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot> {
+    await this.requireRealtimeDictation(signal)
+    return await this.call('dictation.realtime', { request }, signal)
+  }
+  async openRealtimeDictation(options: RealtimeDictationOptions): Promise<RealtimeDictationHandle> {
+    await this.requireRealtimeDictation(options.signal)
+    return await connectRealtimeDictation(this.route, options)
   }
 
   async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }

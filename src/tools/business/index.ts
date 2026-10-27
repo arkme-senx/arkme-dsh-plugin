@@ -1,5 +1,6 @@
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
+import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
@@ -69,6 +70,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  realtimeDictationTool,
   ...nativeAnnotationTools,
   ...messageSyncToolModules,
   ...selfRoleToolModules,

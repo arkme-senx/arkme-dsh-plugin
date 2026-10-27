@@ -1,4 +1,5 @@
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
+import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
 import type { TeamNotificationPort } from '../../team-notification-contract.js'
 import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
@@ -58,6 +59,8 @@ export interface ArkmeCoreToolPorts extends CodexWorkRecordsPort,
   ArkmeUserBanToolPort,
   ArkmeVoiceprintToolPort {
   readCodexImage(ref:string,options:{maxBytes:number;signal?:AbortSignal}):Promise<{data:Uint8Array;mediaType:'image/png'|'image/jpeg'|'image/webp'}>
+  realtimeDictationCommand(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot>
+
   externalChats(operation: import('../../team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown>
   relationPage(query:Omit<ExploreQuery,'module'>,signal?:AbortSignal):Promise<ExplorePage>
   relationRecords(query:{ref:string;cursor?:string},signal?:AbortSignal):Promise<ExploreDetail>

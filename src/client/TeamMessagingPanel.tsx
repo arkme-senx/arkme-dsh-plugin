@@ -1,3 +1,5 @@
+import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
+import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import {TeamForwardDialog} from './TeamForwardDialog.js'
 import {TeamForwardAttempt} from './team-forward-attempt.js'
@@ -325,6 +327,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }, [receiptStore])
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
+  const recordsRef = useRef<HTMLDivElement>(null)
+  const bottomVisibility = useScrollBottomVisibility(scroller, recordsRef, timeline !== undefined, timeline)
   const fileInput = useRef<HTMLInputElement>(null)
   const [dictationBusy, setDictationBusy] = useState(false)
   const editor = useRef<ArkmeRichComposerHandle>(null), composer = useRef<HTMLDivElement>(null)
@@ -404,6 +408,27 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       return data
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
   }, [conversation.ref, receiptStore])
+  const returnToLatest = async () => {
+    if (historyWindow.current) {
+      const previousWindow = historyWindow.current
+      historyWindow.current = 0
+      viewport.current = undefined
+      const fresh = await refresh(0, true)
+      if (!fresh) {
+        historyWindow.current = previousWindow
+        throw new Error('Latest messages unavailable')
+      }
+      setLocatedKey(undefined)
+    }
+    replyBack.current = undefined
+    quoteNavigation.clear()
+    const body = scroller.current
+    if (body) {
+      body.scrollTop = body.scrollHeight
+      viewport.current = arkmeConversationViewport(body)
+    }
+    bottomVisibility.measure()
+  }
   const recover = useCallback(async () => {
     if (ctrl.current.signal.aborted) return
     if (recovering.current) { recoverAgain.current = true; return }
@@ -795,9 +820,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
         }}/>
     </header>
-    {Boolean(quoteNavigation.notice || replyBack.current || historyWindow.current) && <div role="status">{quoteNavigation.notice}
+    {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
-      {historyWindow.current > 0 && <button type="button" onClick={()=>{historyWindow.current=0;replyBack.current=undefined;quoteNavigation.clear();latest.current=undefined;viewport.current=undefined;void refresh(0,true)}}>{tr('回到最新消息')}</button>}
     </div>}
     {teamCardOpen && current.side === 'external' && <TeamPublicCardDialog key={`${accountKey}:${conversation.key}`} accountKey={accountKey}
       jotmoId={current.channel.jotmoId} currentChannel={current.channel} onClose={() => setTeamCardOpen(false)} />}
@@ -810,7 +834,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       {!selection.busy && <button type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus}>×</button>}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-    <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current) }} aria-label={tr("团队消息记录")}>
+    <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>
+      <div ref={recordsRef}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
@@ -833,7 +858,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         </ArkmeSendTaskStatus>)}
       </Fragment>)}
       <div ref={bottom} className="team-read-sentinel" />
+      </div>
     </div>
+    <ArkmeConversationBottomControl showBackToBottom={bottomVisibility.visible || historyWindow.current > 0}
+      historical={historyWindow.current > 0} newMessageCount={0} onReturnToLatest={returnToLatest} />
     <RegionMarquee viewportRef={scroller} scopeKey={`${accountKey}:${conversation.key}`} enabled={!busy && !selection.busy && !editing && !selection.confirm && !detail}
       getItems={() => [...scroller.current?.querySelectorAll<HTMLElement>('[data-team-selectable]') ?? []].map(element => ({ key: element.dataset.teamSelectable!, element }))}
       onCommit={selection.enter} style={{ border: `1px solid ${arkmeTheme.accent}`, background: arkmeTheme.active }} />

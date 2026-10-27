@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import {
-  ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoPreservedScrollTop,
+  ArkmeArkoSurface, arkoHistoryHasTerminalRun,
   arkoRunActivityLabel, latestActiveRun, mergeHistory, shouldShowArkoThinking,
 } from '../src/client/ArkmeArkoSurface.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
@@ -85,11 +85,6 @@ describe('Arko surface', () => {
       historyItem({ messageId: 302, sessionId: 77, runUid: 'run-1', runStatus: 'completed', text: '其他会话' }),
       historyItem({ messageId: 303, sessionId: 88, runUid: 'run-2', runStatus: 'completed', text: '其他任务' }),
     ], 88, 302, 'run-1')).toBe(false)
-  })
-
-  it('preserves the visible history position when older messages are prepended', () => {
-    expect(arkoPreservedScrollTop(120, 900, 1_500)).toBe(720)
-    expect(arkoPreservedScrollTop(0, 900, 850)).toBe(0)
   })
 
   it('restores only the newest active run from the current session', () => {

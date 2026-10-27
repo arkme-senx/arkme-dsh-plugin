@@ -1,3 +1,4 @@
+export { connectRealtimeDictation } from '../realtime-dictation-client.js'
 import type { RecordingImportBatch } from '../recording-workflow-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeClientError } from '../sdk/index.js'

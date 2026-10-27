@@ -23,24 +23,42 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 let root: Root, host: HTMLDivElement
+let hovered: Element | undefined, windowFocused = true
+const nativeMatches = Element.prototype.matches
 beforeEach(() => {
+  hovered = undefined; windowFocused = true
+  vi.spyOn(document, 'hasFocus').mockImplementation(() => windowFocused)
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  vi.spyOn(Element.prototype, 'matches').mockImplementation(function(this: Element, selector) {
+    if (selector === ':hover') return this === hovered
+    if (selector === ':focus-visible') return this === document.activeElement
+    return nativeMatches.call(this, selector)
+  })
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   mock.state = { accountKey: 'prod:42', phase: 'idle', elapsedMillis: 0, maxMillis: 300000, levels: [], pending: [], message: '', error: '', progress: 0, acceptedRevision: 0, startedAt: 0, volatile: false }
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 42 })
   arkmeUi.showConversations()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(() => { act(() => root.unmount()); host.remove(); mock.listeners.clear(); vi.useRealTimers() })
+afterEach(() => { act(() => root.unmount()); host.remove(); mock.listeners.clear(); vi.useRealTimers(); vi.restoreAllMocks() })
 const render = async (props = {}) => { await act(async () => root.render(<ArkmeProductNavigation compact={false} {...props} />)) }
 const update = (value: Partial<DirectRecordingSnapshot>) => act(() => { mock.state = { ...mock.state, ...value }; mock.listeners.forEach(fn => fn()) })
 const button = () => host.querySelector<HTMLButtonElement>('[data-arkme-home-tour-target="recordings"]')!
 const hint = () => document.querySelector<HTMLElement>('[data-arkme-recording-navigation-hint]')
-const hover = () => act(() => { button().dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+const hover = () => act(() => {
+  hovered = button()
+  button().dispatchEvent(new MouseEvent('pointermove', { bubbles: true }))
+  button().dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+})
+const keyboardFocus = (element: HTMLElement) => act(() => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  element.focus()
+})
 
 it('delays icon labels until hover settles and cancels pending hints on leave or scroll', async () => {
   await render(); vi.useFakeTimers()
   const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
-  hover(); act(() => vi.advanceTimersByTime(199)); expect(label()).toBeNull()
+  hover(); act(() => vi.advanceTimersByTime(499)); expect(label()).toBeNull()
   act(() => vi.advanceTimersByTime(1))
   expect(label()?.textContent).toBe('录音')
   expect(label()?.parentElement).toBe(document.body)
@@ -49,22 +67,22 @@ it('delays icon labels until hover settles and cancels pending hints on leave or
   expect(label()).toBeNull()
   hover()
   act(() => document.dispatchEvent(new Event('scroll')))
-  act(() => vi.advanceTimersByTime(250)); expect(label()).toBeNull()
+  act(() => vi.advanceTimersByTime(550)); expect(label()).toBeNull()
   hover()
   await render({ hidden: true })
-  act(() => vi.advanceTimersByTime(250)); expect(label()).toBeNull()
+  act(() => vi.advanceTimersByTime(550)); expect(label()).toBeNull()
 })
 
 it('shows icon names on keyboard focus and dismisses them on Escape, activation and unmount', async () => {
   await render()
   const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
-  act(() => button().focus()); expect(label()?.textContent).toBe('录音')
+  keyboardFocus(button()); expect(label()?.textContent).toBe('录音')
   act(() => button().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   expect(label()).toBeNull()
-  act(() => button().blur()); act(() => button().focus())
+  act(() => button().blur()); keyboardFocus(button())
   act(() => button().click()); expect(label()).toBeNull()
   expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
-  act(() => button().blur()); act(() => button().focus())
+  act(() => button().blur()); keyboardFocus(button())
   expect(label()).not.toBeNull()
   await act(async () => root.render(null)); expect(label()).toBeNull()
 })
@@ -75,10 +93,61 @@ it('keeps the membership label visible and additional account details in the too
   const profile = host.querySelector<HTMLButtonElement>('[aria-label="个人资料"]')!
   expect(brand.textContent).not.toContain('v3.0.0')
   expect(profile.querySelector('.arkme-member-label')).not.toBeNull()
-  act(() => brand.focus())
+  keyboardFocus(brand)
   expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('即我 v')
-  act(() => profile.focus())
+  keyboardFocus(profile)
   expect(document.querySelector('[data-arkme-navigation-tooltip]')?.textContent).toContain('个人资料')
+})
+
+it('does not open from restored focus or a synthetic mouse entry after returning to the window', async () => {
+  await render(); vi.useFakeTimers()
+  const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
+  act(() => button().focus()); expect(label()).toBeNull()
+  hover(); act(() => vi.advanceTimersByTime(100))
+  act(() => { windowFocused = false; window.dispatchEvent(new Event('blur')) })
+  act(() => vi.advanceTimersByTime(600)); expect(label()).toBeNull()
+  act(() => { windowFocused = true; window.dispatchEvent(new Event('focus')); button().blur(); button().focus() })
+  act(() => button().dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+  act(() => vi.advanceTimersByTime(600)); expect(label()).toBeNull()
+  hover(); act(() => vi.advanceTimersByTime(500)); expect(label()?.textContent).toBe('录音')
+})
+
+it('rechecks actual hover at the deadline even when mouseleave was missed', async () => {
+  await render(); vi.useFakeTimers()
+  hover(); act(() => vi.advanceTimersByTime(400)); hovered = undefined
+  act(() => vi.advanceTimersByTime(100))
+  expect(document.querySelector('[data-arkme-navigation-tooltip]')).toBeNull()
+  hover()
+  act(() => document.body.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })))
+  act(() => vi.advanceTimersByTime(600))
+  expect(document.querySelector('[data-arkme-navigation-tooltip]')).toBeNull()
+})
+
+it('consumes keyboard intent once and expires it before a later unrelated focus restoration', async () => {
+  await render(); vi.useFakeTimers()
+  const label = () => document.querySelector('[data-arkme-navigation-tooltip]')
+  keyboardFocus(button()); expect(label()).not.toBeNull()
+  act(() => button().blur()); act(() => button().focus()); expect(label()).toBeNull()
+  act(() => button().blur())
+  act(() => document.dispatchEvent(new KeyboardEvent('keydown', {key:'Tab',bubbles:true})))
+  act(() => vi.advanceTimersByTime(1001)); act(() => button().focus()); expect(label()).toBeNull()
+})
+
+it.each(['blur', 'focus', 'visibilitychange', 'pointercancel', 'pointerleave'])('clears visible and pending hints on %s', async kind => {
+  await render(); vi.useFakeTimers()
+  for (const visible of [false, true]) {
+    hover(); if (visible) act(() => vi.advanceTimersByTime(500))
+    act(() => (['blur','focus'].includes(kind) ? window : document).dispatchEvent(new Event(kind)))
+    act(() => vi.advanceTimersByTime(600))
+    expect(document.querySelector('[data-arkme-navigation-tooltip]')).toBeNull()
+  }
+})
+
+it('dismisses the active recording hint when switching away and does not reopen on restored focus', async () => {
+  update({ phase: 'recording' }); await render(); hover(); expect(hint()).not.toBeNull()
+  act(() => window.dispatchEvent(new Event('blur'))); expect(hint()).toBeNull()
+  act(() => { window.dispatchEvent(new Event('focus')); button().focus() }); expect(hint()).toBeNull()
+  hover(); expect(hint()).not.toBeNull()
 })
 
 it('keeps the existing rail size and shows a red dot plus accessible recording status only while capturing', async () => {
@@ -124,7 +193,7 @@ it('shows a live elapsed hint on hover, portals outside the rail, and dismisses 
 
 it('supports keyboard focus, Escape and click dismissal without announcing the timer every second', async () => {
   update({ phase: 'recording' }); await render()
-  act(() => button().focus()); expect(hint()).not.toBeNull()
+  keyboardFocus(button()); expect(hint()).not.toBeNull()
   expect(hint()?.hasAttribute('aria-live')).toBe(false)
   act(() => button().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   expect(hint()).toBeNull()

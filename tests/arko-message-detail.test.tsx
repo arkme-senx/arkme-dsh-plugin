@@ -367,7 +367,7 @@ it('locates an archive result without changing the active conversation and retur
   await click(host.querySelector('[data-arko-search-hit="original-1"]')!)
   expect(host.querySelector('[data-arko-located="true"]')?.textContent).toContain('我的问题')
   expect(host.querySelector('[aria-label="Arko 历史定位"]')).not.toBeNull()
-  await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
+  await click(host.querySelector('[aria-label="回到最新"]')!)
   expect(host.querySelector('[aria-label="Arko 历史定位"]')).toBeNull()
   expect(bubble('完整回答')).toBeDefined()
 })
@@ -583,7 +583,7 @@ it('keeps the reading window and scroll stable when the current Run finishes in 
   expect(host.querySelector('[aria-label="Arko 历史定位"]')).not.toBeNull()
   expect(host.textContent).toContain('历史窗口中的原始问题')
   expect(host.textContent).not.toContain('后台刚完成的回答')
-  await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
+  await click(host.querySelector('[aria-label="回到最新"]')!)
   expect(host.textContent).toContain('后台刚完成的回答')
  } finally { vi.useRealTimers() }
 })
@@ -652,7 +652,7 @@ it.each((['desc', 'asc'] as const).flatMap(direction =>
       await act(async () => { arkmeComposerDraftStore.setText(arkmeArkoComposerDraftKey(10001), '继续当前会话') })
       await click(host.querySelector('[aria-label="发送"]')!)
     }
-    else if (destination === 'latest') await click([...host.querySelectorAll('button')].find(node => node.textContent === '返回最新消息')!)
+    else if (destination === 'latest') await click(host.querySelector('[aria-label="回到最新"]')!)
     else await act(async () => {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 })
       root.render(<ArkmeArkoSurface key={10002} />)

@@ -63,3 +63,34 @@ it('a document length limit rejects dictation without truncating or overwriting 
   expect(handle.current!.value).toBe('保留原文')
   act(() => target.close())
 })
+
+it('replaces cumulative hypotheses without duplicating text and preserves user typing outside the range', () => {
+  let text = '前文后文'
+  const target = plainDictationTarget({ read: () => text, at: 2, write: value => { text = value }, available: () => true, maxLength: 100 })
+  expect(target.replace('你')).toBe(true)
+  expect(target.replace('你好')).toBe(true)
+  expect(text).toBe('前文你好后文')
+  text = `新增${text}尾巴`
+  expect(target.replace('你好，世界。')).toBe(true)
+  expect(text).toBe('新增前文你好，世界。后文尾巴')
+  target.close()
+})
+it('refuses to overwrite a plain-text hypothesis edited by the user', () => {
+  let text = '原文'
+  const target = plainDictationTarget({ read: () => text, at: 2, write: value => { text = value }, available: () => true, maxLength: 100 })
+  target.replace('你好世界'); text = '原文你好朋友'
+  expect(target.replace('你好，世界！')).toBe(false); expect(text).toBe('原文你好朋友')
+})
+it('revises only the live range in rich documents while retaining headings and images', async () => {
+  const ref = { current: undefined } as any
+  await act(async () => root.render(<ArkmeLongArticleEditor dictationTargetRef={ref} initialSource={'# 标题\n\n正文\n\n![图片](arkme-asset:asset-1)'} resolveImage={() => '/image.png'} onChange={() => {}} onError={() => {}} />))
+  const editor = (host.querySelector('.ProseMirror') as HTMLElement & { editor: Editor }).editor
+  let target!: DictationTarget
+  act(() => { editor.commands.setTextSelection(6); target = ref.current!()!; target.replace('你好') })
+  act(() => editor.view.dispatch(editor.state.tr.insertText('新增', 1)))
+  act(() => { expect(target.replace('你好，世界！')).toBe(true) })
+  expect(editor.view.dom.querySelector('h1')?.textContent).toBe('新增标题')
+  expect(editor.view.dom.querySelector('img')).not.toBeNull()
+  expect(editor.view.dom.textContent).toContain('你好，世界！')
+  expect(editor.view.dom.textContent).not.toContain('你好你好')
+})
