@@ -26,7 +26,7 @@ Record 的 `content_payload.forward_records.items[].display_kind` 是可选独�
 
 新云端 `/api/v1/chats/members/records/aggregate` 使用全局 cursor，不混用不同来源 before_seq。按 attach_at、chat_session_uid、rel_uid 倒序；事件是会话+relation。重复互动投影不会进入该查询，真实跨会话重发保留。返回各消息自己的来源和操作引用，正文先出，不等待精确总数和头像。
 
-新接口 404/501 时，UI 保留原最多两路并发的会话发现+逐源分页组合；临时失败不会改成不支持。`supported` 仅表示聚合协议可用；coverage=current_chat_relations 不表示全历史归档完整。UI 阅读窗口最多 500 事件，事件失效提示复核已加载引用，明确撤权移除，暂时失败保留并重试，无后台轮询。
+新接口 404/501 时，UI 保留原最多两路并发的会话发现+逐源分页组合；临时失败不会改成不支持。`supported` 仅表示聚合协议可用；coverage=current_chat_relations 不表示全历史归档完整。UI 沿全局cursor继续读取，不以500条作为历史终点；普通续页携带最近加载的至多500个事件引用，引用JSON同时限64KiB，为Host默认128KiB请求留余量；失效事件触发已加载全部引用按500条/64KiB一批串行复核，明确撤权移除，暂时失败保留并重试，无后台轮询。
 
 ## 验证口径
 

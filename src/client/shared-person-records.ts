@@ -8,6 +8,31 @@ export function personRecordKey(item: PersonRecordItem): string {
   return JSON.stringify([item.personSource.sourceKey ?? item.personSource.sourceRef, item.timelineItemKey ?? item.sequence ?? item.itemUid])
 }
 interface Stream extends PersonRecordSource { before?: number | undefined; more: boolean; attempted: boolean; failed?: string; frontier: number }
+// Signed event refs can hit the Host body limit before its 500-item quota.
+// Leave half of the 128 KiB request budget for source/member/cursor metadata.
+const validationByteBudget = 64 * 1024
+const refBytes = (ref: string) => new TextEncoder().encode(JSON.stringify(ref)).byteLength + 1
+function validationBatches(refs: readonly string[]): string[][] {
+  const batches: string[][] = []
+  let batch: string[] = [], bytes = 2
+  for (const ref of refs) {
+    const size = refBytes(ref)
+    if (size + 2 > validationByteBudget) throw new Error('消息来源引用过大，请重新打开')
+    if (batch.length >= 500 || bytes + size > validationByteBudget) { batches.push(batch); batch = []; bytes = 2 }
+    batch.push(ref); bytes += size
+  }
+  if (batch.length) batches.push(batch)
+  return batches
+}
+function pageValidationRefs(refs: readonly string[]): string[] {
+  const batch: string[] = []; let bytes = 2
+  for (let i = refs.length - 1; i >= 0 && batch.length < 500; i--) {
+    const ref = refs[i]!, size = refBytes(ref)
+    if (bytes + size > validationByteBudget) break
+    batch.push(ref); bytes += size
+  }
+  return batch.reverse()
+}
 export interface SharedPersonSnapshot {
   items: PersonRecordItem[]; read: number; discovered: number; discovering: boolean; hasMore: boolean; error: string
 }
@@ -91,10 +116,16 @@ export class SharedPersonRecords {
     if (this.pending) { this.validationQueued = true; return }
     this.pending = true
     try {
-      const page = await this.port.aggregate(undefined, [...this.aggregateItems.keys()], true)
-      this.signal.throwIfAborted()
-      if (!page.supported) throw new Error('人物内容权限验证暂不可用，请重试')
-      for (const ref of page.removedEventRefs) this.aggregateItems.delete(ref)
+      // 500 is the server's per-request validation batch, not a history limit.
+      const batches = validationBatches([...this.aggregateItems.keys()])
+      for (const refs of batches) {
+        this.signal.throwIfAborted()
+        const page = await this.port.aggregate(undefined, refs, true)
+        this.signal.throwIfAborted()
+        if (!page.supported) throw new Error('人物内容权限验证暂不可用，请重试')
+        for (const ref of page.removedEventRefs) this.aggregateItems.delete(ref)
+        if (page.removedEventRefs.length) this.emit()
+      }
       this.discoveryError = ''; this.emit()
     } catch (error) {
       this.signal.throwIfAborted()
@@ -108,11 +139,10 @@ export class SharedPersonRecords {
     try {
       this.signal.throwIfAborted()
       if (this.port.aggregate && this.aggregateEnabled !== false) {
-        if (this.aggregateItems.size >= 500) {
-          this.aggregateMore = false; this.discoveryError = '已达本次阅读窗口上限，重新打开可继续查看最近内容。'; this.emit(); return
-        }
         try {
-          const page = await this.port.aggregate(this.aggregateCursor, [...this.aggregateItems.keys()])
+          // Keep normal paging to one request. Permission invalidations above
+          // cover all retained pages in bounded, cancellable batches.
+          const page = await this.port.aggregate(this.aggregateCursor, pageValidationRefs([...this.aggregateItems.keys()]))
           this.signal.throwIfAborted()
           if (page.supported) {
             if (page.hasMore && (!page.nextCursor || page.nextCursor === this.aggregateCursor)) throw new Error('人物内容分页未推进，请重试')
