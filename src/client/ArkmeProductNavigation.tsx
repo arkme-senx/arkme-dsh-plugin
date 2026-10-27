@@ -178,6 +178,22 @@ export function ArkmeProductNavigation({
   const recordingHintId = useId()
   const [recordingHintOpen, setRecordingHintOpen] = useState(false)
   useEffect(() => { setRecordingHintOpen(false) }, [memberScope, isRecording])
+  useEffect(() => {
+    if (!recordingHintOpen) return
+    const hide = () => setRecordingHintOpen(false)
+    window.addEventListener('blur', hide)
+    window.addEventListener('focus', hide)
+    document.addEventListener('visibilitychange', hide)
+    document.addEventListener('pointercancel', hide, true)
+    document.addEventListener('pointerleave', hide)
+    return () => {
+      window.removeEventListener('blur', hide)
+      window.removeEventListener('focus', hide)
+      document.removeEventListener('visibilitychange', hide)
+      document.removeEventListener('pointercancel', hide, true)
+      document.removeEventListener('pointerleave', hide)
+    }
+  }, [recordingHintOpen])
   const membership = useMembership(memberScope, memberUserId, profileOpen)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileRevision = useProfileRevision()
@@ -276,6 +292,7 @@ export function ArkmeProductNavigation({
         style={styles.brand} tabIndex={0} aria-label={`${brand.name} ${productVersion}`}
         aria-describedby={navigationHint.describedBy('brand')}
         onMouseEnter={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
+        onMouseMove={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`) }}
         onMouseLeave={navigationHint.hide}
         onFocus={event => { navigationHint.show(event.currentTarget, 'brand', `${brand.name} ${productVersion}`, true) }}
         onBlur={navigationHint.hide}>
@@ -314,12 +331,16 @@ export function ArkmeProductNavigation({
           }}
           onClick={() => { void socialAccessStore.refreshIfStale(); navigationHint.hide(); setRecordingHintOpen(false); activate(item.id) }}
           onMouseEnter={event => {
-            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(navigationHint.canHover(event.currentTarget)) }
+            else navigationHint.show(event.currentTarget, item.id, hint)
+          }}
+          onMouseMove={event => {
+            if (showsRecording) setRecordingHintOpen(navigationHint.canHover(event.currentTarget))
             else navigationHint.show(event.currentTarget, item.id, hint)
           }}
           onMouseLeave={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
           onFocus={event => {
-            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(true) }
+            if (showsRecording) { navigationHint.hide(); setRecordingHintOpen(navigationHint.takeKeyboardFocus(event.currentTarget)) }
             else navigationHint.show(event.currentTarget, item.id, hint, true)
           }}
           onBlur={() => { navigationHint.hide(); setRecordingHintOpen(false) }}
@@ -394,6 +415,7 @@ export function ArkmeProductNavigation({
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")}
           aria-describedby={navigationHint.describedBy('profile')}
           onMouseEnter={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
+          onMouseMove={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
           onMouseLeave={navigationHint.hide}
           onFocus={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint, true) }}
           onBlur={navigationHint.hide}

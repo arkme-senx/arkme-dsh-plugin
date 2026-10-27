@@ -68,3 +68,23 @@ it('deduplicates rapid create clicks and ignores a late self target after accoun
   await act(async()=>finish(target))
   expect(renderer.root.findAllByProps({'data-test-editor':'signed-self'})).toHaveLength(0)
 })
+
+it('delegates opening the library to the v3 native bridge', async () => {
+  const open=vi.fn(async()=>true)
+  vi.stubGlobal('arkmeLongArticle',{version:3,open,account:async()=>true})
+  await mount()
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({surface:'library',accountKey:'test:42'}))
+  expect(close).toHaveBeenCalledOnce()
+  expect(renderer.root.findAllByProps({'aria-label':'长文库'})).toHaveLength(0)
+})
+it('native library opens articles and automatically published new documents through the existing editor bridge', async () => {
+  const open=vi.fn(async()=>true)
+  vi.stubGlobal('arkmeLongArticle',{version:3,open,account:async()=>true,active:async()=>true})
+  vi.stubGlobal('location',{search:'?arkmeLongArticle=1'})
+  await act(async()=>{renderer=create(<ArkmeLongArticleLibraryDialog standalone onClose={close}/>)})
+  await act(async()=>renderer.root.findByProps({'data-arkme-long-article-result':'true'}).props.onClick({currentTarget:{}}))
+  expect(open).toHaveBeenLastCalledWith(expect.objectContaining({article:expect.objectContaining({mode:'existing'})}))
+  await act(async()=>button('新建长文').props.onClick())
+  expect(open).toHaveBeenLastCalledWith(expect.objectContaining({autoPublish:true,sourceRef:'signed-self',sourceKey:'signed-self'}))
+  expect(renderer.root.findAllByProps({'data-test-editor':'signed-self'})).toHaveLength(0)
+})

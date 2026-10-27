@@ -132,7 +132,7 @@ describe('Team send UI recovery', () => {
     await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(later,new AbortController().signal))
     expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline')).toHaveLength(readsBefore+1)
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('later')
-    const latestButton=renderer!.root.findAllByType('button').find(node=>node.children.includes('回到最新消息'))!
+    const latestButton=renderer!.root.findAllByType('button').find(node=>node.props['aria-label']==='回到最新')!
     await act(async()=>{latestButton.props.onClick();await tick()})
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('new')
   })

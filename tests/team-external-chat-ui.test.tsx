@@ -11,7 +11,7 @@ const item=(uid:string,textContent:string)=>({itemUid:uid,textContent,senderName
 let view:ReactTestRenderer
 const tick=async()=>{await Promise.resolve();await Promise.resolve()}
 const text=()=>JSON.stringify(view.toJSON())
-const button=(label:string)=>view.root.findAllByType('button').find(b=>b.children.join('')===label)!
+const button=(label:string)=>view.root.findAllByType('button').find(b=>b.props['aria-label']===label||b.children.join('')===label)!
 afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.useRealTimers();mocks.callArkme.mockReset()})
 it('groups by sharer and refreshes away withdrawn content, clearing content on revoked access',async()=>{
  vi.useFakeTimers()
@@ -19,7 +19,7 @@ it('groups by sharer and refreshes away withdrawn content, clearing content on r
  mocks.callArkme.mockImplementation(async(op)=>{if(op.endsWith('.list'))return{items:[share],hasMore:false};if(revoked)throw Error('已取消共享');return{items:removed?[item('2','新消息')]:[item('2','新消息'),item('1','待撤回')],hasMore:false,beforeSeq:1,mediaUrls:{}}})
  await act(async()=>{view=create(<TeamExternalChats teamRef="team" teamName="团队" onClose={()=>{}}/>);await tick()})
  expect(text()).toContain('成员甲')
- await act(async()=>{button('客户乙 ›').props.onClick();await tick()})
+ await act(async()=>{button('查看与 客户乙 的私聊').props.onClick();await tick()})
  expect(text()).toContain('待撤回')
  expect(view.root.findAllByType('textarea')).toHaveLength(0)
  removed=true

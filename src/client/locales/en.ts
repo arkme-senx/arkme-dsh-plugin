@@ -1,5 +1,6 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
 正在开启麦克风…|Starting microphone…
