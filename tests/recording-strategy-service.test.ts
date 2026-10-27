@@ -83,3 +83,13 @@ it('reads and writes only the authenticated account preference and rejects forei
  await dispatchArkmeHostOperation(service,'recordings.strategies.preference.set',{strategy:'system-sd-asr/v1'})
  expect(service.recordingStrategies).toHaveBeenCalledWith({action:'preference-set',strategy:'system-sd-asr/v1'},undefined)
 })
+
+it('exposes confirmed source coverage through the shared owner and rejects invalid ends',async()=>{
+ const f=fixture()
+ f.post.mockResolvedValueOnce({items:[{id,file_name:'night.wav',start_at:1000,end_at:8000}]} as never)
+ expect((await f.service.request({action:'sources',sessionRef:'session'}) as any).items[0]).toMatchObject({startAtMillis:1000,endAtMillis:8000})
+ f.post.mockResolvedValueOnce({items:[{id,file_name:'unknown.wav',start_at:1000}]} as never)
+ expect((await f.service.request({action:'sources',sessionRef:'session'}) as any).items[0].endAtMillis).toBeUndefined()
+ f.post.mockResolvedValueOnce({items:[{id,file_name:'bad.wav',start_at:1000,end_at:999}]} as never)
+ await expect(f.service.request({action:'sources',sessionRef:'session'})).rejects.toThrow()
+})

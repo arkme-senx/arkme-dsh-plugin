@@ -4,6 +4,7 @@ import { arkmeTheme as theme } from '../arkme-theme.js'
 import type { RecordingStrategy, RecordingStrategyOptions, RecordingStrategyPage, RecordingStrategySources } from '../../recording-strategy-contract.js'
 
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
+import { useRecordingStrategyPlayback } from './useRecordingStrategyPlayback.js'
 import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow, useRecordingComparisonScroll } from './RecordingComparisonView.js'
 const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hour12: false })
@@ -103,13 +104,9 @@ function StrategyTranscript({ title, kind, paneRef, onScroll, sourceRef, strateg
   const [page, setPage] = useState<RecordingStrategyPage>({ items: [], complete: false, failed: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [playbackError, setPlaybackError] = useState('')
   const controller = useRef<AbortController>()
   const inFlight = useRef(false)
-  const player = useRef<HTMLAudioElement>()
-  const [activeItemRef, setActiveItemRef] = useState('')
-  const playRequest = useRef<AbortController>()
-  const stop = () => { playRequest.current?.abort(); setActiveItemRef(''); if (player.current) { player.current.onerror = null; player.current.onended = null; player.current.pause(); player.current.removeAttribute('src'); player.current.load(); player.current = undefined } }
+  const player = useRecordingStrategyPlayback(mediaPath, stopPlayback)
   const load = async (cursor?: string) => {
     if (inFlight.current) return
     inFlight.current = true
@@ -121,29 +118,17 @@ function StrategyTranscript({ title, kind, paneRef, onScroll, sourceRef, strateg
     } catch (e) { if (!request?.signal.aborted) setError(e instanceof Error ? e.message : '读取失败') }
     finally { if (controller.current === request) { inFlight.current = false; if (!request?.signal.aborted) setBusy(false) } }
   }
-  useEffect(() => { controller.current = new AbortController(); inFlight.current = false; void load(); return () => { controller.current?.abort(); stop() } }, [sourceRef, strategy])
-  const play = async (itemRef: string) => {
-    setPlaybackError(''); stopPlayback.current?.(); stop(); stopPlayback.current = stop; const request = new AbortController(); playRequest.current = request
-    try {
-      const media = await callArkme<{ playbackRef: string }>('recordings.strategies', { action: 'playback', itemRef }, request.signal)
-      if (request.signal.aborted) return
-      const audio = new Audio(`${mediaPath}?ref=${encodeURIComponent(media.playbackRef)}`); player.current = audio
-      audio.onerror = () => { if (player.current === audio) { stop(); setPlaybackError('播放失败，请重试') } }
-      audio.onended = () => { if (player.current === audio) stop() }
-      await audio.play()
-      if (!request.signal.aborted) setActiveItemRef(itemRef)
-    } catch (e) { if (!request.signal.aborted) { stop(); setPlaybackError(e instanceof Error ? e.message : '播放失败') } }
-  }
+  useEffect(() => { controller.current = new AbortController(); inFlight.current = false; void load(); return () => { controller.current?.abort(); player.stop() } }, [sourceRef, strategy])
   return <RecordingComparisonColumn title={title} kind={kind} actions={<>
-    {activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={stop} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
+    {player.activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.stop} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
   </>}>
     <RecordingComparisonPane paneRef={paneRef} onScroll={onScroll} pagination={{ cursor: page.nextCursor, loading: busy, error, next: () => load(page.nextCursor) }}>
-      {playbackError && <p role="alert" style={{ color: theme.danger }}>{playbackError}</p>}
+      {player.error && <p role="alert" style={{ color: theme.danger }}>{player.error}</p>}
       {processing && <p role="status" style={{ color: theme.secondary, fontSize: 13, margin: '0 0 16px' }}>正在处理，完成后自动更新。</p>}
       {(failed || page.failed) && <p role="alert" style={{ color: theme.danger }}>此策略处理未全部成功，已完成部分保留。</p>}
       {page.items.map((item, index) => <RecordingComparisonRow key={`${item.itemRef}:${index}`} speaker={`说话人 ${item.speaker + 1}`} colorIndex={item.speaker}
-        startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} active={activeItemRef === item.itemRef}
-        playLabel={`播放 ${clock(item.startAtMillis)} 的发言`} onPlay={() => { void play(item.itemRef) }} />)}
+        startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} active={player.activeItemRef === item.itemRef}
+        playLabel={`播放 ${clock(item.startAtMillis)} 的发言`} onPlay={() => { void player.play(item.itemRef) }} />)}
       {page.complete && page.items.length === 0 && <p style={{ color: theme.secondary }}>没有可展示的转写内容</p>}
     </RecordingComparisonPane>
   </RecordingComparisonColumn>

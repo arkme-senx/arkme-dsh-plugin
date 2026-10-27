@@ -10,7 +10,7 @@ export function recordingStrategy(value: unknown): RecordingStrategy {
   throw new Error('不支持的录音处理策略')
 }
 export interface RecordingStrategySources {
-  items: Array<{ sourceRef: string; fileName: string; startAtMillis: number }>
+  items: Array<{ sourceRef: string; fileName: string; startAtMillis: number; endAtMillis?: number }>
   nextCursor?: string
 }
 export interface RecordingStrategyRecordings {

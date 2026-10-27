@@ -44,7 +44,10 @@ export class RecordingStrategyService {
       const page = objectValue(await post('strategy-comparison/sources', { session_id: sessionId, ...(after ? { after } : {}) }))
       const result: RecordingStrategySources = { items: await Promise.all(rows(page.items).map(async value => {
         const row = objectValue(value), sourceId = identifier(row.id)
-        return { sourceRef: await seal({ kind: 'source', sessionId, sourceId }), fileName: text(row.file_name), startAtMillis: integer(row.start_at) }
+        const startAtMillis = integer(row.start_at)
+        const endAtMillis = row.end_at === undefined ? undefined : integer(row.end_at)
+        if (endAtMillis !== undefined && endAtMillis <= startAtMillis) invalid()
+        return { sourceRef: await seal({ kind: 'source', sessionId, sourceId }), fileName: text(row.file_name), startAtMillis, ...(endAtMillis === undefined ? {} : { endAtMillis }) }
       })) }
       if (page.next) result.nextCursor = await seal({ kind: 'sources', sessionId, after: identifier(page.next) })
       return result
