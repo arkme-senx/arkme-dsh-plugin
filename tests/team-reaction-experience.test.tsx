@@ -4,6 +4,7 @@ import {act} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {TeamConversationMessage} from '../src/client/TeamConversationMessage.js'
+import type {TeamMessage} from '../src/team-app-contract.js'
 import {ArkmeReactionSelections} from '../src/client/ArkmeReactionPreview.js'
 import {reactionPreview} from '../src/client/reaction-preview-store.js'
 import {emptyTeamReceipt,type TeamReceiptStore} from '../src/client/team-read-receipts.js'
@@ -14,6 +15,7 @@ const message={ref:'message-ref',key:'message',seq:1,revision:1,side:'team' as c
 let host:HTMLDivElement,root:Root
 beforeEach(()=>{
  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true)
+ vi.stubGlobal('IntersectionObserver',class {observe(){} disconnect(){}})
  host=document.createElement('div');document.body.append(host);root=createRoot(host)
  reactionPreview.setScope('test:7')
  vi.spyOn(reactionPreview,'watch').mockReturnValue(()=>{})
@@ -21,6 +23,28 @@ beforeEach(()=>{
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();reactionPreview.setScope(undefined);vi.restoreAllMocks();vi.unstubAllGlobals()})
 async function render(){await act(async()=>root.render(<TeamConversationMessage accountKey="test:7" conversationKey="conversation" conversationRef="conversation-ref" message={message} avatar={null} writable showReceipts={false} receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={()=>{}} onReceipts={()=>{}} onError={()=>{}}/>))}
+it.each([['team',false],['external',false],['team',true],['external',true]] as const)('keeps %s own=%s receipts visible and independently clickable while reactions are enabled',async(side,own)=>{
+ const rect=(left:number,right:number,top:number,bottom:number)=>({left,right,top,bottom,width:right-left,height:bottom-top,x:left,y:top,toJSON(){}})
+ vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(this:HTMLElement){
+  if(this.hasAttribute('data-arkme-message-direction'))return rect(own?220:100,own?600:480,140,220)
+  if(this.hasAttribute('data-arkme-read-receipt-indicator'))return rect(own?202:486,own?214:498,208,220)
+  return rect(100,600,100,220)
+ })
+ const onReceipts=vi.fn(),onDetail=vi.fn()
+ const receipt={value:{summary:{read:2,unread:1,total:3},visitorRead:true,members:[],hasMore:false,senderExcluded:true},loading:false,at:1}
+ await act(async()=>root.render(<TeamConversationMessage accountKey="test:7" conversationKey="conversation" conversationRef="conversation-ref" message={{...message,side,own} as TeamMessage} avatar={null} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>receipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={()=>{}} onReceipts={onReceipts} onDetail={onDetail} onError={()=>{}}/>))
+ const toolbar=host.querySelector<HTMLElement>('.arkme-reaction-hover-toolbar')!
+ const indicator=host.querySelector<HTMLElement>('[data-arkme-read-receipt-indicator]')!
+ const parent=host.querySelector<HTMLElement>('[data-arkme-reaction-preview]')!.getBoundingClientRect()
+ expect(Number.parseFloat(toolbar.style.top)+parent.top+26).toBeLessThanOrEqual(indicator.getBoundingClientRect().top-6)
+ await act(async()=>host.querySelector<HTMLButtonElement>('.arkme-reaction-hover-trigger')!.click())
+ expect(document.querySelector('[aria-label="表态面板"]')).not.toBeNull()
+ const control=host.querySelector<HTMLButtonElement>('[data-arkme-read-receipt] button')!
+ await act(async()=>control.click())
+ expect(onReceipts).toHaveBeenCalledWith(control)
+ expect(onDetail).not.toHaveBeenCalled()
+ expect(indicator.textContent).toBe('2')
+})
 it('keeps Team selections inside the bubble and reaction hover region',async()=>{
  await render()
  const selections=host.querySelector('[data-arkme-message-reactions]')!
