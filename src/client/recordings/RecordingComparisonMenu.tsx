@@ -6,7 +6,9 @@ import { arkmeTheme as theme } from '../arkme-theme.js'
 import { RecordingDesktopIcon } from './RecordingDesktopIcon.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 
-const control: CSSProperties = { padding: '7px 10px', border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, background: theme.base, maxWidth: '100%' }
+const control: CSSProperties = { padding: '7px 10px', border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, background: theme.base, minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }
+const select: CSSProperties = { ...control, width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const field: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 5, fontSize: 12, color: theme.secondary }
 const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
 const message = (error: unknown) => error instanceof Error ? error.message : '读取失败，请重试'
 type Source = RecordingStrategySources['items'][number]
@@ -126,16 +128,16 @@ export function RecordingComparisonChoices({ dateStamp, onResult, onDoubao }: { 
     if (existing || (options.canStart && Date.now() < options.expiresAtMillis)) onResult(source)
   }
   const unavailable = !options ? '读取中' : !options.officialComplete ? '正式结果处理中' : options.officialFailed ? '正式处理失败' : '原件不可用'
-  return <div aria-busy={busy} style={{ display: 'grid', gap: 10 }}>
+  return <div aria-busy={busy} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, overflowWrap: 'anywhere' }}>
     <strong>转写对比</strong>
-    {recordings.items.length > 0 && <label style={{ display: 'grid', gap: 5, fontSize: 12, color: theme.secondary }}>录音时间
-      <select aria-label="选择对比录音" disabled={busy} value={sessionRef} onChange={e => { setSessionRef(e.target.value); setSource(undefined); setOptions(undefined) }} style={control}>
+    {recordings.items.length > 0 && <label style={field}>录音时间
+      <select aria-label="选择对比录音" disabled={busy} value={sessionRef} onChange={e => { setSessionRef(e.target.value); setSource(undefined); setOptions(undefined) }} style={select}>
         {recordings.items.map(row => <option key={row.sessionRef} value={row.sessionRef}>{clock(row.startAtMillis)}{row.endAtMillis > row.startAtMillis ? ` — ${clock(row.endAtMillis)}` : ''}</option>)}
       </select>
     </label>}
     {recordings.nextCursor && <button style={control} disabled={busy} onClick={() => { void more('recordings') }}>更多录音</button>}
-    {sources.items.length > 0 && <label style={{ display: 'grid', gap: 5, fontSize: 12, color: theme.secondary }}>音频文件
-      <select aria-label="选择对比音频" disabled={busy} value={source?.sourceRef ?? ''} onChange={e => { setSource(sources.items.find(row => row.sourceRef === e.target.value)); setOptions(undefined); setError('') }} style={control}>
+    {sources.items.length > 0 && <label style={field}>音频文件
+      <select aria-label="选择对比音频" title={source?.fileName} disabled={busy} value={source?.sourceRef ?? ''} onChange={e => { setSource(sources.items.find(row => row.sourceRef === e.target.value)); setOptions(undefined); setError('') }} style={select}>
         {sources.items.map((row, index) => <option key={row.sourceRef} value={row.sourceRef}>{row.fileName || `音频片段 ${index + 1}`}</option>)}
       </select>
     </label>}
@@ -147,12 +149,12 @@ export function RecordingComparisonChoices({ dateStamp, onResult, onDoubao }: { 
       const result = options?.results.find(row => row.strategy === strategy.id)
       const canOpen = !!options && (official || !!result || (options.canStart && Date.now() < options.expiresAtMillis))
       const status = official ? '正式结果' : result ? result.failed ? '查看部分结果' : result.complete ? '查看对比' : '处理中' : canOpen ? '未生成' : unavailable
-      return <button key={strategy.id} type="button" disabled={busy || !canOpen} onClick={() => { void choose(strategy.id) }} style={{ ...control, display: 'flex', justifyContent: 'space-between', cursor: canOpen ? 'pointer' : 'default', opacity: canOpen ? 1 : 0.55 }}>
+      return <button key={strategy.id} type="button" disabled={busy || !canOpen} onClick={() => { void choose(strategy.id) }} style={{ ...control, display: 'flex', gap: 12, justifyContent: 'space-between', textAlign: 'left', cursor: canOpen ? 'pointer' : 'default', opacity: canOpen ? 1 : 0.55 }}>
         <span>{strategy.name}</span><span style={{ fontSize: 12, color: theme.secondary }}>{status}</span>
       </button>
     })}
     <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
-      <button type="button" style={{ ...control, width: '100%', display: 'flex', justifyContent: 'space-between', cursor: 'pointer' }} disabled={busy} onClick={onDoubao}>
+      <button type="button" style={{ ...control, width: '100%', display: 'flex', gap: 12, justifyContent: 'space-between', textAlign: 'left', cursor: 'pointer' }} disabled={busy} onClick={onDoubao}>
         <span>豆包</span><span style={{ fontSize: 12, color: theme.secondary }}>当天转写增强对比</span>
       </button>
     </div>
