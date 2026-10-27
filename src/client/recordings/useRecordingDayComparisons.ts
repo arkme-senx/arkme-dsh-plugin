@@ -32,7 +32,10 @@ export function useRecordingDayComparisons(dateStamp: number) {
     try { await operation } finally { if (active.current === operation) active.current = undefined }
   }
   useEffect(() => {
-    const pending = sources.filter(source => !source.error && source.options && (!source.options.officialComplete || source.options.results.some(row => !row.complete)))
+    // A transient read error is not terminal processing. Keep polling facts
+    // already known to be pending; terminal authorization/source errors retain
+    // manual retry without repeatedly querying a deleted or inaccessible source.
+    const pending = sources.filter(source => (!source.error || source.retryableRead) && source.options && (!source.options.officialComplete || source.options.results.some(row => !row.complete)))
     if (!pending.length) return
     const timer = setTimeout(() => { void refresh(pending.map(row => row.sourceRef)).catch(() => undefined) }, 3000)
     return () => clearTimeout(timer)

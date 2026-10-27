@@ -7,6 +7,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
 import { RecordingDayStrategyComparison } from '../src/client/recordings/RecordingDayStrategyComparison.js'
 import { canStartDayComparison, readDayComparisonOptions, readDayComparisonSources } from '../src/client/recordings/recording-comparison-day.js'
 import { RECORDING_STRATEGIES } from '../src/recording-strategy-contract.js'
+import { ArkmeClientError } from '../src/sdk/index.js'
 const baseline = 'baseline-sd-asr/20261026', current = 'system-sd-asr/v1'
 const day = new Date(2026, 9, 14).getTime()
 let root: Root | undefined
@@ -77,6 +78,48 @@ it('reads later recordings while an earlier one is pending, then resumes it with
   expect(document.body.textContent).toContain('正文 recovered')
   const official = document.querySelector('section[aria-label="系统转写 · 正式结果"]')!
   expect(official.querySelectorAll('[data-transcript-time]')).toHaveLength(2)
+})
+it('recovers a pending result after a transient status failure without submitting work again', async () => {
+  vi.useFakeTimers(); let statusReads = 0
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'options' && p.sourceRef === 'one') {
+      statusReads++
+      if (statusReads === 2) throw new Error('临时网络错误')
+      return { ...options(), results: [{ strategy: current, complete: statusReads >= 3, failed: false }] }
+    }
+    if (p.action === 'page' && p.sourceRef === 'one' && p.strategy === current) {
+      return { items: statusReads >= 3 ? [utterance('recovered-status')] : [], complete: statusReads >= 3, failed: false }
+    }
+    return read(op, p)
+  })
+  await render()
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(document.body.textContent).toContain('临时网络错误')
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(document.body.textContent).toContain('正文 recovered-status')
+  expect(document.body.textContent).not.toContain('临时网络错误')
+  expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
+  await act(async () => vi.advanceTimersByTimeAsync(9000))
+  expect(statusReads).toBe(3)
+})
+it('stops automatic reads for a terminal source error, retaining existing text and explicit retry', async () => {
+  vi.useFakeTimers(); let statusReads = 0
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'options' && p.sourceRef === 'one') {
+      if (++statusReads > 1) throw new ArkmeClientError({ code: 'source-unavailable', message: '录音已不可访问', retryable: false })
+      return { ...options(), results: [{ strategy: current, complete: false, failed: false }] }
+    }
+    if (p.action === 'page' && p.sourceRef === 'one' && p.strategy === current) return { items: [], complete: false, failed: false }
+    return read(op, p)
+  })
+  await render()
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  await act(async () => vi.advanceTimersByTimeAsync(9000))
+  expect(statusReads).toBe(2)
+  expect(document.body.textContent).toContain('录音已不可访问')
+  expect(document.body.textContent).toContain(`正文 two-${current}`)
+  expect(Array.from(document.querySelectorAll('button')).some(button => button.textContent === '重试')).toBe(true)
+  expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })
 it('limits a cross-midnight source to utterances overlapping the selected day', async () => {
   api.call.mockImplementation(async (op, p) => {

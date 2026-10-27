@@ -1,9 +1,11 @@
 import type { RecordingStrategy, RecordingStrategyOptions, RecordingStrategyRecordings, RecordingStrategySources } from '../../recording-strategy-contract.js'
 import { callArkme } from '../api.js'
+import { ArkmeClientError } from '../../sdk/index.js'
 
 export type DayComparisonSource = RecordingStrategySources['items'][number] & {
   options?: RecordingStrategyOptions
   error?: string
+  retryableRead?: boolean
   /** Unknown pre-midnight coverage remains readable, but must not enqueue an unrelated day's file. */
   dayMembershipUnknown?: boolean
 }
@@ -62,10 +64,10 @@ export async function readDayComparisonOptions(sources: DayComparisonSource[], s
       try {
         const options = await callArkme<RecordingStrategyOptions>('recordings.strategies', { action: 'options', sourceRef: source.sourceRef }, signal)
         signal.throwIfAborted()
-        result[index] = { ...source, options, error: '' }
+        result[index] = { ...source, options, error: '', retryableRead: false }
       } catch (error) {
         signal.throwIfAborted()
-        result[index] = { ...source, error: comparisonError(error) }
+        result[index] = { ...source, error: comparisonError(error), retryableRead: !(error instanceof ArkmeClientError) || error.body.retryable }
       }
     }
   }))
