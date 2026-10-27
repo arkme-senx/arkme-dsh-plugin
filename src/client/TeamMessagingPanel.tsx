@@ -10,7 +10,7 @@ import {prepareTeamAskDshNotes,canAskDshTeamMessage} from './team-ask-dsh.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { useMessageQuoteNavigation } from './use-message-quote-navigation.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { BellSlash } from '@phosphor-icons/react/dist/icons/BellSlash'
+import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
@@ -155,7 +155,6 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
       {c.side === 'team'
         ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
         : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
-      {c.notificationPolicy?.muted && <BellSlash size={14} aria-label={tr('消息免打扰')}/>}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>
@@ -165,7 +164,10 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
         <ArkmeTopicTagBadge label={c.side === 'team' ? `${showTeamName ? `${c.channel.name} · ` : ''}${tr('外部用户')}` : c.channel.name} selected={selected} truncate />
         <span style={{ ...directoryStyles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(c.updatedAt)}</span>
       </span>
-      <span style={directoryStyles.chatBottom}><span style={directoryStyles.preview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span></span>
+      <span style={directoryStyles.chatBottom}>
+        <span style={directoryStyles.preview}><ArkmeRichText text={preview} presentation="preview" emojiSize={20} /></span>
+        {c.notificationPolicy?.muted && <span style={directoryStyles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
+      </span>
     </span>
   </button>{actions.overlays}</>
 }
