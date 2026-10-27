@@ -1,4 +1,5 @@
 import { socialAccessStore } from '../src/client/social-access-store.js'
+import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
 import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: () => <div data-team-public-card-test /> }))
@@ -78,6 +79,25 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it.each(['paused', 'blocked'] as const)('preserves the extension draft if the conversation becomes %s during phone preflight', async reason => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'原文',senderName:'同事'}
+    localStorage.setItem(storageKey, JSON.stringify({text:'待发送',assets:[],reply}))
+    let current = conversation, release!: () => void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline'
+      ? {conversation:current,messages:[],hasMore:false,beforeSeq:0}
+      : op === 'team.app.send.enqueue' ? accepted() : [])
+    await mount()
+    vi.spyOn(socialActionGuard, 'requirePhoneForSocialAction').mockImplementation(() => new Promise(resolve => {release = resolve}))
+    await send()
+    current = {...conversation, blocked:reason === 'blocked', channel:{...conversation.channel,enabled:reason !== 'paused'}}
+    await act(async () => { invalidateTeamMessages('test:11'); await tick() })
+    await act(async () => { release(); await tick() })
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.send.enqueue')).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'待发送',assets:[],reply})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('待发送')
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+  })
 
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
