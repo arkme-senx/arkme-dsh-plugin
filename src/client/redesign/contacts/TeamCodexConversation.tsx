@@ -224,7 +224,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
             {event.truncated && <small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
             <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer></div>
           </article>
-          {event.localProgress?.map(progress=><article key={progress.id} className="arkme-codex-message is-assistant" aria-label={tr('Codex 进度')}>
+          {event.localProgress?.map(progress=><article key={progress.id} className="arkme-codex-message is-assistant" data-event-kind="Progress" aria-label={tr('Codex 进度')}>
             <CodexMessageBody text={progress.text}/>
             {progress.truncated&&<small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
             <footer className="arkme-codex-message-meta"><span>{tr('过程回复 · 仅本机')}</span><time dateTime={new Date(progress.at).toISOString()}>{stamp(progress.at)}</time><CodexCopyButton value={progress.text} label={tr('复制进度')}/></footer>
