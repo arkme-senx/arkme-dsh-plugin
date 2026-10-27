@@ -217,12 +217,64 @@ describe('cloud coordinator account/team boundaries', () => {
     expect(sent.tasks).toHaveLength(1)
     expect((await f.cloud.state(11, 'opaque-team', f.local)).cloud).toMatchObject({ status: 'ready', pending: 0, blocked: 0 })
   })
-  it('never uploads an unrelated team or creates/joins a missing team', async () => {
+  it('opens an ordinary authorized team using its exact public identity, never its display name', async () => {
     const f = cloudFixture()
-    f.selectedTeam.mockResolvedValue({ ...(await f.selectedTeam()), jotmoId: 'other_team' })
-    await f.cloud.sync(11, 'opaque-team', [task], () => events)
+    f.selectedTeam.mockResolvedValue({ ...(await f.selectedTeam()), jotmoId: 'ordinary_team', name: '即我' })
+    const original=f.post.getMockImplementation()!
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('list-mine')
+      ? {teams:[{team_id:101,jotmo_id:'arkme_cn',name:'即我'},{team_id:202,jotmo_id:'ordinary_team',name:'即我'}]}
+      : original(owner,path,body))
+    await f.cloud.enable(11,'opaque-team')
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    expect(f.post.mock.calls.find(c=>c[1].endsWith('/sync'))?.[2]).toMatchObject({team_ref:'202',expected_owner_ref:'11'})
+    expect((await f.cloud.state(11,'opaque-team',f.local)).cloud).toMatchObject({status:'ready',uploadEnabled:true})
+    expect(f.post.mock.calls.every(c=>!c[1].includes('/create')&&!c[1].includes('/join'))).toBe(true)
+  })
+  it.each(['missing','duplicate','invalid-id'] as const)('denies a %s selected team without uploading or granting consent',async kind=>{
+    const f=cloudFixture(),original=f.post.getMockImplementation()!
+    f.selectedTeam.mockResolvedValue({...(await f.selectedTeam()),jotmoId:'ordinary_team'})
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('list-mine')?{teams:kind==='missing'
+      ? [{team_id:101,jotmo_id:'arkme_cn'}]
+      : kind==='duplicate'?[{team_id:202,jotmo_id:'ordinary_team'},{team_id:203,jotmo_id:'ordinary_team'}]
+      : [{team_id:'unsafe',jotmo_id:'ordinary_team'}]}:original(owner,path,body))
+    await expect(f.cloud.enable(11,'opaque-team')).rejects.toMatchObject({code:'TEAM_FORBIDDEN'})
+    expect((await f.cloud.state(11,'opaque-team',f.local)).cloud).toMatchObject({status:'blocked',uploadEnabled:false})
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    expect(f.post.mock.calls.some(c=>c[1].endsWith('/sync'))).toBe(false)
+  })
+  it('preserves the original numeric binding across team rename and rejects handle reuse',async()=>{
+    const f=cloudFixture(),original=f.post.getMockImplementation()!
+    await f.cloud.enable(11,'opaque-team')
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    f.selectedTeam.mockResolvedValue({...(await f.selectedTeam()),jotmoId:'renamed_team'})
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('list-mine')?{teams:[{team_id:101,jotmo_id:'renamed_team'}]}:original(owner,path,body))
+    f.advance();await f.cloud.enable(11,'opaque-team')
+    expect((await f.cloud.state(11,'opaque-team',f.local)).cloud?.uploadEnabled).toBe(true)
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('list-mine')?{teams:[{team_id:202,jotmo_id:'renamed_team'}]}:original(owner,path,body))
+    f.advance()
+    await expect(f.cloud.enable(11,'opaque-team')).rejects.toMatchObject({code:'ACCOUNT_OR_DESTINATION_MISMATCH'})
+    f.post.mockClear()
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    expect(f.post.mock.calls.some(c=>c[1].endsWith('/sync'))).toBe(false)
+  })
+  it('keeps upload consent and destination separate when one account belongs to two teams',async()=>{
+    const f=cloudFixture(),base=await f.selectedTeam(),original=f.post.getMockImplementation()!
+    f.selectedTeam.mockImplementation(async(ref='opaque-team')=>({...base,teamRef:ref,jotmoId:ref==='opaque-team'?'arkme_cn':'ordinary_team'}))
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('list-mine')?{teams:[{team_id:101,jotmo_id:'arkme_cn'},{team_id:202,jotmo_id:'ordinary_team'}]}:original(owner,path,body))
+    await f.cloud.enable(11,'opaque-team')
+    expect((await f.cloud.state(11,'second-team',{...f.local,tasks:[]})).cloud).toMatchObject({uploadEnabled:false,status:'ready'})
+    f.post.mockClear()
+    await f.cloud.sync(11,'second-team',[{...task,id:'second-task'}],()=>events)
     expect(f.post).not.toHaveBeenCalled()
-    expect((await f.cloud.state(11, 'opaque-team', f.local)).cloud?.status).toBe('unsupported')
+    await f.cloud.enable(11,'second-team')
+    await f.cloud.sync(11,'second-team',[{...task,id:'second-task'}],()=>events)
+    await f.cloud.sync(11,'opaque-team',[task],()=>events)
+    const sent=f.post.mock.calls.filter(c=>c[1].endsWith('/sync')).map(c=>c[2] as CloudBatch)
+    expect(sent.map(batch=>batch.team_ref)).toEqual(['202','101'])
+    expect(sent[0]!.source_id).not.toBe(sent[1]!.source_id)
+    f.setUser(22);f.post.mockClear()
+    await f.cloud.sync(22,'second-team',[task],()=>events)
+    expect(f.post).not.toHaveBeenCalled()
   })
   it('keeps pending payload unchanged after network loss, then retries and ACKs', async () => {
     const f = cloudFixture(), original = f.post.getMockImplementation()!

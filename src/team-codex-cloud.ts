@@ -33,7 +33,7 @@ export class TeamCodexCloud {
   private readonly queueRetries = new Map<string, {attempts:number;at:number}>()
   private readonly lastReads = new Map<string, {tasks:TeamCodexTask[];hasMore:boolean}>()
   private controller = new AbortController()
-  private readonly destinations = new Map<string, { id: string | null; until: number }>()
+  private readonly destinations = new Map<string, { id: string; until: number }>()
   private readonly failures = new Map<string, { state: CloudState; retryAt: number; attempts: number }>()
   private syncing = false
   private confirming = false
@@ -60,7 +60,6 @@ export class TeamCodexCloud {
     if (!validCodexSourceName(sourceName)) throw new ArkmePluginError('INVALID_PARAMETER', '来源名称需为 1–128 字节，且不能包含控制字符', false, 400)
     const signal = this.controller.signal
     const team = await this.destination(owner, localTeam, signal)
-    if (!team) throw new ArkmePluginError('TEAM_FORBIDDEN', '本次云端试用仅面向即我团队', false, 403)
     await this.guard(owner, signal)
     this.db.prepare('INSERT INTO codex_cloud_consent(owner,local_team,team,enabled,at,source_name) VALUES(?,?,?,1,?,?) ON CONFLICT(owner,local_team) DO UPDATE SET enabled=1,at=excluded.at,source_name=excluded.source_name WHERE team=excluded.team').run(owner, localTeam, team, this.now(),sourceName.trim())
     if (this.consent(owner, localTeam)?.team !== team) throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH', '云端目标已变化，未开启上传', false, 409)
@@ -75,7 +74,6 @@ export class TeamCodexCloud {
     const signal = this.controller.signal
     try {
       const team = await this.destination(owner, localTeam, signal)
-      if (!team) return 'unsupported'
       const consent = this.consent(owner, localTeam)
       if (consent && consent.team !== team) return 'unavailable'
       return consent?.enabled === 1 ? 'enabled' : 'disabled'
@@ -163,20 +161,16 @@ export class TeamCodexCloud {
     this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
     return data.has_connected_codex
   }
-  private async destination(owner: number, localTeam: string, signal: AbortSignal): Promise<string | null> {
+  private async destination(owner: number, localTeam: string, signal: AbortSignal): Promise<string> {
     await this.guard(owner, signal)
     const key = `${owner}:${localTeam}`, cached = this.destinations.get(key)
     if (cached && cached.until > this.now()) return cached.id
     const selected = await this.port.selectedTeam(localTeam, signal)
     await this.guard(owner, signal)
-    if (selected.teamRef !== localTeam) return invalid()
-    if (selected.jotmoId !== 'arkme_cn') {
-      this.destinations.set(key, { id: null, until: this.now() + 60_000 })
-      return null
-    }
+    if (selected.teamRef !== localTeam || !selected.jotmoId) return invalid()
     const result = obj(await this.post(owner, '/api/v1/team/list-mine', {}, signal))
     if (!Array.isArray(result.teams)) return invalid()
-    const teams = result.teams.map(obj).filter(t => t.jotmo_id === 'arkme_cn')
+    const teams = result.teams.map(obj).filter(t => t.jotmo_id === selected.jotmoId)
     const id = teams.length === 1 ? decimal(teams[0]!.team_id) : ''
     if (!id) throw new ArkmePluginError('TEAM_FORBIDDEN', '当前账号没有指定团队的云端访问权限', false, 403)
     this.destinations.set(key, { id, until: this.now() + 60_000 })
@@ -201,7 +195,6 @@ export class TeamCodexCloud {
     this.syncing = true
     try {
       const destination = await this.destination(owner, localTeam, signal)
-      if (!destination) return
       if (destination !== consent.team) throw new ArkmePluginError('ACCOUNT_OR_DESTINATION_MISMATCH', '已停止向变化后的团队上传', false, 409)
       const active = eligible(tasks)
       this.journal.reconcile(owner, localTeam, destination, active, readEvents,consent.source_name)
@@ -266,7 +259,6 @@ export class TeamCodexCloud {
     try {
       const personal=localTeam==='self'
       const team = personal?null:await this.destination(owner, localTeam, signal)
-      if (!personal && !team) return { ...local, cloud: { status: 'unsupported', ...counts, page, message: '当前团队仅保留本机记录；本次云端试用仅面向即我团队。' } }
       const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { protocol_version:2,view: personal?'self':'team',...(personal?{}:{team_ref:team}),page, limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
       if (!Array.isArray(data.items) || data.items.length > 50 || data.page !== page || typeof data.has_more !== 'boolean') return invalid()
       if(Object.hasOwn(data,'capabilities'))this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
@@ -341,7 +333,6 @@ export class TeamCodexCloud {
   async resolveMember(owner: number, localTeam: string, jotmoId: string): Promise<string> {
     const signal = this.controller.signal
     const team = await this.destination(owner, localTeam, signal)
-    if (!team) throw new ArkmePluginError('team-codex-member-unavailable', '当前团队尚不支持查看其他成员的云端对话', false, 409)
     const matches = new Set<string>(), cursors = new Set<string>()
     let cursor = ''
     for (let page = 0; page < 100; page++) {
@@ -392,7 +383,6 @@ export class TeamCodexCloud {
     const signal = this.controller.signal
     const personal=localTeam==='self'
     const team = personal?null:await this.destination(owner, localTeam, signal)
-    if (!personal&&!team) throw new ArkmePluginError('TEAM_FORBIDDEN', '当前团队未启用云端读取', false, 403)
     const data = obj(await this.post(owner, '/api/v1/team-codex/events/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal))
     if (!Array.isArray(data.items) || data.items.length > 50 || typeof data.has_more !== 'boolean' || (data.has_more && !str(data.next_cursor))) return invalid()
     const items = data.items.map(value => {
