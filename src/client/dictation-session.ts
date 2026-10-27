@@ -18,6 +18,7 @@ export class DictationSession {
   private state: DictationState = { phase: 'idle', pending: 0, error: '', level: 0 }
   private controller = new AbortController()
   private microphone: MicrophoneCapture | undefined
+  private captureRelease: Promise<void> | undefined
   private stream: RealtimeDictationHandle | undefined
   private release: (() => void) | undefined
   private stopped = false
@@ -48,7 +49,7 @@ export class DictationSession {
           this.stream = stream
         },
         onChunk: (pcm, level) => {
-          if (this.closed || this.state.phase === 'failed') return
+          if (this.closed || this.state.phase === 'failed' || this.state.phase === 'idle') return
           try { this.stream?.send(pcm); this.levelListener?.(level) } catch (error) { this.fail(error) }
         },
         onInterrupted: message => { void this.stop(message) },
@@ -72,9 +73,12 @@ export class DictationSession {
       if (!this.insertionFailed) { this.target.close(); this.update({ phase: 'idle', pending: 0, level: 0 }) }
     }
   }
-  private async releaseCapture() {
+  private releaseCapture(): Promise<void> {
+    if (this.captureRelease) return this.captureRelease
     const microphone = this.microphone; this.microphone = undefined
-    try { await microphone?.stop() } finally { this.release?.(); this.release = undefined }
+    return this.captureRelease = Promise.resolve().then(async () => {
+      try { await microphone?.stop() } finally { this.release?.(); this.release = undefined }
+    })
   }
   private fail(error: unknown) {
     if (this.closed || this.state.phase === 'failed') return

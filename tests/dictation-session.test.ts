@@ -36,6 +36,22 @@ it('flushes the capture tail before sending the end marker', async () => {
   await h.session.stop()
   expect(h.stream.send.mock.invocationCallOrder[0]).toBeLessThan(h.stream.finish.mock.invocationCallOrder[0]!)
 })
+it('keeps a settled final result when the capture tail arrives later and holds the lock until capture stops', async () => {
+  const h = setup(); await h.session.start()
+  let stopped!: () => void
+  h.stop.mockImplementationOnce(() => new Promise<void>(resolve => { stopped = resolve }))
+  h.update('正在识别', 'finishing')
+  h.update('完整结果', 'finished')
+  await settle()
+  expect(h.release).not.toHaveBeenCalled()
+  h.stream.send.mockImplementation(() => { throw new Error('实时听写已停止') })
+  h.capture().onChunk(new ArrayBuffer(400), .1)
+  expect(h.stream.send).not.toHaveBeenCalled()
+  expect(h.state().phase).toBe('idle'); expect(h.state().error).toBe('')
+  expect(h.target.replace).toHaveBeenLastCalledWith('完整结果')
+  stopped(); await settle()
+  expect(h.stop).toHaveBeenCalledTimes(1); expect(h.release).toHaveBeenCalledTimes(1)
+})
 it('never inserts late results after an editor or account switch', async () => {
   const h = setup(); await h.session.start(); h.session.cancel(); h.update('旧结果')
   expect(h.target.replace).not.toHaveBeenCalled(); expect(h.stream.dispose).toHaveBeenCalledTimes(1)
