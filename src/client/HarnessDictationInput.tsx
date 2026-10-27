@@ -1,3 +1,4 @@
+import type { DictationTarget } from './dictation-target.js'
 import { useEffect, useRef, useState } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ArkmeAuthSnapshot } from '../types.js'
@@ -32,12 +33,18 @@ function ConnectedInput({ sessionId, inputActions, useInput }: { sessionId: stri
   }, [])
   return <ArkmeDictationButton authSnapshot={auth} scopeKey={`dsh:${sessionId}`} active={active} disabled={phase !== 'plain'} getTarget={() => {
     const actions = latest.current
-    let span = actions.captureInsertion(), closed = false
-    return { insert(text) {
-      if (closed || actions !== latest.current) return false
-      // The native API refuses stale revisions. Never overwrite a submitted or manually changed draft.
-      if (!actions.insertText(text, { ...span, start: span.end })) return false
-      actions.persistDraft(); span = actions.captureInsertion(); return true
-    }, close() { closed = true } }
+    return nativeDictationTarget(actions, () => actions === latest.current)
   }} />
+}
+
+export function nativeDictationTarget(actions: NativeTextInputActions, isCurrent: () => boolean): DictationTarget {
+  let span = actions.captureInsertion(), closed = false, last = ''
+  const from = span.end
+  const replace = (text: string) => {
+    if (closed || !isCurrent()) return false
+    // Public native insertion rejects stale draft revisions; never overwrite a manual edit.
+    if (!actions.insertText(text, { start: from, end: from + last.length, draftRev: span.draftRev })) return false
+    actions.persistDraft(); span = actions.captureInsertion(); last = text; return true
+  }
+  return { insert: text => replace(last + text), replace, close() { closed = true } }
 }

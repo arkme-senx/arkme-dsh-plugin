@@ -4,10 +4,10 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
 正在开启麦克风…|Starting microphone…
-正在听写，停顿后文字会陆续出现|Listening. Text appears after a pause.
+正在实时听写，文字会持续更新|Listening live. Text updates continuously.
 正在识别剩余语音…|Recognizing remaining speech…
 听写已停止|Dictation stopped
-重试识别|Retry recognition
+重试写入|Retry inserting text
 复制识别结果|Copy recognized text
 关闭听写提示|Close dictation notice
 请先将光标放到可编辑的正文中|Place the cursor in editable text first.

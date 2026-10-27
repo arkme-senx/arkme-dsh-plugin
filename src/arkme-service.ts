@@ -1,3 +1,5 @@
+import { RealtimeDictationService } from './services/realtime-dictation-service.js'
+import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { DictationService } from './services/dictation-service.js'
 import {TeamMessageForwardService} from './services/team-message-forward-service.js'
 import type {TeamMessageReadOptions} from './team-message-contract.js'
@@ -583,6 +585,9 @@ export class ArkmeService {
   private readonly conversationWords: ConversationWordFrequencyService
   private readonly speechStatistics: RecordingSpeechStatisticsService
   private readonly calendarDayReview: CalendarDayReviewService
+  private realtimeDictation?: RealtimeDictationService
+  get realtimeDictationOwner() { return this.realtimeDictation ??= new RealtimeDictationService(this.runtime) }
+  async realtimeDictationCommand(request: RealtimeDictationRequest, signal?: AbortSignal) { return await this.realtimeDictationOwner.command(request, signal) }
   private dictationOwner?: DictationService
   async transcribeDictation(input: { expectedUserId: number; segmentId: string; pcm: string }, signal?: AbortSignal) {
     this.dictationOwner ??= new DictationService(this.runtime)
@@ -923,6 +928,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.reset()
     this.unifiedTimeline.reset()
@@ -1196,6 +1202,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       features: {
         authStatus: true,
         passwordLogin: true,
+        realtimeDictationV1: true,
         cachedSnapshot: true,
         remoteRefresh: true,
         search: true,
@@ -1357,6 +1364,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.dispose()
     this.unifiedTimeline.dispose()
