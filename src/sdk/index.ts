@@ -719,8 +719,11 @@ export class ArkmeSdk {
     return this.call('offline-context',input,signal)
   }
   async recordingStrategies<T extends import('../recording-strategy-contract.js').RecordingStrategyRequest>(input: T, signal?: AbortSignal): Promise<import('../recording-strategy-contract.js').RecordingStrategyResponse<T>> {
-    if ((await this.capabilities(signal)).features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
-    return this.call(input.action === 'start' ? 'recordings.strategies.start' : 'recordings.strategies', { ...input }, signal)
+    const features = (await this.capabilities(signal)).features
+    if (input.action === 'preference' || input.action === 'preference-set') {
+      if (features.recordingProcessingPreferenceV1 !== true) throw new Error('当前 Provider 不支持统一录音处理设置')
+    } else if (features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
+    return this.call(input.action === 'start' ? 'recordings.strategies.start' : input.action === 'preference-set' ? 'recordings.strategies.preference.set' : 'recordings.strategies', { ...input }, signal)
   }
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }

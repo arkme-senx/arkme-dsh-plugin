@@ -3,7 +3,7 @@ import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, 
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
@@ -20,6 +20,15 @@ import {
   type PublicRecordingImportProgress,
 } from '../../src/recording-import-contract.js'
 import type { RecordingImportGateway } from '../../src/recording-import-coordinator.js'
+
+const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
+beforeEach(() => {
+  vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
+    return originalAudioPost.call(this, path, body, session, ...rest)
+  })
+})
+afterEach(() => vi.restoreAllMocks())
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',

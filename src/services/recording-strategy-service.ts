@@ -14,11 +14,12 @@ function integer(value: unknown): number { if (typeof value !== 'number' || !Num
 function identifier(value: unknown): string { const s = text(value); if (!/^[a-f0-9]{24}$/.test(s) || /^0{24}$/.test(s)) invalid(); return s }
 function rows(value: unknown): unknown[] { if (!Array.isArray(value) || value.length > 200) invalid(); return value }
 
-/** Owns alternative-result reads/commands. No formal speaker or summary writes. */
+/** Owns account strategy settings and independent comparisons. No formal speaker or summary writes. */
 export class RecordingStrategyService {
   constructor(private readonly runtime: ServiceRuntime, private readonly refs: RecordingStrategyRefs) {}
   async request(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession()
+    if (input.expectedUserId !== undefined && input.expectedUserId !== session.userId) invalid()
     const post = async (path: string, body: Record<string, unknown>) => {
       const result = await this.runtime.authenticatedAudioPost<unknown>(`/api/v1/audio/${path}`, body, session, signal, { bypassCache: true })
       if ((await this.runtime.requireSession()).userId !== session.userId) invalid()
@@ -26,6 +27,13 @@ export class RecordingStrategyService {
       return result
     }
     const seal = (payload: Record<string, unknown>) => this.refs.seal({ version: 1, ...payload, viewerUserId: session.userId })
+    if (input.action === 'preference' || input.action === 'preference-set') {
+      if (input.action === 'preference-set' && (input.strategy === undefined || input.strategy === '')) invalid()
+      const raw = objectValue(await post(input.action === 'preference' ? 'processing-preference' : 'processing-preference/set',
+        input.action === 'preference' ? {} : { strategy: recordingStrategy(input.strategy) }))
+      if (integer(raw.user_id) !== session.userId || typeof raw.strategy !== 'string' || raw.strategy === '') invalid()
+      return { userId: session.userId, strategy: recordingStrategy(raw.strategy) }
+    }
     if (input.action === 'catalog') {
       return rows(await post('strategies', {})).map(value => { const row = objectValue(value); return { id: recordingStrategy(row.id), name: text(row.name) } })
     }

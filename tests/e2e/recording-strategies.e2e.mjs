@@ -63,9 +63,9 @@ describe('packed recording strategies on official DSH', () => {
         }
         if (path.endsWith('/get-session-ls')) data = { session_ls: body.task_scope === 'active' || body.offset ? [] : [{ id:recording,source:2,orig_name:'meeting.wav',source_size:12000,size:500,duration:2000,start_at:start,end_at:start+2000,create_at:start,update_at:start,belong_usr:10001,has_finish_spk:true,has_done_child:true }] }
         if (path.endsWith('/get-session-deal-status')) data = { item_ls: [{session_id:recording,child_status_ls:[{child_id:child,status:5}]}] }
-        if (path.endsWith('/strategies')) data = [{id:'system-sd-asr/v1',name:'当前方案'},{id:'baseline-sd-asr/20261026',name:'基线方案'}]
+        if (path.endsWith('/strategies')) data = [{id:'system-sd-asr/v1',name:'测试版v1'},{id:'baseline-sd-asr/20261026',name:'默认版'}]
         if (path.endsWith('/strategy-comparison/sources')) data = {items:[{id:child,file_name:'meeting.wav',start_at:start}]}
-        if (path.endsWith('/strategy-comparison/options')) data = { strategies:[{id:'system-sd-asr/v1',name:'当前方案'},{id:'baseline-sd-asr/20261026',name:'基线方案'}],official_strategy:'system-sd-asr/v1',official_complete:true,expires_at:Date.now()+100000,can_start:!expired,results:started?[{strategy:'baseline-sd-asr/20261026',complete:true}]:[] }
+        if (path.endsWith('/strategy-comparison/options')) data = { strategies:[{id:'system-sd-asr/v1',name:'测试版v1'},{id:'baseline-sd-asr/20261026',name:'默认版'}],official_strategy:'system-sd-asr/v1',official_complete:true,expires_at:Date.now()+100000,can_start:!expired,results:started?[{strategy:'baseline-sd-asr/20261026',complete:true}]:[] }
         if (path.endsWith('/strategy-comparison/start')) {started=true;data={id:recording}}
         if (path.endsWith('/strategy-comparison/page')) data = {items:[{result_id:child,ordinal:0,media_source:body.strategy==='system-sd-asr/v1'?'primary':'comparison',start_at:start,end_at:start+2000,speaker:0,text:body.strategy==='system-sd-asr/v1'?'正式结果正文':'独立对比正文'}],complete:true}
         if (path.endsWith('/playback/resolve')) data = { clip_ref:{...body,audio_revision:revision},content_path:`/api/v1/audio/clips/${child}/${body.source}/${body.ordinal}/${revision}`,content_type:'audio/ogg',duration_ms:2000 }

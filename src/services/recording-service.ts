@@ -1188,7 +1188,11 @@ export class RecordingService {
     if (belongUserId !== 0 && belongUserId !== session.userId) {
       throw new ArkmePluginError('recording-import-owner-invalid', '录音数据归属无效', false)
     }
-    const selectedStrategy = recordingStrategy(metadata.strategy)
+    const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
+    const receipt = metadata.clientTaskId ? currentJobs.find(job => job.clientTaskId === metadata.clientTaskId) : undefined
+    const selectedStrategy = metadata.strategy !== undefined ? recordingStrategy(metadata.strategy)
+      : receipt ? recordingStrategy(receipt.strategy)
+      : recordingStrategy((await this.recordingStrategies({ action: 'preference', expectedUserId }, signal) as { strategy: string }).strategy)
     const identity = {
       strategy: selectedStrategy,
       userId: session.userId,
@@ -1200,9 +1204,7 @@ export class RecordingService {
     }
     if (metadata.batch !== undefined && !validRecordingImportBatch(metadata.batch)) throw new ArkmePluginError('recording-import-batch-invalid', '录音导入批次无效', false, 400)
     const recordingKind = metadata.recordingKind ?? 0
-    const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const unresolvedJobs = currentJobs.filter(isUnresolvedRecordingImportJob)
-    const receipt = metadata.clientTaskId ? currentJobs.find(job => job.clientTaskId === metadata.clientTaskId) : undefined
     if (receipt && (!sameRecordingImportIdentity(receipt, identity) || receipt.recordingKind !== recordingKind || !sameRecordingImportBatch(receipt.batch, metadata.batch))) {
       throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的文件或参数已改变，请核对后重新选择', false, 409)
     }
@@ -1247,7 +1249,7 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
       recordingKind,
-      ...(metadata.strategy === undefined ? {} : { strategy: selectedStrategy }),
+      strategy: selectedStrategy,
       sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,

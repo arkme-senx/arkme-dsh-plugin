@@ -128,7 +128,7 @@ describe('staged multi-file workflow', () => {
     const second = await f.files.stage(original.path, { fileName: 'second.wav', mimeType: 'audio/wav', size: f.bytes.length })
     const inputs = [f.input, { ...f.input, fileRef: second.fileRef }]
     const snapshot = { local: [], existingFileNames: [], owner: [] }
-    const recording = { ...f.recording, recordingImportReceipt: vi.fn(async () => null),
+    const recording = { ...f.recording, recordingStrategies: vi.fn(async () => ({ userId: 42, strategy: 'system-sd-asr/v1' })), recordingImportReceipt: vi.fn(async () => null),
       recordingDirectorySnapshot: vi.fn(async () => snapshot) }
     let journal: unknown
     const planner = vi.fn(async (_user, candidates) => {
@@ -152,8 +152,9 @@ describe('staged multi-file workflow', () => {
     expect(f.accept.mock.calls[0]![1].clientTaskId).not.toBe(currentId)
     expect(f.accept.mock.calls[0]![1].strategy).toBe('baseline-sd-asr/20261026')
   })
-  it('does not reuse an unresolved import of a different strategy', async () => {
+  it('does not reuse an unresolved import of a different explicit strategy', async () => {
     const f = await batchFixture()
+    Object.assign(f.inputs[0]!, { strategy: 'system-sd-asr/v1' })
     Object.assign(f.snapshot, { local: [{ identity: { fileName: 'voice.wav', fileSize: f.bytes.length,
       sha256: createHash('sha256').update(f.bytes).digest('hex'), startAtMillis: f.input.startAtMillis,
       belongUserId: 42, strategy: 'baseline-sd-asr/20261026' }, task: { importRef: 'wrong-strategy' } }] })
@@ -237,6 +238,7 @@ describe('recording import tool integration', () => {
     const sessions = { read: async () => ({ userId, accessToken: 'test', refreshToken: 'test' }), write: async () => {}, delete: async () => {} }
     const store = new ArkmeStateStore(root)
     const network = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/v1/audio/processing-preference')) return Response.json({ code: 200, data: { user_id: userId, strategy: 'system-sd-asr/v1' } })
       if (!String(url).endsWith('/api/v1/audio/import-batches/capabilities')) throw new Error('unexpected network access')
       return Response.json({ code: 200, data: { supported: true, contract_version: 2 } })
     })
@@ -288,7 +290,8 @@ describe('recording import tool integration', () => {
       expect(finishChild).toHaveBeenCalledOnce()
       expect(finishSession).toHaveBeenCalledOnce()
       expect(await readFile((await service.fileReadLocal(file.fileRef)).path)).toEqual(f.bytes)
-      expect(network).toHaveBeenCalledTimes(2)
+      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(2)
+      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/processing-preference'))).toHaveLength(2)
       const jobs = await store.listRecordingImportJobs(42)
       expect(jobs[0]!.batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
       expect(ensureSession.mock.calls[0]![0].batch).toEqual(jobs[0]!.batch)

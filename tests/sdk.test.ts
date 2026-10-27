@@ -1263,3 +1263,22 @@ it('exposes server search with DSH identity and cancellation to external consume
  expect(result.items[0]?.dshOrigin).toEqual({ sessionId: 's', eventSeq: 7 })
  expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({ operation: 'search.records', params: { query: '武汉', limit: 10 } })
 })
+
+
+it('discovers account recording preferences separately from comparisons and routes writes explicitly', async () => {
+  const calls: Array<{ operation: string; params?: unknown }> = []
+  const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+    const call = JSON.parse(String(init?.body)); calls.push(call)
+    return success(call.operation === 'provider.capabilities'
+      ? { contractVersion: 1, features: { recordingProcessingPreferenceV1: true } }
+      : { userId: 42, strategy: 'baseline-sd-asr/20261026' })
+  } })
+  await expect(sdk.recordingStrategies({ action: 'preference' })).resolves.toMatchObject({ userId: 42 })
+  await sdk.recordingStrategies({ action: 'preference-set', strategy: 'baseline-sd-asr/20261026' })
+  expect(calls.filter(c => c.operation !== 'provider.capabilities')).toEqual([
+    { operation: 'recordings.strategies', params: { action: 'preference' } },
+    { operation: 'recordings.strategies.preference.set', params: { action: 'preference-set', strategy: 'baseline-sd-asr/20261026' } },
+  ])
+  const old = createArkmeSdk({ fetchImpl: async () => success({ contractVersion: 1, features: { recordingStrategiesV1: true } }) })
+  await expect(old.recordingStrategies({ action: 'preference' })).rejects.toThrow('不支持')
+})

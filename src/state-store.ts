@@ -747,7 +747,7 @@ export class ArkmeStateStore {
       .map(cloneRecordingImportJob))
   }
 
-  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal) {
+  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal) {
     const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
     let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
     await this.update(state => {

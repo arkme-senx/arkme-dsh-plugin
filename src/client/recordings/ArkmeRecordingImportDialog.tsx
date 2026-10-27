@@ -1,4 +1,5 @@
-import { RECORDING_STRATEGIES, recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
+import { readRecordingProcessingPreference } from './recording-processing-preference.js'
+import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
@@ -1358,18 +1359,37 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       return
     }
     const group = restoredGroup ?? crypto.randomUUID()
-    for (const row of requested) row.submission ??= group
     const ids = new Set(requested.map(row => row.id))
     const controller = new AbortController()
     submissionControllersRef.current.add(controller)
     for (const id of ids) submissionOwnersRef.current.set(id, controller)
+    // Read once at this explicit submission, not when files were selected or later dequeued.
+    const preference = requested.some(row => !row.submission)
+      ? readRecordingProcessingPreference(currentUserId, controller.signal) : Promise.resolve(undefined)
+    // Attach rejection handling immediately while a preceding batch may still be uploading.
+    const snapshot = preference.then(async value => {
+      if (controller.signal.aborted) return
+      for (const row of requested) if (!row.submission) {
+        row.strategy = value!.strategy
+        row.submission = group
+      }
+      const frozen = new Map(requested.map(row => [row.id, row]))
+      publishRows(current => current.map(row => frozen.has(row.id) ? { ...row, strategy: recordingStrategy(frozen.get(row.id)!.strategy), submission: frozen.get(row.id)!.submission! } : row))
+      persistRows(rowsRef.current, true)
+      await journalTail.current
+    }).then(() => ({}), error => ({ error }))
     const duplicateCheck = duplicateCheckQueueRef.current
     setError('')
     setWorkflowNotice(tr('已加入导入队列，可以继续添加文件；关闭此窗口后后台会继续处理。'))
     publishRows(current => current.map(row => ids.has(row.id) ? { ...row, submitting: true, error: '' } : row))
     persistRows(rowsRef.current, true)
     void submissionQueueRef.current.run(
-      async () => { await processSubmission(requested, controller, duplicateCheck) }, controller.signal,
+      async () => {
+        const resolved = await snapshot
+        if ('error' in resolved) throw resolved.error
+        if (controller.signal.aborted) return
+        if (!controller.signal.aborted) await processSubmission(requested, controller, duplicateCheck)
+      }, controller.signal,
     ).catch(reason => {
       if (!controller.signal.aborted && inspectionActiveRef.current) {
         setError(reason instanceof Error ? reason.message : '导入暂未完成，请重试')
@@ -1705,7 +1725,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             const processingSource = stagedProcessingSource(row, durationNowMillis)
             return <div key={row.id} style={styles.row} role="row">
               <span style={styles.cellCenter}>{row.submitting ? null : <input style={styles.checkbox} aria-label={tr("选择 {v0}", { v0: row.file.name })} type="checkbox" checked={row.selected} disabled={pending} onChange={event => { updateRow(row.id, { selected: event.target.checked }) }} />}</span>
-              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><label style={{ fontSize: 12 }}>处理策略 <select aria-label={`${row.file.name}处理策略`} disabled={rowLocked || row.submission !== undefined} value={recordingStrategy(row.strategy)} onChange={event => updateRow(row.id, { strategy: recordingStrategy(event.target.value) })}>{RECORDING_STRATEGIES.map(strategy => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}</select></label><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
+              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
               <span style={styles.cellCenter}>{row.selection?.ok === true ? durationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
               <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: row.file.name })}><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'self'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'self') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'self' }) }}>{tr("我的")}</button><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'other'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'other') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'other' }) }}>{tr("他人")}</button></span>
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>

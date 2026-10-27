@@ -151,6 +151,24 @@ describe('registerArkmeTools', () => {
       expect(externalChats).toHaveBeenCalledWith('page',expect.objectContaining({shareRef:'opaque-share'}),expect.any(AbortSignal))
     } finally {await registration.dispose()}
   })
+  it('requires a later confirmation for account recording preference and keeps import schema unified', async () => {
+    const ctx = await setup()
+    const recordingStrategies = vi.fn(async () => ({ userId: 42, strategy: 'baseline-sd-asr/20261026' }))
+    const registration = await mountArkmeTools(ctx, 'business', { ...ports, recordingStrategies } as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '以后录音使用默认版' }], source: { kind: 'user' } } }])
+    const agent = { id: SessionId('recording-setting'), session: { get events() { return events } } } as unknown as Agent
+    const base = { name: 'arkme_recording_strategy_preference', arguments: { strategy: 'baseline-sd-asr/20261026' }, agent, signal: new AbortController().signal }
+    const prepared = await ctx.tools.execute({ ...base, callId: CallId('preference-prepare') })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(recordingStrategies).not.toHaveBeenCalled()
+    events.push({ seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '确认' }], source: { kind: 'user' } } })
+    const saved = await ctx.tools.execute({ ...base, callId: CallId('preference-save') })
+    expect(saved.isError).toBe(false)
+    expect(recordingStrategies).toHaveBeenCalledExactlyOnceWith({ action: 'preference-set', strategy: 'baseline-sd-asr/20261026' }, expect.any(AbortSignal))
+    const schema = ctx.tools.schemas().find(tool => tool.name === 'arkme_recording_import')!
+    expect(schema.parameters.properties).not.toHaveProperty('strategy')
+    await registration.dispose()
+  })
   it('discovers reactions through official ToolRuntime and requires a later user confirmation for writes', async () => {
     const ctx = await setup()
     const reactions = vi.fn(async () => ({ revision: 0, items: [] }))
@@ -300,7 +318,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
-      'arkme_recording_strategies', 'arkme_recording_strategy_start',
+      'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',

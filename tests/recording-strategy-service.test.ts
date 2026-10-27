@@ -11,7 +11,7 @@ function fixture(){
  let userId=7
  const post=vi.fn(async (path:string)=>{
   if(path.endsWith('/sources')) return {items:[{id,file_name:'meeting.wav',start_at:1000}]}
-  if(path.endsWith('/options')) return {strategies:[{id:'system-sd-asr/v1',name:'当前方案'},{id:'baseline-sd-asr/20261026',name:'基线方案'}],official_strategy:'system-sd-asr/v1',expires_at:2000,can_start:false,results:[{strategy:'baseline-sd-asr/20261026',complete:true}]}
+  if(path.endsWith('/options')) return {strategies:[{id:'system-sd-asr/v1',name:'测试版v1'},{id:'baseline-sd-asr/20261026',name:'默认版'}],official_strategy:'system-sd-asr/v1',expires_at:2000,can_start:false,results:[{strategy:'baseline-sd-asr/20261026',complete:true}]}
   if(path.endsWith('/page')) return {items:[{result_id:other,ordinal:0,media_source:'comparison',start_at:1000,end_at:1800,speaker:2,text:'您好'}],complete:true}
   return {}
  })
@@ -51,7 +51,7 @@ it('shares Host owner while keeping read and start grants distinct',async()=>{
  await expect(dispatchArkmeHostOperation(service,'recordings.strategies',{action:'start'})).rejects.toThrow()
  await dispatchArkmeHostOperation(service,'recordings.strategies.start',{sourceRef:'source',strategy:'baseline-sd-asr/20261026'})
  expect(recordingStrategies).toHaveBeenCalledWith({action:'start',sourceRef:'source',strategy:'baseline-sd-asr/20261026'},undefined)
- expect(recordingStrategyTools.map(tool=>tool.meta)).toMatchObject([{effect:'read'},{effect:'write',grant:'explicit-user-write'}])
+ expect(recordingStrategyTools.map(tool=>tool.meta)).toMatchObject([{effect:'read'},{effect:'write',grant:'explicit-user-write'},{effect:'write',grant:'explicit-user-write'}])
 })
 it('SDK preserves initial choice and refuses an older Host rather than silently using default',async()=>{
  const calls:any[]=[]
@@ -65,4 +65,21 @@ it('SDK preserves initial choice and refuses an older Host rather than silently 
  capable=false
  const old=createArkmeSdk({fetchImpl:async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}),{headers:{'Content-Type':'application/json'}})})
  await expect(old.recordingStrategies({action:'catalog'})).rejects.toThrow('不支持')
+})
+
+it('reads and writes only the authenticated account preference and rejects foreign/stale owners', async () => {
+ const f=fixture()
+ f.post.mockResolvedValueOnce({user_id:7,strategy:'baseline-sd-asr/20261026'} as never)
+ expect(await f.service.request({action:'preference',expectedUserId:7})).toEqual({userId:7,strategy:'baseline-sd-asr/20261026'})
+ await expect(f.service.request({action:'preference-set',expectedUserId:8,strategy:'system-sd-asr/v1'})).rejects.toThrow()
+ await expect(f.service.request({action:'preference-set'})).rejects.toThrow()
+ expect(f.post).toHaveBeenCalledOnce()
+ f.post.mockResolvedValueOnce({user_id:8,strategy:'system-sd-asr/v1'} as never)
+ await expect(f.service.request({action:'preference'})).rejects.toThrow()
+ f.post.mockResolvedValueOnce({user_id:7,strategy:'system-sd-asr/v1'} as never)
+ expect(await f.service.request({action:'preference-set',strategy:'system-sd-asr/v1'})).toEqual({userId:7,strategy:'system-sd-asr/v1'})
+ const service={recordingStrategies:vi.fn()} as unknown as ArkmeService
+ await expect(dispatchArkmeHostOperation(service,'recordings.strategies',{action:'preference-set'})).rejects.toThrow()
+ await dispatchArkmeHostOperation(service,'recordings.strategies.preference.set',{strategy:'system-sd-asr/v1'})
+ expect(service.recordingStrategies).toHaveBeenCalledWith({action:'preference-set',strategy:'system-sd-asr/v1'},undefined)
 })

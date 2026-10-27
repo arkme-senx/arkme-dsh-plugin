@@ -95,14 +95,16 @@ export interface RecordingFileBatchResult {
 /** One explicit multi-file request is one frozen batch, never one batch per file. */
 export async function importStagedRecordingBatch(
   files: Pick<FileTransfers, 'readLocal'>,
-  recording: Pick<RecordingService, 'recordingImportUserId' | 'acceptRecordingImport' | 'recordingImportReceipt' | 'recordingDirectorySnapshot'>,
+  recording: Pick<RecordingService, 'recordingImportUserId' | 'acceptRecordingImport' | 'recordingImportReceipt' | 'recordingDirectorySnapshot' | 'recordingStrategies'>,
   temporaryDirectory: string, inputs: RecordingFileImportInput[], planner: RecordingToolBatchPlanner, signal?: AbortSignal,
 ): Promise<RecordingFileBatchResult> {
   if (!inputs.length || inputs.length > 10_000 || new Set(inputs.map(row => row.fileRef)).size !== inputs.length) {
     throw new ArkmePluginError('recording-import-input-invalid', '请选择一到一万个不重复的录音文件', false)
   }
   const userId = await recording.recordingImportUserId()
-  const candidates: Array<{ key: string; isNew: boolean }> = []
+  const preference = inputs.some(row => row.strategy === undefined)
+    ? recordingStrategy((await recording.recordingStrategies({ action: 'preference', expectedUserId: userId }, signal) as { strategy: string }).strategy) : undefined
+  const candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }> = []
   const locals: Array<Awaited<ReturnType<FileTransfers['readLocal']>>> = []
   for (const input of inputs) {
     signal?.throwIfAborted()
@@ -117,7 +119,7 @@ export async function importStagedRecordingBatch(
     candidates.push({ key: recordingToolMemberKey(['staged', input.fileRef, file.fileName, file.size, input.startAtMillis, input.ownership,
       // An omitted/default strategy is the original import identity. Explicit
       // alternate strategies must never resolve a receipt from that identity.
-      ...(strategy === recordingStrategy(undefined) ? [] : [strategy])]), isNew: true })
+      ...(strategy === recordingStrategy(undefined) ? [] : [strategy])]), isNew: true, strategy: input.strategy ?? preference ?? strategy })
   }
   const snapshot = await recording.recordingDirectorySnapshot(inputs.map((row, i) => ({ fileName: locals[i]!.file.fileName,
     startAtMillis: row.startAtMillis })), userId, signal)
@@ -134,7 +136,7 @@ export async function importStagedRecordingBatch(
       const match = local.find(row => row.identity.fileName === file.fileName && row.identity.sha256 === sha256
         && row.identity.fileSize === file.size && row.identity.startAtMillis === input.startAtMillis
         && row.identity.belongUserId === (input.ownership === 'self' ? userId : 0)
-        && recordingStrategy(row.identity.strategy) === recordingStrategy(input.strategy))
+        && (input.strategy === undefined || recordingStrategy(row.identity.strategy) === recordingStrategy(input.strategy)))
       existing.set(i, match ? { fileRef: input.fileRef, job: match.task }
         : { fileRef: input.fileRef, errorCode: 'recording-import-file-name-conflict' })
     } else if (snapshot.existingFileNames.some(name => recordingImportFileNameKey(name) === key)) {
@@ -161,7 +163,7 @@ export async function importStagedRecordingBatch(
     }
     try {
       const receipt = member ? await recording.recordingImportReceipt(member.clientTaskId, userId) : null
-      const job = receipt ?? await importStagedRecording(files, recording, temporaryDirectory, input, signal, member, userId)
+      const job = receipt ?? await importStagedRecording(files, recording, temporaryDirectory, { ...input, strategy: member ? recordingStrategy(member.strategy) : candidates[i]!.strategy! }, signal, member, userId)
       result.items.push({ fileRef: input.fileRef, job })
     } catch (error) {
       if (signal?.aborted) throw error

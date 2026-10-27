@@ -1,3 +1,4 @@
+import { readRecordingProcessingPreference } from './recording-processing-preference.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { lockMicrophone as lockDirectRecording } from '../microphone-lock.js'
 import { tr } from '../locale.js'
@@ -30,6 +31,7 @@ export interface DirectRecordingSnapshot {
 export interface DirectRecordingDependencies {
   journal: MicrophoneJournal
   capture(options: MicrophoneCaptureOptions): Promise<MicrophoneCapture>
+  strategy(userId: number, signal: AbortSignal): Promise<RecordingStrategy>
   membership(userId: number, signal: AbortSignal): Promise<ArkmeMembership>
   upload: typeof uploadArkmeRecording
   lock(): Promise<() => void>
@@ -106,7 +108,7 @@ export class DirectRecordingStore {
       if (this.valid(generation)) { this.storageReady = true; this.publish({ pending }) }
     } catch { if (this.valid(generation)) this.publish({ error: '无法使用本地录音存储，请允许浏览器保存网站数据后重试' }) }
   }
-  async start(strategy: RecordingStrategy = 'system-sd-asr/v1'): Promise<void> {
+  async start(strategy?: RecordingStrategy): Promise<void> {
     const account = this.account
     if (!account || this.state.phase !== 'idle') return
     const generation = this.generation; const signal = this.scope.signal
@@ -118,6 +120,8 @@ export class DirectRecordingStore {
       if (!this.valid(generation)) { release(); return }
       session = { generation, account, release, queue: Promise.resolve(), tail: [], writeError: '', queued: 0, bytes: 0 }
       this.session = session
+      const selectedStrategy = strategy ?? await this.deps.strategy(account.userId, signal)
+      if (!this.valid(generation) || signal.aborted) return
       const member = await this.deps.membership(account.userId, signal)
       if (!this.valid(generation) || signal.aborted) return
       if (member.userId !== account.userId) throw new Error('账号已变化，请重新开始录音')
@@ -130,7 +134,7 @@ export class DirectRecordingStore {
           if (!this.valid(generation)) throw new Error('账号已切换，未开始录音')
           const startedAt = this.deps.now(); const id = this.deps.id()
           const stamp = new Date(startedAt).toLocaleString('sv-SE').replace(/[^0-9]/g, '')
-          const record: LocalMicrophoneRecording = { strategy: recordingStrategy(strategy), id, accountKey: account.key, userId: account.userId, startedAt, sampleRate, bytes: 0, chunks: 0, finished: false, fileName: `即我录音-${stamp}-${id.slice(0, 8)}.wav` }
+          const record: LocalMicrophoneRecording = { strategy: recordingStrategy(selectedStrategy), id, accountKey: account.key, userId: account.userId, startedAt, sampleRate, bytes: 0, chunks: 0, finished: false, fileName: `即我录音-${stamp}-${id.slice(0, 8)}.wav` }
           await this.deps.journal.create(record); current.record = record
           if (!this.valid(generation)) throw new Error('账号已切换，未开始录音')
           this.publish({ startedAt, recordingId: id })
@@ -269,6 +273,7 @@ export class DirectRecordingStore {
 
 export const directRecordingStore = new DirectRecordingStore({
   journal: new IndexedMicrophoneJournal(), capture: captureMicrophone,
+  strategy: async (userId, signal) => (await readRecordingProcessingPreference(userId, signal)).strategy,
   membership: (userId, signal) => callArkme<ArkmeMembership>('membership.current', { expectedUserId: userId }, signal),
   upload: (...args) => uploadArkmeRecording(...args), lock: lockDirectRecording, now: () => Date.now(), id: () => crypto.randomUUID(),
   presence: (accountKey, fact) => callArkme('recordings.presence.capture', { accountKey, ...fact }),

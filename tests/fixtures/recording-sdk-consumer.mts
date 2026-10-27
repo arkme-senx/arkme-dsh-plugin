@@ -68,7 +68,7 @@ const strategies = createArkmeSdk({ fetchImpl: async (_url, options) => {
   const request = JSON.parse(String(options?.body)); strategyCalls.push(request.operation)
   return new Response(JSON.stringify({ ok: true, value: request.operation === 'provider.capabilities'
     ? { contractVersion: 1, features: { recordingStrategiesV1: true } }
-    : request.params.action === 'catalog' ? [{ id: 'system-sd-asr/v1', name: '当前方案' }] : { accepted: true } }))
+    : request.params.action === 'catalog' ? [{ id: 'system-sd-asr/v1', name: '测试版v1' }] : { accepted: true } }))
 } })
 const catalog = await strategies.recordingStrategies({ action: 'catalog' })
 if (catalog[0].id !== 'system-sd-asr/v1') throw new Error('Strategy catalog contract lost')

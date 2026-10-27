@@ -170,6 +170,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.compare.start'
   | 'recordings.strategies'
   | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
   | 'recordings.forward.capabilities'
   | 'recordings.copy-link'
   | 'recordings.forward'

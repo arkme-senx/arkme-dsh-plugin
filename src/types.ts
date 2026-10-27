@@ -1538,6 +1538,7 @@ arkoImagesV1?:true
     speakerPresence?: true
     recordingWorkflowV2?: true
     recordingStrategiesV1?: true
+    recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
@@ -4194,6 +4195,7 @@ export type ArkmeChatClientEvent = {
 export type ArkmePluginOperation =
   | 'recordings.strategies'
   | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
   | 'recordings.transcript.page'
   | 'source.person-records.page'
   | 'articles.list'
@@ -4684,6 +4686,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.compare.start'
   | 'recordings.strategies'
   | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
   | 'recordings.forward.capabilities'
   | 'recordings.copy-link'
   | 'recordings.forward'

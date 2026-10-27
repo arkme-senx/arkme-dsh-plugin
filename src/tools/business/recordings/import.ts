@@ -27,7 +27,7 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
   },
   create: ports => defineTool({
     name: 'arkme_recording_import',
-    description: 'Upload staged WAV, MP3 or M4A recordings, query upload status, or retry a failed upload. Upload and retry require a human request and confirmation. For multiple recordings from one user request, pass ALL of them in files in ONE upload call so they share a durable batch, rather than making separate uploads. Use file_ref from arkme_files_list, arkme_file_prepare or arkme_file_receive and actual recording start times; ask if unknown. Use arkme_recording_import_folder for a local directory. Query with import_ref; retry with that reference and its latest revision. phase=accepted means the upload was received, not that transcription is ready. Batch processing and automatic daily summaries/timelines are server-owned; inspect arkme_recording_notifications, do not launch duplicate generation. workflow=untracked means the upload has no automatic workflow (legacy or explicitly unsupported server). If no task reference was received, retry the SAME file references and recording times to recover saved membership; never invent a new batch.',
+    description: 'Upload staged WAV, MP3 or M4A recordings, query upload status, or retry a failed upload. Upload and retry require a human request and confirmation. New submissions snapshot the account recording preference; change it using arkme_recording_strategy_preference before submitting, not per file. For multiple recordings from one user request, pass ALL of them in files in ONE upload call so they share a durable batch, rather than making separate uploads. Use file_ref from arkme_files_list, arkme_file_prepare or arkme_file_receive and actual recording start times; ask if unknown. Use arkme_recording_import_folder for a local directory. Query with import_ref; retry with that reference and its latest revision. phase=accepted means the upload was received, not that transcription is ready. Batch processing and automatic daily summaries/timelines are server-owned; inspect arkme_recording_notifications, do not launch duplicate generation. workflow=untracked means the upload has no automatic workflow (legacy or explicitly unsupported server). If no task reference was received, retry the SAME file references and recording times to recover saved membership; never invent a new batch.',
     parameters: {
       action: { type: 'string', enum: ['upload', 'status', 'retry'], required: true },
       file_ref: { type: 'string', description: 'Upload only: unchanged authorized local file reference.' },
@@ -36,7 +36,6 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
           file_ref: { type: 'string', required: true }, start_at_millis: { type: 'integer', required: true },
         } } },
       start_at_millis: { type: 'integer', description: 'Upload only: actual recording start instant in Unix milliseconds, not the upload time.' },
-      strategy: { type: 'string', enum: ['system-sd-asr/v1', 'baseline-sd-asr/20261026'], description: 'Initial official transcription strategy; omitted uses current.' },
       ownership: { type: 'string', enum: ['self', 'other'], description: 'Upload only: self (default) or other (unbound recording ownership).' },
       import_ref: { type: 'string', description: 'Status/retry only: unchanged import_ref returned by this tool.' },
       revision: { type: 'integer', description: 'Retry only: latest revision from status, at least 1.' },
@@ -71,7 +70,6 @@ export const recordingImportToolModule = defineArkmeCoreToolModule({
         }
         return importResult(await ports.importRecordingFile({
           fileRef: args.file_ref, startAtMillis: args.start_at_millis!, ownership: args.ownership ?? 'self',
-          ...(args.strategy === undefined ? {} : { strategy: args.strategy }),
         }, exec.signal))
       }
       if ((args.action !== 'status' && args.action !== 'retry')

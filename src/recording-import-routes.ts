@@ -120,7 +120,8 @@ export function createArkmeRecordingImportHandler(
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
       const startAtMillis = nonNegativeIntegerHeader(req, 'x-arkme-start-at')
       const belongUserId = nonNegativeIntegerHeader(req, 'x-arkme-belong-user')
-      const strategy = recordingStrategy(headerText(req, 'x-arkme-recording-strategy'))
+      const strategyHeader = headerText(req, 'x-arkme-recording-strategy')
+      const strategy = strategyHeader ? recordingStrategy(strategyHeader) : undefined
       const recordingKindHeader = headerText(req, 'x-arkme-recording-kind').trim()
       const recordingKind = recordingKindHeader === '' ? 0 : Number(recordingKindHeader)
       if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) {
@@ -182,7 +183,7 @@ export function createArkmeRecordingImportHandler(
         startAtMillis,
         belongUserId,
         recordingKind,
-        strategy,
+        ...(strategy === undefined ? {} : { strategy }),
         ...(batch ? { batch } : {}),
       }, expectedUserId)
       accepted = true

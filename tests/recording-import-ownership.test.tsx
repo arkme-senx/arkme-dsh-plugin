@@ -7,6 +7,7 @@ vi.mock('../src/client/api.js', () => ({
   callArkme: vi.fn(async (operation: string) => {
     if (operation === 'recordings.import.list') return { items: [], owner: { state: 'available' } }
     if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+    if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
     if (operation === 'recordings.workflow') return { supported: false }
     throw new Error(`unexpected operation: ${operation}`)
   }),

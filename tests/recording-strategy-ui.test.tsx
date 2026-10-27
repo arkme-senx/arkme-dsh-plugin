@@ -4,7 +4,7 @@ const mock=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mock.call}))
 import { RecordingStrategyComparison } from '../src/client/recordings/RecordingStrategyComparison.js'
 let renderer:ReactTestRenderer
-const options={strategies:[{id:'system-sd-asr/v1',name:'当前方案'},{id:'baseline-sd-asr/20261026',name:'基线方案'}],officialStrategy:'system-sd-asr/v1',officialComplete:true,officialFailed:false,expiresAtMillis:Date.now()+100000,canStart:true,results:[] as any[]}
+const options={strategies:[{id:'system-sd-asr/v1',name:'测试版v1'},{id:'baseline-sd-asr/20261026',name:'默认版'}],officialStrategy:'system-sd-asr/v1',officialComplete:true,officialFailed:false,expiresAtMillis:Date.now()+100000,canStart:true,results:[] as any[]}
 const nodeMock=(element:any)=>element.type==='dialog'?{showModal:vi.fn(),close:vi.fn()}:null
 const mount=async()=>act(async()=>{renderer=create(<RecordingStrategyComparison sessionRef="session" fileName="meeting.wav" mediaPath="/media" onClose={()=>{}}/>,{createNodeMock:nodeMock})})
 const buttons=()=>renderer.root.findAllByType('button')
