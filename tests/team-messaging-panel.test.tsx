@@ -12,6 +12,7 @@ import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
+import { ArkmeMuteIcon } from '../src/client/ArkmeMuteIcon.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { arkmeEmojiById } from '../src/client/arkme-emoji.js'
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
@@ -234,6 +235,22 @@ describe('Team send UI recovery', () => {
         expect(badges[0]!.props.width).toBe('13')
       }
     }
+  })
+
+  it.each(['team', 'external'] as const)('%s places the shared mute icon at the preview end, outside the avatar', async side => {
+    const row = (muted: boolean) => <TeamConversationRow conversation={{ ...conversation, side,
+      notificationPolicy: { muted, policyVersion: 1, notifyAfterSeq: 0 },
+      preview: { status: 'available', text: '预览内容', hasMedia: false }, unread: 3,
+    }} onClick={() => {}} />
+    await act(async () => { renderer = create(row(true)) })
+    const icon = renderer!.root.findByType(ArkmeMuteIcon)
+    expect(icon.props.size).toBe(15)
+    expect(icon.parent!.props.style).toMatchObject({ color: conversationDirectoryStyles.preview.color, flex: 'none', display: 'inline-flex' })
+    expect(icon.parent!.parent!.props.style).toBe(conversationDirectoryStyles.chatBottom)
+    expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.sourceAvatarWrap }).findAllByType(ArkmeMuteIcon)).toHaveLength(0)
+    expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.mentionUnread }).children).toEqual(['3'])
+    await act(async () => renderer!.update(row(false)))
+    expect(renderer!.root.findAllByType(ArkmeMuteIcon)).toHaveLength(0)
   })
 
   it('refreshes the conversation title membership from the authorized timeline', async () => {

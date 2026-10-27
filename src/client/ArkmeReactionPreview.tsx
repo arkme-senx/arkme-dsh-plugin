@@ -68,6 +68,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
   useEffect(() => { setNotice(undefined) }, [scope, target.id])
   const anchor = useRef<HTMLButtonElement>(null)
   const message = useVisibleReactionNotification(scope, target.sourceKey, target.itemUid, reactionPreview.snapshot(target.id)?.groups.map(group => group.key) ?? [])
+  const activeAnchor = () => (!standalone ? message.current?.querySelector<HTMLButtonElement>('[data-arkme-reaction-toggle]') : undefined) ?? anchor.current
   const [toolbar, setToolbar] = useState<CSSProperties>({ ...(isMe ? { right: '100%' } : { left: '100%' }), bottom: 0 })
   const positionToolbar = useCallback(() => {
     const root = message.current
@@ -100,9 +101,10 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
   const panel = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<CSSProperties>({ left: 8, top: 8 })
   useLayoutEffect(() => {
-    if (!open || !anchor.current || !panel.current) return
+    const entry = activeAnchor()
+    if (!open || !entry || !panel.current) return
     // Keep this opening anchored to its initial position while reaction rows grow.
-    const box = anchor.current.getBoundingClientRect()
+    const box = entry.getBoundingClientRect()
     const reposition = () => {
       if (!panel.current) return
       const size = panel.current.getBoundingClientRect()
@@ -133,7 +135,7 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     return accepted
   }
   const readOnly = forcedReadOnly || reactionPreview.snapshot(target.id)?.private === true
-  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); anchor.current?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
+  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); activeAnchor()?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div role="group" aria-label="全部表情" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, height: 206, minHeight: 38, flexShrink: 1, alignContent: 'start', scrollSnapType: 'y mandatory', overflowY: 'auto' }}>
         {arkmeDefaultEmojis.map(emoji => <button type="button" key={emoji.id} aria-label={emoji.label} title={emoji.label}
           disabled={reactionPreview.busy(target.id)} aria-pressed={selected.includes(emoji.token)} onClick={() => toggle(emoji.token)}
