@@ -11,20 +11,27 @@ export function RecordingComparisonView({ scope, description, notices, children,
   scope: string; description?: ReactNode; notices?: ReactNode; children: ReactNode; onClose(): void
 }) {
   useArkmeLocale()
+  const dialog = useRef<HTMLDivElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const previous = document.activeElement
     closeButton.current?.focus()
     return () => { if (previous instanceof HTMLElement) previous.focus() }
   }, [])
-  return createPortal(<div role="dialog" aria-modal="true" aria-label={tr('转写对比')} onKeyDown={event => {
-    if (event.key === 'Escape') { event.stopPropagation(); onClose() }
-    if (event.key === 'Tab') {
-      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),[tabindex="0"]'))
-      if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus() }
-      else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus() }
+  useEffect(() => {
+    // Completing an action can remove the focused button and leave focus on body.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose() }
+      if (event.key !== 'Tab' || !dialog.current) return
+      const controls = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),[tabindex="0"]'))
+      const outside = !dialog.current.contains(document.activeElement)
+      if (event.shiftKey && (outside || document.activeElement === controls[0])) { event.preventDefault(); controls.at(-1)?.focus() }
+      else if (!event.shiftKey && (outside || document.activeElement === controls.at(-1))) { event.preventDefault(); controls[0]?.focus() }
     }
-  }} style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', flexDirection: 'column', background: colors.layer2, color: colors.text }}>
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [onClose])
+  return createPortal(<div ref={dialog} role="dialog" aria-modal="true" aria-label={tr('转写对比')} style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', flexDirection: 'column', background: colors.layer2, color: colors.text }}>
     <header style={{ minHeight: 58, flex: 'none', padding: '0 20px', display: 'flex', alignItems: 'center', gap: 16, borderBottom: `1px solid ${colors.border}` }}>
       <strong style={{ fontSize: 18, fontWeight: 600, flexShrink: 0 }}>{tr('转写对比')}</strong>
       <span title={scope} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 12 }}>{scope}</span>

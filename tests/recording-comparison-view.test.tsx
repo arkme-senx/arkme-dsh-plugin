@@ -39,6 +39,26 @@ it('preserves text selection on one click and uses explicit double click or keyb
   expect(row.textContent).toContain('<1秒')
 })
 
+it('keeps keyboard dismissal and navigation working when a completed action removes the focused button', async () => {
+  const close = vi.fn()
+  const view = (processing: boolean) => <RecordingComparisonView scope="当天录音" onClose={close}>
+    {processing && <button>开始处理</button>}
+    <button>播放结果</button>
+  </RecordingComparisonView>
+  await render(view(true))
+  const action = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '开始处理')!
+  action.focus()
+  await act(async () => root!.render(view(false)))
+  expect(document.activeElement).toBe(document.body)
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(close).toHaveBeenCalledOnce()
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="关闭转写对比"]'))
+  await act(async () => root!.unmount()); root = undefined
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(close).toHaveBeenCalledOnce()
+})
+
 it('synchronizes independent segmentations by time rather than by row position and avoids scroll feedback', async () => {
   function Pair() {
     const { columns, synchronize } = useRecordingComparisonScroll()
