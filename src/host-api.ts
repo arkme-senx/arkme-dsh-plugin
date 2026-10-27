@@ -1,3 +1,4 @@
+import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
 import type { ArkmeArkoHistoryQuery } from './arko-history-contract.js'
 import type { ArkmeCapabilityUpdate } from './capabilities.js'
@@ -938,7 +939,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (request.operation === 'dictation.transcribe' && (!isLoopback(req.socket.remoteAddress) || origin === undefined || new URL(origin).host !== req.headers.host)) {
+      if (['dictation.transcribe', 'dictation.realtime'].includes(request.operation) && (!isLoopback(req.socket.remoteAddress) || origin === undefined || new URL(origin).host !== req.headers.host)) {
         throw new ArkmePluginError('origin-required', '听写必须从当前本机页面发起', false, 403)
       }
       if ((['team.app.external.share', 'team.app.external.unshare'].includes(request.operation)
@@ -1167,6 +1168,7 @@ export async function dispatchArkmeHostOperation(
     case 'device.lock.status': return await service.deviceLockStatus()
     case 'device.lock.lock': return await service.lockDevice()
     case 'device.lock.unlock': return await service.requestDeviceUnlock()
+    case 'dictation.realtime': return await service.realtimeDictationCommand(objectValue(params.request) as unknown as RealtimeDictationRequest, requestSignal)
     case 'dictation.transcribe': return await service.transcribeDictation({ expectedUserId: numberParam(params, 'expectedUserId', 0), segmentId: stringParam(params, 'segmentId'), pcm: stringParam(params, 'pcm') }, requestSignal)
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()

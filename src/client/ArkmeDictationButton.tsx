@@ -15,7 +15,7 @@ export function textareaDictationTarget(input: HTMLTextAreaElement | null, write
   if (!input || input.disabled || input.readOnly) return
   return plainDictationTarget({ read: () => input.value, at: input.selectionEnd, maxLength: input.maxLength > 0 ? input.maxLength : 40_000,
     available: () => input.isConnected && !input.disabled && !input.readOnly,
-    write(text, caret) { write(text); queueMicrotask(() => { if (input.isConnected) input.setSelectionRange(caret, caret) }) },
+    write(text, caret) { input.value = text; write(text); queueMicrotask(() => { if (input.isConnected) input.setSelectionRange(caret, caret) }) },
   })
 }
 
@@ -69,10 +69,10 @@ export function ArkmeDictationButton(props: {
     </ArkmeComposerToolButton>
     {(busy || state.error || state.phase === 'failed') && <span role="status" style={{ position: 'absolute', bottom: 42, left: 0, minWidth: 180, maxWidth: 'min(340px,70vw)', padding: '8px 12px', borderRadius: 10,
       border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '0 4px 18px #0002', fontSize: 12, lineHeight: '20px', zIndex: 15 }}>
-      <span>{tr(state.phase === 'starting' ? '正在开启麦克风…' : state.phase === 'listening' ? '正在听写，停顿后文字会陆续出现' : state.phase === 'finishing' ? '正在识别剩余语音…' : state.error || '听写已停止')}</span>
+      <span>{tr(state.phase === 'starting' ? '正在开启麦克风…' : state.phase === 'listening' ? '正在实时听写，文字会持续更新' : state.phase === 'finishing' ? '正在识别剩余语音…' : state.error || '听写已停止')}</span>
       {state.pending > 0 && <span> · {state.pending}</span>}
       {state.error && busy && <span style={{ display: 'block' }}>{tr(state.error)}</span>}
-      {state.phase === 'failed' && session.current?.canRetry && <button type="button" onClick={() => session.current?.retry()}>{tr('重试识别')}</button>}
+      {state.phase === 'failed' && session.current?.canRetry && <button type="button" onClick={() => session.current?.retry()}>{tr('重试写入')}</button>}
       {state.phase === 'failed' && session.current?.recoverableText && <button type="button" onClick={() => { void copyText(session.current!.recoverableText) }}>{tr('复制识别结果')}</button>}
       {!busy && <button type="button" aria-label={tr('关闭听写提示')} onClick={() => { session.current?.cancel(); session.current = undefined; setState(initial); latest.current.onBusyChange?.(false) }} style={{ marginLeft: 8 }}>{tr(state.pending > 0 ? '结束听写' : '关闭')}</button>}
     </span>}

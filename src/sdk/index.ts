@@ -1,3 +1,7 @@
+import { connectRealtimeDictation, type RealtimeDictationOptions } from '../realtime-dictation-client.js'
+import type { RealtimeDictationRequest, RealtimeDictationSnapshot, RealtimeDictationHandle } from '../realtime-dictation-contract.js'
+export type * from '../realtime-dictation-contract.js'
+export type { RealtimeDictationOptions } from '../realtime-dictation-client.js'
 import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
 export type * from '../arko-lifecycle-contract.js'
 import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
@@ -513,6 +517,18 @@ function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
 }
 
 export class ArkmeSdk {
+  private async requireRealtimeDictation(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.realtimeDictationV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持实时听写，请升级', retryable: false })
+  }
+  async realtimeDictation(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot> {
+    await this.requireRealtimeDictation(signal)
+    return await this.call('dictation.realtime', { request }, signal)
+  }
+  async openRealtimeDictation(options: RealtimeDictationOptions): Promise<RealtimeDictationHandle> {
+    await this.requireRealtimeDictation(options.signal)
+    return await connectRealtimeDictation(this.route, options)
+  }
+
   async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }
   async nativeAnnotationContexts(targets: NativeAnnotationTarget[], signal?: AbortSignal): Promise<NativeAnnotationContext[]> { return await this.call('native-chat.annotations', { request: { action: 'contexts', targets } }, signal) }
   async listNativeAnnotations(messageRefs: string[], signal?: AbortSignal): Promise<NativeAnnotationSnapshot[]> { return await this.call('native-chat.annotations', { request: { action: 'list', messageRefs } }, signal) }
