@@ -1159,3 +1159,19 @@ it('lost policy response is resolved by owner read and is never replayed as a to
  expect(await f.service.execute('team.app.notification-policy.set',{conversationRef:c.ref,muted:true})).toEqual({muted:true,policyVersion:1,notifyAfterSeq:3})
  expect(f.requests.filter(r=>r.path.endsWith('/notification-policy/set'))).toHaveLength(1)
 },15000)
+
+it('extension Host scopes both refs and seals parent media without signed URLs',async()=>{
+ const f=fixture(path=>path.endsWith('/messages/extensions')
+   ? {message,items:[],total_count:0,has_more:false,next_seq:0,through_seq:2}
+   : {channel,conversation,messages:[{...message,reply:{message_uid:'parent-private',record_version:3,state:'available',text:'原文',title:'附件标题',sender:{nickname:'原作者'},media:message.record.media}}]})
+ const ref=(await open(f)).conversation!.ref
+ const timeline=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const reply=timeline.messages[0]!.reply!
+ expect(reply.media?.[0]?.url).toContain('/custom/api/team/media?ref=')
+ expect(JSON.stringify(reply)).not.toContain('private-signed')
+ const page=await f.service.execute('team.app.extensions',{conversationRef:ref,messageRef:timeline.messages[0]!.ref,limit:2,afterSeq:0}) as import('../src/team-app-contract.js').TeamExtensionPage
+ expect(page.message.key).toBe(timeline.messages[0]!.key)
+ expect(f.requests.at(-1)).toMatchObject({path:'/api/v1/team/conversations/messages/extensions',body:{conversation_uid:conversation.conversation_uid,side:'external',message_uid:message.message_uid,limit:2}})
+ f.changeAccount()
+ await expect(f.service.execute('team.app.extensions',{conversationRef:ref,messageRef:timeline.messages[0]!.ref})).rejects.toThrow()
+})

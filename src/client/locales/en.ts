@@ -2063,4 +2063,8 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 暂无可核实的关联录音，已创建的说话人仍会保留在名单中。|No verified linked recordings yet. The created speaker remains in the list.
 对应的识别说话人|Linked recognized speakers
 查看说话人 {v0} 的最近录音|View the latest recording for speaker {v0}
+查看延展|View replies
+团队消息延展列表|Team message replies
+正在加载延展…|Loading replies…
+返回延展列表|Back to replies
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

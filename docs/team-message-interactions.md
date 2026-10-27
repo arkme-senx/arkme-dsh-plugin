@@ -40,3 +40,18 @@ node tests/e2e/team-message-official-cli-acceptance.mjs
 默认合成 HTTP 模式检查精确版本读取失败发生在 native 草稿创建之前，以及重试成功。配齐 `TEAM_INTERACTION_STACK_TEAM/RECORD/CHAT` 三个显式 `http://127.0.0.1:<port>` 地址后，业务读写转给仓内 opt-in 真实服务 fixture，逐项操作引用发送、共享标记、表态、转发、举报与问 DSH，并回查 owner 接受事实。目录组合元数据和账号是隔离夹具，不连接真实用户。先运行常规三服务 driver，再运行本脚本；最后才运行 driver 的撤权模式，避免并行改变同一组夹具的权限和消息。
 
 新宿主 `sessions.create` 只登记会话。附件桥必须通过 `controllerOperation` retain 并等待 ready，再访问 scoped conversation；成功或失败都释放临时引用。原生主视图接管后仍只提供草稿，不代用户发送。iframe Error 的消息采用结构检查，避免跨 JavaScript realm 的 `instanceof Error` 丢失具体失败原因。
+
+
+## 2026-10-26 延展体验对齐
+
+| 能力 | UI | 公开 SDK | Tools | Owner |
+| --- | --- | --- | --- | --- |
+| 直系回复分页/计数、逐层浏览 | TeamMessageDetail；群聊与 Team 共用父预览、列表样式和输入目标附件 | readTeamExtensions(conversationRef, messageRef, {afterSeq, throughSeq, limit}, signal)，features.teamMessageExtensions=1 | 现有 arkme_team_messages 增加 extensions:true、conversation_ref、message_ref 及游标 | TeamAppService |
+| 延展中的继续输入 | 详情 footer 与原会话共用同一份 composer、草稿和稳定队列；选择“延展回复”绑定当前消息 | 既有发送方法不变 | 既有显式写入确认不变 | TeamSendQueue |
+| 父媒体、整条/选区预览 | ArkmeExtensionParentPreview；pending/持久任务保留 reply | 可选 title/media 字段 | 复用只读结果 | 当前账号作用域不透明引用 |
+
+计数是固定 through_seq 内当前消息的直系已发布回复数量；打开子回复查询下一层，不声称全树总数。返回父层重新读取已经加载的页与水位，恢复滚动。通知失效或请求失败立即清旧内容；迟到请求不能跨会话/账号更新面板。媒体仍走 Team 授权，不接受外部签名 URL 或 Chat 引用。
+
+后端部署顺序：先部署 jotmo-team 的 extensions 只读接口和独立索引，再部署客户端。旧 reply_to 和发送命令不变；不支持的新 Provider 明确提示升级。未修改插件版本号、根 README 或 DSH 源码。
+
+本次验证入口为 tests/team-extension-detail.test.tsx、team-extension-parity.test.tsx、team-message-sdk.test.ts、team-app-service.test.ts 和增强的官方 CLI acceptance；打包后在全新官方 0.2.1-rc.2 Profile 验证 UI/SDK/真实 Agent Session Tool。业务上游仍是隔离合成 HTTP，真实 Mongo 查询计划在 jotmo-team 独立验证；不等于线上多服务或 Windows/Linux 实机验收。具体运行结果见同任务 meta change c20261026-team-extension-ux/verification.md。

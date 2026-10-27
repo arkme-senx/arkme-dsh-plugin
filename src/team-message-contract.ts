@@ -17,6 +17,7 @@ export interface TeamForwardInput {
  commentText?:string;commentRecordUid?:string
 }
 export interface TeamMessagePort {
+ readTeamExtensions(conversationRef:string,messageRef:string,options?:TeamExtensionOptions,signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage>
  forwardTeamMessages(input:TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>
  createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>
 
@@ -31,3 +32,6 @@ export interface TeamMessagePort {
   teamMessageTasks(conversationRef: string, signal?: AbortSignal): Promise<TeamSendTask[]>
   updateTeamSend(conversationRef: string, taskRef: string, action: 'retry'|'cancel', signal?: AbortSignal): Promise<TeamSendTask>
 }
+
+export type TeamExtensionOptions = {afterSeq?:number;throughSeq?:number;limit?:number}
+export type {TeamExtensionPage} from './team-app-contract.js'

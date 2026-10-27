@@ -503,6 +503,9 @@ export class ArkmeService {
     if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
     return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
   }
+  async readTeamExtensions(conversationRef:string,messageRef:string,options:import('./team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage> {
+    return await this.executeTeamApp('team.app.extensions',{conversationRef,messageRef,...options},signal) as import('./team-app-contract.js').TeamExtensionPage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -1228,6 +1231,7 @@ arkoImagesV1:true,
         entityArchive: true,
         teamProfiles: true,
         teamExternalChats: true,
+        teamMessageExtensions: 1,
         teamMessageInteractions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,
