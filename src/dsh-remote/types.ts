@@ -269,6 +269,7 @@ export interface DshRemoteModelOption {
   model: string
   displayName: string
   description?: string
+  supportsImages?: boolean
   reasoningEfforts?: DshRemoteReasoningEffortOption[]
   defaultReasoningEffort?: string
 }
