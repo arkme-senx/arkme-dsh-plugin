@@ -1486,6 +1486,7 @@ export interface ArkmeProviderCapabilities {
   environment: ArkmeEnvironment
   features: {
     authStatus: true
+    realtimeDictationV1?: true
     /** Interactive preset-account login; passwords must never enter model tools. */
     passwordLogin?: true
     cachedSnapshot: true
@@ -4208,6 +4209,7 @@ export type ArkmePluginOperation =
   | 'source.message-underline.change'
   | 'provider.state'
   | 'chat.realtime.state'
+  | 'dictation.realtime'
   | 'dictation.transcribe'
   | 'auth.status'
   | 'auth.config'

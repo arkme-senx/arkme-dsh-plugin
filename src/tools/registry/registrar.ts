@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_realtime_dictation',
   'arkme_arko_change_lifecycle',
   'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_day_review_generate',
@@ -92,6 +93,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_realtime_dictation') return '是否对刚才提供的音频执行实时听写操作？这会使用当前账号的语音权益，不获取麦克风或发送消息。'
   if (name === 'arkme_arko_change_lifecycle') return `是否${args.action === 'restore' ? '恢复' : '删除'}刚才选定的 ${Array.isArray(args.message_refs) ? args.message_refs.length : 0} 条 Arko 消息？删除后 30 天内可恢复，已创建的快记和安排会保留。`
   if (name === 'arkme_conversation_words_generate') return '是否按刚才指定的对话、人员和日期范围开始或更新词频统计？这不会调用大模型或扣除 AI 积分。'
   if (name === 'arkme_device_lock') return '是否锁定当前电脑上的即我？'
@@ -233,6 +235,11 @@ function withCoreConversationalConfirmation(
       }
       if (definition.name === 'arkme_topic_home_visibility' && (args as Record<string, unknown>).show_in_home === undefined) {
         return await definition.execute(args, exec)
+      }
+      if (definition.name === 'arkme_realtime_dictation') {
+        const request = JSON.parse(String((args as Record<string, unknown>).request_json)) as { action?: string }
+        // The confirmed start returns a short-lived account-bound capability; audio/control use it.
+        if (['audio', 'status', 'finish', 'cancel'].includes(request.action ?? '')) return await definition.execute(args, exec)
       }
       if (exec.agent === undefined) throw new Error('该 Arkme 操作必须在一个真实 DSH Agent 会话中执行')
       const hooks = arkmeConfirmationContextHooks(definition)
