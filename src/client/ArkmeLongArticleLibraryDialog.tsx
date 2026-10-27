@@ -13,6 +13,7 @@ import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { openBrowseWindow, openLongArticleWindow, longArticleWindowBridge } from './long-article-window.js'
 import css from './long-article-library.css?inline'
+import { longArticleSearchTimelineItem } from './long-article-search-item.js'
 
 const scopes: { key: ArkmeLongArticleBrowseScope; label: string }[] = [
   { key: 'recent', label: '最近' }, { key: 'shared_by_me', label: '我共享的' }, { key: 'shared_with_me', label: '共享给我的' },
@@ -111,8 +112,7 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
         aria-labelledby={`${id}-${item.key}-tab`} className="arkme-article-library-panel" hidden={scope !== item.key}>
         <ArkmeLongArticleQuickView key={`${item.key}:${revision}`} onChooseArticle={standalone ? item => {
           if (!item.targetSource) return
-          void openLongArticleWindow({ ...item.targetSource, sourceKey: item.targetSource.sourceKey ?? item.targetSource.sourceRef }, { mode: 'existing', item: { senderName: '', isMe: false, status: 1, templateKind: 8, displayKind: 1, itemUid: item.recordUid, title: item.title, textContent: item.textContent, sendAtMillis: item.sendAtMillis,
-            ...(item.recordOwnerUserId !== undefined ? { recordOwnerUserId: item.recordOwnerUserId } : {}) } }).catch(reason => setError(reason instanceof Error ? reason.message : '无法打开长文'))
+          void openLongArticleWindow({ ...item.targetSource, sourceKey: item.targetSource.sourceKey ?? item.targetSource.sourceRef }, { mode: 'existing', item: longArticleSearchTimelineItem(item) }).catch(reason => setError(reason instanceof Error ? reason.message : '无法打开长文'))
         } : undefined} scope={item.key} active={scope === item.key} scrollRoot={panels[item.key]} created={created} />
       </div>)}
     </section>

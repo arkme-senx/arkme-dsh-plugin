@@ -102,3 +102,14 @@ it('keeps native category pages when the window regains focus and refreshes only
   act(()=>renderer.unmount())
   expect(stop).toHaveBeenCalledOnce()
 })
+it('passes the original sharing relation and display metadata into the independent reader',async()=>{
+ const open=vi.fn(async()=>true)
+ vi.stubGlobal('arkmeLongArticle',{version:3,open,active:async()=>true})
+ vi.stubGlobal('location',{search:'?arkmeLongArticle=1'})
+ const foreign={...article,recordOwnerUserId:7,templateKind:2,displayKind:1,textFormat:'markdown',messageActionRef:'signed-original',targetSource:{...target,kind:'group_chat',sourceRef:'signed-group'}}
+ mocks.call.mockResolvedValue({...page,items:[foreign]})
+ await act(async()=>{renderer=create(<ArkmeLongArticleLibraryDialog standalone onClose={close}/>)})
+ await act(async()=>renderer.root.findByProps({'data-arkme-long-article-result':'true'}).props.onClick({currentTarget:{}}))
+ expect(open).toHaveBeenCalledWith(expect.objectContaining({sourceRef:'signed-group',article:{mode:'existing',item:expect.objectContaining({recordOwnerUserId:7,messageActionRef:'signed-original',templateKind:2,displayKind:1,textFormat:'markdown'})}}))
+ expect(mocks.call.mock.calls.some(([op])=>op==='source.long-article.detail'||op==='source.timeline-around')).toBe(false)
+})

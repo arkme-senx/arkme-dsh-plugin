@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import type { ArkmeLongArticleBrowseScope, ArkmeLongArticleDetail, ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
 import { arkmeMarkdownPlainText } from '../markdown.js'
 import { callArkme } from './api.js'
+import { needsLongArticleSource, resolveLongArticleSource, longArticleSearchTimelineItem } from './long-article-search-item.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 
@@ -41,6 +43,8 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
   const [error, setError] = useState('')
   const [openError, setOpenError] = useState('')
   const [unavailable, setUnavailable] = useState(false)
+  const [opening, setOpening] = useState(false)
+  const openingRequest = useRef<AbortController>()
   const [selected, setSelected] = useState<ArkmeSearchRecordItem>()
   const generation = useRef(0)
   const request = useRef<AbortController>()
@@ -86,9 +90,9 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
   }, [scope])
 
   useEffect(() => {
-    if (!active) { setLoading(false); return }
+    if (!active) { setLoading(false); setOpening(false); return }
     if (!current.current.page && !current.current.error) void load()
-    return () => { generation.current += 1; request.current?.abort(); inFlight.current = false }
+    return () => { generation.current += 1; request.current?.abort(); inFlight.current = false; openingRequest.current?.abort(); openingRequest.current = undefined }
   }, [active, load])
 
   useEffect(() => !active ? undefined : subscribeMessageQuoteInvalidations(() => { void load() }), [active, load])
@@ -115,6 +119,32 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     return () => observer.disconnect()
   }, [active, error, load, loading, page, scrollRoot])
 
+  const chooseArticle = (item: ArkmeSearchRecordItem, trigger: HTMLButtonElement) => {
+    if (openingRequest.current) return
+    setOpenError('')
+    if (!item.targetSource) { setOpenError('原会话暂不可访问，请返回后重试'); return }
+    const show = (prepared: ArkmeSearchRecordItem) => {
+      if (onChooseArticle) { onChooseArticle(prepared); return }
+      opener.current = trigger; setSelected(prepared)
+    }
+    if (!needsLongArticleSource(item)) { show(item); return }
+    const controller = new AbortController(); openingRequest.current = controller; setOpening(true)
+    const account = arkmeAuthStore.getSnapshot().auth
+    void resolveLongArticleSource(item, controller.signal).then(prepared => {
+      const currentAccount = arkmeAuthStore.getSnapshot().auth
+      if (controller.signal.aborted || openingRequest.current !== controller) return
+      if (account?.userId !== currentAccount?.userId || account?.environment !== currentAccount?.environment) throw new Error('账号已切换，请重新打开长文')
+      show(prepared)
+    }).catch(caught => {
+      if (!controller.signal.aborted && openingRequest.current === controller) {
+        setOpenError(caught instanceof Error ? caught.message : '无法打开长文，请重试')
+        if ((caught as { body?: { retryable?: boolean } })?.body?.retryable === false) {
+          setPage(previous => previous ? { ...previous, items: previous.items.filter(row => identity(row) !== identity(item)) } : previous)
+        }
+      }
+    }).finally(() => { if (openingRequest.current === controller) { openingRequest.current = undefined; setOpening(false) } })
+  }
+
   const closeArticle = useCallback(() => {
     setSelected(undefined)
     opener.current?.focus({ preventScroll: true })
@@ -124,6 +154,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
 
   return <section aria-label={tr("长文快速查找")}>
     {openError !== '' && <p role="alert" style={styles.state}>{openError}</p>}
+    {opening && <p role="status" style={styles.state}>{tr('正在打开长文…')}</p>}
     <div style={titleOnly ? { display: 'flex', flexDirection: 'column', gap: 3, padding: '8px 0' } : styles.list}>
       {titleOnly && currentArticle && !page?.items.some(isCurrent)
         && <div className="arkme-article-directory-current" aria-current="page" title={currentArticle.title}>{currentArticle.title || tr('无标题长文')}</div>}
@@ -131,13 +162,8 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
         const text = item.snippet || item.textContent
         const summary = item.textFormat === 'markdown' ? arkmeMarkdownPlainText(text) : text
         return <button key={identity(item)} type="button" data-arkme-feedback="neutral" data-arkme-long-article-result="true"
-          {...(titleOnly ? { className: 'arkme-article-directory-item', title: item.title || tr('无标题长文'), 'aria-current': isCurrent(item) ? 'page' as const : undefined } : { style: styles.card })} onClick={event => {
-          setOpenError('')
-          if (item.targetSource === undefined) { setOpenError('原会话暂不可访问，请返回后重试'); return }
-          if (onChooseArticle) { onChooseArticle(item); return }
-          opener.current = event.currentTarget
-          setSelected(item)
-        }}>
+          {...(titleOnly ? { className: 'arkme-article-directory-item', title: item.title || tr('无标题长文'), 'aria-current': isCurrent(item) ? 'page' as const : undefined } : { style: styles.card })} disabled={opening} onClick={event => chooseArticle(item, event.currentTarget)}>
+
           {titleOnly ? <span>{item.title || tr('无标题长文')}</span> : <>
             <h3 style={styles.title}>{item.title || '无标题长文'}</h3>
             {summary !== '' && <p style={styles.summary}>{summary}</p>}
@@ -154,8 +180,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     {selected?.targetSource !== undefined && typeof document !== 'undefined' && createPortal(
       <ArkmeLongArticleDialog
         sourceRef={selected.targetSource.sourceRef}
-        item={{ itemUid: selected.recordUid, ...(selected.messageActionRef ? { messageActionRef: selected.messageActionRef } : {}), title: selected.title, textContent: selected.textContent, sendAtMillis: selected.sendAtMillis,
-          ...(selected.recordOwnerUserId !== undefined ? { recordOwnerUserId: selected.recordOwnerUserId } : {}) }}
+        item={longArticleSearchTimelineItem(selected)}
         overlayZIndex={10060}
         initialDirectoryPage={scope === 'recent' ? page : undefined}
         onClose={closeArticle}

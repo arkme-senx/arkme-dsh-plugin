@@ -4,8 +4,9 @@ import type { ArkmeLongArticleDialogProps } from '../src/client/ArkmeLongArticle
 import type { ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../src/types.js'
 import { ArkmeLongArticleQuickView } from '../src/client/ArkmeLongArticleQuickView.js'
 
-const mocks = vi.hoisted(() => ({ call: vi.fn(), dialog: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), dialog: vi.fn(), auth: { auth: { userId: 42, environment: 'test' } } }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: { getSnapshot: () => mocks.auth } }))
 vi.mock('react-dom', () => ({ createPortal: (node: unknown) => node }))
 vi.mock('../src/client/ArkmeLongArticleDialog.js', () => ({ ArkmeLongArticleDialog: (props: ArkmeLongArticleDialogProps) => {
   mocks.dialog(props)
@@ -38,6 +39,7 @@ async function mount() { await act(async () => { renderer = create(<ArkmeLongArt
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('document', { body: {} })
+  mocks.auth={auth:{userId:42,environment:'test'}}
   intersect=undefined
   vi.stubGlobal('IntersectionObserver', class { constructor(callback:(entries:{isIntersecting:boolean}[])=>void){intersect=callback} observe(){} disconnect(){intersect=undefined} })
   mocks.call.mockReset(); mocks.dialog.mockReset()
@@ -174,4 +176,35 @@ it('loads twenty articles per page on bottom intersection without a load-more bu
  await act(async()=>scrollBottom())
  expect(cards()).toHaveLength(40)
  expect(mocks.call.mock.calls[1]![1]).toEqual({scene:'long_article',articleScope:'shared_by_me',limit:20,cursor:'next'})
+})
+it('cancels a recent source lookup when leaving and never opens a late result',async()=>{
+ let finish!:(value:unknown)=>void
+ const foreign=item('1',{recordOwnerUserId:7,targetSource:{sourceRef:'signed-group',kind:'group_chat',displayName:'群聊',unreadCount:0,activeAtMillis:1}})
+ mocks.call.mockResolvedValueOnce(page([foreign])).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
+ await mount()
+ act(()=>{cards()[0]!.props.onClick({currentTarget:{focus:vi.fn()}});cards()[0]!.props.onClick({currentTarget:{}})})
+ expect(mocks.call).toHaveBeenCalledTimes(2)
+ const signal=mocks.call.mock.calls[1]![2] as AbortSignal
+ act(()=>renderer!.unmount());renderer=undefined
+ expect(signal.aborted).toBe(true)
+ await act(async()=>finish({items:[{itemUid:'1',recordOwnerUserId:7,messageActionRef:'signed'}]}))
+ expect(mocks.dialog).not.toHaveBeenCalled()
+})
+it('does not open a recent source result after switching accounts',async()=>{
+ let finish!:(value:unknown)=>void
+ const foreign=item('1',{recordOwnerUserId:7,targetSource:{sourceRef:'signed-group',kind:'group_chat',displayName:'群聊',unreadCount:0,activeAtMillis:1}})
+ mocks.call.mockResolvedValueOnce(page([foreign])).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
+ await mount();act(()=>cards()[0]!.props.onClick({currentTarget:{focus:vi.fn()}}))
+ mocks.auth={auth:{userId:43,environment:'test'}}
+ await act(async()=>finish({items:[{itemUid:'1',recordOwnerUserId:7,messageActionRef:'signed'}]}))
+ expect(mocks.dialog).not.toHaveBeenCalled()
+ expect(content(renderer!.toJSON())).toContain('账号已切换')
+})
+it('removes only the exact original after an explicit source revocation',async()=>{
+ const source={sourceRef:'signed-group',kind:'group_chat' as const,displayName:'群聊',unreadCount:0,activeAtMillis:1}
+ mocks.call.mockResolvedValueOnce(page([item('same',{recordOwnerUserId:7,targetSource:source}),item('same',{recordOwnerUserId:8,targetSource:source})])).mockRejectedValueOnce(Object.assign(new Error('共享已撤销'),{body:{retryable:false}}))
+ await mount();await act(async()=>cards()[0]!.props.onClick({currentTarget:{}}))
+ expect(cards()).toHaveLength(1)
+ expect(mocks.dialog).not.toHaveBeenCalled()
+ expect(content(renderer!.toJSON())).toContain('共享已撤销')
 })
