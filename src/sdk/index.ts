@@ -2,6 +2,7 @@ import { connectRealtimeDictation, type RealtimeDictationOptions } from '../real
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot, RealtimeDictationHandle } from '../realtime-dictation-contract.js'
 export type * from '../realtime-dictation-contract.js'
 export type { RealtimeDictationOptions } from '../realtime-dictation-client.js'
+export type { PersonRecordsPage } from '../person-records.js'
 import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
 export type * from '../arko-lifecycle-contract.js'
 import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
@@ -2020,6 +2021,14 @@ export class ArkmeSdk {
     return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  /** One server page across current common chats; no read state mutation. */
+  async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}): Promise<import('../person-records.js').PersonRecordsPage> {
+    const { signal, ...params } = options
+    if ((await this.capabilities(options.signal)).features.personRecordsV1 !== true) throw new Error('Unsupported Arkme person records contract')
+    const result = await this.call<import('../person-records.js').PersonRecordsPage>('source.person-records.page', { sourceRef, memberRef, ...params }, signal)
+    if (result.version !== 1) throw new Error('Unsupported Arkme person records contract')
+    return result
+  }
   async sourceMemberRecords(
     sourceRef: string,
     memberRef: string,
@@ -2599,6 +2608,15 @@ export class ArkmeSdk {
     const policy = await this.call<ArkmeFilePolicy>('files.capabilities', undefined, signal)
     if (policy.version !== 1) throw new Error(`Unsupported Arkme file contract version ${String(policy.version)}`)
     return policy
+  }
+  /** Browse authorized articles by actual sharing direction. Unsupported servers fail explicitly. */
+  async listArticles(options: { scope?: import('../types.js').ArkmeLongArticleBrowseScope; limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeRecordSearchResult> {
+    const scope = options.scope ?? 'recent'
+    if (!['recent', 'shared_by_me', 'shared_with_me'].includes(scope)) throw new TypeError('Invalid article scope')
+    if ((await this.capabilities(options.signal)).features.articleLibraryV1 !== true) throw new Error('Unsupported Arkme article library contract')
+    const result = await this.call<import('../types.js').ArkmeRecordSearchResult>('articles.list', { scope, limit: options.limit ?? 30, ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+    if (scope !== 'recent' && result.appliedArticleScope !== scope) throw new Error('Unsupported Arkme article sharing contract')
+    return result
   }
   async searchFiles(options: { query?: string; limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeRecordSearchResult> {
     const { signal, ...params } = options

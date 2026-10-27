@@ -1249,6 +1249,7 @@ export interface ArkmeDshInputOrigin {
 }
 
 export interface ArkmeSearchRecordItem {
+  messageActionRef?: string
   selfRole?: ArkmeSelfRoleSnapshot
   /** DSH input identity resolved from local public session events; never persisted by record sync. */
   dshOrigin?: ArkmeDshInputOrigin
@@ -1307,6 +1308,7 @@ export interface ArkmeSearchSourceAggregate extends ArkmeSearchSourceMatch {
 }
 
 export interface ArkmeRecordSearchResult {
+  appliedArticleScope?: ArkmeLongArticleBrowseScope
   items: ArkmeSearchRecordItem[]
   sourceAggregates: ArkmeSearchSourceAggregate[]
   hasMore: boolean
@@ -1527,6 +1529,8 @@ arkoImagesV1?:true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    personRecordsV1?: true
+    articleLibraryV1?: true
     relationPages?: true
     recordingPersonReferences?: true
     recordingEntities?: true
@@ -4156,6 +4160,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'source.person-records.page'
+  | 'articles.list'
   | 'native-chat.annotations'
   | 'arko.models'
   | 'arko.ask'
