@@ -58,8 +58,43 @@ export function RecordingComparisonColumn({ title, kind, actions, children }: {
   </section>
 }
 
-export function RecordingComparisonPane({ paneRef, onScroll, children }: { paneRef?: Ref<HTMLDivElement>; onScroll?(event: UIEvent<HTMLDivElement>): void; children: ReactNode }) {
-  return <div ref={paneRef} onScroll={onScroll} style={{ overflowY: 'auto', overflowWrap: 'anywhere', minWidth: 0, minHeight: 0, flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>{children}</div>
+type ComparisonPagination = {
+  cursor?: string | undefined
+  loading: boolean
+  error: string
+  next(): Promise<unknown>
+}
+
+/** Only viewport loading is shared; each comparison keeps its own cursor and data owner. */
+export function RecordingComparisonPane({ paneRef, onScroll, pagination, children }: { paneRef?: Ref<HTMLDivElement>; onScroll?(event: UIEvent<HTMLDivElement>): void; pagination?: ComparisonPagination; children: ReactNode }) {
+  const pane = useRef<HTMLDivElement | null>(null)
+  const requested = useRef<string>()
+  const latest = useRef(pagination); latest.current = pagination
+  const fill = () => {
+    const element = pane.current, page = latest.current
+    if (!element || element.clientHeight <= 0 || !page?.cursor || page.loading || page.error || requested.current === page.cursor) return
+    if (element.scrollHeight - element.scrollTop - element.clientHeight >= 400) return
+    // A pending page may return the same cursor. Do not busy-loop that cursor;
+    // the result owner refreshes it when processing advances, or the user retries.
+    requested.current = page.cursor
+    void page.next().catch(() => undefined)
+  }
+  useEffect(() => { fill() })
+  useEffect(() => {
+    const element = pane.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(fill); observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return <div ref={element => {
+    pane.current = element
+    if (typeof paneRef === 'function') paneRef(element)
+    else if (paneRef) (paneRef as React.MutableRefObject<HTMLDivElement | null>).current = element
+  }} onScroll={event => { onScroll?.(event); fill() }} style={{ overflowY: 'auto', overflowWrap: 'anywhere', minWidth: 0, minHeight: 0, flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
+    {children}
+    {pagination?.loading && <p role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr('正在加载…')}</p>}
+    {pagination?.error && <div role="alert" style={{ color: colors.danger, fontSize: 12 }}>{pagination.error} <RecordingTranscriptButton disabled={pagination.loading} onClick={() => { requested.current = undefined; void pagination.next().catch(() => undefined) }}>{tr('重试')}</RecordingTranscriptButton></div>}
+  </div>
 }
 
 export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, endAtMillis, text, active, background, playLabel, onPlay }: {

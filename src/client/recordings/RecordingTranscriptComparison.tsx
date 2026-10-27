@@ -90,13 +90,16 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
       {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>{tr('豆包转写中…')}</small>}
     </>}>
       {source === 'doubao' && !pending && data.candidateCount > 0 && <p style={{ margin: '0 20px', fontSize: 12, color: colors.secondary }}>将处理当天尚未完成豆包转写的音频，正式结果不变。</p>}
-      <RecordingComparisonPane paneRef={element => { columns.current[index] = element }} onScroll={event => { synchronize(event, index); const pane = event.currentTarget; const pages = source === 'system' ? primaryPages : enhancedPages; if (pages.error === '' && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 400) void pages.next().catch(() => undefined) }}>
+      <RecordingComparisonPane paneRef={element => { columns.current[index] = element }} onScroll={event => synchronize(event, index)} pagination={{
+        cursor: data[source].nextCursor ? `${data[source].viewRef}:${data[source].nextCursor}` : undefined,
+        loading: source === 'system' ? primaryPages.loading : enhancedPages.loading,
+        error: source === 'system' ? primaryPages.error : enhancedPages.error,
+        next: source === 'system' ? primaryPages.next : enhancedPages.next,
+      }}>
         {data[source].items.map(item => <RecordingComparisonRow key={item.itemId} speaker={item.speakerLabel} colorIndex={item.speakerColorIndex}
           startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} background={item.isBackground}
           active={player.activeItemRef === item.itemRef && player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis}
           playLabel={`播放${source === 'system' ? '系统' : '豆包'}片段 ${new Date(item.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })}`} onPlay={() => play(item)} />)}
-        {(source === 'system' ? primaryPages.error : enhancedPages.error) !== '' && <p role="alert">{source === 'system' ? primaryPages.error : enhancedPages.error}</p>}
-        {data[source].nextCursor !== '' && <RecordingTranscriptButton disabled={source === 'system' ? primaryPages.loading : enhancedPages.loading} onClick={() => { void (source === 'system' ? primaryPages : enhancedPages).next().catch(() => undefined) }}>加载更多</RecordingTranscriptButton>}
         {data[source].items.length === 0 && <p style={{ color: colors.secondary }}>{pending && source === 'doubao' ? '正在转写，请稍候' : data[source].message || '暂无转写'}</p>}
         {source === 'doubao' && data.failedCount > 0 && <p role="status" style={{ color: colors.danger }}>{data.failedCount} {tr('个片段转写失败')}</p>}
         {source === 'doubao' && data.silentCount > 0 && <p role="status">{data.silentCount} {tr('个片段未识别到人声')}</p>}
