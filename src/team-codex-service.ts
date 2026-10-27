@@ -7,7 +7,7 @@ import type { TeamServicePort } from './services/team-service.js'
 import { ArkmePluginError } from './services/service.js'
 import type { ArkmeTeam, ArkmeTeamMember, ArkmeUserProfileSnapshot } from './types.js'
 import type { TeamCodexConnectionStatus, TeamCodexEntryAvailability, TeamCodexEvent, TeamCodexEventPage, TeamCodexInvitation, TeamCodexState, TeamCodexTask } from './team-codex-contract.js'
-import { expandLocalCodexEvents } from './team-codex-contract.js'
+import { readLocalCodexEvents } from './team-codex-local-reader.js'
 import { TEAM_CODEX_BRIDGE_SCRIPT } from './team-codex-bridge-script.js'
 import { TeamCodexMachineJournal } from './team-codex-machine-journal.js'
 import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
@@ -69,6 +69,7 @@ export class TeamCodexService {
   private nativeSignatures = new Map<string,{signature:string;checkedAt:number}>()
   private nativeTargetCursor = ''
   private readonly nativeTurnCursors=new Map<string,number>()
+  private readonly cloudReadCursors=new Map<string,string>()
   private nextNativeCheck = 0
   private readonly cloud: TeamCodexCloud | undefined
   private cloudPumping = false
@@ -133,7 +134,7 @@ export class TeamCodexService {
     this.images?.fence()
     this.liveUpdates?.fence()
     this.nativeSignatures.clear()
-    this.nativeTurnCursors.clear();this.nativeTargetCursor=''
+    this.nativeTurnCursors.clear();this.cloudReadCursors.clear();this.nativeTargetCursor=''
     this.nextNativeCheck=0
     for(const watcher of this.inboxWatchers.values()) watcher.close()
     this.inboxWatchers.clear()
@@ -418,20 +419,13 @@ export class TeamCodexService {
   async events(teamRef: string, id: string, before?: number, sourceId?: string, cursor?: string,window?:{after?:string;from?:string;through?:string}): Promise<TeamCodexEventPage> {
     const userId = await this.user()
     const generation = this.generation
-    const annotate = async (page:TeamCodexEventPage, source:CodexTimingSource|undefined,canonical=false,capture=true) => {
+    const annotate = async (page:TeamCodexEventPage, source:CodexTimingSource|undefined,capture=true) => {
       page = {...page,items:page.items.map(event=>{const safe=codexImageSafeText(event.text);return {...event,text:event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe}})}
       if(!source){const collected=this.collectedSource(userId,id,teamRef);if(collected){source={sessionId:collected.sessionId,homeKey:collected.homeKey,live:false};capture=false}}
       const scope=JSON.stringify([userId,teamRef,sourceId??'local',id])
-      const finish=(items:TeamCodexEvent[])=>{
-        if(canonical||!items.length)return {...page,items}
-        const turns=[...new Set(items.map(event=>event.turnId))],slots=turns.map(()=>'?').join(',')
-        const rows=this.db.prepare(`SELECT turn_id,MIN(sequence) turn_order FROM (
-          SELECT turn_id,sequence FROM codex_events WHERE task_id=? AND turn_id IN (${slots})
-          UNION ALL SELECT turn_id,sequence FROM events WHERE connection_id=? AND turn_id IN (${slots})) GROUP BY turn_id`).all(id,...turns,id,...turns)
-        return {...page,items:expandLocalCodexEvents(items,new Map(rows.map(row=>[String(row.turn_id),Number(row.turn_order)])))}
-      }
+      const finish=(items:TeamCodexEvent[])=>({...page,items})
       if(!source) return finish(this.timings.project(scope,{sessionId:''},page.items,new Map()))
-      if(!capture){const cached=this.images.project(userId,source,this.timings.project(scope,source,page.items,new Map()));return finish(canonical?cached:this.liveUpdates.project(userId,source,cached))}
+      if(!capture){const cached=this.images.project(userId,source,this.timings.project(scope,source,page.items,new Map()));return finish(cached)}
       const fresh=await this.timings.read(source,page.items)
       if(this.closed || generation!==this.generation || await this.options.currentUserId()!==userId) fail('账号或同步状态已变化，请重试',409)
       // Re-check exclusion/disconnection after asynchronous source reads.
@@ -442,12 +436,16 @@ export class TeamCodexService {
       this.images.schedule(userId,current,page.items,()=>!this.closed&&generation===this.generation)
       const barrier=sourceId?0:Number(this.db.prepare('SELECT MAX(at) AS at FROM codex_live_barriers WHERE owner=? AND task IN (?,?)')
         .get(userId,id,String(this.db.prepare('SELECT installation_id FROM codex_tasks WHERE id=?').get(id)?.installation_id??id))?.at??0)
-      const allowed=new Set(page.items.filter(event=>event.kind==='UserPromptSubmit'&&event.at>=barrier).map(event=>event.turnId))
-      this.liveUpdates.schedule(userId,current,page.items.filter(event=>allowed.has(event.turnId)),()=>!this.closed&&generation===this.generation&&!!(sourceId
+      const originals=[...new Set(page.items.map(event=>source!.turns?.get(event.turnId)??event.turnId))]
+      const slots=originals.map(()=>'?').join(',')
+      const authorized=originals.length?this.db.prepare(`SELECT turn_id FROM codex_events WHERE task_id=? AND kind='UserPromptSubmit' AND at>=? AND turn_id IN (${slots})
+       UNION SELECT turn_id FROM events WHERE connection_id=? AND kind='UserPromptSubmit' AND at>=? AND turn_id IN (${slots})`).all(id,barrier,...originals,id,barrier,...originals):[]
+      const allowed=new Set(authorized.map(row=>String(row.turn_id)))
+      this.liveUpdates.schedule(userId,current,page.items.filter(event=>allowed.has(source!.turns?.get(event.turnId)??event.turnId)),()=>!this.closed&&generation===this.generation&&!!(sourceId
         ? this.captureHealth.timingSource(userId,teamRef,id,sourceId,page.items.map(event=>event.turnId))
         : this.machine.timingSource(userId,teamRef,id) ?? (this.binding(userId,teamRef,id).status==='active'?current:undefined)))
       const projected=this.images.project(userId,current,this.timings.project(scope,current,page.items,fresh))
-      return finish(canonical?projected:this.liveUpdates.project(userId,current,projected))
+      return finish(projected)
     }
     if (sourceId) {
       if (!this.cloud) fail('当前环境未启用云端记录', 403)
@@ -456,6 +454,7 @@ export class TeamCodexService {
     }
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) fail('分页标识无效')
     if(teamRef==='self'){const own=this.db.prepare('SELECT i.team_ref FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? UNION SELECT team_ref FROM connections WHERE id=? AND user_id=?').get(id,userId,id,userId);if(!own)fail('未找到本人记录',404);teamRef=String(own.team_ref)}
+    this.machine.assertReadableTask(userId,teamRef,id)
     const canonical=this.cloud?.localEvents(userId,teamRef,id,cursor,window)
     if(canonical){
       let source:CodexTimingSource|undefined=this.machine.timingSource(userId,teamRef,id)
@@ -463,7 +462,13 @@ export class TeamCodexService {
       const capture=!!source||!!owned&&!owned.native&&owned.active
       if(!source&&owned)source={sessionId:owned.sessionId,homeKey:owned.homeKey,live:capture}
       if(source)source={...source,turns:this.cloud!.originalTurns(userId,teamRef,id,canonical.items.map(event=>event.turnId))}
-      return this.imageReferences(userId,teamRef,id,undefined,await annotate(canonical,source,true,capture))
+      return this.imageReferences(userId,teamRef,id,undefined,await annotate(canonical,source,capture))
+    }
+    const collected=this.collectedSource(userId,id,teamRef)
+    if(collected){
+      const page=readLocalCodexEvents(this.db,{owner:userId,task:id,...collected},cursor,window,before)
+      const source=collected.native?this.machine.timingSource(userId,teamRef,id):collected.active?{sessionId:collected.sessionId,homeKey:collected.homeKey,live:true}:undefined
+      return this.imageReferences(userId,teamRef,id,undefined,await annotate(page,source))
     }
     const machine=this.machine.events(userId,teamRef,id,before)
     if(machine) return this.imageReferences(userId,teamRef,id,undefined,await annotate(machine,this.machine.timingSource(userId,teamRef,id)))
@@ -706,6 +711,9 @@ export class TeamCodexService {
     if(!backfill.length){this.nativeTargetCursor='';backfill=this.db.prepare(`SELECT t.id,i.team_ref FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE i.user_id=? AND i.status='active' AND t.excluded=0 AND t.deleted=0 ORDER BY t.id LIMIT 8`).all(user)}
     this.nativeTargetCursor=String(backfill.at(-1)?.id??'')
     const recent=[...new Map([...hot,...backfill].map(row=>[String(row.id),row])).values()]
+    // Cursor memory follows the current authorized task scope, including removal/pause.
+    const eligible=new Set(this.db.prepare(`SELECT t.id FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE i.user_id=? AND i.status='active' AND t.excluded=0 AND t.deleted=0 UNION SELECT id FROM connections WHERE user_id=? AND status='active'`).all(user,user).map(row=>String(row.id)))
+    for(const key of this.nativeTurnCursors.keys())if(!eligible.has(key)){this.nativeTurnCursors.delete(key);this.nativeSignatures.delete(key)}
     const targets=[...recent.map(row=>({id:String(row.id),team:String(row.team_ref),machine:true})),
       ...legacy.filter(row=>row.status==='active'&&row.session_id).map(row=>({id:row.id,team:row.team_ref,machine:false}))]
     for(const target of targets){
@@ -713,12 +721,13 @@ export class TeamCodexService {
         : {sessionId:legacy.find(row=>row.id===target.id)!.session_id!,live:true}
       if(!source)continue
       const table=target.machine?'codex_events':'events',column=target.machine?'task_id':'connection_id'
-      const hotRows=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? ORDER BY sequence DESC LIMIT 8`).all(target.id)
+      const hotRows=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND kind='UserPromptSubmit' ORDER BY sequence DESC LIMIT 4`).all(target.id)
       const after=this.nativeTurnCursors.get(target.id)??0
-      let older=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND kind='UserPromptSubmit' AND sequence>? ORDER BY sequence LIMIT 8`).all(target.id,after)
-      if(!older.length)older=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND kind='UserPromptSubmit' ORDER BY sequence LIMIT 8`).all(target.id)
+      let older=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND kind='UserPromptSubmit' AND sequence>? ORDER BY sequence LIMIT 4`).all(target.id,after)
+      if(!older.length)older=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND kind='UserPromptSubmit' ORDER BY sequence LIMIT 4`).all(target.id)
       this.nativeTurnCursors.set(target.id,Number(older.at(-1)?.sequence??0))
-      const rows=[...new Map([...hotRows,...older].map(row=>[Number(row.sequence),row])).values()].sort((a,b)=>Number(b.sequence)-Number(a.sequence)) as unknown as EventRow[]
+      const turns=[...new Set([...hotRows,...older].map(row=>String(row.turn_id)))]
+      const rows=this.db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND turn_id IN (${turns.map(()=>'?').join(',')}) ORDER BY sequence DESC`).all(target.id,...turns) as unknown as EventRow[]
       const events=rows.reverse().map(row=>({sequence:row.sequence,turnId:row.turn_id,kind:row.kind,text:row.text,at:row.at,truncated:row.truncated===1}))
       const signature=events.map(e=>`${e.sequence}:${e.at}`).join(',')
       const previous=this.nativeSignatures.get(target.id)
@@ -744,6 +753,8 @@ export class TeamCodexService {
   }
 
   private async pumpCloud(user: number, generation: number): Promise<void> {
+    const ownedIds=new Set(this.db.prepare('SELECT t.id FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE i.user_id=? UNION SELECT id FROM connections WHERE user_id=?').all(user,user).map(row=>String(row.id)))
+    for(const id of this.cloudReadCursors.keys())if(!ownedIds.has(id))this.cloudReadCursors.delete(id)
     const teams = this.db.prepare(`SELECT team_ref FROM codex_installations WHERE user_id=? AND (status='active' OR home_key IS NOT NULL)
       UNION SELECT team_ref FROM connections c WHERE user_id=? AND (status='active' OR EXISTS(SELECT 1 FROM events e WHERE e.connection_id=c.id))`).all(user, user) as { team_ref: string }[]
     for (const { team_ref: team } of teams) {
@@ -753,13 +764,15 @@ export class TeamCodexService {
         .all(user,team,user,team) as {id:string}[]
       await this.cloud?.confirmSources(user,team,sources.map(source=>source.id))
       if (this.closed || generation !== this.generation || await this.options.currentUserId() !== user) return
-      await this.cloud?.sync(user, team, this.localState(user, team, null).tasks, task => {
-        const rows = this.db.prepare(task.installationId
-          ? 'SELECT * FROM codex_events WHERE task_id=? ORDER BY at,sequence'
-          : 'SELECT * FROM events WHERE connection_id=? ORDER BY at,sequence').all(task.id) as unknown as EventRow[]
-        const events=rows.map(row => ({ sequence: row.sequence, turnId: row.turn_id, kind: row.kind, text: row.text, at: row.at, truncated: row.truncated === 1 }))
+      const tasks=this.localState(user,team,null).tasks
+      await this.cloud?.sync(user, team, tasks, task => {
+        // Read a bounded ascending slice from the existing native projection. The
+        // durable cloud ledger keeps identity/ACKs; this cursor only rotates reads.
+        const collected=this.collectedSource(user,task.id,team)??{sessionId:'',homeKey:'',native:!!task.installationId}
+        const page=readLocalCodexEvents(this.db,{owner:user,task:task.id,...collected},this.cloudReadCursors.get(task.id),{},undefined,true)
+        if(page.nextCursor)this.cloudReadCursors.set(task.id,page.nextCursor);else this.cloudReadCursors.delete(task.id)
         const source=task.installationId?this.machine.timingSource(user,team,task.id):(()=>{const binding=this.binding(user,team,task.id);return binding.status==='active'&&binding.session_id?{sessionId:binding.session_id,live:true}:undefined})()
-        return source?this.liveUpdates.project(user,source,this.timings.project(JSON.stringify([user,team,'local',task.id]),source,events,new Map())):events
+        return source?this.timings.project(JSON.stringify([user,team,'local',task.id]),source,page.items,new Map()):page.items
       })
     }
     if(!this.closed&&generation===this.generation&&await this.options.currentUserId()===user)void this.options.onCloudSynced?.().catch(()=>undefined)

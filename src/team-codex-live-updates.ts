@@ -43,10 +43,10 @@ export class TeamCodexLiveUpdates {
   async idle():Promise<void>{while(this.work.size)await Promise.all([...this.work])}
   schedule(owner:number,source:CodexTimingSource,events:readonly TeamCodexEvent[],valid:()=>boolean,complete?: (value:Completion)=>void):void {
     if(!safeId(source.sessionId)||!valid())return
-    const key=scopeOf(owner,source),wanted=new Set(events.slice(-8).flatMap(event=>{
+    const key=scopeOf(owner,source),wanted=new Set([...new Set(events.flatMap(event=>{
       const turn=source.turns?source.turns.get(event.turnId):event.turnId
       return safeId(turn)?[turn]:[]
-    }))
+    }))].slice(-8))
     if(!wanted.size)return
     let sub=this.subscriptions.get(key)
     if(sub&&!complete&&sub.request.complete){this.run(key,sub);return}

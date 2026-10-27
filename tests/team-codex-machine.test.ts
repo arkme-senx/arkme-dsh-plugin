@@ -49,6 +49,37 @@ function fixture(cloud?:TeamCodexCloudPort){
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('collects every authorized task and older turn in the background beyond both live budgets',async()=>{
+    const f=fixture();await f.enroll()
+    mkdirSync(join(f.codex,'sessions'))
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    const at=Date.now(), expected:string[]=[]
+    for(let n=0;n<20;n++){
+      const id=`session_many_${n}`,path=join(f.codex,'sessions',id+'.jsonl'),lines:object[]=[{type:'session_meta',payload:{id}}]
+      native.prepare('INSERT INTO threads VALUES(?,?,?)').run(id,id,path)
+      for(let turn=0;turn<10;turn++){
+        const turnId=`turn_many_${turn}`,text=`task-${n}-turn-${turn}`;expected.push(text)
+        expect(f.record('UserPromptSubmit',{session_id:id,turn_id:turnId}).status).toBe(0)
+        lines.push({type:'event_msg',timestamp:new Date(at+turn*100).toISOString(),payload:{type:'task_started',turn_id:turnId,root_turn_id:turnId}},
+          {type:'response_item',timestamp:new Date(at+turn*100+1).toISOString(),payload:{id:`message_${turn}`,type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text}]}})
+      }
+      writeFileSync(path,lines.map(v=>JSON.stringify(v)).join('\n')+'\n')
+    }
+    native.close()
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    try{
+      for(let attempt=0;attempt<18;attempt++){
+        f.advance(61000);await f.service.tick();await new Promise(resolve=>setTimeout(resolve,75))
+        const count=Number(journal.prepare("SELECT COUNT(*) n FROM codex_live_messages WHERE kind='commentary'").get()?.n??0)
+        if(count===expected.length)break
+      }
+      expect(journal.prepare("SELECT text FROM codex_live_messages WHERE kind='commentary' ORDER BY text").all().map(row=>row.text)).toEqual(expected.sort())
+      // Reading source A uses the same first-class identities captured without opening its page.
+      const tasks=await f.tasks();expect(tasks).toHaveLength(20)
+      for(const task of tasks){const page=await f.service.events('self',task.id);expect(page.items.filter(e=>e.kind==='Progress')).toHaveLength(10)}
+    }finally{journal.close()}
+  },60000)
   it('serves private images only through the exact owner, team, task and turn binding',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
@@ -438,8 +469,8 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     const task=await f.task();expect(task).toMatchObject({eventCount:56,state:'finished'})
     const newest=await f.service.events(teamRef,task.id)
     expect(newest.items.map(e=>e.text)).toEqual(Array.from({length:50},(_,i)=>`text_${i+6}`))
-    const older=await f.service.events(teamRef,task.id,newest.nextBefore)
-    expect(older.items.map(e=>e.text)).toEqual(Array.from({length:6},(_,i)=>`text_${i}`));expect(older.nextBefore).toBeUndefined()
+    const older=await f.service.events(teamRef,task.id,undefined,undefined,newest.nextCursor)
+    expect(older.items.map(e=>e.text)).toEqual(Array.from({length:6},(_,i)=>`text_${i}`));expect(older.nextCursor).toBeUndefined()
     expect(readdirSync(join(folder,'inbox'))).toEqual([])
   })
   it('keeps legacy records narrow, then preserves history and disables legacy hooks for the migrated task',async()=>{

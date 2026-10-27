@@ -125,7 +125,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         ...(task.cloud?.remote ? { sourceId: task.cloud.sourceId } : {}),
         ...(typeof older==='string'?{cursor:older}:typeof older==='number'?{before:older}:{}),
       }, controller.signal)
-      if((task.cloud?.remote||reading.items.some(event=>event.cursor?.startsWith('lc1_'))) && older===undefined && reading.items.length){
+      if((task.cloud?.remote||reading.items.some(event=>event.cursor?.startsWith('lc1_')||event.cursor?.startsWith('nl1_'))) && older===undefined && reading.items.length){
         const ordered=[...reading.items].sort(compareCodexEvents),first=ordered[0]?.cursor,last=ordered.at(-1)?.cursor
         const readRange=async (bounds:Record<string,string>)=>{
           let continuation='',round=0;const seen=new Set<string>(),values:TeamCodexEvent[]=[]

@@ -125,15 +125,3 @@ export function compareCodexEvents(a:TeamCodexEvent,b:TeamCodexEvent):number {
  if(a.turnSequence!==undefined&&b.turnSequence!==undefined)return a.turnSequence-b.turnSequence||codexEventPhase(a.kind)-codexEventPhase(b.kind)||(a.messageSequence??0)-(b.messageSequence??0)||(a.eventId??'').localeCompare(b.eventId??'')
  return a.at-b.at||a.sequence-b.sequence
 }
-
-/** Local progress is the same user-visible message kind, even without upload consent. */
-export function expandLocalCodexEvents(events:readonly TeamCodexEvent[],turnOrders:ReadonlyMap<string,number>):TeamCodexEvent[] {
- return events.flatMap(event=>{
-  const {localProgress,...message}=event
-  const turnSequence=turnOrders.get(event.turnId)??event.sequence
-  return [{...message,turnSequence,messageSequence:0},...(localProgress??[]).map(progress=>({
-   eventId:progress.id,sequence:event.sequence,turnId:event.turnId,turnSequence,
-   messageSequence:progress.sourceSequence??progress.at,kind:'Progress' as const,text:progress.text,at:progress.at,truncated:progress.truncated,
-  }))]
- }).sort(compareCodexEvents)
-}

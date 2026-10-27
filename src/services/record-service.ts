@@ -1388,7 +1388,7 @@ export class RecordService {
           // Unknown outcomes retain the exact frozen intent; definitive refusals retain the original local data.
         }
       }
-      if(this.legacyExcerptRetry.size>256)this.legacyExcerptRetry.delete(this.legacyExcerptRetry.keys().next().value!)
+      while(this.legacyExcerptRetry.size>256)this.legacyExcerptRetry.delete(this.legacyExcerptRetry.keys().next().value!)
     }finally{this.legacyExcerptBusy=false}
   }
 

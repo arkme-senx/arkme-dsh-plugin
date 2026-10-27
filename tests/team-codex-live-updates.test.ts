@@ -5,7 +5,6 @@ import {tmpdir} from 'node:os'
 import {DatabaseSync} from 'node:sqlite'
 import {afterEach,describe,it,expect,vi} from 'vitest'
 import {TeamCodexLiveUpdates} from '../src/team-codex-live-updates.js'
-import {expandLocalCodexEvents} from '../src/team-codex-contract.js'
 import type {TeamCodexEvent} from '../src/team-codex-contract.js'
 const roots:string[]=[],dbs:DatabaseSync[]=[],stores:TeamCodexLiveUpdates[]=[]
 afterEach(async()=>{for(const store of stores.splice(0)){store.fence();await store.idle()}for(const db of dbs.splice(0))db.close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true})})
@@ -103,11 +102,4 @@ describe('event-driven public Codex progress',()=>{
   const cursor=f.db.prepare('SELECT offset FROM codex_live_cursors').get()!
   await f.scan();expect(f.db.prepare('SELECT offset FROM codex_live_cursors').get()).toEqual(cursor)
  })
-})
-
-it('projects local commentary as independently selectable messages with stable native order',()=>{
- const messages=expandLocalCodexEvents([{...prompt,localProgress:[{id:'native-b',text:'同文',at:at+1,truncated:false,sourceSequence:40},{id:'native-a',text:'同文',at:at+2,truncated:false,sourceSequence:20}]},{...prompt,sequence:2,kind:'Stop',text:'最终',at:at+3}],new Map([[turn,1]]))
- expect(messages.map(value=>value.eventId??value.kind)).toEqual(['UserPromptSubmit','native-a','native-b','Stop'])
- expect(messages.every(value=>!value.localProgress)).toBe(true)
- expect(messages[1]).toMatchObject({kind:'Progress',turnSequence:1,messageSequence:20,text:'同文'})
 })

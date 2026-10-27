@@ -181,11 +181,16 @@ export class TeamCodexMachineJournal {
       WHERE t.id=? AND i.user_id=? AND i.team_ref=?`).get(id,user,team) as unknown as Task|undefined
   }
 
-  events(user:number,team:string,id:string,before?:number):TeamCodexEventPage|undefined {
+  assertReadableTask(user:number,team:string,id:string):boolean {
     const task=this.ownedTask(user,team,id)
-    if(!task) return undefined
+    if(!task) return false
     if(task.deleted) fail('本地记录已删除',404)
     if(this.visibility(task.installation_id,task.session_id)!=='user') fail('此记录尚未确认为用户任务',409)
+    return true
+  }
+
+  events(user:number,team:string,id:string,before?:number):TeamCodexEventPage|undefined {
+    if(!this.assertReadableTask(user,team,id))return undefined
     const rows=this.db.prepare('SELECT * FROM codex_events WHERE task_id=? AND sequence<? ORDER BY sequence DESC LIMIT 51').all(id,before??Number.MAX_SAFE_INTEGER) as unknown as EventRow[]
     const visible=rows.slice(0,50).reverse()
     return {items:visible.map(row=>({sequence:row.sequence,turnId:row.turn_id,kind:row.kind,text:row.text,at:row.at,truncated:row.truncated===1})),
