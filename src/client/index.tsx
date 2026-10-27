@@ -7,7 +7,7 @@ import { registerConversationWindowRoot } from './conversation-window-root.js'
 import { conversationWindowRequested } from './conversation-window.js'
 import { bindConversationWindows } from './conversation-window-sync.js'
 import { createRoot } from 'react-dom/client'
-import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
+import { registerLongArticleWindowRoot } from './long-article-window-root.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
 import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -156,16 +156,7 @@ export function apply(ctx: ClientContext): void {
 
   if (longArticleWindowRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
-    ctx.effect(() => {
-      const disposeStyles = installArkmeRedesignStyles()
-      const host = document.createElement('div')
-      host.dataset.arkmeOwned = 'long-article-window'
-      Object.assign(host.style, { position: 'fixed', inset: '0', zIndex: '2147483000' })
-      document.body.append(host)
-      const root = createRoot(host)
-      root.render(<ArkmeLongArticleWindow />)
-      return () => { root.unmount(); host.remove(); disposeStyles() }
-    }, 'dsh-arkme: independent article editor')
+    registerLongArticleWindowRoot(ctx)
     return
   }
 
