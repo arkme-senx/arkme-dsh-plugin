@@ -60,7 +60,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     const timeout = setTimeout(() => controller.abort(), 20_000)
     try {
       const result = await callArkme<ArkmeRecordSearchResult>('search.scene', {
-        scene: 'long_article', limit: 30, ...(cursor === undefined ? {} : { cursor }),
+        scene: 'long_article', limit: 20, ...(cursor === undefined ? {} : { cursor }),
         ...(scope === 'recent' ? {} : { articleScope: scope }),
       }, controller.signal)
       if (id !== generation.current) return
@@ -149,7 +149,7 @@ export function ArkmeLongArticleQuickView({ scrollRoot, scope = 'recent', active
     {!loading && !error && page?.items.length === 0 && <p style={styles.state}>{page.hasMore ? '正在查找更多长文…' : '暂无长文'}</p>}
     <div ref={sentinel} style={styles.state}>
       {loading ? <span role="status">{tr("正在加载长文…")}</span> : error ? <span role={unavailable ? 'status' : 'alert'}>{tr(error)}{!unavailable && <button type="button" style={styles.retry} onClick={() => { void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button>}</span>
-        : page?.hasMore && <button type="button" style={styles.retry} onClick={() => { void load(page.nextCursor) }}>{tr("加载更多长文")}</button>}
+        : null}
     </div>
     {selected?.targetSource !== undefined && typeof document !== 'undefined' && createPortal(
       <ArkmeLongArticleDialog

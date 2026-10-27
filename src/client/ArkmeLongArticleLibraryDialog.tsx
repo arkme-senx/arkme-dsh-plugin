@@ -39,8 +39,7 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
     if (!standalone) return
     const refresh = () => setRevision(value => value + 1)
     const stop = longArticleWindowBridge()?.onChanged?.(refresh)
-    window.addEventListener('focus', refresh)
-    return () => { stop?.(); window.removeEventListener('focus', refresh) }
+    return () => { stop?.() }
   }, [standalone])
   const id = useId(), root = useRef<HTMLElement>(null)
   const recent = useRef<HTMLDivElement>(null), sent = useRef<HTMLDivElement>(null), received = useRef<HTMLDivElement>(null)

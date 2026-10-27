@@ -28,14 +28,18 @@ function content(value: unknown): string {
   if (Array.isArray(value)) return value.map(content).join('')
   return value !== null && typeof value === 'object' && 'children' in value ? content(value.children) : ''
 }
+let intersect: ((entries: {isIntersecting:boolean}[])=>void) | undefined
 let renderer: ReactTestRenderer | undefined
+const scrollBottom=()=>intersect?.([{isIntersecting:true}])
 const cards = () => renderer!.root.findAllByProps({ 'data-arkme-long-article-result': 'true' })
 const button = (label: string) => renderer!.root.findAllByType('button').find(node => content(node.props.children) === label)!
-async function mount() { await act(async () => { renderer = create(<ArkmeLongArticleQuickView />) }) }
+async function mount() { await act(async () => { renderer = create(<ArkmeLongArticleQuickView />, {createNodeMock:()=>({})}) }) }
 
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('document', { body: {} })
+  intersect=undefined
+  vi.stubGlobal('IntersectionObserver', class { constructor(callback:(entries:{isIntersecting:boolean}[])=>void){intersect=callback} observe(){} disconnect(){intersect=undefined} })
   mocks.call.mockReset(); mocks.dialog.mockReset()
 })
 afterEach(() => { act(() => { renderer?.unmount() }); renderer = undefined; vi.unstubAllGlobals(); vi.useRealTimers() })
@@ -44,7 +48,7 @@ describe('long-article quick browse', () => {
   it('uses the Flutter scene, excludes ordinary notes/files and shows plain-text markdown excerpts', async () => {
     mocks.call.mockResolvedValue(page([item('1', { textFormat: 'markdown', snippet: '**加粗摘要**' }), item('file', { templateKind: 7 }), item('note', { templateKind: 1 }), item('2', { templateKind: 1, displayKind: 1 })]))
     await mount()
-    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('search.scene', { scene: 'long_article', limit: 30 }, expect.any(AbortSignal))
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('search.scene', { scene: 'long_article', limit: 20 }, expect.any(AbortSignal))
     expect(cards()).toHaveLength(2)
     expect(content(renderer!.toJSON())).toContain('加粗摘要')
     expect(content(renderer!.toJSON())).not.toContain('**')
@@ -55,9 +59,9 @@ describe('long-article quick browse', () => {
     let finish!: (value: ArkmeRecordSearchResult) => void
     mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     await mount()
-    act(() => { const more = button('加载更多长文'); more.props.onClick(); more.props.onClick() })
+    act(() => { scrollBottom(); scrollBottom() })
     expect(mocks.call).toHaveBeenCalledTimes(2)
-    expect(mocks.call.mock.calls[1]![1]).toEqual({ scene: 'long_article', limit: 30, cursor: 'next' })
+    expect(mocks.call.mock.calls[1]![1]).toEqual({ scene: 'long_article', limit: 20, cursor: 'next' })
     await act(async () => { finish(page([item('1'), item('2'), item('1', { recordOwnerUserId: 43 })])) })
     expect(cards()).toHaveLength(3)
     expect(content(renderer!.toJSON())).not.toContain('加载更多长文')
@@ -66,7 +70,7 @@ describe('long-article quick browse', () => {
   it('keeps loaded cards on pagination failure and retries the same cursor', async () => {
     mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockRejectedValueOnce(new Error('网络暂不可用')).mockResolvedValueOnce(page([item('2')]))
     await mount()
-    await act(async () => { button('加载更多长文').props.onClick() })
+    await act(async () => { scrollBottom() })
     expect(cards()).toHaveLength(1)
     expect(content(renderer!.toJSON())).toContain('网络暂不可用')
     await act(async () => { button('重试').props.onClick() })
@@ -86,7 +90,7 @@ describe('long-article quick browse', () => {
   it('does not repeatedly load an invalid or repeated cursor', async () => {
     mocks.call.mockResolvedValueOnce(page([item('1')], 'next')).mockResolvedValueOnce(page([item('2')], 'next'))
     await mount()
-    await act(async () => { button('加载更多长文').props.onClick() })
+    await act(async () => { scrollBottom() })
     expect(content(renderer!.toJSON())).toContain('后续分页暂不可用')
     expect(content(renderer!.toJSON())).not.toContain('加载更多长文')
     expect(mocks.call).toHaveBeenCalledTimes(2)
@@ -116,7 +120,8 @@ describe('long-article quick browse', () => {
     act(() => { renderer!.root.findByProps({ 'aria-label': '关闭长文' }).props.onClick() })
     expect(focus).toHaveBeenCalledWith({ preventScroll: true })
     expect(cards()).toHaveLength(1)
-    expect(button('加载更多长文')).toBeDefined()
+    expect(button('加载更多长文')).toBeUndefined()
+    expect(intersect).toEqual(expect.any(Function))
     expect(mocks.call).toHaveBeenCalledTimes(1)
   })
 
@@ -159,3 +164,14 @@ it('removes a deleted article by owner and uid while keeping another owners same
  act(()=>props.onDeleted?.('same',42));expect(cards()).toHaveLength(1);
  act(()=>cards()[0]!.props.onClick({currentTarget:{}}));expect((mocks.dialog.mock.lastCall![0] as ArkmeLongArticleDialogProps).item?.recordOwnerUserId).toBe(43);
 });
+
+
+it('loads twenty articles per page on bottom intersection without a load-more button', async()=>{
+ mocks.call.mockResolvedValueOnce(page(Array.from({length:20},(_,i)=>item(String(i))),'next')).mockResolvedValueOnce(page(Array.from({length:20},(_,i)=>item(String(i+20)))))
+ await act(async()=>{renderer=create(<ArkmeLongArticleQuickView scope="shared_by_me"/>,{createNodeMock:()=>({})})})
+ expect(cards()).toHaveLength(20)
+ expect(button('加载更多长文')).toBeUndefined()
+ await act(async()=>scrollBottom())
+ expect(cards()).toHaveLength(40)
+ expect(mocks.call.mock.calls[1]![1]).toEqual({scene:'long_article',articleScope:'shared_by_me',limit:20,cursor:'next'})
+})
