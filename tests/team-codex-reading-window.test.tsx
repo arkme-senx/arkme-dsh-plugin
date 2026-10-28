@@ -55,3 +55,15 @@ it('retains selected message snapshots after their page leaves the bounded windo
  await act(async()=>window.dispatchEvent(new Event('focus')))
  expect(reading.items).toEqual([]);expect(host.textContent).not.toContain('已选 1 条')
 })
+it('keeps the message anchored when an older page moves its date header',async()=>{
+ const reading=newCodexReadingState();await act(async()=>root.render(<TeamCodexConversation teamRef="team" task={task} reading={reading} inputName="本人"/>))
+ const el=host.querySelector<HTMLElement>('.arkme-codex-transcript')!,key=reading.items[0]!.eventId
+ reading.atBottom=false;el.scrollTop=0
+ const box=(top:number,height=100)=>({x:0,y:top,left:0,right:900,width:900,top,bottom:top+height,height,toJSON:()=>({})}) as DOMRect
+ const geometry=vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(this:HTMLElement){
+  if(this===el)return box(0,600)
+  if(this.closest<HTMLElement>('[data-codex-row]')?.dataset.codexRow!==key)return box(0,0)
+  return box((reading.items.length===50?100:1100)-el.scrollTop+(this.tagName==='ARTICLE'&&reading.items.length===50?40:0))
+ })
+ try{await click('加载更早记录');expect(el.scrollTop).toBe(960)}finally{geometry.mockRestore()}
+})

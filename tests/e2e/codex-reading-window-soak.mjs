@@ -49,10 +49,17 @@ const {chromium}=createRequire(resolve(process.env.PLAYWRIGHT_MODULE_ANCHOR??joi
 const browser=await chromium.launch({channel:'chrome',headless:true})
 const context=await browser.newContext({viewport:{width:1100,height:900}}),page=await context.newPage()
 const errors=[];page.on('pageerror',e=>errors.push(e.message))
-const samples=[],began=Date.now();let cycles=0
+const samples=[];let began=Date.now(),cycles=0
 try{
  await page.goto('http://127.0.0.1:'+address.port)
  await page.locator('[data-codex-row]').first().waitFor({timeout:60000})
+ await page.locator('.arkme-codex-transcript').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'))})
+ const first=page.locator('[data-codex-row]').first(),anchor=await first.getAttribute('data-codex-row'),position=await first.locator('article').boundingBox()
+ await page.getByRole('button',{name:'加载更早记录',exact:true}).evaluate(el=>el.click())
+ await page.waitForFunction(()=>window.__reading.items.length===100)
+ const restored=await page.locator('[data-codex-row="'+anchor+'"] article').boundingBox()
+ assert(position&&restored&&Math.abs(position.y-restored.y)<1,'older-page message anchor moved')
+ began=Date.now()
  const cdp=await context.newCDPSession(page);await cdp.send('Performance.enable')
  let nextSample=Date.now(),oldest=1000000
  while(Date.now()-began<seconds*1000){

@@ -161,7 +161,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
       const el=scroller.current
       if(el&&(older!==undefined||forward||!reading.atBottom&&mode!=='latest')){
         const rect=el.getBoundingClientRect(),anchor=Array.from(el.querySelectorAll<HTMLElement>('[data-codex-row]')).find(node=>{const r=node.getBoundingClientRect();return r.height>0&&r.bottom>rect.top})
-        pendingScroll.current={top:el.scrollTop,height:el.scrollHeight,...(anchor?{key:anchor.dataset.codexRow!,offset:anchor.getBoundingClientRect().top-rect.top}:{})}
+        pendingScroll.current={top:el.scrollTop,height:el.scrollHeight,...(anchor?{key:anchor.dataset.codexRow!,offset:(anchor.querySelector<HTMLElement>('article')??anchor).getBoundingClientRect().top-rect.top}:{})}
       }else pendingScroll.current=mode==='latest'||reading.atBottom?'bottom':'restore'
       const previousById=new Map(previous.map(item=>[item.eventId??item.sequence,item]))
       const messageChanged=fitted.items.some(item=>{const old=previousById.get(item.eventId??item.sequence);return !old||old.text!==item.text||old.kind!==item.kind||JSON.stringify(old.localProgress)!==JSON.stringify(item.localProgress)})
@@ -207,7 +207,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     const pending = pendingScroll.current
     if(typeof pending==='object'){
       const anchor=pending.key?Array.from(el.querySelectorAll<HTMLElement>('[data-codex-row]')).find(node=>node.dataset.codexRow===pending.key):undefined
-      el.scrollTop=anchor&&pending.offset!==undefined?el.scrollTop+anchor.getBoundingClientRect().top-el.getBoundingClientRect().top-pending.offset:pending.top+el.scrollHeight-pending.height
+      el.scrollTop=anchor&&pending.offset!==undefined?el.scrollTop+(anchor.querySelector<HTMLElement>('article')??anchor).getBoundingClientRect().top-el.getBoundingClientRect().top-pending.offset:pending.top+el.scrollHeight-pending.height
     }else el.scrollTop=pending==='bottom'||pending==='restore'&&reading.atBottom?el.scrollHeight:reading.scrollTop
     pendingScroll.current = 'restore'
     rememberScroll()

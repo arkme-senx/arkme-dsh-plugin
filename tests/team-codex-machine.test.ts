@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
+import { TeamCodexLiveUpdates } from '../src/team-codex-live-updates.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
 import { wrappedCodexPrompt } from './fixtures/codex-prompt.js'
@@ -68,9 +69,11 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     }
     native.close()
     const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    const owners=new Set<TeamCodexLiveUpdates>(),schedule=TeamCodexLiveUpdates.prototype.schedule
+    const observing=vi.spyOn(TeamCodexLiveUpdates.prototype,'schedule').mockImplementation(function(this:TeamCodexLiveUpdates,...args){owners.add(this);schedule.apply(this,args)})
     try{
       for(let attempt=0;attempt<18;attempt++){
-        f.advance(61000);await f.service.tick();await new Promise(resolve=>setTimeout(resolve,75))
+        f.advance(61000);await f.service.tick();await Promise.all([...owners].map(owner=>owner.idle()))
         const count=Number(journal.prepare("SELECT COUNT(*) n FROM codex_live_messages WHERE kind='commentary'").get()?.n??0)
         if(count===expected.length)break
       }
@@ -78,7 +81,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
       // Reading source A uses the same first-class identities captured without opening its page.
       const tasks=await f.tasks();expect(tasks).toHaveLength(20)
       for(const task of tasks){const page=await f.service.events('self',task.id);expect(page.items.filter(e=>e.kind==='Progress')).toHaveLength(10)}
-    }finally{journal.close()}
+    }finally{observing.mockRestore();journal.close()}
   },60000)
   it('serves private images only through the exact owner, team, task and turn binding',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
