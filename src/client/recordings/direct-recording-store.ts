@@ -1,3 +1,4 @@
+import { lockMicrophone as lockDirectRecording } from '../microphone-lock.js'
 import { tr } from '../locale.js'
 import type { ArkmeMembership } from '../../types.js'
 import { recordingCoverageContains } from '../../recording-coverage.js'
@@ -8,6 +9,9 @@ import { IndexedMicrophoneJournal, type LocalMicrophoneRecording, type Microphon
 export interface DirectRecordingAccount { key: string; userId: number; importPath: string }
 export interface DirectRecordingSnapshot {
   accountKey?: string
+  recordingId?: string | undefined
+  /** Terminal capture IDs for this account lifetime; late list snapshots must not revive them. */
+  stoppedRecordingIds?: readonly string[]
   phase: 'idle' | 'starting' | 'recording' | 'saving' | 'uploading'
   elapsedMillis: number
   maxMillis: number
@@ -30,6 +34,7 @@ export interface DirectRecordingDependencies {
   lock(): Promise<() => void>
   now(): number
   id(): string
+  presence?(accountKey: string, fact: { operation: 'start' | 'update' | 'stop'; recordingId: string; startedAt: number; elapsedMillis: number; reason?: string }): Promise<unknown>
 }
 
 /** Same limits as Flutter AudioLongRecordingManager: free / VIP / SVIP. */
@@ -38,17 +43,9 @@ export function directRecordingLimit(member: ArkmeMembership, now: number): numb
   return (active ? [5, 60, 120][member.memberType] ?? 5 : 5) * 60_000
 }
 
-export async function lockDirectRecording(): Promise<() => void> {
-  if (!navigator.locks) throw new Error('当前浏览器不支持安全的多窗口录音，请更新浏览器后重试')
-  return await new Promise((resolve, reject) => {
-    void navigator.locks.request('arkme.direct-microphone', { ifAvailable: true }, async lock => {
-      if (!lock) { reject(new Error('其他预览窗口正在录音或保存，请先在该窗口结束')); return }
-      await new Promise<void>(release => resolve(release))
-    }).catch(reject)
-  })
-}
+export { lockMicrophone as lockDirectRecording } from '../microphone-lock.js'
 
-const initial = (): DirectRecordingSnapshot => ({ phase: 'idle', elapsedMillis: 0, maxMillis: 0, levels: [], pending: [], submitted: [], message: '', error: '', progress: 0, acceptedRevision: 0, startedAt: 0, volatile: false })
+const initial = (): DirectRecordingSnapshot => ({ phase: 'idle', stoppedRecordingIds: [], elapsedMillis: 0, maxMillis: 0, levels: [], pending: [], submitted: [], message: '', error: '', progress: 0, acceptedRevision: 0, startedAt: 0, volatile: false })
 const errorText = (error: unknown) => error instanceof Error ? error.message : '录音操作失败，请重试'
 
 interface CaptureSession {
@@ -63,6 +60,9 @@ interface CaptureSession {
   queued: number
   bytes: number
   stopping?: Promise<void>
+  presenceStarted?: Promise<unknown> | undefined
+  presenceConfirmed?: boolean
+  presenceLastAt?: number
 }
 
 /** Lives above recording/conversation routes; changing pages never owns microphone lifetime. */
@@ -109,7 +109,7 @@ export class DirectRecordingStore {
     const account = this.account
     if (!account || this.state.phase !== 'idle') return
     const generation = this.generation; const signal = this.scope.signal
-    this.publish({ phase: 'starting', error: '', message: '正在准备麦克风…', elapsedMillis: 0, levels: [] })
+    this.publish({ phase: 'starting', recordingId: undefined, error: '', message: '正在准备麦克风…', elapsedMillis: 0, levels: [] })
     let session: CaptureSession | undefined
     try {
       if (!this.storageReady) { await this.refresh(generation); if (!this.storageReady) throw new Error('本地保存不可用，未开始录音') }
@@ -132,7 +132,7 @@ export class DirectRecordingStore {
           const record: LocalMicrophoneRecording = { id, accountKey: account.key, userId: account.userId, startedAt, sampleRate, bytes: 0, chunks: 0, finished: false, fileName: `即我录音-${stamp}-${id.slice(0, 8)}.wav` }
           await this.deps.journal.create(record); current.record = record
           if (!this.valid(generation)) throw new Error('账号已切换，未开始录音')
-          this.publish({ startedAt })
+          this.publish({ startedAt, recordingId: id })
         },
         onChunk: (pcm, level) => this.chunk(current, pcm, level),
         onInterrupted: reason => { void this.finishSession(current, false, reason) },
@@ -141,7 +141,7 @@ export class DirectRecordingStore {
       this.publish({ phase: 'recording', message: '正在录音' })
     } catch (error) {
       if (session?.record && !session.bytes) await this.deps.journal.remove(session.record.id).catch(() => undefined)
-      if (this.valid(generation)) this.publish({ phase: 'idle', message: '', error: errorText(error) })
+      if (this.valid(generation)) this.publish({ phase: 'idle', recordingId: undefined, message: '', error: errorText(error) })
     } finally {
       if (session && (!session.capture || !this.valid(generation))) {
         session.release(); if (this.session === session) this.session = undefined
@@ -153,6 +153,20 @@ export class DirectRecordingStore {
     const record = session.record
     if (!record || !pcm.byteLength) return
     session.bytes += pcm.byteLength; session.queued++
+    const elapsedMillis = session.bytes / (record.sampleRate * 2) * 1000
+    if (this.deps.presence) {
+      if (!session.presenceStarted) {
+        const task = this.deps.presence(session.account.key, { operation: 'start', recordingId: record.id, startedAt: record.startedAt, elapsedMillis })
+          .then(() => { session.presenceConfirmed = true }, () => { if (session.presenceStarted === task) session.presenceStarted = undefined })
+        session.presenceStarted = task
+      }
+      else if (this.deps.now() - (session.presenceLastAt ?? 0) >= 900) {
+        session.presenceLastAt = this.deps.now()
+        void session.presenceStarted.then(() => session.presenceConfirmed
+          ? this.deps.presence?.(session.account.key, { operation: 'update', recordingId: record.id, startedAt: record.startedAt, elapsedMillis })
+          : undefined).catch(() => undefined)
+      }
+    }
     if (this.valid(session.generation)) this.publish({ elapsedMillis: session.bytes / (record.sampleRate * 2) * 1000, levels: [...this.state.levels.slice(-23), level] })
     session.queue = session.queue.then(async () => {
       if (session.writeError) { session.tail.push(pcm); return }
@@ -173,7 +187,26 @@ export class DirectRecordingStore {
       const current = () => this.valid(session.generation)
       if (current()) this.publish({ phase: 'saving', message: '正在保存录音…', error: reason })
       try {
-        await session.capture?.stop(); await session.queue
+        let captureStopError: unknown
+        try { await session.capture?.stop() } catch (error) { captureStopError = error }
+        if (current() && session.record) {
+          this.publish({ stoppedRecordingIds: [...(this.state.stoppedRecordingIds ?? []), session.record.id] })
+        }
+        if (session.record && session.bytes > 0 && this.deps.presence) {
+          const record = session.record
+          const elapsedMillis = session.bytes / (record.sampleRate * 2) * 1000
+          const presence = this.deps.presence
+          void (async () => {
+            await session.presenceStarted
+            if (!session.presenceConfirmed) {
+              await presence(session.account.key, { operation: 'start', recordingId: record.id, startedAt: record.startedAt, elapsedMillis }).catch(() => undefined)
+            }
+            await presence(session.account.key, { operation: 'stop', recordingId: record.id, startedAt: record.startedAt, elapsedMillis,
+              reason: captureStopError ? 'capture_error' : reason ? 'capture_interrupted' : 'capture_stopped' })
+          })().catch(() => undefined)
+        }
+        if (captureStopError) throw captureStopError
+        await session.queue
         if (session.record && session.bytes === 0) {
           await this.deps.journal.remove(session.record.id)
           reason = reason || '录音过短，尚未录到音频，请重新开始'
@@ -187,7 +220,7 @@ export class DirectRecordingStore {
         session.release(); if (this.session === session) this.session = undefined
       }
       if (!current()) return
-      this.publish({ phase: 'idle', message: '录音已保存在本机', error: session.writeError || reason })
+      this.publish({ phase: 'idle', recordingId: undefined, message: '录音已保存在本机', error: session.writeError || reason })
       await this.refresh(session.generation)
       if (upload && session.record && !session.writeError && !reason) await this.upload(session.record.id)
     })()
@@ -207,7 +240,8 @@ export class DirectRecordingStore {
       if (!this.valid(generation)) return
       // Sending the captured user id (never 0) lets the host reject account changes.
       await this.deps.upload(account.importPath, file, record.startedAt, account.userId, {
-        signal, onProgress: progress => { if (this.valid(generation)) this.publish({ progress: progress.totalBytes ? progress.uploadedBytes / progress.totalBytes : 0 }) },
+        signal, recordingKind: 1,
+        onProgress: progress => { if (this.valid(generation)) this.publish({ progress: progress.totalBytes ? progress.uploadedBytes / progress.totalBytes : 0 }) },
       })
       // Host accepted and durably owns the file/upload job; safe to clear this browser's copy.
       await this.deps.journal.remove(id); this.emergency.delete(id)
@@ -236,4 +270,5 @@ export const directRecordingStore = new DirectRecordingStore({
   journal: new IndexedMicrophoneJournal(), capture: captureMicrophone,
   membership: (userId, signal) => callArkme<ArkmeMembership>('membership.current', { expectedUserId: userId }, signal),
   upload: (...args) => uploadArkmeRecording(...args), lock: lockDirectRecording, now: () => Date.now(), id: () => crypto.randomUUID(),
+  presence: (accountKey, fact) => callArkme('recordings.presence.capture', { accountKey, ...fact }),
 })

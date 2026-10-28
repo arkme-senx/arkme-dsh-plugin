@@ -12,11 +12,14 @@ describe('native World integration', () => {
     expect(controller).toContain("mode: 'world'")
   })
 
-  it('places World immediately below Calendar in the product navigation', async () => {
+  it('groups World under Explore in the product navigation', async () => {
     const productNavigation = await source('src/client/ArkmeProductNavigation.tsx')
 
-    expect(productNavigation).toMatch(/id: 'calendar'[\s\S]*id: 'world'[\s\S]*id: 'extensions'/)
-    expect(productNavigation).toContain("if (id === 'world') arkmeUi.showWorld()")
+    expect(productNavigation).toMatch(/id: 'calendar'[\s\S]*id: 'explore'[\s\S]*id: 'extensions'/)
+    expect(productNavigation).toContain('<ExploreNavigation')
+    const explore = await source('src/client/explore/ExploreNavigation.tsx')
+    expect(explore).toContain("...EXPLORE_MODULES,'location' as const,'world' as const]")
+    expect(explore).toContain("module==='world'?arkmeUi.showWorld()")
   })
 
   it('renders World as a full native utility surface like recordings', async () => {
@@ -73,17 +76,19 @@ describe('native World integration', () => {
     expect(world).toContain('.publishWorldText(')
     expect(world).toContain('.publishWorldFileAssets(')
     expect(world).toContain('mutationIdRef')
-    expect(world).toContain('uploadedAssetsRef')
-    expect(world).toContain('cachedUploads?.mutationId === mutationIdRef.current')
-    expect(world).toContain('uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }')
-    expect(world).toContain("result.visibility === 'pending_review'")
-    expect(world).toContain('已提交审核')
+    expect(world).toContain('if (item.asset) return item.asset')
+    expect(world).toContain('setAttachments(current => current.map')
+    expect(world).toContain('mutationIdRef.current')
+    const publishHost = await source('src/client/WorldPublishHost.tsx')
+    expect(publishHost).toContain("result.visibility === 'pending_review'")
+    expect(publishHost).toContain('已提交审核')
     expect(world).toContain('result.worldPublished')
     expect(api).not.toContain('world.upload-image-data')
     expect(api).not.toContain('world.publish-rich')
     expect(world).not.toContain('fileBase64')
     expect(world).not.toContain('world.upload-image-data')
     expect(world).not.toContain('world.publish-rich')
-    expect(world).toContain('草稿不会被清空')
+    expect(world).toContain('草稿已保留')
+    expect(world).toContain('<WorldPublishGuide')
   })
 })

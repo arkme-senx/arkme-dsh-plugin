@@ -20,7 +20,7 @@ describe('Arkme persistent conversation frame', () => {
       close: () => {},
       initialAuth: { status: 'authenticated', environment: 'prod', userId: 1 },
       openedFromSession: undefined,
-      useSessions: (selector: (state: { current: string }) => unknown) => selector({ current: 'session-1' }),
+      useSessions: (selector: (state: { ids: string[]; byId: Record<string, { id: string; retainedBy: { mainView: number } }> }) => unknown) => selector({ ids: ['session-1'], byId: { 'session-1': { id: 'session-1', retainedBy: { mainView: 1 } } } }),
       renderSlot: () => null,
     } as never))
     expect(markup).toContain('data-arkme-owned="persistent-conversation-compat"')
@@ -152,6 +152,8 @@ describe('Arkme persistent conversation frame', () => {
     }
 
     expect(arkmeTimelineSenderName(item, profile)).toBe('Ye')
+    expect(arkmeTimelineSenderName({ ...item, avatarSnapshot: true, senderNameSnapshot: true, senderName: '旧昵称' }, profile)).toBe('旧昵称')
+    expect(arkmeTimelineSenderName({ ...item, avatarSnapshot: true }, profile)).toBe('Ye')
     expect(arkmeTimelineAvatarRef(item, profile)).toBe('profile-avatar-ref')
     expect(arkmeTimelineAvatarRef({ ...item, avatarSnapshot: true }, profile)).toBeUndefined()
     expect(arkmeTimelineAvatarRef({ ...item, avatarSnapshot: true, avatarRef: 'historical-avatar' }, profile)).toBe('historical-avatar')
@@ -183,7 +185,7 @@ describe('Arkme persistent conversation frame', () => {
     expect(renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: { ...item, senderKind: 'human' } }))).not.toContain('BOT')
   })
 
-  it('puts time before nickname for own messages and keeps nickname before time for received messages', () => {
+  it('keeps sender identity in the header without duplicating the bubble timestamp', () => {
     const sendAtMillis = new Date(2026, 7, 21, 16, 38).getTime()
     const ownItem: ArkmeTimelineItem = {
       itemUid: 'record-1', senderName: 'Ye', isMe: true, sendAtMillis,
@@ -193,8 +195,10 @@ describe('Arkme persistent conversation frame', () => {
     const ownMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: ownItem }))
     const receivedMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: receivedItem }))
 
-    expect(ownMarkup.indexOf('16:38')).toBeLessThan(ownMarkup.indexOf('Ye'))
-    expect(receivedMarkup.indexOf('小林')).toBeLessThan(receivedMarkup.indexOf('16:38'))
+    expect(ownMarkup).toContain('Ye')
+    expect(receivedMarkup).toContain('小林')
+    expect(ownMarkup).not.toContain('16:38')
+    expect(receivedMarkup).not.toContain('16:38')
   })
 
   it.each(['', '群成员'])('keeps the timeline name while member presentation is %j', displayName => {

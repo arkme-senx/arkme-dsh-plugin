@@ -600,3 +600,83 @@ describe('ServiceRuntime', () => {
     })
   })
 })
+
+
+describe('reaction request scheduling', () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  it('shares identical reads, isolates accounts, and keeps notification polling off the write lane', async () => {
+    vi.useFakeTimers()
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    const fetcher = vi.fn(async () => { await gate; return new Response(JSON.stringify({ code: 0, data: {} })) })
+    const runtime = runtimeFixture(fetcher)
+    const query = '/api/v1/reactions/query', body = { targets: [{ record_uid: 'record' }] }
+    const reads = [runtime.authenticatedPost(query, body, session), runtime.authenticatedPost(query, body, session),
+      runtime.authenticatedPost(query, body, { ...session, userId: 43 }),
+      runtime.authenticatedPost('/api/v1/reactions/notifications/query', { limit: 50 }, session)]
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(runtime.requestCoordinator.snapshotStats()).toMatchObject({
+      'interactive-read:record': { started: 2, joined: 1 }, 'background-read:record': { started: 1 },
+    })
+    finish(); await Promise.all(reads); runtime.dispose()
+  })
+  it.each([false, true])('does not merge writes or reuse a pre-write read (unknown outcome=%s)', async failed => {
+    vi.useFakeTimers()
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    let reads = 0
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/query') && ++reads === 1) await gate
+      if (failed && String(url).endsWith('/set')) throw new Error('network failed')
+      return new Response(JSON.stringify({ code: 0, data: { reads } }))
+    })
+    const runtime = runtimeFixture(fetcher), body = { targets: [{ record_uid: 'record' }] }
+    const before = runtime.authenticatedPost('/api/v1/reactions/query', body, session)
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.allSettled([runtime.authenticatedPost('/api/v1/reactions/set', {}, session), runtime.authenticatedPost('/api/v1/reactions/set', {}, session)])
+    const after = runtime.authenticatedPost('/api/v1/reactions/query', body, session)
+    finish(); await vi.advanceTimersByTimeAsync(250)
+    await Promise.all([before, after])
+    expect(reads).toBe(2)
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/set'))).toHaveLength(2)
+    expect(runtime.requestCoordinator.snapshotStats()['write:record']?.started).toBe(2)
+    runtime.dispose()
+  })
+})
+
+
+it('removes a shared queued reaction read when its final consumer disconnects', async () => {
+  vi.useFakeTimers()
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: {} })))
+  const runtime = runtimeFixture(fetcher), path = '/api/v1/reactions/query', body = { targets: [] }
+  await runtime.authenticatedPost(path, body, session) // Consume the route burst token.
+  const a = new AbortController(), b = new AbortController()
+  const first = runtime.authenticatedPost(path, body, session, a.signal)
+  const second = runtime.authenticatedPost(path, body, session, b.signal)
+  const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+  const secondRejected = expect(second).rejects.toMatchObject({ name: 'AbortError' })
+  a.abort(); await firstRejected
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  b.abort(); await secondRejected
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  runtime.dispose()
+})
+
+describe('speaker directory HTTP contract', () => {
+  it.each([[2, 45000], [60, 2000]])('honors both Retry-After and retry_after_ms: %s seconds, %s ms', async (seconds, milliseconds) => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 429, data: { error_code: 'directory_rate_limited', retry_after_ms: milliseconds } }), { status: 429, headers: { 'Retry-After': String(seconds) } }))
+    const runtime = runtimeFixture(fetcher)
+    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+      .rejects.toMatchObject({ upstreamStatus: 429, retryAfterMillis: Math.max(seconds * 1000, milliseconds) })
+    expect(fetcher).toHaveBeenCalledTimes(1); runtime.dispose()
+  })
+  it.each([0, 1001, 1002])('does not treat HTTP 200 business code %s as success', async code => {
+    const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({ code, data: { items: [] } }))))
+    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+      .rejects.toMatchObject({ code: `arkme-code-${code}` })
+    runtime.dispose()
+  })
+})

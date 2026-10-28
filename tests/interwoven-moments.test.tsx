@@ -221,15 +221,22 @@ describe('interwoven UI', () => {
     expect(scrollBody.scrollTop).toBe(211)
   })
 
-  it('renders the centered transparent 18px-avatar card as a native keyboard button', () => {
+  it('renders a centered row with a compact sender avatar as a native keyboard button', () => {
     const markup = renderToStaticMarkup(
       <ArkmeInterwovenMentionCard moment={moment('one', Date.now())} rowId="moment:one" onOpen={vi.fn()} />,
     )
 
-    expect(markup).toContain('<button type="button"')
+    expect(markup).toContain('type="button"')
     expect(markup).toContain('打开快记详情')
     expect(markup).toContain('即我大群，小林：@我 one')
-    expect(markup).toContain('width:18px')
+    expect(markup).toContain('data-arkme-interwoven-avatar')
+    expect(markup).toContain('width:20px;height:20px;min-width:20px')
+    expect(markup).not.toContain(' title=')
+    expect(markup).toContain('>小</span>')
+    expect(markup).not.toContain('data-arkme-interwoven-direction')
+    expect(markup).toContain('>@我 one</span>')
+    expect(markup.indexOf('data-arkme-interwoven-content')).toBeLessThan(markup.indexOf('data-arkme-interwoven-origin'))
+    expect(markup).toContain('max-width:min(9em, 24%)')
     expect(markup).toContain('gap:8px')
     expect(markup).toContain('font-size:13px')
     expect(markup).toContain('background:transparent')

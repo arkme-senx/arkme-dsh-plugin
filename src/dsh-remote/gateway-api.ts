@@ -1,18 +1,19 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
+import type { ConnectionFetchHandler, PeerScope } from '@deepseek-ai/dsh-client-connection'
 import { randomUUID } from 'node:crypto'
 import type { DshPublicApiProxyLike } from './api-proxy-adapter.js'
 import { snapshotDshHistoryEntry } from './dsh-event-contract.js'
 import { DshRemoteError } from './errors.js'
 
-/** Public, carrier-independent DSH 0.1.5 Gateway seam (no private imports). */
-export interface DshGatewayLike {
-  invoke(request: { namespace: string; method: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<unknown>
-  stream(request: { namespace: string; method: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<AsyncIterable<unknown>>
-  wireStream: { open(endpoint: string, payload: unknown, signal: AbortSignal): Promise<AsyncIterable<unknown>> }
+/** Keep the adapter checked against the supported DSH public Host contract. */
+export interface DshGatewayLike extends Pick<TypertGateway, 'invoke' | 'stream'> {
+  wireStream: Pick<TypertGateway['wireStream'], 'open'>
 }
 export interface DshConnectionLike {
-  createSharedFetchHandler(channel: '/api'): { fetch(request: Request): Promise<Response> }
+  createSharedFetchHandler(channel: '/api'): Pick<ConnectionFetchHandler, 'fetch'>
 }
+export const EMPTY_DSH_UPLINK: AsyncIterable<never> = { async *[Symbol.asyncIterator]() {} }
 type Frame = { rpcId: string; payload: Record<string, unknown> }
 type RecordValue = Record<string, unknown>
 type Sessions = NonNullable<DshPublicApiProxyLike['sessions']>
@@ -39,11 +40,12 @@ export function createDshGatewayApi(
   gateway: DshGatewayLike,
   connection: DshConnectionLike,
   lifetime: AbortSignal,
+  peer: PeerScope,
 ): DshPublicApiProxyLike {
   const pending = new Map<string, { clientId: string; sessionId: string; kind: 'question' | 'approval'; signal: AbortSignal }>()
   const invoke = async (method: string, request: Record<string, unknown> | undefined, signal = lifetime) => {
     signal.throwIfAborted()
-    return await gateway.invoke({ namespace: 'session', method, args: request === undefined ? {} : { [method === 'list' ? '_request' : 'request']: request }, signal })
+    return await gateway.invoke({ namespace: 'session', method, args: request === undefined ? {} : { [method === 'list' ? '_request' : 'request']: request }, signal, peer })
   }
   const wrap = <P, T>(operation: (payload: P, rpcId: string) => Promise<T>) =>
     async (request: { rpcId: string; payload: P }) => {
@@ -68,7 +70,7 @@ export function createDshGatewayApi(
     const controller = new AbortController()
     const signal = AbortSignal.any([lifetime, controller.signal, AbortSignal.timeout(30_000)])
     signal.throwIfAborted()
-    const stream = await gateway.stream({ namespace, method, args, signal })
+    const stream = await gateway.stream({ namespace, method, args, signal, peer })
     const iterator = stream[Symbol.asyncIterator]()
     try {
       const first = await iterator.next()
@@ -77,13 +79,14 @@ export function createDshGatewayApi(
     } finally { controller.abort(); await iterator.return?.() }
   }
   const api: DshPublicApiProxyLike = {
-    workspace: { list: wrap(async () => {
+    workspace: { archiveSession: wrap(async payload => record(await gateway.invoke({ namespace: 'workspace', method: 'archiveSession', args: { request: payload }, signal: lifetime, peer })) as { archivedSessionIds: string[] }), list: wrap(async () => {
       const frame = await opening('workspace', 'follow', {})
       if (frame.type !== 'baseline') throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH Workspace 缺少 baseline')
       const value = record(frame.value)
       return { items: array(value.items) as WorkspaceValue['items'], archivedSessionIds: array(value.archivedSessionIds) as string[] }
     }) },
     sessions: {
+      rename: wrap(async payload => record(await invoke('rename', payload)) as unknown as SessionValue<'rename'>),
       list: wrap(async payload => record(await invoke('list', payload)) as unknown as SessionValue<'list'>),
       create: wrap(async payload => record(await invoke('create', payload)) as unknown as SessionValue<'create'>),
       modelCatalog: wrap(async () => record(await invoke('modelCatalog', undefined)) as unknown as SessionValue<'modelCatalog'>),
@@ -123,7 +126,7 @@ export function createDshGatewayApi(
     const response = await connection.createSharedFetchHandler('/api').fetch(new Request('http://localhost/api/$events/result', {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: '$events/result', payload: { args: { clientId, eventId, outcome } } }),
-    }))
+    }), peer)
     const result = record(record(await response.json()).result)
     if (!response.ok || result.ok !== true) throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'DSH 交互应答失败', true)
     return { accepted: true as const }
@@ -166,8 +169,13 @@ export function createDshGatewayApi(
     }
     let clientId: string | undefined
     const tasks = [
-      consume(gateway.wireStream.open('$events', { args: {} }, signal), async frame => {
+      consume(gateway.wireStream.open('$events', { args: {} }, EMPTY_DSH_UPLINK, peer, signal), async frame => {
         if (frame.type === 'ready') { clientId = text(frame.clientId); return }
+        if (frame.type === 'emit' && ['api-session/added', 'api-session/activity', 'api-session/status'].includes(String(frame.event))) {
+          const first = array(frame.args)[0]
+          push({ type: 'session/metadata', sessionId: frame.event === 'api-session/added' ? text(record(first).sessionId) : text(first) })
+          return
+        }
         if (frame.type === 'cancel') {
           const item = pending.get(text(frame.eventId))
           pending.delete(text(frame.eventId))
@@ -188,7 +196,8 @@ export function createDshGatewayApi(
           ? { type: 'question/requested', sessionId: frame.agentId, questions: request.questions }
           : { type: 'approval/requested', sessionId: frame.agentId, approvalId: frame.eventId, toolName: request.toolName, reason: request.reason }, text(frame.eventId))
       }),
-      consume(gateway.stream({ namespace: 'session', method: 'control', args: {}, signal }), frame => {
+      consume(gateway.stream({ namespace: 'session', method: 'control', args: {}, signal, peer }), frame => {
+        if (frame.type === 'projection' && frame.key === 'title') push({ type: 'session/metadata', sessionId: text(frame.sessionId) })
         if (frame.type === 'projection' && frame.key === 'goal') push({ ...frame, type: 'session/projection' })
         if (frame.type === 'baseline') {
           for (const [sessionId, value] of Object.entries(record(record(frame.value).projections))) {

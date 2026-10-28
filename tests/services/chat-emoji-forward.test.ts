@@ -29,14 +29,14 @@ describe('Record forwarding emoji boundaries', () => {
       openSourceRef: vi.fn(async () => ({ kind: 'default_category', ownerRef: 'default', userId: 42 })),
       sourceItem: vi.fn(async () => ({ sourceRef: 'default', kind: 'default_category' })),
     }
-    const record = { list: vi.fn(async () => ({ items: [item], hasMore: false })), recordTimelineItem: (value: unknown) => value }
+    const record = { createPersonalRecord: runtime.authenticatedPost, list: vi.fn(async () => ({ items: [item], hasMore: false })), recordTimelineItem: (value: unknown) => value }
     const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, record as never,
       {} as never, {} as never, {} as never, { invalidateRecordProjection: vi.fn() } as never)
     const page = await chat.readSource('default')
     await chat.forwardSourceMessages('default', [page.items[0]!.messageActionRef!], { recordUid: 'forward-emoji' })
     expect(authenticatedPost).toHaveBeenCalledWith('/api/v1/records/create', expect.objectContaining({
       content_payload: expect.objectContaining({ forward_records: expect.objectContaining({ items: [expect.objectContaining({
-        title: '题'.repeat(495), text: textContent.slice(0, 995), text_preview: '文'.repeat(495),
+        title: '题'.repeat(495), text: textContent.slice(0, 995),
       })] }) }),
     }), expect.objectContaining({ userId: 42 }), undefined)
     expect(page.items[0]?.textContent).toBe(textContent)

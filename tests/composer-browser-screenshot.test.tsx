@@ -8,8 +8,9 @@ import type { ScreenshotFrame } from '../src/client/browser-screenshot.js'
 const { call, capture, cropImage } = vi.hoisted(() => ({ call: vi.fn(), capture: vi.fn(), cropImage: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
 vi.mock('../src/client/browser-screenshot.js', async original => ({
-  ...await original<typeof import('../src/client/browser-screenshot.js')>(), captureBrowserScreenshot: capture, cropScreenshot: cropImage,
+  ...await original<typeof import('../src/client/browser-screenshot.js')>(), captureBrowserScreenshot: capture,
 }))
+vi.mock('../src/client/screenshot-editor-render.js', () => ({ paintScreenshot: vi.fn(), exportScreenshot: cropImage }))
 let host: HTMLDivElement, root: Root, grant: (frame: ScreenshotFrame) => void, signal: AbortSignal
 const frame = { blob: new Blob(['full'], { type: 'image/png' }), width: 1600, height: 900 }
 const cropped = new Blob(['crop'], { type: 'image/png' })
@@ -21,7 +22,6 @@ const click = async (label: string) => {
 }
 const open = async () => {
   await mount(); await click('截屏'); await act(async () => grant(frame))
-  await act(async () => document.querySelector('img')!.dispatchEvent(new Event('load')))
 }
 const pointer = (element: Element, type: string, x: number, y: number) => {
   const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y })
@@ -29,6 +29,10 @@ const pointer = (element: Element, type: string, x: number, y: number) => {
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  vi.stubGlobal('Image', class {onload?:()=>void;set src(_v:string){queueMicrotask(()=>this.onload?.())}})
+  vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockReturnValue({left:0,top:0,width:800,height:450} as DOMRect)
+
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('arkmeDesktop', undefined); vi.stubGlobal('isSecureContext', true)
   vi.stubGlobal('navigator', { mediaDevices: { getDisplayMedia: vi.fn() } })
@@ -44,32 +48,29 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
 
-it('does not call the native host in a browser, and adds the whole image only after explicit confirmation', async () => {
-  await open()
-  expect(call).not.toHaveBeenCalled(); expect(capture).toHaveBeenCalledOnce()
-  expect(onFile).not.toHaveBeenCalled()
-  expect(document.querySelector('[role=dialog]')!.textContent).toContain('屏幕共享已停止')
-  await click('使用整张')
-  expect(onFile).toHaveBeenCalledOnce()
-  expect(onFile.mock.calls[0]![0]).toMatchObject({ type: 'image/png', size: 4 })
-  expect(document.querySelector('[role=dialog]')).toBeNull()
-  expect(restore).toHaveBeenCalledOnce(); expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:screenshot-test')
+async function selectRegion() {
+ const stage=document.querySelector<HTMLElement>('[data-arkme-screenshot-stage]')!
+ stage.setPointerCapture=vi.fn();stage.releasePointerCapture=vi.fn()
+ act(()=>{pointer(stage,'pointerdown',600,360);pointer(stage,'pointermove',200,90);pointer(stage,'pointerup',200,90)})
+}
+it('stages a browser image only after explicit completion with the edited crop',async()=>{
+ await open();expect(call).not.toHaveBeenCalled();expect(onFile).not.toHaveBeenCalled()
+ await selectRegion();await click('完成')
+ expect(cropImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement),{x:400,y:180,width:800,height:540})
+ expect(onFile).toHaveBeenCalledOnce();expect(restore).toHaveBeenCalledOnce()
+ expect(document.querySelector('[role=dialog]')).toBeNull()
 })
-it('uses reverse drag coordinates for crop and rejects zero-size selections', async () => {
-  await open()
-  const stage = document.querySelector<HTMLElement>('[data-arkme-screenshot-image]')!
-  vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 20, width: 800, height: 450 } as DOMRect)
-  stage.setPointerCapture = vi.fn(); stage.releasePointerCapture = vi.fn()
-  const cropButton = [...document.querySelectorAll('button')].find(node => node.textContent === '完成裁剪')!
-  expect(cropButton.disabled).toBe(true)
-  act(() => { pointer(stage, 'pointerdown', 610, 380); pointer(stage, 'pointermove', 210, 110); pointer(stage, 'pointerup', 210, 110) })
-  expect(cropButton.disabled).toBe(false)
-  expect(document.querySelector('[role=status]')!.textContent).toBe('800 × 540')
-  await click('完成裁剪')
-  expect(cropImage).toHaveBeenCalledWith(expect.any(HTMLImageElement), frame, { x: .25, y: .2, width: .5, height: .6000000000000001 })
-  expect(onFile).toHaveBeenCalledOnce()
+it('keeps tools icon-only, names them via tooltip and offers the six requested tools',async()=>{
+ await open();await selectRegion()
+ for(const name of ['矩形','圆形','箭头','画笔','马赛克','文本','撤销','重做','保存']) {
+  const button=document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!
+  expect(button.querySelector('svg')).not.toBeNull();expect(button.title).toContain(name)
+  expect(button.querySelector('[role=tooltip]')?.textContent).toContain(name)
+ }
+ await click('文本');expect(document.querySelector('[aria-label="字号"]')).not.toBeNull()
+ await click('马赛克');expect(document.querySelector('[aria-label="马赛克大小"]')).not.toBeNull()
 })
-it.each(['取消', '关闭截图', 'Escape'])('cancels using %s without adding or sending any image', async method => {
+it.each(['取消', 'Escape'])('cancels using %s without adding or sending any image', async method => {
   await open()
   if (method === 'Escape') act(() => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   else await click(method)
@@ -93,13 +94,13 @@ it('cancels a pending chooser and rejects a late frame on conversation change', 
 })
 it('ignores a crop result completed after the dialog was cancelled', async () => {
   await open()
-  const stage = document.querySelector<HTMLElement>('[data-arkme-screenshot-image]')!
+  const stage = document.querySelector<HTMLElement>('[data-arkme-screenshot-stage]')!
   vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 800, height: 450 } as DOMRect)
   stage.setPointerCapture = vi.fn(); stage.releasePointerCapture = vi.fn()
   act(() => { pointer(stage, 'pointerdown', 0, 0); pointer(stage, 'pointermove', 400, 200); pointer(stage, 'pointerup', 400, 200) })
   let complete!: (blob: Blob) => void
   cropImage.mockReturnValue(new Promise<Blob>(resolve => { complete = resolve }))
-  await click('完成裁剪'); await click('取消'); await act(async () => complete(cropped))
+  await click('完成'); await click('取消'); await act(async () => complete(cropped))
   expect(onFile).not.toHaveBeenCalled(); expect(onError).not.toHaveBeenCalled()
 })
 it('shows an actionable unsupported-browser message on click', async () => {

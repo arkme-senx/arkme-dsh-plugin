@@ -1,5 +1,7 @@
 import type {
   ArkmeRecordingSummaryModelConfig,
+  ArkmeRecordingTimelineDialoguePoint,
+  ArkmeRecordingTimelineDetailItem,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
   ArkmeRecordingTranscriptSource,
@@ -9,6 +11,9 @@ import type {
 import { isRecordingInstantOnOrAfterUnixEpoch } from './recording-time.js'
 
 export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTranscriptItem {
+  speakerRevision?: string
+  soundSource?: import('./types.js').ArkmeRecordingSoundSource
+  containsPlayback?: boolean
   childAsrItemStartAt: number
   childAsrItemEndAt: number
   formalSpeakerId: string
@@ -18,6 +23,7 @@ export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTrans
   event?: string
   /** Owner ASR text kept separate from the cleaned transcript presentation. */
   generationText?: string
+  rawTranscriptText?: string
 }
 
 function recordingGenerationDateLabel(value: number): string {
@@ -46,21 +52,23 @@ export function buildRecordingGenerationTranscript(
   items: readonly ArkmeRecordingPrivateTranscriptItem[],
   kind: 'summary' | 'timeline',
   dayStartMillis: number,
+  timeZone?: string,
 ): string {
   const available = items
     .filter(item => item.text.trim() !== '' && item.endAtMillis > item.startAtMillis)
     .toSorted((left, right) => left.startAtMillis - right.startAtMillis || left.endAtMillis - right.endAtMillis)
   let selfSpeakerLabel = ''
   const sections = available.map(item => {
-    if (item.isSelf) selfSpeakerLabel = item.speakerLabel
+    if (item.isSelf && item.soundSource !== 'playback' && !item.containsPlayback) selfSpeakerLabel = item.speakerLabel
     const startSeconds = Math.round((item.startAtMillis - dayStartMillis) / 1_000)
     const endSeconds = Math.round((item.endAtMillis - dayStartMillis) / 1_000)
     const event = item.event?.trim() ?? ''
     const text = item.generationText?.trim() || item.text
     return [
       `说话人：${item.speakerLabel}`,
+      ...(item.soundSource === 'playback' ? ['[声音来源：播放内容；不能据此认定该人物在现场发言或表达观点]'] : item.containsPlayback ? ['[本片段部分声音来自播放内容；不能把整段归为现场人物发言]'] : []),
       ...(item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
-      `[${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
+      `[${timeZone ? new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(item.startAtMillis) : `${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)}`} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
       text,
     ].join('\n')
   })
@@ -351,9 +359,10 @@ export function projectRecordingTranscripts(
         || (itemAssignedSpeakerId === '' && stringValue(row.q_unassigned_spk_id).trim() === sessionSpeakerId && sessionSpeakerId !== '' && !hasEffectiveIdentity)
       const formalSpeakerId = explicitlyUnassigned ? '' : hasEffectiveIdentity ? effectiveSpeakerId : itemAssignedSpeakerId || sessionSpeakerId
       const innerDisplay = stringValue(assignmentSessionSpeaker.inner_display).trim()
+      const partitionId = stringValue(row.speaker_partition_id).trim()
       const speakerIdentity = formalSpeakerId !== ''
         ? `speaker:${formalSpeakerId}`
-        : innerDisplay !== ''
+        : partitionId !== '' ? `partition:${partitionId}` : innerDisplay !== ''
           ? `inner:${innerDisplay}`
           : `session:${sessionId}:${String(assignmentSpeakerNumber)}`
       const formalSpeaker = speakers.get(formalSpeakerId) ?? {}
@@ -363,11 +372,12 @@ export function projectRecordingTranscripts(
       const profile = speakerUserId === undefined ? undefined : profilesByUserId.get(speakerUserId)
       const isSelf = speakerUserId !== undefined && speakerUserId === options.viewerUserId
       const persistentSpeakerNumber = optionalNumberValue(
-        assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
+        (partitionId !== '' && formalSpeakerId === '' ? row.speaker_display_number : undefined)
+          ?? assignmentSessionSpeaker.speaker_display_number ?? assignmentSessionSpeaker.speakerDisplayNumber,
       )
       const speakerNumber = persistentSpeakerNumber !== undefined && persistentSpeakerNumber > 0
         ? persistentSpeakerNumber
-        : assignmentSpeakerNumber
+        : partitionId !== '' && formalSpeakerId === '' ? -1 : assignmentSpeakerNumber
       const speakerColorIndex = speakerColorIndexes.get(speakerIdentity)
         ?? sessionSpeakerColorIndexes.get(`${sessionId}:${String(assignmentSpeakerNumber)}`)
         ?? Math.max(0, assignmentSpeakerNumber)
@@ -395,7 +405,10 @@ export function projectRecordingTranscripts(
         transcriptSource,
         childAsrItemStartAt: startOffset,
         childAsrItemEndAt: endOffset,
+        ...(stringValue(row.speaker_revision) ? { speakerRevision: stringValue(row.speaker_revision) } : {}),
         formalSpeakerId,
+        ...(['unknown', 'in_person', 'playback'].includes(String(row.sound_source)) ? { soundSource: row.sound_source as 'unknown' | 'in_person' | 'playback' } : {}),
+        ...(row.contains_playback === true ? { containsPlayback: true } : {}),
         sourceSpeakerNumber,
         assignmentSpeakerNumber,
         speakerIdentity,
@@ -408,6 +421,7 @@ export function projectRecordingTranscripts(
         isSelf,
         isBackground,
         text,
+        rawTranscriptText: stringValue(row.t ?? row.text),
         ...(generationText === text ? {} : { generationText }),
         ...(stringValue(row.p).trim() === '' ? {} : { event: stringValue(row.p).trim() }),
         sourceIndex,
@@ -451,15 +465,23 @@ function normalizeStructuredTimeline(value: unknown): ArkmeRecordingTimelineEven
     const rangeMatch = TIMELINE_HEADER.exec(rawRange)
     const startAt = stringValue(row.start_at ?? row.startAt ?? row.start_time).trim() || rangeMatch?.[1] || ''
     const endAt = stringValue(row.end_at ?? row.endAt ?? row.end_time).trim() || rangeMatch?.[2] || ''
-    const dialoguePoints = listValue(row.dialogue_points ?? row.dialogues).map(objectValue)
+    const dialoguePoints = listValue(row.dialogue_points ?? row.dialogues)
+      .map(objectValue)
+      .map(normalizeTimelineDialoguePoint)
+      .filter(point => point.speakerName !== '' || point.summary !== '' || point.quote !== '' || point.roleDescription !== '')
     const participantValues = [
       ...listValue(row.participants ?? row.roles).map(item => {
         const participant = objectValue(item)
         return Object.keys(participant).length === 0 ? item : participant.name ?? participant.spk_name
       }),
-      ...dialoguePoints.map(item => item.spk_name ?? item.speaker_name),
+      ...dialoguePoints.map(item => item.speakerName),
     ]
     const tags = listValue(row.event_tags ?? row.tags)
+    const otherInfo = normalizeTimelineDetailItems(row.other_info ?? row.otherInfo)
+    const positionNote = stringValue(row.position_note ?? row.positionNote).trim()
+    const environmentNote = stringValue(row.environment_note ?? row.environmentNote).trim()
+    const praise = stringValue(row.praise ?? row.praise_text).trim()
+    const praisePoint = optionalNumberValue(row.praise_point ?? row.praisePoint)
     return {
       eventId: stringValue(row.id ?? row.event_id).trim() || `event-${index}`,
       startAt,
@@ -473,8 +495,45 @@ function normalizeStructuredTimeline(value: unknown): ArkmeRecordingTimelineEven
       tags: uniqueStrings(tags),
       participants: uniqueStrings(participantValues),
       rawText: stringValue(row.raw_source).trim(),
+      ...(stringValue(row.period_label ?? row.periodLabel).trim() === '' ? {} : { periodLabel: stringValue(row.period_label ?? row.periodLabel).trim() }),
+      ...(stringValue(row.duration_text ?? row.durationText).trim() === '' ? {} : { durationText: stringValue(row.duration_text ?? row.durationText).trim() }),
+      ...(typeof row.related_to_me === 'boolean' || typeof row.relatedToMe === 'boolean' ? { relatedToMe: row.related_to_me === true || row.relatedToMe === true } : {}),
+      ...(positionNote === '' ? {} : { positionNote }),
+      ...(environmentNote === '' ? {} : { environmentNote }),
+      ...(praise === '' ? {} : { praise }),
+      ...(praisePoint === undefined ? {} : { praisePoint }),
+      ...(stringValue(row.speaker_note ?? row.speakerNote).trim() === '' ? {} : { speakerNote: stringValue(row.speaker_note ?? row.speakerNote).trim() }),
+      ...(dialoguePoints.length === 0 ? {} : { dialoguePoints }),
+      ...(otherInfo.length === 0 ? {} : { otherInfo }),
     }
   }).filter(item => item.startAt !== '' || item.endAt !== '' || item.title !== '' || item.description !== '')
+}
+
+function normalizeTimelineDialoguePoint(row: Record<string, unknown>): ArkmeRecordingTimelineDialoguePoint {
+  const rawData = listValue(row.raw_data_ls ?? row.rawData).map(objectValue)
+  const quote = rawData
+    .map(item => stringValue(item.text ?? item.content).trim())
+    .filter(value => value !== '')
+    .join('\n')
+  return {
+    speakerName: stringValue(row.spk_name ?? row.speaker_name ?? row.speakerName).trim(),
+    summary: stringValue(row.summary ?? row.summary_content).trim(),
+    quote: stringValue(row.quote ?? row.quote_content).trim() || quote,
+    roleDescription: stringValue(row.role_description ?? row.roleDescription).trim() || rawData
+      .map(item => stringValue(item.role_in_period ?? item.roleInPeriod).trim())
+      .filter(value => value !== '')
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join('；'),
+    isSelf: row.is_self === true || row.isSelf === true,
+  }
+}
+
+function normalizeTimelineDetailItems(value: unknown): ArkmeRecordingTimelineDetailItem[] {
+  return listValue(value).map(objectValue).flatMap(item => {
+    const label = stringValue(item.label ?? item.name).trim()
+    const detail = stringValue(item.value ?? item.content ?? item.text).trim()
+    return label !== '' && detail !== '' ? [{ label, value: detail }] : []
+  })
 }
 
 interface MutableMarkdownEvent {
@@ -487,7 +546,8 @@ interface MutableMarkdownEvent {
 const TIMELINE_HEADER = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—~～至]\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*(.*)$/
 const TIMELINE_SECTION_LABELS = new Set([
   '场景类型', '场景', '角色', '说话人', '发生的事情', '内容描述', '我的心情', '心情', '待办',
-  '代表性原话', '关键对话', '环境', '环境说明', '评价', '表扬', '事件标签',
+  '代表性原话', '关键对话', '环境', '环境说明', '环境备注', '评价', '表扬', '事件标签',
+  '场景说明', '位置说明', '说话人备注', '说话人说明', '其他信息',
 ])
 
 function cleanMarkdownLine(source: string): string {
@@ -540,6 +600,14 @@ function markdownEvent(event: MutableMarkdownEvent, index: number): ArkmeRecordi
     return sectionValue(event.lines, names)
   }
   const description = field('发生的事情', '内容描述') || unsectionedValue(event.lines)
+  const quote = field('代表性原话', '关键对话')
+  const speakerNote = field('说话人备注', '说话人说明')
+  const positionNote = field('场景说明', '位置说明')
+  const environmentNote = field('环境', '环境说明', '环境备注')
+  const praise = field('评价', '表扬')
+  const dialoguePoints: ArkmeRecordingTimelineDialoguePoint[] = quote === '' ? [] : [{
+    speakerName: '', summary: '', quote, roleDescription: '', isSelf: false,
+  }]
   return {
     eventId: `event-${index}`,
     startAt: event.startAt,
@@ -553,6 +621,11 @@ function markdownEvent(event: MutableMarkdownEvent, index: number): ArkmeRecordi
     tags: splitLabels(field('事件标签')),
     participants: splitLabels(field('角色', '说话人')),
     rawText: event.lines.join('\n').trim(),
+    ...(positionNote === '' ? {} : { positionNote }),
+    ...(environmentNote === '' ? {} : { environmentNote }),
+    ...(praise === '' ? {} : { praise }),
+    ...(speakerNote === '' ? {} : { speakerNote }),
+    ...(dialoguePoints.length === 0 ? {} : { dialoguePoints }),
   }
 }
 
@@ -629,7 +702,7 @@ export function projectRecordingVersions(
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),
       content,
       timelineEvents,
-      error: stringValue(version.error ?? version.error_message).trim(),
+      error: stringValue(version.llm_error).trim() || stringValue(version.error).trim() || stringValue(version.error_message).trim(),
       sourceIndex,
     })
     sourceIndex += 1

@@ -1,3 +1,8 @@
+import { LocationSearchService } from './location-search-service.js'
+import type { LocationQuery } from '../location-search.js'
+import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
+import type { ProfileService } from './profile-service.js'
+import { parseRecordingSearchItem } from '../recording-search-result.js'
 import { resolveDshSearchOrigins } from '../dsh-search-origins.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -31,6 +36,7 @@ function listValue(value: unknown): unknown[] { return Array.isArray(value) ? va
 
 export class SearchService {
   localDshQuery?: () => unknown
+  articleActionRef?: (raw: Record<string, unknown>, sourceRef: string, signal?: AbortSignal) => Promise<string>
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -38,7 +44,14 @@ export class SearchService {
     private readonly media: MediaService,
     private readonly source?: SourceService,
     private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
+    private readonly profile?: ProfileService,
   ) {}
+
+  async searchLocations(query: LocationQuery, signal?: AbortSignal) {
+    return await new LocationSearchService(this.runtime, this.privacy, async (items, locked, requestSignal) =>
+      (await this.withNavigationTargets(this.recordSearchResult({ items }, locked), requestSignal)).items,
+    ).query(query, signal)
+  }
 
   async searchRecords(options: {
     query: string
@@ -115,13 +128,17 @@ export class SearchService {
     const items = listValue(data.items).map(raw => {
       const item = objectValue(raw)
       const core = objectValue(item.record_core)
-      const sourceKind = Math.trunc(numberValue(core.origin_kind))
-      const sourceUid = stringValue(core.origin_container_ref).trim()
+      const origin = Math.trunc(numberValue(core.origin_kind))
+      const effective = Math.trunc(numberValue(core.source_kind))
+      const sourceKind = [1, 2, 3, 4].includes(effective) ? effective
+        : origin === 5 ? 4 : origin === 3 || origin === 4 ? 3 : origin
+      const sourceUid = stringValue(core.source_uid ?? core.origin_container_ref).trim()
       return {
         ...item,
         source_kind: sourceKind,
         ...(sourceUid === '' ? {} : { source_uid: sourceUid }),
-        route_target_kind: sourceKind === 2 ? 'topic' : 'default_category',
+        route_target_kind: sourceKind === 4 ? 'record_detail' : sourceKind === 2 ? 'topic' : 'default_category',
+        ...(sourceKind === 4 ? { route_target_uid: stringValue(core.record_uid) } : {}),
         match_summary: { snippet: stringValue(core.text_content) },
       }
     })
@@ -222,6 +239,7 @@ export class SearchService {
 
   async searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('../types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     searchScope?: 'global' | 'topic' | 'chat_session'
@@ -229,6 +247,10 @@ export class SearchService {
     sourceRef?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
+    if (options.articleScope !== undefined && (options.scene !== 'long_article'
+      || !['recent', 'shared_by_me', 'shared_with_me'].includes(options.articleScope))) {
+      throw new ArkmePluginError('long-article-scope-invalid', '长文分类无效', false, 400)
+    }
     const sceneKinds: Record<ArkmeSearchSceneKind, number> = {
       audio: 1,
       link: 2,
@@ -241,20 +263,36 @@ export class SearchService {
     }
     const session = await this.runtime.requireSession()
     const scope = await this.searchScope(options, session.userId)
-    const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
+    // Sharing rows were checked by Record for their exact owner+UID. The local
+    // visibility snapshot contains only this account's UIDs and cannot filter foreign originals.
+    const lockedRecordUids = options.articleScope && options.articleScope !== 'recent' ? new Set<string>() : await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/search/records/scene/query',
       {
         scene_kind: sceneKinds[options.scene],
+        ...(options.articleScope ? { article_scope: options.articleScope } : {}),
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
-        ...(scope.search_scope === 'global' ? { search_scope: 'global' } : scope),
+        ...(scope.search_scope === 'global' && options.sourceRef === undefined ? { search_scope: 'global' } : scope),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
       options.signal,
       { lane: 'interactive-read' },
     )
+    if (options.articleScope && options.articleScope !== 'recent' && data.applied_article_scope !== options.articleScope) {
+      throw new ArkmePluginError('long-article-sharing-unavailable', '服务端暂不支持此共享分类，请升级后重试', false, 501)
+    }
     const result = await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal, options.sourceRef)
+    if (options.articleScope && options.articleScope !== 'recent') {
+      result.appliedArticleScope = options.articleScope
+      for (const item of result.items) {
+        const raw = listValue(data.items).map(objectValue).find(row => {
+          const core = objectValue(row.record_core)
+          return stringValue(row.record_uid) === item.recordUid && recordOwnerId(core.owner_user_id) === item.recordOwnerUserId
+        })
+        if (raw && item.targetSource && this.articleActionRef) item.messageActionRef = await this.articleActionRef(raw, item.targetSource.sourceRef, options.signal)
+      }
+    }
     return options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
   }
 
@@ -266,16 +304,17 @@ export class SearchService {
     if (options.sourceRef !== undefined) {
       if (this.source === undefined) throw new ArkmePluginError('search-source-unavailable', '会话搜索暂不可用', true)
       const source = await this.source.openSourceRef(options.sourceRef, userId)
-      if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
-        throw new ArkmePluginError('search-source-invalid', '请选择私聊或群聊搜索', false)
-      }
-      return { search_scope: 'chat_session', source_kinds: [3], source_uid: source.ownerRef }
+      if (source.kind === 'private_chat' || source.kind === 'group_chat') return { search_scope: 'chat_session', source_kinds: [3], source_uid: source.ownerRef }
+      if (source.kind === 'topic') return { search_scope: 'topic', source_kinds: [2], source_uid: source.ownerRef }
+      if (source.kind === 'send_to_self') return { search_scope: 'global', source_kinds: [1, 2] }
+      if (source.kind === 'default_category') return { search_scope: 'global', source_kinds: [1] }
+      throw new ArkmePluginError('search-source-invalid', '当前内容暂不支持查找', false)
     }
     const scope = options.searchScope ?? 'global'
     if (!['global', 'topic', 'chat_session'].includes(scope)) throw new ArkmePluginError('search-source-invalid', '搜索范围无效', false)
     const uid = options.sourceUid?.trim() ?? ''
     if (scope !== 'global' && uid === '') throw new ArkmePluginError('search-source-invalid', '搜索范围缺少数据源', false)
-    return { search_scope: scope, source_kinds: scope === 'chat_session' ? [3] : scope === 'topic' ? [2] : [1, 2, 3],
+    return { search_scope: scope, source_kinds: scope === 'chat_session' ? [3] : scope === 'topic' ? [2] : [1, 2, 3, 4],
       ...(scope === 'global' ? {} : { source_uid: uid }) }
   }
 
@@ -288,9 +327,13 @@ export class SearchService {
     if (sourceRef !== undefined) {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
-      const targetSource = await this.source.sourceItem(source)
-      return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
-        ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
+      // Chat results share one session. Personal search may span several topics,
+      // so resolve each result's actual topic below instead of attaching the root.
+      if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+        const targetSource = await this.source.sourceItem(source)
+        return { ...result, items: result.items.map(item => item.sourceKind === 3 && (item.sourceUid ?? item.routeTargetUid) === source.ownerRef
+          ? { ...item, targetSource, sourceTitle: targetSource.displayName } : item) }
+      }
     }
     const targets = new Map<string, { sourceKind: number; sourceUid: string; title: string }>()
     const aggregateTitleByKey = new Map(result.sourceAggregates.map(item => [
@@ -316,7 +359,7 @@ export class SearchService {
       } catch (error) { if (signal?.aborted) throw error }
     }
     for (const [key, item] of targets) {
-      if (item.sourceKind === 3) continue
+      if (item.sourceKind === 3 || item.sourceKind === 4) continue
       try {
         sourceByKey.set(key, await this.source.searchTargetSource(
           item.sourceKind,
@@ -432,25 +475,36 @@ export class SearchService {
       '/api/v1/search/recordings/query',
       {
         keyword: query,
+        result_mode: 'segments',
         limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
         ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
       },
       session,
       options.signal,
     )
+    const items = listValue(data.items).map(parseRecordingSearchItem)
+    const segments = items.flatMap(item => [item.previous, item.match, item.next].filter(value => value !== undefined))
+    const userIds = [...new Set(segments.flatMap(item => item.speaker?.userId === undefined ? [] : [item.speaker.userId]))]
+    if (this.profile !== undefined && userIds.length > 0) {
+      try {
+        const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, options.signal)
+        const avatars = new Map<number, string>()
+        await Promise.all([...profiles].map(async ([userId, profile]) => {
+          if (profile.avatarUrl !== undefined) avatars.set(userId, await this.profile!.sealProfileImageRef(session.userId, userId))
+        }))
+        for (const segment of segments) {
+          const speaker = segment.speaker
+          if (speaker?.userId === undefined) continue
+          const profile = profiles.get(speaker.userId)
+          const avatarRef = avatars.get(speaker.userId)
+          if (avatarRef !== undefined) speaker.avatarRef = avatarRef
+          if (profile && (speaker.userId === session.userId || speaker.label === '未知说话人')) speaker.label = profile.displayName.trim() || profile.nickname.trim() || speaker.label
+        }
+      } catch (error) { if (options.signal?.aborted) throw error }
+    }
     const guard = objectValue(data.query_guard)
     return {
-      items: listValue(data.items).map(raw => {
-        const item = objectValue(raw)
-        return {
-          sessionId: stringValue(item.session_id).trim(),
-          ...(stringValue(item.record_uid).trim() === '' ? {} : { recordUid: stringValue(item.record_uid).trim() }),
-          dateStamp: numberValue(item.date_stamp),
-          startAtMillis: numberValue(item.start_at),
-          snippet: clippedText(item.snippet, 1_000),
-          score: numberValue(item.score),
-        }
-      }).filter(item => item.sessionId !== '' && item.snippet !== ''),
+      items,
       hasMore: booleanValue(data.has_more),
       ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
       queryGuard: {
@@ -509,16 +563,19 @@ export class SearchService {
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
     const linkUrls = arkmeSearchRecordLinks(stringValue(core.text_content))
-    const sourceTitle = stringValue(topic.title ?? chat.title).trim()
+    const kind = numberValue(core.origin_kind) === 5 && ![2, 3].includes(numberValue(item.source_kind)) ? 4 : Math.trunc(numberValue(item.source_kind))
+    const sourceUid = kind === 4 ? stringValue(core.origin_container_ref || item.source_uid).trim() : stringValue(item.source_uid).trim()
+    const sourceTitle = stringValue(topic.title ?? chat.title).trim() || (kind === 4 ? '团队对话' : '')
     const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
     const recordOwnerUserId = recordOwnerId(core.owner_user_id)
     return {
       recordUid,
+      ...(selfRoleSnapshotFromCloud(core.self_role_snapshot) ? { selfRole: selfRoleSnapshotFromCloud(core.self_role_snapshot)! } : {}),
       ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
       ...(recordOwnerId(core.creator_user_id) !== 0 ? { recordCreatorUserId: recordOwnerId(core.creator_user_id) } : {}),
-      sourceKind: Math.trunc(numberValue(item.source_kind)),
-      ...(stringValue(item.source_uid).trim() === '' ? {} : { sourceUid: stringValue(item.source_uid).trim() }),
-      routeTargetKind: stringValue(item.route_target_kind).trim(),
+      sourceKind: kind,
+      ...(sourceUid ? { sourceUid } : {}),
+      routeTargetKind: kind === 4 ? 'record_detail' : stringValue(item.route_target_kind).trim(),
       ...(stringValue(item.route_target_uid).trim() === '' ? {} : { routeTargetUid: stringValue(item.route_target_uid).trim() }),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: clippedText(core.title, 500),

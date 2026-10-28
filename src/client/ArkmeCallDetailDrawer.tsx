@@ -7,6 +7,7 @@ import { TimerIcon } from '@phosphor-icons/react/dist/csr/Timer'
 import type { ArkmeCallDetail, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -85,7 +86,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
   const icon = `${video ? 'video' : 'call'}-${item.callRecord?.direction ?? (item.isMe ? 'outgoing' : 'incoming')}-linear.svg`
   const iconColor = (detail?.acceptedAtMillis ?? 0) > 0 ? arkmeTheme.accent : arkmeTheme.danger
   return <aside ref={panel} role="dialog" aria-label={tr("通话详情")} data-arkme-call-detail="true" style={styles.drawer}>
-    <ArkmeRightPanelHeader title={tr("通话详情")} onClose={onClose} closeLabel={tr("关闭通话详情")} closeRef={closeButton} />
+    <ArkmeRightPanelHeader title={tr("通话详情")} onClose={onClose} closeLabel={tr("关闭通话详情")} closeRef={closeButton} actions={!loading && !error && detail && <ArkmeCallShareControls compact callRef={detail.callRef} />} />
     <div style={styles.overview}>
       <span style={styles.cell}><span aria-hidden style={{ width: 12, height: 12, flex: '0 0 12px', background: iconColor, mask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat`, WebkitMask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat` }} />{video ? tr("视频通话") : tr("语音通话")}</span>
       <span style={{ ...styles.cell, justifyContent: 'center' }}><ClockIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{startTime(detail?.startedAtMillis || item.callRecord?.startedAtMillis || item.sendAtMillis)}</span>

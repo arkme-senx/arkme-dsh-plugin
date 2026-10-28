@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import {
-  ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoPreservedScrollTop,
+  ArkmeArkoSurface, arkoHistoryHasTerminalRun,
   arkoRunActivityLabel, latestActiveRun, mergeHistory, shouldShowArkoThinking,
 } from '../src/client/ArkmeArkoSurface.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
@@ -22,7 +22,7 @@ function historyItem(overrides: Partial<ArkmeArkoHistoryItem>): ArkmeArkoHistory
 }
 
 describe('Arko surface', () => {
-  it('exposes header whitespace for native dragging without marking its action toolbar', () => {
+  it('keeps the header draggable and exposes shared history tools while leaving model selection in the composer', () => {
     const dom = new JSDOM(renderToStaticMarkup(<ArkmeArkoSurface />))
     try {
       const header = dom.window.document.querySelector('header')!
@@ -30,7 +30,10 @@ describe('Arko surface', () => {
       const copy = header.querySelector('[data-arkme-window-drag-copy]')!
       expect(copy?.getAttribute('data-arkme-window-drag-region')).toBe('conversation')
       expect(copy?.querySelector('h2')?.textContent).toBe('Arko')
-      expect(header.querySelector('[role="toolbar"]')?.hasAttribute('data-arkme-window-drag-region')).toBe(false)
+      expect(header.querySelector('[aria-label="按日期查看 Arko 对话"]')).not.toBeNull()
+      expect(header.querySelector('[aria-label="搜索 Arko 对话"]')).not.toBeNull()
+      expect(header.querySelector('[aria-label="更多 Arko 操作"]')).not.toBeNull()
+      expect(dom.window.document.querySelector('footer button[aria-label="选择模型"]')).not.toBeNull()
     } finally {
       dom.window.close()
     }
@@ -47,10 +50,9 @@ describe('Arko surface', () => {
     expect(markup).toContain('Arko</h2>')
     expect(markup).toContain('内容由 AI 生成，仅供参考')
     expect(markup).not.toContain('data-arkme-topic-tag="Agent"')
-    expect(markup).toContain('role="toolbar"')
-    expect(markup).toContain('aria-label="Arko 操作"')
-    expect(markup).toContain('模型选择')
-    expect(markup).toContain('清除上下文')
+    expect(markup).not.toContain('aria-label="Arko 操作"')
+    expect(markup).toContain('选择模型')
+    expect(markup).toContain('更多 Arko 操作')
     expect(markup).not.toContain('aria-label="AI"')
     expect(markup).not.toContain('DeepSeek-R1满血版')
     expect(markup).not.toContain('状态同步失败')
@@ -83,11 +85,6 @@ describe('Arko surface', () => {
       historyItem({ messageId: 302, sessionId: 77, runUid: 'run-1', runStatus: 'completed', text: '其他会话' }),
       historyItem({ messageId: 303, sessionId: 88, runUid: 'run-2', runStatus: 'completed', text: '其他任务' }),
     ], 88, 302, 'run-1')).toBe(false)
-  })
-
-  it('preserves the visible history position when older messages are prepended', () => {
-    expect(arkoPreservedScrollTop(120, 900, 1_500)).toBe(720)
-    expect(arkoPreservedScrollTop(0, 900, 850)).toBe(0)
   })
 
   it('restores only the newest active run from the current session', () => {

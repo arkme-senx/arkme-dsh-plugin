@@ -3,6 +3,41 @@ import { createServer } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
+import type { TeamCodexService } from '../src/team-codex-service.js'
+
+it('forwards a read-only personal World source request with cancellation', async () => {
+  const service = { worldPublishSource: vi.fn(async () => ({ itemUid: 'owned' })) } as unknown as ArkmeService
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service, 'world.source-draft', { sourceRef: 'self', itemUid: 'owned' }, undefined, undefined, undefined, undefined, signal)
+  expect(service.worldPublishSource).toHaveBeenCalledWith('self', 'owned', signal)
+})
+
+it('never silently publishes a team intent through a personal World route', async () => {
+  const service = { publishWorldText: vi.fn(), publishWorldFileAssets: vi.fn() } as unknown as ArkmeService
+  for (const operation of ['world.publish-text', 'world.publish-file-assets'] as const) {
+    await expect(dispatchArkmeHostOperation(service, operation, { teamRef: 'team', clientMutationId: 'request', textContent: '内容' })).rejects.toThrow('不能改为个人发布')
+    await expect(dispatchArkmeHostOperation(service, operation, { publisher: { kind: 'team' } })).rejects.toThrow('不能改为个人发布')
+  }
+  expect(service.publishWorldText).not.toHaveBeenCalled(); expect(service.publishWorldFileAssets).not.toHaveBeenCalled()
+})
+
+it('revalidates Codex task access before forwarding and never delivers after revocation', async () => {
+  const forwardCodexChat = vi.fn(async () => ({ itemUid: 'sent' }))
+  const service = { forwardCodexChat } as unknown as ArkmeService
+  const events = vi.fn(async () => ({ items: [] }))
+  const codex = { events } as unknown as TeamCodexService
+  const signal = new AbortController().signal
+  const params = { teamRef: 'team', id: 'task', sourceId: 'remote', snapshot: { taskTitle: 'task' }, expectedUserId: 42,
+    targetSourceRef: 'target', requestId: 'request', recordUid: 'record', sendAtMillis: 100 }
+  const send = () => dispatchArkmeHostOperation(service, 'codex.forward', params,
+    undefined, undefined, undefined, undefined, signal, undefined, undefined, undefined, undefined, undefined, undefined, codex)
+  await send()
+  expect(events).toHaveBeenCalledWith('team', 'task', undefined, 'remote')
+  expect(forwardCodexChat).toHaveBeenCalledWith(params.snapshot, 42, expect.objectContaining({ targetSourceRef: 'target', signal }))
+  events.mockRejectedValueOnce(new Error('任务访问权已撤销'))
+  await expect(send()).rejects.toThrow('任务访问权已撤销')
+  expect(forwardCodexChat).toHaveBeenCalledTimes(1)
+})
 
 describe('owner-neutral message action Host operations', () => {
   it('passes only opaque conversation and message references to the owner service', async () => {
@@ -172,4 +207,50 @@ it('accepts native Markdown beyond the standard 128 KiB body limit using its bou
     expect(response.status).toBe(200)
     expect(forwardNativeChat).toHaveBeenCalledTimes(1)
   } finally { server.close(); await once(server, 'close') }
+})
+
+it('routes native copy-link content separately from signed message references', async () => {
+  const service = { copyNativeChatLink: vi.fn(async () => ({ sid: 'sid', url: 'https://share.test/s/sid' })) } as unknown as ArkmeService
+  const snapshot = { sessionId: 'native', messages: [] }
+  const signal = new AbortController().signal
+  await dispatchArkmeHostOperation(service, 'native-chat.copy-link', { snapshot, expectedUserId: 42, actionRefs: ['must-not-use'] }, undefined, undefined, undefined, undefined, signal)
+  expect(service.copyNativeChatLink).toHaveBeenCalledWith(snapshot, 42, signal)
+})
+it('rejects a foreign origin for native copy-link before service access', async () => {
+  const service = { copyNativeChatLink: vi.fn() } as unknown as ArkmeService
+  const server = createServer(createArkmeHostApi(service, { expectedPort: 3080, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('missing address')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://foreign.test' }, body: JSON.stringify({ operation: 'native-chat.copy-link', params: {} }) })
+    expect(response.status).toBe(403); expect(service.copyNativeChatLink).not.toHaveBeenCalled()
+  } finally { server.close(); await once(server, 'close') }
+})
+
+it('passes selected text forwarding through the bounded owner API and carries the abort signal', async () => {
+  const forwardSelectedText = vi.fn(async () => ({ itemUid: 'sent' })), signal = new AbortController().signal
+  const params = { expectedAccountKey: 'prod:42', targetSourceRef: 'opaque-target', recordUid: 'record', relationUid: 'relation', commentText: '', quote: { version: 1, text: 'selected' } }
+  await dispatchArkmeHostOperation({ forwardSelectedText } as unknown as ArkmeService, 'selected-text.forward', params, undefined, undefined, undefined, undefined, signal)
+  expect(forwardSelectedText).toHaveBeenCalledWith(params, signal)
+})
+it('requires a same-origin mutation request for selected text forwarding', async () => {
+  const forwardSelectedText = vi.fn(), handler = createArkmeHostApi({ forwardSelectedText } as unknown as ArkmeService, { expectedPort: 3080, allowNonLoopback: false })
+  const server = createServer(handler); server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  try {
+    const address = server.address() as { port: number }
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'selected-text.forward', params: {} }) })
+    expect(response.status).toBe(403); expect(forwardSelectedText).not.toHaveBeenCalled()
+  } finally { server.close(); await once(server, 'close') }
+})
+
+it('routes member world lookups with their original opaque references and cancellation signal',async()=>{
+ const memberWorldTarget=vi.fn(async()=>({userId:7})),signal=new AbortController().signal
+ await expect(dispatchArkmeHostOperation({memberWorldTarget} as unknown as ArkmeService,'chat.member.world-target',{sourceRef:'source',memberRef:'signed-member'},undefined,undefined,undefined,undefined,signal)).resolves.toEqual({userId:7})
+ expect(memberWorldTarget).toHaveBeenCalledWith('source','signed-member',signal)
+})
+
+it('passes cancellation and the opt-in lightweight projection to member-record reads',async()=>{
+ const sourceMemberRecords=vi.fn(async()=>({items:[],hasMore:false})),signal=new AbortController().signal
+ await dispatchArkmeHostOperation({sourceMemberRecords} as unknown as ArkmeService,'source.member-records',{sourceRef:'source',memberRef:'member',mode:'owner',limit:12,basicPresentation:true},undefined,undefined,undefined,undefined,signal)
+ expect(sourceMemberRecords).toHaveBeenCalledWith('source','member','owner',{limit:12,beforeSequence:0,basicPresentation:true,signal})
 })

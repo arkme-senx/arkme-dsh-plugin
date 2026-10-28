@@ -2,6 +2,7 @@ import { tr } from './locale.js'
 export type ArkmeComposerPlaceholderTarget =
   | { kind: 'record' }
   | { kind: 'private_chat'; displayName: string }
+  | { kind: 'team_conversation'; displayName: string; recipient: 'person' | 'team' }
   | { kind: 'group_chat'; displayName: string; memberCount?: number }
 
 const composerPlaceholderSegmenter = new Intl.Segmenter('zh-CN', { granularity: 'grapheme' })
@@ -28,7 +29,7 @@ export function arkmeComposerGroupMemberCount(
 export function arkmeComposerPlaceholderText(target: ArkmeComposerPlaceholderTarget): string {
   if (target.kind === 'record') return tr("记录此刻想法...")
   const label = composerPlaceholderLabel(target.displayName)
-  if (target.kind === 'private_chat') return label === '' ? tr("记录此刻想法...") : tr("发消息给@{v0}", { v0: label })
-  const memberCount = arkmeComposerGroupMemberCount(target.memberCount, undefined)
+  if (target.kind === 'private_chat' || target.kind === 'team_conversation' && target.recipient === 'person') return label === '' ? tr("记录此刻想法...") : tr("发消息给@{v0}", { v0: label })
+  const memberCount = arkmeComposerGroupMemberCount(target.kind === 'group_chat' ? target.memberCount : undefined, undefined)
   return tr("发消息到 {v0}{v1}", { v0: label, v1: memberCount === undefined ? '' : `(${String(memberCount)}人)` })
 }

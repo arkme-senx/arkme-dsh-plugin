@@ -41,9 +41,37 @@ async function mount(source: DayActivityReader | undefined, q = query, navigate 
 afterEach(() => { act(() => { renderer?.unmount() }); renderer = undefined })
 
 describe('day activity read model', () => {
-  it('prefers remarks, distinguishes received messages, and hides restricted titles', () => {
-    expect(dayActivityTitle(entry('a'))).toBe('与 备注名 的私聊')
-    expect(dayActivityTitle(entry('a', { participation: 'received' }))).toBe('收到 备注名 的消息')
+  it('coalesces soft refreshes without aborting an in-flight activity read', async () => {
+    const pending = deferred<DayActivityPage>(), source = reader()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+    await mount(source)
+    const signal = source.loadDay.mock.calls[0]![1].signal
+    for (const revision of [1, 2, 3]) await act(async () => {
+      renderer!.update(<ArkmeDayTimeline query={query} reader={source} refreshVersion={revision} onQueryChange={() => {}} />)
+    })
+    expect(signal.aborted).toBe(false)
+    expect(source.loadDay).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve(page([entry('a')])))
+    expect(source.loadDay).toHaveBeenCalledTimes(2)
+    expect(text()).toContain('本段讨论内容')
+  })
+  it('renders a progressive page but does not allow pagination until the first read finishes', async () => {
+    const pending = deferred<DayActivityPage>(), source = reader()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+    await mount(source)
+    await act(async () => source.loadDay.mock.calls[0]![1].onProgress!(page([entry('a')], { completeness: 'partial', hasMore: true, nextCursor: 'next' })))
+    expect(text()).toContain('本段讨论内容')
+    expect(text()).toContain('正在加载更多活动')
+    const more = renderer!.root.findAllByType('button').find(node => content(node.props.children).includes('加载更多'))
+    expect(more?.props.disabled).toBe(true)
+    if (more) await act(async () => more.props.onClick())
+    expect(source.loadDay).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve(page([entry('a')])))
+    expect(text()).not.toContain('正在加载当天活动')
+  })
+  it('prefers stable remark titles regardless of last message direction, and hides restricted titles', () => {
+    expect(dayActivityTitle(entry('a'))).toBe('备注名')
+    expect(dayActivityTitle(entry('a', { participation: 'received' }))).toBe('备注名')
     expect(dayActivityTitle(entry('a', { access: 'restricted' }))).toBe('内容已不可访问')
     expect(dayActivityDisplayName({ name: '昵称', remark: '  ' })).toBe('昵称')
     expect(dayActivityDisplayName({ name: '' })).toBe('未命名用户')
@@ -66,9 +94,110 @@ describe('day activity read model', () => {
 })
 
 describe('day timeline integration boundary', () => {
+  it('retains loaded pages and expanded content while an automatic refresh rebuilds the same prefix', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValueOnce(page([entry('a')], {hasMore:true,nextCursor:'p2'}))
+      .mockResolvedValueOnce(page([entry('b')]))
+    await mount(source)
+    await act(async () => { button('加载更多').props.onClick() })
+    await act(async () => { activityButton('a').props.onClick() })
+    const pending = deferred<DayActivityPage>()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page([entry('b', {preview:'新第二页'})], {snapshotId:'v2'}))
+    source.loadDetail.mockResolvedValue(detail('a',{snapshotId:'v2'}))
+    await act(async () => { renderer!.update(<ArkmeDayTimeline query={query} reader={source} refreshVersion={1} onQueryChange={() => {}} />) })
+    expect(renderer!.root.findAllByProps({'data-activity-id':'b'})).toHaveLength(1)
+    expect(text()).toContain('详情文本')
+    expect(text()).not.toContain('正在加载当天活动…')
+    await act(async () => { pending.resolve(page([entry('a', {preview:'新第一页'})], {snapshotId:'v2',hasMore:true,nextCursor:'new-p2'})) })
+    expect(source.loadDay).toHaveBeenCalledTimes(4)
+    expect(source.loadDay.mock.calls[3]?.[1]).toMatchObject({cursor:'new-p2',snapshotId:'v2'})
+    expect(text()).toContain('新第一页'); expect(text()).toContain('新第二页')
+    expect(activityButton('a').props['aria-expanded']).toBe(true)
+    expect(text()).toContain('详情文本')
+  })
+  it('rebuilds opened detail pages when the selected group changes without reloading activities', async () => {
+    const pending = deferred<DayActivityPage>(), source = reader()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+    await mount(source)
+    const progress = source.loadDay.mock.calls[0]![1].onProgress!
+    await act(async () => progress(page([entry('a', { detailRevision: '1' })])))
+    source.loadDetail.mockResolvedValueOnce(detail('a', { hasMore: true, nextCursor: '50' }))
+      .mockResolvedValueOnce(detail('a', { items: [{ id: 'old-second', occurredAtMillis: start, author: { name: '我' }, text: '旧第二页' }] }))
+    await act(async () => activityButton('a').props.onClick())
+    await act(async () => button('加载更多原始记录').props.onClick())
+    expect(text()).toContain('旧第二页')
+    source.loadDetail.mockResolvedValueOnce(detail('a', { hasMore: true, nextCursor: '50',
+      items: [{ id: 'new-first', occurredAtMillis: start, author: { name: '我' }, text: '新第一页' }] }))
+      .mockResolvedValueOnce(detail('a', { hasMore: true, nextCursor: '100',
+        items: [{ id: 'new-second', occurredAtMillis: start, author: { name: '我' }, text: '新第二页' }] }))
+    await act(async () => pending.resolve(page([entry('a', { detailRevision: '2' })])))
+    expect(source.loadDetail.mock.calls.slice(2).map(call => call[2].cursor)).toEqual([undefined, '50'])
+    expect(text()).toContain('新第一页'); expect(text()).toContain('新第二页'); expect(text()).not.toContain('旧第二页')
+    expect(source.loadDay).toHaveBeenCalledTimes(1)
+  })
+  it('cancels stale detail reads and ignores late replies when a progressive group changes', async () => {
+    const pending = deferred<DayActivityPage>(), oldDetail = deferred<DayActivityDetailPage>(), source = reader()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+    source.loadDetail.mockReturnValueOnce(oldDetail.promise).mockResolvedValue(detail('a', {
+      items: [{ id: 'fresh', occurredAtMillis: start, author: { name: '我' }, text: '最新详情' }],
+    }))
+    await mount(source)
+    await act(async () => source.loadDay.mock.calls[0]![1].onProgress!(page([entry('a', { detailRevision: '1' })])))
+    await act(async () => activityButton('a').props.onClick())
+    const oldSignal = source.loadDetail.mock.calls[0]![2].signal
+    await act(async () => pending.resolve(page([entry('a', { detailRevision: '2' })])))
+    expect(oldSignal.aborted).toBe(true)
+    await act(async () => oldDetail.resolve(detail('a')))
+    expect(text()).toContain('最新详情'); expect(text()).not.toContain('详情文本')
+  })
+  it.each(['restricted', 'failed', 'cycle'] as const)('fails closed on %s while rebuilding a changed detail prefix', async outcome => {
+    const pending = deferred<DayActivityPage>(), source = reader()
+    source.loadDay.mockReturnValueOnce(pending.promise)
+    await mount(source)
+    await act(async () => source.loadDay.mock.calls[0]![1].onProgress!(page([entry('a', { detailRevision: '1' })])))
+    source.loadDetail.mockResolvedValueOnce(detail('a', { hasMore: true, nextCursor: '50' }))
+      .mockResolvedValueOnce(detail('a'))
+    await act(async () => activityButton('a').props.onClick())
+    await act(async () => button('加载更多原始记录').props.onClick())
+    source.loadDetail.mockResolvedValueOnce(detail('a', { hasMore: true, nextCursor: '50' }))
+    if (outcome === 'failed') source.loadDetail.mockRejectedValueOnce(new Error('详情来源不可用'))
+    else source.loadDetail.mockResolvedValueOnce(detail('a', outcome === 'restricted'
+      ? { access: 'restricted', items: [] } : { hasMore: true, nextCursor: '50' }))
+    await act(async () => pending.resolve(page([entry('a', { detailRevision: '2' })])))
+    expect(text()).not.toContain('详情文本')
+    expect(text()).toContain(outcome === 'restricted' ? '内容已不可访问' : outcome === 'failed' ? '详情来源不可用' : '活动详情已变化')
+    expect(source.loadDetail).toHaveBeenCalledTimes(4)
+  })
+  it('renders selected original excerpts and compact metadata without repeating a source name', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValue(page([entry('group', { kind: 'group_chat', participant: undefined,
+      title: '项目群', sourceName: '项目群', preview: '好的', statusLabel: '我收到', recordCount: 3,
+      excerpts: [{ id: 'a', text: '明天完成接口联调', self: true },
+        { id: 'b', text: '还需要补一个回复筛选', self: false, author: { name: '昵称', remark: '周鹏' } }] })]))
+    await mount(source)
+    const row = renderer!.root.findByProps({ 'data-activity-id': 'group' })
+    const rowText = content(row)
+    expect(rowText).toContain('我：明天完成接口联调')
+    expect(rowText).toContain('周鹏：还需要补一个回复筛选')
+    expect(rowText).toContain('3 条相关消息')
+    expect(rowText.match(/项目群/g)).toHaveLength(1)
+    expect(rowText).not.toMatch(/好的|原始记录|我收到/)
+    expect(source.loadDetail).not.toHaveBeenCalled()
+  })
+  it('shows recording duration instead of zero original records and does not fetch transcripts eagerly', async () => {
+    const source = reader()
+    source.loadDay.mockResolvedValue(page([entry('audio', { kind: 'recording', title: '录音时段', sourceName: '录音',
+      recordCount: 0, startAtMillis: start + hour, endAtMillis: start + hour + 25_000, participant: undefined })]))
+    await mount(source)
+    expect(text()).toContain('录音 0:25')
+    expect(text()).not.toContain('0 条原始记录')
+    expect(text()).not.toContain('01:00–01:00')
+    expect(source.loadDetail).not.toHaveBeenCalled()
+  })
   it('does not fake an empty complete day when no adapter is installed', async () => {
     await mount(undefined)
-    expect(text()).toContain('多维活动数据尚未接入')
+    expect(text()).toContain('暂时无法读取当天活动')
     expect(text()).not.toContain('这一天暂无匹配内容')
   })
   it('does not read while account identity is unavailable', async () => {
@@ -80,8 +209,9 @@ describe('day timeline integration boundary', () => {
   it('loads one page, uses remark names and does not auto-load details, navigate or mark read', async () => {
     const source = reader(); const navigate = vi.fn()
     await mount(source, query, navigate)
-    expect(source.loadDay).toHaveBeenCalledExactlyOnceWith(query, { signal: expect.any(AbortSignal) })
-    expect(text()).toContain('与 备注名 的私聊')
+    expect(source.loadDay).toHaveBeenCalledExactlyOnceWith(query, { signal: expect.any(AbortSignal), onProgress: expect.any(Function) })
+    expect(text()).toContain('备注名')
+    expect(text()).toContain('对方：本段讨论内容')
     expect(text()).not.toContain('原始昵称')
     expect(source.loadDetail).not.toHaveBeenCalled()
     expect(navigate).not.toHaveBeenCalled()
@@ -93,11 +223,10 @@ describe('day timeline integration boundary', () => {
     act(() => { button('前往原始来源').props.onClick() })
     expect(navigate).toHaveBeenCalledExactlyOnceWith('opaque-source')
   })
-  it('passes mode/filter choices to the adapter query instead of pretending loaded records are the whole day', async () => {
+  it('keeps the activity view and passes filter choices to the adapter query', async () => {
     const change = vi.fn(); const source = reader()
     await mount(source, query, vi.fn(), change)
-    act(() => { button('原始明细').props.onClick() })
-    expect(change).toHaveBeenLastCalledWith({ ...query, mode: 'records', includeBackground: true })
+    expect(button('原始明细')).toBeUndefined()
     act(() => { button('录音').props.onClick() })
     expect(change).toHaveBeenLastCalledWith({ ...query, kind: 'recording' })
     act(() => { button('对话').props.onClick() })
@@ -134,11 +263,11 @@ describe('day timeline integration boundary', () => {
   it('distinguishes partial data, complete empty data and failed reads', async () => {
     const source = reader(); source.loadDay.mockResolvedValue(page([], { completeness: 'partial', missingKinds: ['group_chat', 'recording'] }))
     await mount(source)
-    expect(text()).toContain('群聊、录音尚未完整覆盖')
-    expect(text()).toContain('已加载来源中暂无匹配内容')
+    expect(text()).toContain('尚未全部显示：群聊、录音')
+    expect(text()).toContain('暂未找到匹配的活动，部分内容还未加载完成')
     expect(text()).not.toContain('这一天暂无匹配内容')
     source.loadDay.mockRejectedValueOnce(new Error('网络不可用'))
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '刷新当天活动' }).props.onClick() })
+    await act(async () => { renderer!.update(<ArkmeDayTimeline query={query} reader={source} refreshVersion={1} onQueryChange={() => {}} />) })
     expect(text()).toContain('网络不可用')
     expect(text()).not.toContain('暂无匹配内容')
     source.loadDay.mockResolvedValueOnce(page([]))
@@ -148,7 +277,7 @@ describe('day timeline integration boundary', () => {
   it('keeps a load-more control for a filtered empty page rather than declaring no records', async () => {
     const source = reader(); source.loadDay.mockResolvedValue(page([entry('background', { participation: 'background' })], { hasMore: true, nextCursor: 'next' }))
     await mount(source)
-    expect(text()).toContain('本页没有匹配内容，可继续加载')
+    expect(text()).toContain('当前没有匹配的活动，可点击“加载更多”')
     expect(button('加载更多')).toBeDefined()
   })
   it.each(['accountScope', 'bucketDate', 'timezone', 'kind'] as const)('does not display a late response after changing %s', async field => {
@@ -264,7 +393,8 @@ describe('day timeline integration boundary', () => {
     expect(segments).toHaveLength(2)
     expect(parseFloat(segments[0]!.props.style.width)).toBeCloseTo(100 / 6)
     expect(segments[1]!.props.style.width).toBe('25%')
-    expect(text()).toContain('已有录音，暂无已识别人声信息；不代表静音')
+    expect(text()).toContain('录音时段')
+    expect(text()).not.toContain('不代表静音')
   })
   it('does not draw recognized speech outside owned physical audio and marks unknown ranges', async () => {
     const source = reader(); source.loadDay.mockResolvedValue(page([], { coverage: { state: 'partial', intervals: [
@@ -273,12 +403,26 @@ describe('day timeline integration boundary', () => {
     await mount(source)
     const speech = renderer!.root.findAllByProps({ className: 'arkme-day-speech' }).find(n => n.type === 'span')!
     expect(parseFloat(speech.props.style.width)).toBeCloseTo(100 / 24)
-    expect(text()).toContain('未覆盖区间不能断言为无录音')
+    expect(text()).toContain('部分录音时段尚未显示')
+    expect(text()).not.toContain('还有录音未显示')
+  })
+  it('hides an empty recording bar and the redundant page footer', async () => {
+    const source = reader(); source.loadDay.mockResolvedValue(page([entry('a')], { coverage: { state: 'ready', intervals: [] } }))
+    await mount(source)
+    expect(renderer!.root.findAllByProps({ className: 'arkme-day-track' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ className: 'arkme-day-footnote' })).toHaveLength(0)
+    expect(text()).toContain('在这里浏览，不会把聊天标为已读')
+  })
+  it('keeps partial recording status and pagination without promising missing audio can be loaded', async () => {
+    const source = reader(); source.loadDay.mockResolvedValue(page([], { hasMore: true, nextCursor: 'more', coverage: { state: 'partial', intervals: [] } }))
+    await mount(source)
+    expect(text()).toContain('部分录音时段尚未显示')
+    expect(button('加载更多')).toBeDefined()
   })
   it('treats unavailable coverage as unknown, not an empty audio day', async () => {
     const source = reader(); source.loadDay.mockResolvedValue(page([], { coverage: { state: 'error', intervals: [] } }))
     await mount(source)
-    expect(text()).toContain('录音覆盖范围暂不可用，不代表当天没有录音')
+    expect(text()).toContain('录音时段暂时无法显示')
     expect(renderer!.root.findAllByProps({ className: 'arkme-day-track' })).toHaveLength(0)
   })
 })

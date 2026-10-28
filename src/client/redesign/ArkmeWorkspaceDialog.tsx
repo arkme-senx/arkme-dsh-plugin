@@ -5,7 +5,7 @@ import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { Folder } from '@phosphor-icons/react/Folder'
 import { House } from '@phosphor-icons/react/House'
 import { X } from '@phosphor-icons/react/X'
-import type { DirectoryListing } from '@deepseek-ai/dsh-client-runtime/client'
+import type { DirectoryListing } from '@deepseek-ai/dsh-host-directory-picker/types'
 
 export function ArkmeWorkspaceDialog({
   open,

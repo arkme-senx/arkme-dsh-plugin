@@ -93,6 +93,34 @@ async function connectedTransport(): Promise<{
 }
 
 describe('Realtime login-only remote transport wire', () => {
+  it('correlates cursors, receipts, publish ACKs and heartbeats without message bodies', async () => {
+    const socket = new FakeSocket()
+    const rows: Array<Record<string, unknown>> = []
+    let now = 60_000
+    const transport = new ArkmeRemoteRealtimeTransport(() => socket, 10_000, {
+      now: () => now, onDiagnostic: (phase, fields) => rows.push({ phase, ...fields }),
+    })
+    const signal = new AbortController().signal
+    const connected = transport.connect({ profileRef: target.hostProfileRef, clientRef: target.hostClientRef, signal })
+    setTimeout(() => { socket.open() }, 0)
+    await connected
+    await transport.subscribe({ target: preRegistrationTarget, afterSequence: 5861, onEvent: () => undefined, signal })
+    await transport.registerHost({ runtimeRef: target.runtimeRef, capabilities: ['session.create'], signal })
+    socket.remoteEvent({ operation: 'session.create', request_ref: 'create-01', body: { text: 'secret-text' } })
+    await transport.publish({ target, commandId: 'reply-01', direction: 'response', payload: { operation: 'session.create', request_ref: 'create-01', result: { token: 'secret-token' } }, signal })
+    socket.heartbeat?.()
+    socket.heartbeat?.()
+    expect(rows).toContainEqual(expect.objectContaining({ phase: 'wire_subscribe_finished', after_seq: 5861, server_seq: 1 }))
+    expect(rows).toContainEqual(expect.objectContaining({ phase: 'wire_event_received', request_ref: 'create-01', transport_seq: 3, listener_ready: true, target_lease_generation: 29 }))
+    expect(rows).toContainEqual(expect.objectContaining({ phase: 'wire_publish_ack', request_ref: 'create-01', command_id: 'reply-01', server_seq: 2 }))
+    expect(rows.filter(row => row.phase === 'wire_heartbeat')).toHaveLength(1)
+    now += 30_000
+    socket.heartbeat?.()
+    expect(rows.at(-1)).toMatchObject({ phase: 'wire_heartbeat', channel_count: 1, last_transport_seq: 3, last_channel_event_age_ms: 30_000 })
+    expect(JSON.stringify(rows)).not.toMatch(/secret-text|secret-token/)
+    await transport.disconnect()
+  })
+
   it('fails a silent pre-open socket instead of blocking Host startup', async () => {
     const socket = new FakeSocket()
     const transport = new ArkmeRemoteRealtimeTransport(() => socket, 1_000)
@@ -270,6 +298,20 @@ it('does not let an old subscription cleanup remove a replacement connection sub
   second.remoteEvent({ kind: 'test' })
   expect(received).toHaveBeenCalledOnce()
   expect(second.sent.some(x => JSON.parse(x).type === 'channel.unsubscribe')).toBe(false)
+  await transport.disconnect()
+})
+
+it.each(['closing', 'send-race'])('releases a subscription safely during %s without leaking its listener', async mode => {
+  const { transport, socket } = await connectedTransport()
+  const controller = new AbortController(), received = vi.fn()
+  const stop = await transport.subscribe({ target, onEvent: received, signal: controller.signal })
+  if (mode === 'closing') socket.readyState = 2
+  else socket.sendFailure = new Error('connection closed during send')
+  controller.abort()
+  expect(stop).not.toThrow()
+  socket.remoteEvent({ kind: 'late' })
+  expect(received).not.toHaveBeenCalled()
+  expect(socket.sent.some(frame => JSON.parse(frame).type === 'channel.unsubscribe')).toBe(false)
   await transport.disconnect()
 })
 

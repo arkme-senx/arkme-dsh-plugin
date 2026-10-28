@@ -63,5 +63,6 @@ export function useForwardTargetDirectory(account: string | undefined, enabled: 
     return forwardTargetDirectory.observe(account, snapshot => setState({ account, snapshot }))
   }, [account, enabled])
   if (!enabled || account === undefined) return EMPTY
-  return state?.account === account ? state.snapshot : forwardTargetDirectory.snapshot(account)
+  const snapshot = state?.account === account ? state.snapshot : forwardTargetDirectory.snapshot(account)
+  return snapshot
 }

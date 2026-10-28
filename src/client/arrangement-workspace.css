@@ -1,0 +1,97 @@
+.arkme-arrangement-workspace { --aw-surface: var(--dsw-alias-bg-base, #fff); --aw-ink: var(--dsw-alias-label-primary, #17191c); --aw-secondary: var(--dsw-alias-label-secondary, #777c85); --aw-line: var(--dsw-alias-border-l1, #eceef1); --aw-hover: color-mix(in srgb, var(--aw-ink) 4%, var(--aw-surface)); --aw-selected: color-mix(in srgb, #4378ed 9%, var(--aw-surface)); display: flex; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow: hidden; color: var(--aw-ink); background: var(--aw-surface); container: arrangement-workspace / inline-size; font-size: 14px; }
+.arkme-arrangement-workspace button { font: inherit; color: inherit; cursor: pointer; border: 0; background: transparent; border-radius: 7px; }
+.arkme-arrangement-workspace button:disabled { cursor: default; opacity: .5; }
+.arkme-arrangement-workspace button:focus-visible { outline: 2px solid #467af0; outline-offset: 2px; }
+.arkme-arrangement-navigation { width: 166px; flex: 0 0 166px; box-sizing: border-box; display: flex; flex-direction: column; padding: 24px 12px 14px; border-right: 1px solid var(--aw-line); background: color-mix(in srgb, var(--aw-ink) 1.5%, var(--aw-surface)); }
+.arkme-arrangement-navigation h2 { margin: 0 12px 24px; font-size: 20px; font-weight: 600; }
+.arkme-arrangement-view-links { display: flex; flex-direction: column; gap: 5px; }
+.arkme-arrangement-view-links button { min-height: 40px; padding: 9px 12px; text-align: left; white-space: nowrap; }
+.arkme-arrangement-view-links button:nth-child(4) { margin-top: 17px; }
+.arkme-arrangement-view-links button:hover { background: var(--aw-hover); }
+.arkme-arrangement-view-links button[aria-current=page] { background: var(--aw-selected); color: #3c72df; font-weight: 600; }
+.arkme-arrangement-navigation-footer { margin-top: auto; padding-top: 24px; display: flex; flex-direction: column; gap: 5px; color: var(--aw-secondary); font-size: 12px; }
+.arkme-arrangement-navigation-footer button { display: flex; align-items: center; gap: 7px; padding: 8px 10px; text-align: left; }
+.arkme-arrangement-navigation-footer button:hover { background: var(--aw-hover); }
+.arkme-arrangement-directory { flex: 0 1 420px; width: 38%; min-width: 270px; display: flex; flex-direction: column; border-right: 1px solid var(--aw-line); }
+.arkme-arrangement-directory > header { min-height: 78px; box-sizing: border-box; padding: 18px 20px; display: flex; align-items: center; gap: 12px; justify-content: space-between; flex: none; border-bottom: 1px solid var(--aw-line); }
+.arkme-arrangement-directory h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.arkme-arrangement-directory header small { display: block; color: var(--aw-secondary); font-size: 11px; margin-top: 4px; }
+.arkme-arrangement-directory-tools { display: flex; gap: 5px; }
+.arkme-arrangement-directory-tools button, .arkme-arrangement-detail > header button { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--aw-secondary); }
+.arkme-arrangement-directory-tools button:hover, .arkme-arrangement-detail > header button:hover { background: var(--aw-hover); color: var(--aw-ink); }
+.arkme-arrangement-directory-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.arkme-arrangement-task { display: flex; align-items: flex-start; min-width: 0; border-radius: 9px; padding: 14px 10px; gap: 12px; margin-bottom: 2px; transition: background 120ms ease, opacity 160ms ease; }
+.arkme-arrangement-task:hover { background: var(--aw-hover); }
+.arkme-arrangement-task[data-selected=true] { background: var(--aw-selected); }
+.arkme-arrangement-workspace button.arkme-arrangement-checkbox { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border: 0; border-radius: 5px; padding: 0; margin: -3px -5px 0; background: transparent; }
+/* The icon remains visible even when the workspace's shared button reset removes borders. */
+.arkme-arrangement-checkbox-icon { display: block; flex: none; color: color-mix(in srgb, var(--aw-ink) 58%, var(--aw-surface)); }
+.arkme-arrangement-checkbox:hover .arkme-arrangement-checkbox-icon, .arkme-arrangement-checkbox:focus-visible .arkme-arrangement-checkbox-icon,
+.arkme-arrangement-checkbox[aria-checked=true] .arkme-arrangement-checkbox-icon { color: #477dec; }
+.arkme-arrangement-workspace .arkme-arrangement-checkbox[aria-busy=true] { opacity: .7; }
+.arkme-arrangement-task[data-completed=true] strong { text-decoration: line-through; color: var(--aw-secondary); }
+.arkme-arrangement-task-body { flex: 1; min-width: 0; padding: 0; display: flex; gap: 12px; align-items: flex-start; text-align: left; }
+.arkme-arrangement-task-copy { flex: 1; min-width: 0; }
+.arkme-arrangement-task-title { display: flex; align-items: center; gap: 5px; }
+.arkme-arrangement-task-title strong { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 21px; overflow-wrap: anywhere; }
+.arkme-arrangement-task-copy p { margin: 5px 0 0; line-height: 18px; font-size: 12px; color: var(--aw-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arkme-arrangement-task time { flex: 0 0 auto; color: var(--aw-secondary); font-size: 11px; line-height: 21px; max-width: 94px; text-align: right; white-space: nowrap; }
+.arkme-arrangement-directory > footer { flex: none; border-top: 1px solid var(--aw-line); color: var(--aw-secondary); font-size: 11px; padding: 9px 20px; }
+.arkme-arrangement-workspace-empty { color: var(--aw-secondary); text-align: center; padding: 40px 12px; font-size: 13px; }
+.arkme-arrangement-detail, .arkme-arrangement-detail-empty { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.arkme-arrangement-detail-empty { align-items: center; justify-content: center; color: var(--aw-secondary); font-size: 13px; }
+.arkme-arrangement-detail > header { flex: none; min-height: 78px; padding: 18px 24px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; color: var(--aw-secondary); border-bottom: 1px solid var(--aw-line); font-size: 12px; }
+.arkme-arrangement-detail-scroll { flex: 1; min-height: 0; padding: 26px 28px 36px; overflow-y: auto; overscroll-behavior: contain; }
+.arkme-arrangement-detail h2 { font-size: 20px; line-height: 1.5; margin: 0 0 15px; font-weight: 600; overflow-wrap: anywhere; }
+.arkme-arrangement-detail-description { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 14px; }
+.arkme-arrangement-detail dl { display: flex; flex-direction: column; gap: 13px; margin: 26px 0; font-size: 12px; }
+.arkme-arrangement-detail dl > div { display: flex; align-items: flex-start; gap: 20px; line-height: 20px; }
+.arkme-arrangement-detail dt { color: var(--aw-secondary); flex: 0 0 62px; }
+.arkme-arrangement-detail dd { margin: 0; overflow-wrap: anywhere; }
+.arkme-arrangement-detail dd button { padding: 0 7px; margin-left: -7px; color: #477dec; }
+.arkme-arrangement-detail dd button:hover { background: var(--aw-hover); }
+.arkme-arrangement-detail-actions { display: flex; align-items: center; gap: 10px; padding: 0 0 24px; }
+.arkme-arrangement-detail-actions button { padding: 7px 12px; background: var(--aw-hover); font-size: 12px; }
+.arkme-arrangement-detail-actions button:first-child { background: var(--aw-selected); color: #3c72df; }
+.arkme-arrangement-detail-sources { border-top: 1px solid var(--aw-line); padding-top: 22px; }
+.arkme-arrangement-detail-sources strong, .arkme-arrangement-detail-sources h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
+.arkme-arrangement-detail-sources .arkme-arrangement-content { cursor: text; }
+.arkme-arrangement-detail-progress, .arkme-arrangement-list-progress { color: var(--aw-secondary); font-size: 12px; line-height: 1.6; }
+.arkme-arrangement-list-progress { text-align: center; padding: 10px; }
+.arkme-arrangement-list-error { font-size: 12px; line-height: 1.6; padding: 12px; color: var(--aw-secondary); }
+.arkme-arrangement-list-error button { padding: 4px 8px; color: #477dec; background: var(--aw-hover); }
+.arkme-arrangement-load-more { padding: 12px; display: block; margin: 4px auto; font-size: 12px !important; color: var(--aw-secondary) !important; }
+.arkme-arrangement-feedback { display: flex; align-items: center; gap: 8px; flex: none; padding: 10px 16px; font-size: 12px; background: var(--aw-selected); }
+.arkme-arrangement-feedback > span { flex: 1; min-width: 0; }
+.arkme-arrangement-feedback button { display: flex; align-items: center; padding: 3px; color: #477dec; }
+.arkme-arrangement-feedback[role=alert] { background: color-mix(in srgb, #d74b4b 8%, var(--aw-surface)); }
+.arkme-arrangement-workspace-skeletons { padding: 12px 10px; }
+.arkme-arrangement-workspace-skeletons > div { height: 65px; }
+.arkme-arrangement-workspace-skeletons span { display: block; width: 70%; height: 12px; margin: 0 0 10px; border-radius: 4px; background: var(--aw-hover); }
+.arkme-arrangement-workspace-skeletons span + span { width: 45%; height: 9px; }
+.arkme-arrangement-delete-confirm { position: absolute; inset: 0; z-index: 20; background: #0003; display: flex; justify-content: center; align-items: center; padding: 20px; }
+.arkme-arrangement-delete-confirm > div { max-width: 350px; width: 100%; border-radius: 14px; padding: 24px; background: var(--aw-surface); box-shadow: 0 12px 40px #0002; }
+.arkme-arrangement-delete-confirm h3 { font-size: 17px; margin-top: 0; }
+.arkme-arrangement-delete-confirm p { overflow-wrap: anywhere; line-height: 1.6; font-size: 13px; }
+.arkme-arrangement-delete-confirm footer { display: flex; justify-content: flex-end; gap: 12px; }
+.arkme-arrangement-delete-confirm button { padding: 8px 12px; background: var(--aw-hover); }
+@container arrangement-workspace (max-width: 800px) {
+  .arkme-arrangement-navigation { width: 140px; flex-basis: 140px; padding-inline: 8px; }
+  .arkme-arrangement-directory { flex: 1; min-width: 0; width: auto; border-right: 0; }
+  .arkme-arrangement-detail-empty { display: none; }
+  .arkme-arrangement-detail { position: absolute; top: 0; bottom: 0; right: 0; z-index: 5; width: min(480px, calc(100% - 140px)); background: var(--aw-surface); box-shadow: -8px 0 28px #0002; }
+}
+@container arrangement-workspace (max-width: 430px) {
+  .arkme-arrangement-navigation { width: 108px; flex-basis: 108px; padding-inline: 5px; }
+  .arkme-arrangement-navigation h2 { margin-left: 8px; }
+  .arkme-arrangement-view-links button { padding-inline: 8px; font-size: 12px; }
+  .arkme-arrangement-directory > header { padding-inline: 12px; }
+  .arkme-arrangement-task { padding-inline: 4px; gap: 8px; }
+  .arkme-arrangement-task-body { flex-wrap: wrap; gap: 3px 8px; }
+  .arkme-arrangement-task-copy { flex-basis: 100%; }
+  .arkme-arrangement-task time { margin-left: auto; }
+  .arkme-arrangement-navigation-footer button { padding-inline: 5px; font-size: 10px; }
+  .arkme-arrangement-detail { width: calc(100% - 108px); }
+  .arkme-arrangement-detail-scroll { padding: 20px 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-task { transition: none; } }

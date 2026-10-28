@@ -1,3 +1,5 @@
+import { ArkmeReadTimeoutError } from './read-deadline.js'
+
 interface ArkmeRetryableErrorShape {
   body?: { retryable?: unknown; retryAfterMillis?: number; recovery?: { owner?: string } }
 }
@@ -18,12 +20,11 @@ export function isArkmeRequestAbort(error: unknown, signal?: AbortSignal): boole
   return message.includes('signal is aborted') || message.includes('request aborted')
 }
 
-function isRetryableReadFailure(error: unknown): boolean {
+export function isArkmeTransientReadFailure(error: unknown): boolean {
   const body = error !== null && typeof error === 'object'
     ? (error as ArkmeRetryableErrorShape).body
     : undefined
-  if (body?.recovery?.owner === 'host') return false
-  if (body?.retryable === true || error instanceof TypeError) return true
+  if (body?.retryable === true || error instanceof TypeError || error instanceof ArkmeReadTimeoutError) return true
   const message = errorText(error).toLowerCase()
   return message === 'failed to fetch' || message.includes('networkerror') || message.includes('fetch failed')
 }
@@ -56,7 +57,7 @@ export async function retryArkmeRead<T>(
     try {
       return await read()
     } catch (error) {
-      if (isArkmeRequestAbort(error, options.signal) || !isRetryableReadFailure(error)
+      if (isArkmeRequestAbort(error, options.signal) || error instanceof ArkmeReadTimeoutError || !isArkmeTransientReadFailure(error) || (error as ArkmeRetryableErrorShape | undefined)?.body?.recovery?.owner === 'host'
         || attempt >= retryDelays.length) throw error
       const body = (error as ArkmeRetryableErrorShape | undefined)?.body
       await waitForRetry(Math.max(retryDelays[attempt] ?? 0, body?.retryAfterMillis ?? 0), options.signal)

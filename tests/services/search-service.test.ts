@@ -20,6 +20,79 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SearchService', () => {
+  it('requires an applied sharing receipt and rejects ignored filters on old servers', async () => {
+    const authenticatedPost = vi.fn(async () => ({ items: [] }))
+    const service = new SearchService({ authenticatedPost, requireSession: async () => ({ userId: 42 }) } as never, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+    for (const articleScope of ['shared_by_me', 'shared_with_me'] as const) {
+      await expect(service.searchScene({ scene: 'long_article', articleScope, limit: 30 })).rejects.toMatchObject({ code: 'long-article-sharing-unavailable', retryable: false })
+      expect(authenticatedPost.mock.calls.at(-1)?.[1]).toMatchObject({ article_scope: articleScope, scene_kind: 5 })
+    }
+    await expect(service.searchScene({ scene: 'file', articleScope: 'shared_by_me', limit: 30 })).rejects.toMatchObject({ code: 'long-article-scope-invalid' })
+    await expect(service.searchScene({ scene: 'long_article', articleScope: 'unknown' as never, limit: 30 })).rejects.toMatchObject({ code: 'long-article-scope-invalid' })
+  })
+  it('returns a sharing classification only after the backend confirms it', async () => {
+    const authenticatedPost = vi.fn(async () => ({ applied_article_scope: 'shared_with_me', items: [], has_more: true, next_cursor: 'account-scope-cursor' }))
+    const service = new SearchService({ authenticatedPost, requireSession: async () => ({ userId: 42 }) } as never, {} as never, {} as never, undefined, { lockedRecordUids: async () => new Set() } as never)
+    expect(await service.searchScene({ scene: 'long_article', articleScope: 'shared_with_me', limit: 30 })).toMatchObject({ appliedArticleScope: 'shared_with_me', hasMore: true, nextCursor: 'account-scope-cursor' })
+  })
+  it.each([
+    ['send_to_self', { search_scope: 'global', source_kinds: [1, 2] }],
+    ['default_category', { search_scope: 'global', source_kinds: [1] }],
+    ['topic', { search_scope: 'topic', source_kinds: [2], source_uid: 'topic-1' }],
+  ] as const)('searches signed personal %s scope and keeps real result navigation', async (kind, scope) => {
+    const authenticatedPost = vi.fn(async () => ({ items: [{
+      record_uid: 'own-note', source_kind: 2, source_uid: 'topic-1', record_core: { owner_user_id: 42, text_content: '关键词' },
+    }], has_more: true, next_cursor: 'next-page' }))
+    const target = { sourceRef: 'signed-topic', kind: 'topic', displayName: '工作' }
+    const openSourceRef = vi.fn(async () => ({ kind, ownerRef: 'topic-1' }))
+    const searchTargetSource = vi.fn(async () => target)
+    const service = new SearchService({ requireSession: async () => ({ userId: 42 }), authenticatedPost } as never,
+      {} as never, {} as never, { openSourceRef, searchTargetSource } as never,
+      { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '关键词', limit: 50, sourceRef: 'signed-personal', sourceUid: 'wrong-topic', searchScope: 'chat_session' })
+    expect(openSourceRef).toHaveBeenCalledWith('signed-personal', 42)
+    expect(authenticatedPost.mock.calls[0]).toContainEqual({ keyword: '关键词', limit: 50, ...scope })
+    expect(result.items[0]?.targetSource).toEqual(target)
+    expect(result).toMatchObject({ hasMore: true, nextCursor: 'next-page' })
+    await service.searchScene({ scene: 'file', limit: 30, sourceRef: 'signed-personal', cursor: 'next-page' })
+    expect(authenticatedPost.mock.calls[1]).toContainEqual({ scene_kind: 4, limit: 30, cursor: 'next-page', ...scope })
+  })
+  it.each([[5, 4], [4, 3], [3, 3], [1, 1]])('distinguishes Record origin %s from effective search source %s in tag results', async (origin, expected) => {
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => ({
+      items: [{ record_core: { record_uid: 'record', owner_user_id: 42, origin_kind: origin, origin_container_ref: 'container', text_content: '#项目' } }],
+    }) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchTagRecords({ normalizedTag: '项目', limit: 20 })
+    expect(result.items[0]?.sourceKind).toBe(expected)
+    if (origin === 5) expect(result.items[0]?.routeTargetKind).toBe('record_detail')
+  })
+  it('uses current Record Team origin even before the search source projection catches up', async () => {
+    const runtime = { requireSession: async () => ({userId:42}), authenticatedPost:async () => ({items:[{
+      record_uid:'r',source_kind:1,route_target_kind:'home_feed',
+      record_core:{owner_user_id:42,origin_kind:5,origin_container_ref:'team-conversation',text_content:'正文'}
+    }],source_aggregates:[]}) } as unknown as ServiceRuntime
+    const result = await new SearchService(runtime, {} as never, {} as never).searchRemote({query:'正文'})
+    expect(result.items[0]).toMatchObject({sourceKind:4,sourceUid:'team-conversation',routeTargetKind:'record_detail'})
+  })
+  it('includes personal Team Records without constructing a Chat or Home navigation target', async () => {
+    const authenticatedPost = vi.fn(async () => ({ items: [{
+      record_uid: 'team-record', source_kind: 4, source_uid: 'team-conversation',
+      route_target_kind: 'record_detail', route_target_uid: 'team-record',
+      record_core: { origin_kind: 5, owner_user_id: 42, text_content: '团队内容' },
+    }], source_aggregates: [] }))
+    const searchTargetSource = vi.fn()
+    const chatSourcesBySessionUids = vi.fn()
+    const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedPost } as unknown as ServiceRuntime
+    const service = new SearchService(runtime, {} as never, {} as never,
+      { searchTargetSource, chatSourcesBySessionUids } as unknown as SourceService,
+      { lockedRecordUids: async () => new Set() } as never)
+    const result = await service.searchRemote({ query: '团队', limit: 20 })
+    expect(authenticatedPost.mock.calls[0]).toContainEqual(expect.objectContaining({ source_kinds: [1, 2, 3, 4] }))
+    expect(result.items[0]).toMatchObject({ sourceKind: 4, sourceTitle: '团队对话', routeTargetKind: 'record_detail' })
+    expect(result.items[0]?.targetSource).toBeUndefined()
+    expect(searchTargetSource).not.toHaveBeenCalled()
+    expect(chatSourcesBySessionUids).not.toHaveBeenCalled()
+  })
+
   it('projects viewer remarks into every source aggregate, including sources with no message on the current page', async () => {
     const target = (displayName: string, privateNickname: string) => ({ sourceRef: displayName, kind: 'private_chat', displayName, privateNickname, unreadCount: 0, activeAtMillis: 0 })
     const chats = new Map([['chat-1', target('周鹏', '狗才')], ['chat-2', target('何宏顺', '1D3E')]])
@@ -74,14 +147,14 @@ describe('SearchService', () => {
     const pending = controllers.map((controller, index) => {
       const signal = controller.signal
       const request = kind === 'keyword' ? search.searchRemote({ query: String(index), limit: 30, signal })
-        : kind === 'scene' ? search.searchScene({ scene: 'file', limit: 30, signal })
+        : kind === 'scene' ? search.searchScene({ scene: 'file', limit: 30, cursor: `page-${index}`, signal })
           : kind === 'assets' ? media.queryFileAssets([String(index)], signal)
             : new ArkmePrivacyVisibilityService(runtime).lockedRecordUids(session, signal)
       return expect(request).rejects.toMatchObject({ name: 'AbortError' })
     })
     let write: Promise<unknown> | undefined
     try {
-      await vi.waitFor(() => expect(reads).toHaveLength(4), { timeout: 2_000 })
+      await vi.waitFor(() => expect(reads).toHaveLength(kind === 'scene' ? 1 : 4), { timeout: 2_000 })
       write = runtime.authenticatedPost('/write-fixture', {}, session)
       await vi.waitFor(() => expect(written).toBe(true), { timeout: 500 })
       await expect(write).resolves.toEqual({ saved: true })

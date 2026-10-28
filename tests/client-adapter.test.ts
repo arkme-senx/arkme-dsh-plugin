@@ -7,7 +7,7 @@ function installDesktopGateMarker(): () => void {
   const previousWindow = globalThis.window
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: { arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
+    value: { location: { hostname: 'localhost', search: '' }, arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
   })
   return () => {
     if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
@@ -16,6 +16,20 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
+  it.each([
+    ['?arkmeScreenshot=1', false],
+    ['?arkmeConversation=1', true],
+  ] as const)('scopes the social binding prompt correctly for %s', (search, expected) => {
+    const effect = vi.fn()
+    vi.stubGlobal('location', { search })
+    vi.stubGlobal('window', { location: { search } })
+    try {
+      apply({ effect, slots: { register: vi.fn() } } as never)
+      const prompts = effect.mock.calls.filter(([, label]) => label === 'dsh-arkme: social action binding prompt')
+      expect(prompts).toHaveLength(expected ? 1 : 0)
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('shadows only the native settings seat inside the embedded Harness document', () => {
     const previousWindow = globalThis.window
     Object.defineProperty(globalThis, 'window', {
@@ -56,7 +70,6 @@ describe('official DSH client adapter', () => {
       inject?: () => unknown
     }> = []
     const inject = vi.fn((key: string, register: () => unknown) => {
-      if (key === 'main.conversation') return () => {}
       register()
       return () => {}
     })
@@ -92,9 +105,10 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).toEqual([
       'arkme.topic.actions',
       'arkme.send-to-self.entry',
+      'settings.launcher',
       'sidebar',
-      'conversation',
-      'details',
+      'main',
+      'rightbar',
       'settings.section',
       'settings.section',
       'settings.section',
@@ -104,6 +118,7 @@ describe('official DSH client adapter', () => {
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'settings.section', id: 'arkme-data', order: -2.5, label: expect.any(Function) }),
       expect.objectContaining({
         name: 'sidebar',
         priority: -100,
@@ -114,10 +129,11 @@ describe('official DSH client adapter', () => {
         },
       }),
       expect.objectContaining({
-        name: 'conversation',
+        name: 'main',
+        key: 'conversation',
         priority: -100,
       }),
-      expect.objectContaining({ name: 'details', priority: -100 }),
+      expect.objectContaining({ name: 'rightbar', priority: -100 }),
       expect.objectContaining({
         name: 'shell.overlay',
         id: 'arkme-web-login-overlay',
@@ -132,7 +148,7 @@ describe('official DSH client adapter', () => {
     ]))
     expect(effect).toHaveBeenCalledWith(
       expect.any(Function),
-      'dsh-arkme: render account settings navigation icon',
+      'dsh-arkme: render Arkme settings navigation icons',
     )
 
     const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {
@@ -149,11 +165,11 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
     expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
     expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: expect.any(Function) }))
-    expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
+    expect(registered.find(item => item.name === 'main')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })
 
-  it('uses the DSH 0.1.5 rightbar API when the legacy details API is unavailable', () => {
+  it('uses the DSH 0.2 rightbar API when the legacy details API is unavailable', () => {
     let sidebarFace: { closeDetails(): void } | undefined
     const registeredNames: string[] = []
     const closeRightbar = vi.fn()
@@ -163,7 +179,6 @@ describe('official DSH client adapter', () => {
       return vi.fn()
     })
     const inject = vi.fn((key: string, registerEntry: () => unknown) => {
-      if (key === 'conversation' || key === 'details') return () => {}
       return registerEntry()
     })
     const effect = vi.fn((factory: () => unknown, label: string) => {
@@ -180,7 +195,7 @@ describe('official DSH client adapter', () => {
 
     sidebarFace?.closeDetails()
     expect(closeRightbar).toHaveBeenCalledOnce()
-    expect(registeredNames).toContain('main.conversation')
+    expect(registeredNames).toContain('main')
   })
 
   it('tracks the official settings trigger instead of mistaking an unrelated dialog for settings', () => {
@@ -198,6 +213,7 @@ describe('official DSH client adapter', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
+        location: { hostname: 'localhost', search: '' },
         setInterval: vi.fn((callback: () => void) => { tick = callback; return 1 }),
         clearInterval: vi.fn(),
       },
@@ -276,7 +292,7 @@ describe('official DSH client adapter', () => {
 
     expect(disposed).toEqual([])
     expect(register.mock.calls.map(([options]) => (options as { name: string }).name))
-      .toEqual(expect.arrayContaining(['sidebar', 'conversation', 'details']))
+      .toEqual(expect.arrayContaining(['sidebar', 'main', 'rightbar']))
     cleanups.forEach(cleanup => { cleanup() })
     arkmeUi.showConversations()
   })
@@ -327,6 +343,7 @@ describe('official DSH client adapter', () => {
     } as never)
 
     const labels = effect.mock.calls.map(call => call[1])
+    expect(labels.filter(label => label === 'dsh-arkme: social action binding prompt')).toHaveLength(1)
     expect(labels).toContain('dsh-arkme: client app update bridge')
     expect(labels).not.toContain('dsh-arkme: client plugin update status')
   })

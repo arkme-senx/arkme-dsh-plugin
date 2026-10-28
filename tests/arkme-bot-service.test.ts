@@ -425,7 +425,9 @@ describe('ArkmeService Bot owner adapter', () => {
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
       const body = JSON.parse(String(init?.body)) as unknown
-      requestBodies.push(body)
+      // Listing bots may also schedule an independent notification-preference
+      // query. Assert the credential owner's calls, regardless of timer order.
+      if (new URL(String(input)).origin === config.botBaseUrl) requestBodies.push(body)
       if (String(input).endsWith('/list')) {
         return json({ code: 200, data: { bots: [{
           bot_id: 'bot-owner-id-4', name: '总结', provider: 'openclaw', description: '', status: 'offline',
@@ -961,7 +963,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(source).toMatchObject({ kind: 'private_chat', displayName: 'Chat Bot' })
   })
 
-  it('lists, installs, and removes a Bot using only opaque Bot and group references', async () => {
+  it.each(['openclaw', 'webhook'] as const)('lists, installs, and removes a %s Bot using only opaque Bot and group references', async provider => {
     const calls: Array<{ url: string; body: unknown }> = []
     let installed = false
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
@@ -971,7 +973,7 @@ describe('ArkmeService Bot owner adapter', () => {
       calls.push({ url, body })
       if (url.endsWith('/bot/list')) {
         return json({ code: 200, data: { bots: [{
-          bot_id: 'bot-owner-id-5', name: '群聊总结', provider: 'OpenClaw', description: '总结', status: 'offline',
+          bot_id: 'bot-owner-id-5', name: '群聊总结', provider, description: '总结', status: 'offline',
           subject_uid: 'direct-5', chat_session_uid: '',
         }] } })
       }
@@ -979,7 +981,7 @@ describe('ArkmeService Bot owner adapter', () => {
         return json({ code: 200, data: {
           subject_uid: 'group-session-1', subject_title: '研发群', can_current_user_add_bots: true,
           bots: [{
-            bot_id: 'bot-owner-id-5', name: '群聊总结', provider: 'OpenClaw', description: '总结', status: 'offline',
+            bot_id: 'bot-owner-id-5', name: '群聊总结', provider, description: '总结', status: 'offline',
             installed,
           }],
         } })
@@ -1003,7 +1005,7 @@ describe('ArkmeService Bot owner adapter', () => {
         botRef,
         directoryKey: expect.stringMatching(/^arkme-bot-directory-v1\./),
         name: '群聊总结',
-        provider: 'openclaw',
+        provider,
         description: '总结',
         status: 'offline',
         installed: false,

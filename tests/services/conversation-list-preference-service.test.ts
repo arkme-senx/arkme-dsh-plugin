@@ -279,3 +279,13 @@ function snapshot(
     updated_at: revision === 0 ? 0 : 110,
   }
 }
+
+
+it('rejects an older same-account query after a newer revision has been observed', async () => {
+  let revision = 5
+  const service = createService(async () => ({ items: [snapshot(1, 'chat-1', 1, revision, 0, 0)] }))
+  const ref = { entityKind: 1 as const, entityUid: 'chat-1' }
+  await service.query([ref], { ownerUserId: 42 })
+  revision = 4
+  await expect(service.query([ref], { ownerUserId: 42 })).rejects.toMatchObject({ code: 'conversation-list-preference-stale', retryable: true })
+})

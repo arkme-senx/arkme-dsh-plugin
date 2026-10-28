@@ -1,5 +1,7 @@
+import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
+import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -13,6 +15,7 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
+import { arkmeSelfRoleAvatarFallback } from './self-role-presentation.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
@@ -31,6 +34,8 @@ import { arkmeUi } from './ui-controller.js'
 import type { SelfCalendarDateSelection } from './use-self-calendar-navigation.js'
 import type { CalendarMonthSnapshot } from './calendar-month-cache.js'
 import { CALENDAR_MIN_HEIGHT, useCalendarPopoverLayout } from './use-calendar-popover-layout.js'
+import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -77,22 +82,17 @@ const styles: Record<string, CSSProperties> = {
     transform: 'rotate(45deg)', background: arkmeTheme.menu,
     borderBottom: `1px solid ${colors.border}`, borderLeft: `1px solid ${colors.border}`,
   },
-  header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: {
     width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', color: colors.secondary,
     cursor: 'pointer', font: 'inherit', lineHeight: 1,
   },
-  navDisabled: { opacity: .32, cursor: 'default' },
-  caretLeft: { transform: 'rotate(180deg)' },
   monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
     width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
     borderRadius: 8, background: 'transparent', color: colors.secondary, cursor: 'pointer',
     font: 'inherit', fontSize: 11, fontWeight: 400,
   },
-  todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
   week: {
     height: 32, marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
     alignItems: 'center',
@@ -105,6 +105,7 @@ const styles: Record<string, CSSProperties> = {
   },
   blank: { height: 45 },
   dayButton: {
+    position: 'relative',
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit',
@@ -127,7 +128,6 @@ const styles: Record<string, CSSProperties> = {
   error: { color: colors.danger },
   loadingStatus: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary, fontSize: 12, lineHeight: '18px', padding: '12px 0' },
   initialLoading: { minHeight: '100%', boxSizing: 'border-box' },
-  topicBadge: { display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%', marginTop: 10, padding: '2px 6px', minHeight: 24, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 8, color: colors.tertiary, fontSize: 12, lineHeight: '18px' },
   recordsPanel: {
     position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
     display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
@@ -222,7 +222,7 @@ function sameMonth(left: Date, right: Date): boolean {
 }
 
 export function ArkmeCalendarMonthView({
-  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates,
+  visibleMonth, selectedDate, today, days, loading, error, onVisibleMonthChange, onSelectDate, recordingDates, allowFuture = false,
 }: {
   visibleMonth: Date
   selectedDate: Date
@@ -233,11 +233,10 @@ export function ArkmeCalendarMonthView({
   onVisibleMonthChange(month: Date): void
   onSelectDate(date: Date): void
   recordingDates?: ReadonlySet<string>
+  allowFuture?: boolean
 }) {
   useArkmeLocale()
   const calendarByDay = useMemo(() => new Map(days.map(day => [day.bucketDate, day])), [days])
-  const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
-  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
   const chooseDate = (date: Date) => {
     const normalized = startOfLocalDay(date)
     onSelectDate(normalized)
@@ -245,29 +244,14 @@ export function ArkmeCalendarMonthView({
   }
 
   return <>
-    <header style={styles.header}>
-      <div style={styles.navCluster}>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("上个月")} title={tr("上个月")} style={styles.iconButton}
-          onClick={() => onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}>
-          <CaretRight size={16} style={styles.caretLeft} aria-hidden />
-        </button>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("下个月")} title={tr("下个月")} disabled={!canGoNext}
-          style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }}
-          onClick={() => { if (canGoNext) onVisibleMonthChange(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1)) }}>
-          <CaretRight size={16} aria-hidden />
-        </button>
-      </div>
-      <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-      <button data-arkme-feedback="neutral" type="button" disabled={!canJumpToday}
-        style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }}
-        onClick={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }}>{tr("回到今日")}</button>
-    </header>
+    <ArkmeCalendarMonthHeader visibleMonth={visibleMonth} selectedDate={selectedDate} today={today} allowFuture={allowFuture}
+      onVisibleMonthChange={onVisibleMonthChange} onToday={() => { onVisibleMonthChange(monthStart(today)); chooseDate(today) }} />
     <div style={styles.week}>{calendarWeekdays().map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
     <div style={{ ...styles.days, opacity: loading && days.length === 0 ? .55 : 1 }}>
       {calendarCells(visibleMonth).map((date, index) => {
         if (date === undefined) return <span key={`blank:${String(index)}`} style={styles.blank} />
         const key = dateKey(date)
-        const disabled = date > today
+        const disabled = !allowFuture && date > today
         const meta = calendarByDay.get(key)
         return <ArkmeCalendarCell
           key={key}
@@ -299,7 +283,26 @@ interface ScopedResource<T> {
   value?: T
 }
 
-type CalendarIndex = CalendarMonthSnapshot & { retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+type CalendarMonthReader = (query: { startDate: string; endDate: string; timezone: string }, signal: AbortSignal) => Promise<{ days: ArkmeCalendarBucketDay[] }>
+type CalendarIndex = Omit<CalendarMonthSnapshot, 'value'> & { loadMonth?: CalendarMonthReader; value?: { days: ArkmeCalendarBucketDay[] }; retry(): void; notice?: string; incomplete?: boolean; retryNotice?: (() => void) | undefined }
+
+/** A source adapter owns month reads; custom calendars never invoke record APIs. */
+function useIndexedMonth(load: CalendarMonthReader | undefined, startDate: string, endDate: string, timezone: string, enabled: boolean, account?: string) {
+  const [attempt, setAttempt] = useState(0)
+  const [resource, setResource] = useState<{ value?: { days: ArkmeCalendarBucketDay[] }; loading: boolean; error: string }>({ loading: false, error: '' })
+  useEffect(() => {
+    if (!load) return
+    setResource({ loading: false, error: '' })
+    if (!enabled) return
+    const controller = new AbortController()
+    setResource({ loading: true, error: '' })
+    void load({ startDate, endDate, timezone }, controller.signal).then(value => {
+      if (!controller.signal.aborted) setResource({ value, loading: false, error: '' })
+    }).catch(error => { if (!controller.signal.aborted) setResource({ loading: false, error: errorMessage(error) }) })
+    return () => controller.abort()
+  }, [load, startDate, endDate, timezone, enabled, account, attempt])
+  return { ...resource, retry: () => setAttempt(value => value + 1) }
+}
 
 /** A single month in the shared scrolling calendar; self/topic months load only near the viewport. */
 function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKey, accountScope, timezone, index, initial, scrollRoot, onSelect, onNavigate, firstMonth }: {
@@ -314,7 +317,7 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
   const [visible, setVisible] = useState(initial)
   useEffect(() => { if (initial) setVisible(true) }, [initial])
   useEffect(() => {
-    if (index || visible || !element.current || typeof IntersectionObserver === 'undefined') return
+    if ((index && !index.loadMonth) || visible || !element.current || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect() }
     }, { root: scrollRoot.current, rootMargin: '60px' })
@@ -323,7 +326,8 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
   }, [index, visible, scrollRoot])
   const loaded = useCalendarMonth({ scopeKey: scopeKey ?? sourceRef ?? 'global', ...(sourceRef ? { sourceRef } : {}),
     startDate: dateKey(monthStart(month)), endDate: dateKey(monthEnd(month)), timezone }, !index && visible, accountScope)
-  const resource = index ?? loaded
+  const indexed = useIndexedMonth(index?.loadMonth, dateKey(monthStart(month)), dateKey(monthEnd(month)), timezone, visible, accountScope)
+  const resource = index?.loadMonth ? indexed : index ?? loaded
   const byDay = new Map(resource.value?.days.map(day => [day.bucketDate, day]))
   const known = resource.value !== undefined
   return <section ref={element} aria-label={monthLabel(month)} data-calendar-month={dateKey(month).slice(0, 7)} style={{ paddingBottom: 12 }}>
@@ -351,7 +355,7 @@ function ScrollingCalendarMonth({ month, today, selectedDate, sourceRef, scopeKe
         today={sameDay(date, today)} showCountLabel unknown={!known} incomplete={index?.incomplete}
         onClick={() => onSelect(date, day)} />
     })}</div>
-    {!index && (resource.loading || resource.error) && <div style={styles.status} role={resource.error ? 'alert' : 'status'}>
+    {(!index || index.loadMonth) && (resource.loading || resource.error) && <div style={styles.status} role={resource.error ? 'alert' : 'status'}>
       {resource.error || (known ? tr("正在更新…") : tr("正在加载…"))}
       {resource.error && <button type="button" style={styles.retryButton} data-arkme-feedback="neutral" onClick={resource.retry}>{tr("重试")}</button>}
     </div>}
@@ -502,7 +506,7 @@ function ConversationCalendarMonths({ getReadingDate, ...props }: Omit<Parameter
 }
 
 export function ArkmeSelfCalendarPopover({
-  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, index, getReadingDate,
+  open, anchor, sourceRef, scopeKey, accountScope, onClose, onSelectRecord, onSelectDate, onSelectIndexedDay, index, getReadingDate,
 }: {
   open: boolean
   anchor: RefObject<HTMLButtonElement>
@@ -512,6 +516,8 @@ export function ArkmeSelfCalendarPopover({
   onClose(): void
   onSelectRecord(item: ArkmeCalendarRecordItem): void
   onSelectDate?(selection: SelfCalendarDateSelection): void
+  /** Locally indexed non-record conversations retain their own message identity. */
+  onSelectIndexedDay?(bucketDate: string): void
   index?: CalendarIndex
   getReadingDate?: (() => string | undefined) | undefined
 }) {
@@ -543,9 +549,10 @@ export function ArkmeSelfCalendarPopover({
     const key = dateKey(normalized)
     selectionControllerRef.current?.abort()
     if ((day?.count ?? 0) <= 0) {
-      setSelectionStatus('这一天没有发给自己的记录')
+      setSelectionStatus(index ? '这一天没有已加载的对话记录' : '这一天没有发给自己的记录')
       return
     }
+    if (onSelectIndexedDay !== undefined) { onSelectIndexedDay(key); onClose(); return }
     if (index && !day?.anchor && !day?.momentAnchor) { setSelectionStatus('当天定位信息暂不可用，请刷新日历后重试'); return }
     if (onSelectDate !== undefined) {
       onSelectDate({ bucketDate: key, timezone, ...(day?.anchor ? { anchor: day.anchor } : {}),
@@ -630,30 +637,32 @@ function calendarTimelineItem(item: ArkmeCalendarRecordItem, avatarRef?: string)
   }), ...(avatarRef === undefined ? {} : { avatarRef }) }
 }
 
-function CalendarSourceBadge({ item, onSelect }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function CalendarSourceBadge({ item, onSelect, onTeamOpened }: { item: ArkmeCalendarRecordItem; onSelect(source: NonNullable<ArkmeCalendarRecordItem['source']>): void; onTeamOpened?: (() => void) | undefined }) {
   // DSH inputs use the shared origin marker, not a personal-topic navigation.
   if (isDshAgentInputCreationSource(item)) return null
+  if (item.sourceKind === 'team') return <TeamRecordSource conversationUid={item.teamConversationUid} navigable onOpened={onTeamOpened} />
   const title = item.topicTitle?.trim() || item.source?.displayName.trim() || (item.sourceKind === 'chat' ? '会话来源暂不可用' : '')
   if (title === '') return null
-  return <button data-arkme-feedback="neutral" type="button" style={{ ...styles.topicBadge, background: 'transparent', cursor: item.source ? 'pointer' : 'default', textAlign: 'left' }}
+  return <button data-arkme-feedback="neutral" type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: item.source ? 'pointer' : 'default' }}
     aria-label={tr("来源：{v0}", { v0: title })} disabled={item.source === undefined}
     onClick={event => { event.stopPropagation(); if (item.source !== undefined) onSelect(item.source) }}>
     {item.source !== undefined && item.source.kind !== 'topic' ? <ArkmeDirectorySourceAvatar source={item.source} size={16} />
-      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <NotePencil size={14} aria-hidden />}
+      : item.sourceKind === 'chat' && !item.topicTitle ? <ChatCircle size={14} aria-hidden /> : <ArkmeTopicSourceIcon />}
     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
     {item.source !== undefined && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
   </button>
 }
 
-function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
+function RecordRow({ item, avatarRef, onOpen, onSelectSource, onTeamOpened }: { item: ArkmeCalendarRecordItem; avatarRef?: string; onTeamOpened?: () => void; onOpen(): void; onSelectSource(source: NonNullable<ArkmeCalendarRecordItem['source']>): void }) {
   const sourceLabel = arkmeCalendarRecordSourceLabel(item)
-  return <article style={styles.recordRow}>
-    <div style={styles.recordStack}>
-      <div style={styles.recordHeader}>
-        <h3 style={styles.recordTitle}>{tr("你")}</h3>
+  const role = !item.protected && (item.sourceKind === 'self' || item.sourceKind === 'topic') ? item.content?.selfRole : undefined
+  return <article data-arkme-calendar-role={role?.roleId} style={{ ...styles.recordRow, ...(role === undefined ? {} : { flexDirection: 'row-reverse', justifyContent: 'flex-end' }) }}>
+    <div style={{ ...styles.recordStack, ...(role === undefined ? {} : { alignItems: 'flex-start' }) }}>
+      <div style={{ ...styles.recordHeader, ...(role === undefined ? {} : { justifyContent: 'flex-start' }) }}>
+        <h3 style={styles.recordTitle}>{role?.name ?? tr("你")}</h3>
         <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
       </div>
-      <div style={{ ...styles.recordBubble, cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
+      <div style={{ ...styles.recordBubble, ...(role === undefined ? {} : { borderRadius: '5px 16px 16px 16px', background: arkmeTheme.subtle }), cursor: 'pointer' }} tabIndex={0} role="button" aria-label={tr("打开快记详情")}
         onKeyDown={event => {
           if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
           event.preventDefault(); onOpen()
@@ -665,14 +674,15 @@ function RecordRow({ item, avatarRef, onOpen, onSelectSource }: { item: ArkmeCal
       }}>
         <ArkmeMessageContent item={calendarTimelineItem(item, avatarRef)} onArticleOpen={onOpen} onCallDetailOpen={onOpen} />
 
-        <CalendarSourceBadge item={item} onSelect={onSelectSource} />
+        <CalendarSourceBadge item={item} onSelect={onSelectSource} onTeamOpened={onTeamOpened} />
         {sourceLabel === '' ? null : <ArkmeDshAgentInputMarker
           style={styles.recordSource}
           iconStyle={styles.recordSourceIcon}
         />}
       </div>
     </div>
-    <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+    {role === undefined ? <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label={tr("当前用户头像")} />
+      : <ArkmeUserAvatar {...(role.avatarRef ? { avatarRef: role.avatarRef } : {})} fallback={arkmeSelfRoleAvatarFallback(role)} size={30} label={`${role.name}的头像`} />}
   </article>
 }
 
@@ -692,12 +702,23 @@ export function ArkmeCalendarCell({
 }) {
   const count = meta?.count ?? 0
   const breakdown = meta?.conversationCounts
+  const markers = meta?.activityMarkers
   const tooltip = breakdown ? [breakdown.messages > 0 ? tr("私聊 {v0} 条", { v0: breakdown.messages }) : '',
     breakdown.interactions > 0 ? tr("群聊互动 {v0} 条", { v0: breakdown.interactions }) : ''].filter(Boolean).join(' · ') : ''
-  return <button data-arkme-feedback={selected ? 'primary' : 'neutral'}
+  const activityLabels = [hasRecordingIndex || markers?.recording ? tr('录音') : '', markers?.chat ? tr('对话') : '',
+    markers?.call ? tr('通话') : '', markers?.arko ? 'Arko' : '', markers?.bot ? 'Bot' : ''].filter(Boolean)
+  const activityHint = activityLabels.length ? tr('有{v0}', { v0: activityLabels.join('、') }) : ''
+  const tooltipText = [tooltip || (!breakdown && count > 0 ? tr('{v0} 条记录', { v0: count }) : ''), activityHint].filter(Boolean).join(' · ')
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipId = useId()
+  const cellKey = dateKey(date)
+  const [hintDate, setHintDate] = useState<string>()
+  const closeHint = useCallback(() => setHintDate(undefined), [])
+  const showHint = !disabled && !unknown && hintDate === cellKey && tooltipText !== ''
+  return <><button ref={buttonRef} data-arkme-feedback={selected ? 'primary' : 'neutral'}
     type="button"
-    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : tr("暂无记录")}${hasRecordingIndex ? ' · 录音索引有内容' : ''}`}
-    title={tooltip || undefined}
+    aria-label={`${dateKey(date)} ${unknown ? '待加载' : count > 0 ? `${incomplete ? '已知 ' : ''}${String(count)} 条记录` : incomplete ? '暂无已加载记录' : activityHint ? '' : tr("暂无记录")}${activityHint ? ` · ${activityHint}` : ''}`}
+    aria-describedby={showHint ? tooltipId : undefined}
     data-selected={selected ? 'true' : 'false'}
     data-arkme-hover="button"
     data-calendar-date={dateKey(date)}
@@ -705,21 +726,36 @@ export function ArkmeCalendarCell({
     disabled={disabled}
     style={{
       ...styles.dayButton,
-      ...(hasRecordingIndex ? { position: 'relative' } : {}),
       ...(showCountLabel && count > 0 ? { background: colors.bubble } : {}),
       ...(today ? { borderColor: colors.selected } : {}),
       ...(disabled ? styles.dayDisabled : {}),
       ...(selected ? styles.daySelected : {}),
     }}
-    onClick={onClick}
+    onPointerEnter={event => { if (event.pointerType !== 'touch') setHintDate(cellKey) }}
+    onPointerLeave={closeHint}
+    onPointerCancel={closeHint}
+    onFocus={event => { if (event.currentTarget.matches(':focus-visible')) setHintDate(cellKey) }}
+    onBlur={closeHint}
+    onClick={() => { closeHint(); onClick() }}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
     <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? `${count}${showCountLabel ? tr("条") : ''}` : ''}</span>
-    {hasRecordingIndex && <span aria-hidden style={{ position: 'absolute', bottom: 2, left: 'calc(50% - 2px)', width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : colors.selected }} />}
+    {(hasRecordingIndex || markers) && <span aria-hidden style={{ position: 'absolute', bottom: 2, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 2, height: 4 }}>
+      {(hasRecordingIndex || markers?.recording) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : colors.selected }} />}
+      {markers?.chat && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#5d8dff' }} />}
+      {markers?.call && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#d79838' }} />}
+      {(markers?.arko || markers?.bot) && <i style={{ width: 4, height: 4, borderRadius: '50%', background: selected ? arkmeTheme.onPrimaryAction : '#9a75d6' }} />}
+    </span>}
   </button>
+    {showHint && buttonRef.current && <ArkmeCalendarDateTooltip anchor={buttonRef.current}
+      id={tooltipId} text={tooltipText} onClose={closeHint} />}
+  </>
 }
 
-export function ArkmeCalendarSurface({
+export function ArkmeCalendarSurface(props: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
+  return <TeamRecordSourceScope><ArkmeCalendarSurfaceBody {...props} /></TeamRecordSourceScope>
+}
+function ArkmeCalendarSurfaceBody({
   onClose, anchor = 'directory', accountScope,
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
   useArkmeLocale()
@@ -860,7 +896,7 @@ export function ArkmeCalendarSurface({
     onClose?.()
     arkmeUi.selectSource(source)
   }
-  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} />
+  const sourceBadge = selectedItem === undefined ? undefined : <CalendarSourceBadge item={selectedItem} onSelect={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }} />
 
   return <div style={{
     ...styles.root,
@@ -906,8 +942,8 @@ export function ArkmeCalendarSurface({
               <NotePencil size={23} style={styles.emptyIcon} aria-hidden />
               <strong>{tr("这一天还没有快记")}</strong>
             </div>
-              : <ArkmeDirectoryWindow activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
-                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource}
+              : <ArkmeDirectoryWindow scrollRootRef={listRef} activeKey={selectedItem?.recordUid}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item}
+                onOpen={() => { setSelectedRecord({ scope: recordsScope, uid: item.recordUid }); setShowOriginal(false) }} onSelectSource={selectSource} onTeamOpened={() => { setSelectedRecord(undefined); onClose?.() }}
                 {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}</ArkmeDirectoryWindow>}
           {records?.hasMore === true && records.nextCursor !== undefined && <div ref={loadMoreSentinel} style={{ minHeight: 1 }}>
             {loadingMore && <div style={styles.loadingStatus} role="status">{tr("加载中…")}</div>}
@@ -917,8 +953,9 @@ export function ArkmeCalendarSurface({
       {detailItem !== undefined && <div style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }}>
         <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(394px, 100%)', pointerEvents: 'auto' }}>
           {detailItem.forwardRecords !== undefined
-            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem} onClose={() => setSelectedRecord(undefined)} />
-            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} key={detailItem.itemUid} item={detailItem} canExtend={false}
+            ? <ForwardRecordsDetail sourceBadge={sourceBadge} item={detailItem}
+              onPrivateChatOpened={selectSource} onClose={() => setSelectedRecord(undefined)} />
+            : <ArkmeTimelineDetailDrawer sourceBadge={sourceBadge} {...(detailItem.selfRole === undefined ? {} : selectedItem?.sourceKind === 'self' ? { sourceKind: 'send_to_self' as const } : selectedItem?.sourceKind === 'topic' ? { sourceKind: 'topic' as const } : {})} key={detailItem.itemUid} item={detailItem} canExtend={false}
               showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal(value => !value)}
               onClose={() => setSelectedRecord(undefined)} />}
         </div>

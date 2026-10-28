@@ -1,6 +1,8 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
+import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
-import { Button, IconEditOutline16, IconNewChatOutline16, IconTrashOutline16, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEditOutlineMedium, IconNewChatOutlineMedium, IconTrashOutlineMedium, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { conversationMenuLayer, conversationMenuPosition } from './conversation-menu-layer.js'
@@ -336,7 +338,7 @@ function ArkmeTopicCount({ count, error, hidden }: { count: number | undefined; 
 export function ArkmeSourceBreadcrumb({
   userId, environment = 'prod', selectedSource, sources, loading = false, countsReady, error, onSelect, onSelectAggregate,
   onCreateTopic, onCreateChildTopic, onRenameTopic, onDissolveTopic, onRetry, onMoveTopic, activeDissolve,
-  tourOpen, trigger = 'visible', onOpen, assignment,
+  tourOpen, trigger = 'visible', onOpen, assignment, showRootTitle = true,
 }: {
   userId?: number | undefined
   environment?: ArkmeEnvironment
@@ -347,6 +349,8 @@ export function ArkmeSourceBreadcrumb({
   error?: string
   tourOpen?: boolean | undefined
   trigger?: 'visible' | 'none'
+  /** The conversation header can own the fixed name separately from this selector. */
+  showRootTitle?: boolean
   onSelect(source: ArkmeSourceItem): void
   onSelectAggregate(): void
   onOpen?(): void
@@ -379,6 +383,7 @@ export function ArkmeSourceBreadcrumb({
   const [draggingSourceRef, setDraggingSourceRef] = useState<string>()
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicMenuSource, setTopicMenuSource] = useState<ArkmeSourceItem>()
+  const archiveMutation = useArchiveMutation()
   const [renameTopic, setRenameTopic] = useState<ArkmeSourceItem>()
   const [dissolveTopic, setDissolveTopic] = useState<ArkmeSourceItem>()
   const [dissolveDialogOpen, setDissolveDialogOpen] = useState(false)
@@ -423,6 +428,9 @@ export function ArkmeSourceBreadcrumb({
   const label = arkmeSelfTopicSelectionLabel(selectedSource, sources)
   const selectedRef = selectedSource?.kind === 'send_to_self' || selectedSource === undefined ? undefined : selectedSource.sourceRef
   const countsComplete = countsReady ?? (!loading && error === undefined)
+  // A full snapshot remains usable while the owner revalidates membership.
+  // Loading rows are only for an incomplete directory, never background refresh.
+  const showDirectoryLoading = loading && !countsComplete
   const allTopicsCount = countsComplete
     ? arkmeSelfDirectorySources(sources).reduce((total, source) => total + topicDirectRecordCount(source), 0)
     : undefined
@@ -697,10 +705,17 @@ export function ArkmeSourceBreadcrumb({
       const anchor = menu?.parentElement
       const win = menu?.ownerDocument.defaultView
       if (!menu || !anchor || !win) return
-      // The inline header sits to the right of the conversation list. Limit its
-      // width to the actual remaining viewport, not the entire window width.
       const resize = () => {
-        menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - anchor.getBoundingClientRect().left - 12)}px`)
+        const left = anchor.getBoundingClientRect().left
+        if (!showRootTitle) {
+          // A centered trigger should keep a full-sized menu, shifting it left
+          // at the right edge rather than squeezing its rows into a narrow strip.
+          menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - 24)}px`)
+          const width = menu.getBoundingClientRect().width || menuLayout.width
+          menu.style.left = `${Math.max(12 - left, Math.min(0, win.innerWidth - left - width - 12))}px`
+        } else {
+          menu.style.setProperty('--arkme-topic-menu-available-width', `${Math.max(0, win.innerWidth - left - 12)}px`)
+        }
       }
       resize()
       const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(resize)
@@ -720,7 +735,7 @@ export function ArkmeSourceBreadcrumb({
       }
     })
     return () => { cancelAnimationFrame(frame) }
-  }, [externalRequest, open, positionExternalMenu, rows])
+  }, [externalRequest, open, positionExternalMenu, rows, showRootTitle])
   useLayoutEffect(() => {
     if (!open || !menuRef.current || !menuListRef.current) return
     return watchConversationMenuScrollbars(menuRef.current, menuListRef.current)
@@ -837,8 +852,9 @@ export function ArkmeSourceBreadcrumb({
   return <nav aria-label={tr("发给自己主题")} style={trigger === 'visible' ? styles.breadcrumb : {
     ...styles.breadcrumb, position: 'absolute', width: 0, height: 0, minWidth: 0, overflow: 'visible',
   }}>
+    {trigger === 'visible' && selectedSource?.kind === 'topic' && <ArkmeArchiveStatus source={selectedSource} />}
     <style>{CONVERSATION_SELECTOR_CSS}</style>
-    {trigger === 'visible' && <><span data-arkme-self-topic-root="true" style={styles.fixedTitle}>{tr("发给自己")}</span>
+    {trigger === 'visible' && <>{showRootTitle && <span data-arkme-self-topic-root="true" style={styles.fixedTitle}>{tr("发给自己")}</span>}
     <button
       ref={selectorRef}
       type="button" aria-label={tr("选择主题")} aria-haspopup="tree" aria-expanded={open}
@@ -1010,13 +1026,19 @@ export function ArkmeSourceBreadcrumb({
             : <ArkmeTopicCount count={displayedCount} error={error} hidden={showActions} />}</button>
           {showActions && <span data-arkme-self-topic-actions style={styles.topicActions}><ArkmeDshRowActionsMenu open={manageMenuOpen} label={tr("{v0}主题操作", { v0: row.source.displayName })}
             items={[
-              ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutline16 /> }] : []),
-              ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutline16 /> }] : []),
-              ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutline16 />, danger: true }] : []),
+              ...(canCreateChild ? [{ id: 'create', label: '新建子主题', icon: <IconNewChatOutlineMedium /> }] : []),
+              ...(onRenameTopic ? [{ id: 'rename', label: '重命名', icon: <IconEditOutlineMedium /> }] : []),
+              { id: 'archive', label: tr('归档'), icon: <Archive size={16} />, disabled: archiveMutation.isBusy(row.source.sourceRef) },
+              ...(onDissolveTopic ? [{ id: 'dissolve', label: '解散主题', icon: <IconTrashOutlineMedium />, danger: true }] : []),
             ]}
             onToggle={() => { setSortMenuOpen(false); setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : row.source) }}
             onClose={() => { setTopicMenuSource(current => current?.sourceRef === row.source.sourceRef ? undefined : current) }}
             onSelect={action => {
+              if (action === 'archive') {
+                setTopicMenuSource(undefined)
+                void archiveMutation.archive(row.source)
+                return
+              }
               closeMenu()
               if (action === 'create' && canCreateChild) onCreateChildTopic?.(row.source, row.depth + 1)
               if (action === 'rename') { setTopicMutationError(''); setRenameTopic(row.source) }
@@ -1024,7 +1046,7 @@ export function ArkmeSourceBreadcrumb({
             }}
           /></span>}
         </div>
-        {loading && row.source.hasPendingChildren === true && <div role="status" data-arkme-self-topic-children-loading="true"
+        {showDirectoryLoading && row.source.hasPendingChildren === true && <div role="status" data-arkme-self-topic-children-loading="true"
           style={{ ...styles.childLoadingRow, paddingLeft: 34 + row.depth * 16 }}
         ><ArkmeTopicLoadingIcon />{tr("加载子主题")}</div>}
       </div>
@@ -1045,7 +1067,8 @@ export function ArkmeSourceBreadcrumb({
         }}
       >{tr("拖到这里，变为一级主题")}</div>}
       {moveError !== '' && <div role="alert" style={styles.loadingRow}>{moveError}</div>}
-      {loading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />{searching ? '仍在查找主题…' : '加载更多主题'}</div>}
+      {archiveMutation.error !== '' && <div role="alert" style={styles.loadingRow}>{archiveMutation.error}</div>}
+      {showDirectoryLoading && <div role="status" data-arkme-self-topic-loading="true" style={styles.loadingRow}><ArkmeTopicLoadingIcon />{searching ? '仍在查找主题…' : '加载更多主题'}</div>}
       {!loading && !error && rows.length === 0 && (searching || assignment) && <div role="status" style={styles.loadingRow}>{searching ? '没有匹配的主题' : '暂无主题'}</div>}
       {!loading && error !== undefined && <div role="alert" style={styles.loadingRow}>{tr("加载失败")}{onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={onRetry}>{tr("重试")}</button>}
       </div>}
@@ -1057,7 +1080,7 @@ export function ArkmeSourceBreadcrumb({
       <div data-arkme-self-topic-footer="true" style={styles.createFooter}>
         {onCreateTopic !== undefined && <Button type="button" variant="outline" size="md" aria-label={tr("新主题")}
           disabled={assignment?.disabled}
-          className="arkme-self-topic-create-button" icon={<IconNewChatOutline16 size={14} />} onClick={() => {
+          className="arkme-self-topic-create-button" icon={<IconNewChatOutlineMedium size={14} />} onClick={() => {
           if (assignment) { if (!assignment.disabled) onCreateTopic(); return }
           acceptExternalSelection()
           closeMenu()

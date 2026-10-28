@@ -11,6 +11,7 @@ const versionsPath = '/api/public/v1/ci/arkme-plugin/runtime/versions'
 const defaultPollIntervalMs = 5_000
 const defaultPollTimeoutMs = 15 * 60_000
 const maxBackendAttempts = 3
+const ossUploadTimeoutMs = 5 * 60_000
 const sha40Pattern = /^[0-9a-f]{40}$/
 const sha256Pattern = /^[0-9a-f]{64}$/
 const objectPrefixPattern = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/
@@ -217,17 +218,29 @@ function ossErrorStatus(error) {
   return Number.isFinite(status) ? status : undefined
 }
 
-export async function uploadRuntimeObject(client, objectKey, artifactPath, headers, { sleep = delay } = {}) {
+export async function uploadRuntimeObject(client, objectKey, artifactPath, headers, { sleep = delay, log = () => {} } = {}) {
   for (let attempt = 1; attempt <= maxBackendAttempts; attempt += 1) {
+    const startedAt = Date.now()
+    const context = `oss_upload attempt=${attempt}/${maxBackendAttempts}`
+    log(`${context} timeout_ms=${ossUploadTimeoutMs} status=started`)
     try {
-      return await client.put(objectKey, artifactPath, { headers })
+      // Cross-region CI uploads can exceed the SDK's default 60 second timeout.
+      const result = await client.put(objectKey, artifactPath, { headers, timeout: ossUploadTimeoutMs })
+      log(`${context} status=success elapsed_ms=${Date.now() - startedAt}`)
+      return result
     } catch (error) {
       const status = ossErrorStatus(error)
       const code = error && typeof error === 'object' ? error.code : undefined
-      if (status === 409 && code === 'FileAlreadyExists') return { alreadyExists: true }
+      if (status === 409 && code === 'FileAlreadyExists') {
+        log(`${context} status=already_exists elapsed_ms=${Date.now() - startedAt}`)
+        return { alreadyExists: true }
+      }
       const retryable = status === undefined || status === -1 || status === -2 || status === 429 || status >= 500
-      if (!retryable || attempt === maxBackendAttempts) throw error
-      await sleep(1_000 * attempt)
+      const retryDelayMs = retryable && attempt < maxBackendAttempts ? 1_000 * attempt : 0
+      // Do not serialize SDK errors: they can contain signed request details.
+      log(`${context} status=failed elapsed_ms=${Date.now() - startedAt} http_status=${status ?? 'unknown'} retry_in_ms=${retryDelayMs}`)
+      if (retryDelayMs === 0) throw error
+      await sleep(retryDelayMs)
     }
   }
   throw new Error('OSS upload failed')
@@ -262,7 +275,7 @@ export async function publishRuntimeArtifact(options, {
   const grant = await request(uploadCredentialsPath, { method: 'POST', body: artifact })
   const credentials = validateUploadGrant(grant, expectedObjectSuffix)
   for (const value of [credentials.access_key_id, credentials.access_key_secret, credentials.security_token]) mask(value)
-  log(`version=${metadata.version} source_sha=${options.sourceSHA} object_key=${grant.object_key}`)
+  log(`version=${metadata.version} source_sha=${options.sourceSHA} object_key=${grant.object_key} size_bytes=${metadata.size}`)
 
   const oss = createOSSClient({
     accessKeyId: credentials.access_key_id,
@@ -280,6 +293,7 @@ export async function publishRuntimeArtifact(options, {
     'x-oss-meta-source-sha': options.sourceSHA,
   }, {
     sleep,
+    log,
   })
 
   const created = await request(versionsPath, {

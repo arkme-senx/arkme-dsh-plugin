@@ -1,5 +1,11 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
 import type { ArkmeAuthSnapshot } from '../src/types.js'
 
 const testState = vi.hoisted(() => ({
@@ -46,7 +52,7 @@ const english = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn[key]) as ArkmeLoginT
 function LoginAfterLogout({ t }: { t: ArkmeLoginTranslate }) {
   const flow = useArkmeAuthFlow({}, t)
   return <ArkmeStartupAuthGateView
-    screen={startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error)}
+    screen={startupAuthGateScreen(flow.auth, flow.error)}
     error={flow.error} busy={flow.busy} onRetry={flow.retry} flow={flow} t={t}
   />
 }
@@ -104,6 +110,21 @@ describe('Arkme WeChat login ownership', () => {
 
     expect(restored.startsWith('data:image/gif;base64,')).toBe(true)
     expect(arkmePendingWechatQrDataUrl({ status: 'logged-out', environment: 'prod' })).toBe('')
+  })
+
+  it('trusts an authenticated old account without a browser phone check or binding flash', async () => {
+    const auth: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'prod', userId: 10003 }
+    vi.mocked(callArkme).mockImplementation(async method => {
+      testState.calls.push(method)
+      if (method === 'auth.status') return auth as never
+      if (method === 'auth.config') return { captchaId: '', testLoginEnabled: false, jiwoScanLoginEnabled: false } as never
+      throw new Error(`unexpected auth-flow request ${method}`)
+    })
+    arkmeAuthStore.setAuth(auth)
+    await act(async () => { renderer = create(<LoginAfterLogout t={defaultArkmeLoginTranslate} />) })
+    expect(renderer!.root.findAllByType(ArkmeLogin)).toHaveLength(0)
+    expect(testState.calls).not.toContain('user.profile.refresh')
+    expect(arkmeAuthStore.getSnapshot().auth?.status).toBe('authenticated')
   })
 
   it('keeps the Web dialog open when a newly signed-in account requires phone binding', async () => {
@@ -164,6 +185,30 @@ describe('Arkme WeChat login ownership', () => {
     await act(async () => { phoneTab!.props.onClick() })
 
     expect(renderer!.root.findByType(ArkmeLogin).props.mode).toBe('phone')
+  })
+
+  it.each([
+    ['startup gate', () => <LoginAfterLogout t={defaultArkmeLoginTranslate} />, 'phone'],
+    ['startup gate', () => <LoginAfterLogout t={defaultArkmeLoginTranslate} />, 'password'],
+    ['sidebar', () => <ArkmeSurface ownsQrLogin />, 'phone'],
+    ['sidebar', () => <ArkmeSurface ownsQrLogin />, 'password'],
+  ] as const)('preserves the selected login method in the %s across foreground revalidation (%s)', async (_surface, renderSurface, mode) => {
+    testState.jiwoScanLoginEnabled = true
+    arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
+    await act(async () => { renderer = create(renderSurface()) })
+    await act(async () => { renderer!.root.findByType(ArkmeLogin).props.onModeChange(mode) })
+    if (mode === 'password') {
+      await act(async () => {
+        const fields = renderer!.root.findByType(ArkmeLogin).props.passwordLogin
+        fields.onAccountChange('review-fixture'); fields.onPasswordChange('synthetic-password')
+      })
+    }
+    for (let index = 0; index < 2; index++) {
+      await act(async () => { await arkmeAuthStore.refresh() })
+      const props = renderer!.root.findByType(ArkmeLogin).props
+      expect(props.mode).toBe(mode)
+      if (mode === 'password') expect(props.passwordLogin).toMatchObject({ account: 'review-fixture', password: 'synthetic-password' })
+    }
   })
 
   it.each([

@@ -9,7 +9,8 @@ describe('Arkme public brand slots', () => {
     const hero = renderToStaticMarkup(<ArkmeHeroBrandMark size={40} className="hero-mark" />)
     const name = renderToStaticMarkup(<ArkmeSidebarBrandName />)
 
-    expect(sidebar).toContain('width="97"')
+    expect(sidebar).toContain('width:48px')
+    expect(sidebar).toContain('alt="即我"')
     expect(sidebar).toContain('data:image/png;base64,')
     expect(hero).toContain('width="40"')
     expect(hero).toContain('hero-mark')
@@ -20,7 +21,9 @@ describe('Arkme public brand slots', () => {
     const source = await readFile(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("ctx.slots.inject('sidebar'")
-    expect(source).toContain("['conversation', 'main.conversation']")
+    expect(source).toContain("ctx.slots.inject('main'")
+    expect(source).toContain("key: 'conversation'")
+    expect(source).toContain("ctx.slots.inject('rightbar'")
     expect(source).not.toContain("ctx.slots.inject('sidebar.brand.mark'")
     expect(source).not.toContain("ctx.slots.inject('conversation.hero.brand.mark'")
     expect(source).not.toContain('MutationObserver')

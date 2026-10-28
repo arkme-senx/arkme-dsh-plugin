@@ -1,0 +1,104 @@
+.team-message-panel{width:100%;height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:var(--arkme-chat-bg,var(--dsw-alias-bg-base,#fff));color:var(--dsw-alias-label-primary,#17191c);font:14px/1.5 system-ui}
+.team-settings button,.team-settings input,.team-settings textarea,.team-settings select{font:inherit}.team-settings button{cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#d7dae1);border-radius:7px;background:transparent;color:inherit;padding:6px 10px}.team-settings button:disabled{opacity:.5;cursor:default}.team-settings button:focus-visible,.team-settings input:focus-visible,.team-settings textarea:focus-visible{outline:2px solid #657bea;outline-offset:2px}.team-panel-header{display:flex;align-items:center;gap:16px;padding:16px 20px;border-bottom:1px solid var(--dsw-alias-border-l2,#e3e5eb)}.team-panel-header>span{flex:1;color:var(--dsw-alias-label-secondary,#7d818b)}.team-main{flex:1;min-width:0;overflow:auto}.team-empty{padding:20px;color:var(--dsw-alias-label-secondary,#7c818d);text-align:center}.team-conversation-pane{height:100%;display:flex;flex-direction:column}.team-conversation-pane>header{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--dsw-alias-border-l2,#e3e5eb)}.team-conversation-pane>header>div{flex:1}.team-conversation-pane>header small{display:block;color:var(--dsw-alias-label-secondary,#7c818d)}.team-message-list{flex:1;min-height:120px;overflow:auto;padding:16px 20px}.team-message{display:flex;gap:12px;margin:0 0 20px}.team-read-sentinel{height:2px}.team-settings{padding:24px 0;max-width:none;border-bottom:1px solid var(--dsw-alias-border-l2,#e3e5eb)}.team-settings input{width:100%;box-sizing:border-box;padding:8px}.team-settings h3{margin-top:28px}.team-settings p{color:var(--dsw-alias-label-secondary,#777e8c)}.team-member-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--dsw-alias-border-l1,#eceef3)}.team-member-row>span:first-child{flex:1}.team-error{padding:10px 16px;background:var(--dsw-alias-interactive-bg-hover-danger,#fff1eb);color:var(--dsw-alias-state-error-primary,#a14b31);white-space:pre-wrap}.team-receipts,.team-edit,.team-confirm{padding:12px 18px;background:var(--dsw-alias-bg-layer-1,#f5f6fb);border:1px solid var(--dsw-alias-border-l2,#dedfea)}.team-receipts{max-height:150px;overflow:auto}.team-unread-dot{height:8px;width:8px;background:#d66b50;border-radius:50%}
+
+.team-settings input,.team-settings select{background:var(--dsw-specific-input-major,var(--dsw-alias-bg-layer-2,#fff));color:inherit;border:1px solid var(--dsw-alias-border-l2,#d7dae1)}
+.team-message-list{overflow-anchor:none}
+
+
+
+
+.team-opening-error{margin:auto;max-width:480px;padding:32px;text-align:center;color:var(--dsw-alias-label-secondary,#777e8c)}
+.team-conversation-directory{overflow:auto;padding:16px 20px;min-height:0}.team-conversation-directory>[role=list]{max-width:760px;margin:0 auto}
+.team-settings button,.arkme-team-detail .team-confirm button{font:inherit;cursor:pointer;color:inherit;background:transparent;border:1px solid var(--dsw-alias-border-l2,#e3e5eb);border-radius:8px;padding:7px 12px;margin:4px}.team-settings button:disabled{opacity:.5;cursor:default}.team-settings h2{font-size:16px;margin:0}.team-settings input{border:1px solid var(--dsw-alias-border-l2,#e3e5eb);border-radius:8px;background:transparent;color:inherit;font:inherit}
+@media(max-width:760px){.team-message-list{padding:12px}.team-conversation-pane>header{padding:12px;flex-wrap:wrap}}
+.arkme-team-directory-actions{display:flex;align-items:center;padding:0 6px}.arkme-team-directory-actions button{font:inherit;border:1px solid var(--dsw-alias-border-l2,#e3e5eb);background:transparent;color:inherit;border-radius:8px;padding:7px 12px;cursor:pointer}
+
+.team-message-panel,.team-conversation-pane{min-width:0;box-sizing:border-box}
+.team-conversation-pane>header>div{min-width:0;overflow-wrap:anywhere}
+
+@media(max-width:760px){.team-message-list{padding:10px}.team-message{gap:6px}.team-conversation-pane>header{padding:10px}}
+
+.arkme-team-detail>.team-settings{width:min(760px,calc(100% - 2 * var(--arkme-team-detail-inset)));margin:0 auto;padding:12px 0 28px;box-sizing:border-box}
+.arkme-team-detail-actions{max-width:760px;margin:20px auto 0;display:flex;justify-content:flex-start}
+.arkme-team-member-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.arkme-team-action{min-height:32px;white-space:nowrap;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#e3e5eb)!important;border-radius:8px;padding:5px 12px;background:var(--dsw-alias-button-elevated-fill,#fff);color:var(--dsw-alias-label-primary,#202124)}
+.team-settings button,.arkme-team-directory-actions button{border:1px solid var(--dsw-alias-border-l2,#e3e5eb)!important}
+.arkme-team-detail-footer{width:min(760px,calc(100% - 2 * var(--arkme-team-detail-inset)));margin:0 auto;padding:20px 0;box-sizing:border-box}
+@media(max-width:760px){.arkme-team-member-actions{gap:4px}.arkme-team-action{padding:5px 8px}}
+
+/* Team details use the Contacts detail rhythm and one document scroll owner. */
+[data-arkme-workspace] .arkme-team-detail button.arkme-team-action {
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;
+  padding:8px 14px;background:var(--dsw-alias-button-elevated-fill,var(--dsw-alias-bg-base,#fff));
+}
+[data-arkme-workspace] .arkme-team-detail button.arkme-team-primary-action {
+  background:var(--dsw-alias-button-primary-fill,#202124);color:var(--dsw-alias-label-primary-inverted,#fff);
+  border-color:transparent!important;
+}
+[data-arkme-workspace] .arkme-team-directory-actions button.arkme-team-directory-add {
+  display:grid;place-items:center;width:32px;height:32px;min-width:32px;padding:0;
+  border:0!important;border-radius:8px;color:var(--dsw-alias-label-secondary,#68707c);
+}
+[data-arkme-workspace] .arkme-team-directory-add:hover {background:var(--dsw-alias-interactive-bg-hover,#f1f2f5)}
+.team-channel-card {border:1px solid var(--dsw-alias-border-l1,#e7e7e9);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);overflow:hidden}
+.team-channel-state {display:flex;align-items:center;gap:12px;padding:16px}
+.team-channel-icon {display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f2f3f5);color:var(--dsw-alias-label-secondary,#68707c)}
+.team-channel-state>div {flex:1;min-width:0}
+.team-channel-state small {display:block}
+.team-channel-state small {margin-top:3px;font-size:12px;color:var(--dsw-alias-label-secondary,#68707c)}
+:is([data-arkme-workspace], .arkme-team-message-channel-dialog) .team-settings button.team-channel-switch {flex:none;width:40px;height:24px;min-height:24px;padding:3px;margin:0;border:0!important;border-radius:20px;background:var(--dsw-alias-border-l2,#c9ccd2)}
+:is([data-arkme-workspace], .arkme-team-message-channel-dialog) .team-settings button.team-channel-switch[aria-checked=true] {background:var(--dsw-alias-state-business-primary,#5368cd)}
+.team-channel-switch>span {display:block;width:18px;height:18px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0002;transition:transform .15s}
+.team-channel-switch[aria-checked=true]>span {transform:translateX(16px)}
+.team-channel-sharing {border-top:1px solid var(--dsw-alias-border-l1,#e7e7e9);padding:14px 16px}
+:is([data-arkme-workspace], .arkme-team-message-channel-dialog) .team-settings button.team-link-reset {margin:0;padding:0;border:0!important}
+.team-channel-link-row {display:flex;align-items:center;gap:8px}
+.team-channel-link-row input {flex:1;min-width:0;font-size:12px;padding:10px}
+.team-channel-link-row button {display:flex;align-items:center;gap:6px;flex:none;margin:0}
+.team-channel-link-help {margin:8px 0 0;font-size:12px}
+.team-setting-disclosure summary {cursor:pointer}
+.team-setting-disclosure {margin-top:12px;border:1px solid var(--dsw-alias-border-l1,#e7e7e9);border-radius:12px}
+.team-setting-disclosure>summary {padding:16px;font-size:14px;font-weight:500}
+.team-setting-disclosure>summary small {float:right;font-size:12px;color:var(--dsw-alias-label-secondary,#68707c);font-weight:400}
+.team-setting-disclosure-body {padding:0 16px 16px}
+.team-setting-disclosure-body p {margin:0 0 12px;font-size:13px}
+.team-member-row strong,.team-member-row small {display:block}
+.team-member-row small {font-size:12px;color:var(--dsw-alias-label-secondary,#68707c)}
+.team-application-actions {display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.arkme-team-detail-footer>button {font:inherit;color:var(--dsw-alias-state-error-primary,#b42318)!important;padding:8px 0}
+@media(max-width:760px){.team-channel-state,.team-channel-sharing{padding:12px}.team-setting-disclosure>summary{padding:12px}.team-setting-disclosure>summary small{float:none;display:block;margin-top:4px}}
+
+/* Team profile uses the same compact identity form as the role editor. */
+.arkme-team-profile-editor{overflow:visible;width:min(400px,calc(100% - 40px));box-sizing:border-box;padding:24px;border:0;border-radius:14px;background:var(--dsw-specific-sidebar-fill,#fff);color:var(--dsw-alias-label-primary,#292929);box-shadow:0 22px 65px rgba(0,0,0,.22)}
+.arkme-team-profile-editor::backdrop{background:rgba(17,24,39,.42)}
+.arkme-team-profile-editor h3{margin:0;font-size:20px;font-weight:600}
+.arkme-team-profile-identity{display:flex;align-items:flex-start;gap:16px;margin-top:20px}
+.arkme-team-profile-avatar-field{width:56px;flex:none;text-align:center}
+.arkme-team-profile-avatar-trigger{width:56px;height:56px;position:relative;border:0;border-radius:50%;padding:2px;background:transparent;cursor:pointer}
+.arkme-team-profile-avatar-trigger>img{width:52px;height:52px;object-fit:cover;border-radius:50%}
+.arkme-team-profile-avatar-add{position:absolute;right:-2px;bottom:-2px;width:19px;height:19px;display:grid;place-items:center;border-radius:50%;font-size:14px}
+.arkme-team-profile-identity label{min-width:0;flex:1;display:grid;gap:6px;font-size:13px;color:var(--dsw-alias-label-secondary,#717780)}
+.arkme-team-profile-identity input{width:100%;height:40px;padding:0 10px;box-sizing:border-box;border-radius:7px;border:1px solid var(--dsw-alias-border-l1,#ddd);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#292929);font:inherit;font-size:15px}
+.arkme-team-profile-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}
+.arkme-team-profile-actions button{border:1px solid var(--dsw-alias-border-l1,#e6e8ec);border-radius:7px;padding:8px 18px;font:inherit;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#292929);cursor:pointer}
+.arkme-team-profile-actions button[type=submit]{background:var(--dsw-alias-label-primary,#343b48);color:var(--dsw-alias-bg-base,#fff);border-color:transparent;font-weight:600}
+.arkme-team-profile-editor button:disabled{opacity:.5;cursor:default}
+.arkme-team-profile-error{color:var(--dsw-alias-label-error,#bf3030);font-size:13px;line-height:1.5}
+
+.arkme-team-profile-avatar-option{display:grid;gap:3px;text-align:left;font-size:13px;line-height:1.4}
+.arkme-team-profile-avatar-option small{font-size:11px;color:var(--dsw-alias-label-secondary,#717780)}
+.arkme-team-profile-avatar-field [role=menuitem]:has(.arkme-team-profile-avatar-option){height:auto;min-height:52px}
+.arkme-team-profile-avatar-field [role=menuitem]>span:has(.arkme-team-name-avatar){width:28px;flex:0 0 28px}
+
+.team-receipt-heading { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
+.team-receipt-heading > span { font-weight: 400; opacity: .65; }
+
+.arkme-team-message-channel-body {padding:20px;min-width:0}
+.arkme-team-message-channel-body>.team-settings {padding:16px 0 0;border-bottom:0}
+.arkme-team-message-channel-conversations {display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#f8f9fa);color:inherit;font:inherit;font-size:14px;text-align:left;cursor:pointer}
+.arkme-team-message-channel-conversations>span:first-of-type {flex:1}
+.arkme-team-message-channel-conversations>span:last-child {color:var(--dsw-alias-label-tertiary,#9097a1)}
+.arkme-team-message-channel-conversations:hover {background:var(--dsw-alias-interactive-bg-hover,#f1f2f5)}
+.arkme-team-message-channel-conversations:focus-visible {outline:2px solid var(--dsw-alias-state-business-primary,#8295e8);outline-offset:2px}
+.arkme-team-message-channel-dialog .team-channel-link-row {flex-wrap:wrap}
+.arkme-team-message-channel-dialog .team-channel-link-row input {flex:1 1 180px}

@@ -1,0 +1,115 @@
+import type { ArkmeTeamMember } from './types.js'
+
+/** Versioned, local-only events. No credentials, raw tool results or private reasoning. */
+export type TeamCodexEventKind = 'UserPromptSubmit' | 'Stop' | 'Interrupt'
+export type TeamCodexConnectionStatus = 'pending' | 'active' | 'paused' | 'disconnected' | 'expired'
+/** Navigation hint only. It grants neither cloud access nor upload permission. */
+export interface TeamCodexEntryAvailability {
+  userId: number
+  visible: boolean
+  checked: boolean
+}
+export interface TeamCodexQueuedRequest {
+  id: string
+  text: string
+  createdAt: number
+  delivery: 'queue' | 'send-now'
+  state: 'queued' | 'pending' | 'sending' | 'unknown'
+  paused: boolean
+  attachmentCount: number
+  truncated: boolean
+}
+/** A read-only, shape-validated desktop snapshot, not a Codex scheduling API. */
+export interface TeamCodexQueueSnapshot {
+  version: number
+  availability: 'ready' | 'partial' | 'unavailable' | 'stale' | 'paused'
+  reason: 'none' | 'unavailable' | 'unsupported' | 'wrong-home' | 'excluded' | 'paused' | 'ambiguous-owner'
+  sourceAt: number | null
+  checkedAt: number
+  changedAt: number
+  items: TeamCodexQueuedRequest[]
+}
+export interface TeamCodexTask {
+  id: string
+  title: string
+  status: TeamCodexConnectionStatus
+  state: 'waiting' | 'working' | 'finished' | 'interrupted'
+  updatedAt: number
+  eventCount: number
+  member: ArkmeTeamMember
+  /** Present for server-backed tasks; remote tasks never expose local mutation controls. */
+  cloud?: { taskId: string; sourceId: string; sourceName: string; ownerRef: string; remote: boolean }
+  cloudBlocked?: boolean
+  /** Absent only on the original, single-session trial records. */
+  installationId?: string
+  projectKey?: string
+  projectName?: string
+  cwd?: string
+  branch?: string
+  worktree?: string
+  excluded?: boolean
+  projectExcluded?: boolean
+  queue?: TeamCodexQueueSnapshot
+  /** Set only after checking the cloud contract and row ownership; never authorizes dispatch. */
+  queueCloud?: 'ready' | 'unsupported' | 'unavailable' | 'private'
+  currentInput?: { turnId: string; text: string; at: number }
+  /** Local, account-checked source evidence. Absence does not mean another physical computer. */
+  captureHealth?: { status: 'online' | 'buffering' | 'offline' | 'paused'; checkedAt: number; lastReceivedAt: number }
+}
+export interface TeamCodexInstallation {
+  id: string
+  name: string
+  status: TeamCodexConnectionStatus
+  configured: boolean
+  updatedAt: number
+  excludedProjects: { key: string; name: string }[]
+}
+export interface TeamCodexState {
+  localOnly: boolean
+  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; sourceName?: string; reviewingTasks?: number }
+  self: ArkmeTeamMember | null
+  tasks: TeamCodexTask[]
+  installations: TeamCodexInstallation[]
+}
+export interface TeamCodexInvitation {
+  id: string
+  instructions: string
+  expiresAt: number
+  /** Snapshot for this account and selected team, never an authorization grant. */
+  context?: {
+    account: { name: string; jotmoId: string }
+    team: { name: string; jotmoId: string }
+    cloudUpload: 'enabled' | 'disabled' | 'unsupported' | 'unavailable'
+  }
+}
+/** Source-reported turn lifecycle, never derived from transport timestamps. */
+export interface TeamCodexTurnTiming {
+  startedAt: number
+  completedAt?: number
+  durationMs?: number
+  state: 'working' | 'finished' | 'interrupted'
+  observedAt: number
+  /** Explicit source liveness at observedAt; absent on older cloud contracts. */
+  live?: boolean
+}
+export interface TeamCodexProgress { id:string; text:string; at:number; truncated:boolean }
+export interface TeamCodexEvent {
+  eventId?: string
+  version?: number
+  sequence: number
+  turnId: string
+  kind: TeamCodexEventKind
+  text: string
+  at: number
+  truncated: boolean
+  /** Owner-local public progress; excluded from the cloud transport until its protocol supports it. */
+  localProgress?: TeamCodexProgress[]
+  timing?: TeamCodexTurnTiming
+  /** Host-local, owner-only references. Never serialized into the team cloud journal. */
+  privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'unavailable' }[]
+}
+export interface TeamCodexEventPage {
+  items: TeamCodexEvent[]
+  nextBefore?: number
+  nextCursor?: string
+}

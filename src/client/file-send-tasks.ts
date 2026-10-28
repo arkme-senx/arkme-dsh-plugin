@@ -24,6 +24,7 @@ export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem
   return {
     itemUid: task.result?.itemUid ?? task.recordUid, title: task.content.title ?? '', textContent: task.content.textContent ?? '', textFormat: task.content.textFormat ?? 'plain',
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
+    ...(task.result?.sequence === undefined ? {} : { sequence: task.result.sequence }),
     ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
     contentBlocks: visibleFiles.map((file, index) => ({ ...localFileBlock(file, index),
       ...(['queued', 'uploading', 'sending'].includes(task.state) ? { uploadProgress: file.progress } : {}),
@@ -76,13 +77,15 @@ export function arkmeFileSendTasksEqual(
 
 // Reuse the fallback until a snapshot exists; consumers memoize by task identity.
 const EMPTY_FILE_SEND_TASKS: readonly ArkmeFileSendTask[] = Object.freeze([])
+const EMPTY_ACTIVE_TASK_KEYS: ReadonlySet<string> = new Set()
 
-export function useArkmeFileSendTasks(
+export function useArkmeDeliveryTasks<T>(
   sourceRef: string | undefined,
-  userId: number | undefined,
+  userId: string | number | undefined,
+  adapter: { read(scope: string, signal: AbortSignal): Promise<T[]>; active(tasks: readonly T[]): boolean; belongs(task: T, scope: string): boolean; key(task: T): string },
   enabled = true,
 ) {
-  const [snapshot, setSnapshot] = useState<{ sourceRef: string; userId: number; tasks: ArkmeFileSendTask[] }>()
+  const [snapshot, setSnapshot] = useState<{ sourceRef: string; userId: string | number; tasks: T[]; activeKeys: ReadonlySet<string> }>()
   const [revision, setRevision] = useState(0)
   useEffect(() => {
     if (!enabled || sourceRef === undefined || userId === undefined) return
@@ -91,7 +94,7 @@ export function useArkmeFileSendTasks(
     let controller: AbortController | undefined
     let pending = false
     let failures = 0
-    let knownTasks = snapshot?.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.tasks : []
+    let knownTasks: readonly T[] = snapshot?.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.tasks : []
     const browserDocument = typeof document === 'undefined' ? undefined : document
     const foreground = () => browserDocument?.visibilityState !== 'hidden'
     const clearTimer = () => {
@@ -109,19 +112,26 @@ export function useArkmeFileSendTasks(
       const request = new AbortController()
       controller = request
       try {
-        const tasks = await callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef }, request.signal)
+        const tasks = await adapter.read(sourceRef, request.signal)
+        if (!Array.isArray(tasks)) throw new Error('发送任务响应无效')
         if (!active || request.signal.aborted) return
         failures = 0
-        const changed = !arkmeFileSendTasksEqual(knownTasks, tasks)
+        const changed = JSON.stringify(knownTasks) !== JSON.stringify(tasks)
         knownTasks = tasks
-        if (changed) setSnapshot({ sourceRef, userId, tasks })
+        if (changed) setSnapshot(current => ({ sourceRef, userId, tasks,
+          // Only the current task list owns these keys; account/source changes
+          // and task eviction release them. Restored sent receipts are not new sends.
+          activeKeys: new Set(tasks.filter(task => adapter.active([task])
+            || current?.sourceRef === sourceRef && current.userId === userId && current.activeKeys.has(adapter.key(task)))
+            .map(adapter.key)),
+        }))
       } catch {
         if (!request.signal.aborted) failures += 1
       } finally {
         if (controller === request) controller = undefined
         pending = false
         if (!active) return
-        if (arkmeFileSendTasksNeedPolling(knownTasks)) schedule()
+        if (adapter.active(knownTasks)) schedule()
         else if (failures > 0 && failures <= FILE_TASK_INITIAL_RETRY_LIMIT) schedule(FILE_TASK_POLL_INTERVAL_MS * failures)
       }
     }
@@ -137,14 +147,31 @@ export function useArkmeFileSendTasks(
       controller?.abort()
       browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [enabled, sourceRef, userId, revision])
+  }, [enabled, sourceRef, userId, revision, adapter])
   return {
-    tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? EMPTY_FILE_SEND_TASKS : EMPTY_FILE_SEND_TASKS,
+    tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? (EMPTY_FILE_SEND_TASKS as readonly T[]) : (EMPTY_FILE_SEND_TASKS as readonly T[]),
+    activeTaskKeys: snapshot !== undefined && snapshot.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.activeKeys : EMPTY_ACTIVE_TASK_KEYS,
     refresh: () => setRevision(value => value + 1),
-    accept: (task: ArkmeFileSendTask) => {
-      if (sourceRef === undefined || userId === undefined || task.sourceRef !== sourceRef) return
-      setSnapshot(current => ({ sourceRef, userId, tasks: [...(current?.sourceRef === sourceRef && current.userId === userId ? current.tasks.filter(value => value.taskRef !== task.taskRef) : []), task] }))
+    accept: (task: T) => {
+      if (sourceRef === undefined || userId === undefined || !adapter.belongs(task, sourceRef)) return
+      setSnapshot(current => {
+        const sameScope = current?.sourceRef === sourceRef && current.userId === userId
+        return { sourceRef, userId,
+          tasks: [...(sameScope ? current.tasks.filter(value => adapter.key(value) !== adapter.key(task)) : []), task],
+          activeKeys: new Set([...(sameScope ? current.activeKeys : []), adapter.key(task)]),
+        }
+      })
       setRevision(value => value + 1)
     },
   }
+}
+
+const fileTaskAdapter = {
+  read: (sourceRef: string, signal: AbortSignal) => callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef }, signal),
+  active: arkmeFileSendTasksNeedPolling,
+  belongs: (task: ArkmeFileSendTask, scope: string) => task.sourceRef === scope,
+  key: (task: ArkmeFileSendTask) => task.taskRef,
+}
+export function useArkmeFileSendTasks(sourceRef: string | undefined, userId: number | undefined, enabled = true) {
+  return useArkmeDeliveryTasks(sourceRef, userId, fileTaskAdapter, enabled)
 }

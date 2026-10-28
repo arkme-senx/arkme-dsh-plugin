@@ -55,12 +55,18 @@ describe('related quick note shared UI', () => {
     expect(markup).toContain('aria-label="查看 4 条相关快记"')
   })
 
-  it('hides non-result states and keeps failures as a compact retry row', () => {
-    for (const state of [{ kind: 'idle' }, { kind: 'loading' }, { kind: 'empty' }] as const) {
+  it('hides empty states while distinguishing loading and failure from missing data', () => {
+    for (const state of [{ kind: 'idle' }, { kind: 'empty' }] as const) {
       expect(renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
         state, onOpen: vi.fn(), onRetry: vi.fn(),
       }))).toBe('')
     }
+    const loading = renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
+      state: { kind: 'loading' }, onOpen: vi.fn(), onRetry: vi.fn(),
+    }))
+    expect(loading).toContain('正在加载相关快记…')
+    expect(loading).toContain('role="status"')
+    expect(loading).not.toContain('<button')
     const error = renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesCard, {
       state: { kind: 'error', message: '网络不可用' },
       onOpen: vi.fn(),
@@ -89,6 +95,16 @@ describe('related quick note shared UI', () => {
     expect(renderToStaticMarkup(createElement(ArkmeRelatedQuickNotesList, {
       state: { kind: 'error', message: '加载失败' }, onSelect: vi.fn(), onRetry: vi.fn(),
     }))).toContain('重试')
+  })
+
+  it.each([ArkmeRelatedQuickNotesCard, ArkmeRelatedQuickNotesList])('does not expose recall metadata or add controls for usable fallback content', Component => {
+    const list = { total: 1, items: [item('a', '已有相关正文')] }
+    const render = (recallMode: 'embedding' | 'search_fallback') => renderToStaticMarkup(createElement(Component, {
+      state: { kind: 'success', list: { ...list, recallMode, retryable: true, retryAfterMillis: 1500 } },
+      onOpen: vi.fn(), onSelect: vi.fn(), onRetry: vi.fn(),
+    }))
+    expect(render('search_fallback')).toBe(render('embedding'))
+    expect(render('search_fallback')).not.toContain('相关结果可能不完整')
   })
 
   it('reuses rich-content detail rendering and preserves two-level back targets', () => {

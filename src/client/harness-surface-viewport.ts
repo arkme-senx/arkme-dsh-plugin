@@ -30,6 +30,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
   let nativeObserver: MutationObserver | undefined
   let viewportStyle: HTMLStyleElement | undefined
   let contentFrame: HTMLElement | undefined
+  let sessionHeader: HTMLElement | undefined
   let scheduled = 0
   let disposed = false
   const shadow = surface.ownerDocument.createElement('div')
@@ -51,16 +52,36 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
       set(viewport, `--arkme-harness-content-${key}`, `${value}px`)
     }
     const visible = surface.getAttribute('data-arkme-visible') === 'true'
+    viewport.toggleAttribute('data-arkme-history-active', surface.hasAttribute('data-arkme-history-session'))
     if (visible) viewport.removeAttribute('data-arkme-session-preview')
     else if (!viewport.hasAttribute('data-arkme-session-preview')) viewport.setAttribute('data-arkme-session-preview', '')
     const nextContent = native.querySelector<HTMLElement>('[data-arkme-session-frame]')
-      ?? native.querySelector<HTMLElement>('[data-rightbar-col]')?.parentElement ?? undefined
+      ?? native.querySelector<HTMLElement>('[data-rightbar-col]')?.parentElement ?? native.body ?? undefined
     if (nextContent !== contentFrame) {
       contentFrame?.removeAttribute('data-arkme-harness-content-frame')
       contentFrame = nextContent
       contentFrame?.setAttribute('data-arkme-harness-content-frame', '')
     }
-    const ready = contentFrame !== undefined
+    const nextHeader = contentFrame?.querySelector<HTMLElement>('[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])') ?? undefined
+    if (nextHeader !== sessionHeader) {
+      if (sessionHeader) resize?.unobserve(sessionHeader)
+      sessionHeader = nextHeader
+      if (sessionHeader) resize?.observe(sessionHeader)
+    }
+    // Native fullscreen panels are fixed to the iframe viewport, which is
+    // intentionally wider than the visible conversation seat (for menus).
+    // Keep their entire contents inside that seat, below the live task header.
+    const headerBottom = sessionHeader?.getAttribute('aria-hidden') !== 'true'
+      ? sessionHeader?.getBoundingClientRect().bottom ?? rect.top : rect.top
+    const panelTop = Math.min(rect.bottom, Math.max(rect.top, headerBottom))
+    set(viewport, '--arkme-harness-panel-top', `${panelTop}px`)
+    set(viewport, '--arkme-harness-panel-height', `${Math.max(0, rect.bottom - panelTop)}px`)
+    // about:blank and an empty mount are not a painted native client. Keep the
+    // host's theme visible; still expose native loading/error content promptly.
+    const ready = contentFrame !== undefined && (contentFrame !== native.body || [...native.body.childNodes].some(node =>
+      node.nodeType === 3 ? Boolean(node.textContent?.trim())
+        : node.nodeType === 1 && !['SCRIPT', 'STYLE', 'LINK', 'META'].includes((node as Element).tagName)
+          && (Boolean(node.textContent?.trim()) || (node as Element).children.length > 0)))
     const layers = ready ? harnessMenuLayers(native) : []
     let menuRect: PaintRect | undefined
     const painted: PaintRect[] = visible && ready ? [rect] : []
@@ -101,22 +122,32 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     viewportStyle?.remove()
     contentFrame?.removeAttribute('data-arkme-harness-content-frame')
     contentFrame = undefined
+    if (sessionHeader) resize?.unobserve(sessionHeader)
+    sessionHeader = undefined
     native?.documentElement.removeAttribute('data-arkme-harness-viewport')
     try { native = frame.contentDocument ?? undefined } catch { native = undefined }
     if (!native) return
     native.documentElement.setAttribute('data-arkme-harness-viewport', '')
     viewportStyle = native.createElement('style')
     viewportStyle.textContent = `
+      html[data-arkme-history-active] [data-arkme-session-anchor],
+      html[data-arkme-history-active] [data-arkme-session-identity] { visibility: hidden !important; pointer-events: none !important; }
       html[data-arkme-harness-viewport], html[data-arkme-harness-viewport] body { background: transparent !important; }
       [data-arkme-harness-content-frame] {
         position: absolute !important; left: var(--arkme-harness-content-left); top: var(--arkme-harness-content-top);
         width: var(--arkme-harness-content-width); height: var(--arkme-harness-content-height);
       }
+      [data-arkme-harness-content-frame] [data-sidebar-right-panel="fullscreen"] {
+        left: var(--arkme-harness-content-left) !important; right: auto !important;
+        top: var(--arkme-harness-panel-top) !important; bottom: auto !important;
+        width: var(--arkme-harness-content-width) !important;
+        height: var(--arkme-harness-panel-height) !important;
+      }
     `
     native.head.append(viewportStyle)
     nativeObserver = new win.MutationObserver(schedule)
     nativeObserver.observe(native.documentElement, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ['style', 'class', 'hidden', 'data-arkme-session-open', 'data-arkme-session-frame'] })
+      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'data-arkme-session-open', 'data-arkme-session-frame'] })
     sync()
   }
   const position = () => {
@@ -129,7 +160,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
   const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(position) : undefined
   resize?.observe(seat)
   const visibility = new win.MutationObserver(sync)
-  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
+  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-history-session'] })
   frame.addEventListener('load', attach)
   win.addEventListener('resize', position)
   win.addEventListener('scroll', position, true)
@@ -146,6 +177,8 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     win.removeEventListener('scroll', position, true)
     native?.documentElement.removeAttribute('data-arkme-harness-viewport')
     native?.documentElement.removeAttribute('data-arkme-session-preview')
+    native?.documentElement.removeAttribute('data-arkme-history-active')
     for (const key of ['left', 'top', 'width', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-content-${key}`)
+    for (const key of ['top', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-panel-${key}`)
   }
 }

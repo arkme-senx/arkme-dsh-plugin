@@ -7,9 +7,9 @@ import type {
   ArkmeFavoriteSticker, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList, ArkmeSourceSendResult, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { arkmeRecentEmojiStore } from './emoji-recent-store.js'
+import { arkmeRecentEmojiStore, useRecentEmoji } from './emoji-recent-store.js'
 import {
-  arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds,
+  arkmeDefaultEmojis, arkmeEmojiById,
   type ArkmeEmoji,
 } from './arkme-emoji.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
@@ -83,7 +83,7 @@ export function resolveArkmeEmojiPanelGeometry({ caret, editor, panelWidth, pane
 
 const styles: Record<string, CSSProperties> = {
   host: { position: 'relative', flex: 'none' },
-  triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' },
+  triggerIcon: { width: 20, height: 20, display: 'block' },
   trigger: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 9,
     appearance: 'none', WebkitAppearance: 'none',
@@ -263,6 +263,7 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   const hostRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const stickerInputRef = useRef<HTMLInputElement>(null)
+  const pointerSelectionCaptured = useRef(false)
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'emoji' | 'favorite'>('emoji')
   const [stickers, setStickers] = useState<ArkmeFavoriteSticker[]>([])
@@ -276,13 +277,11 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
   const [previewRevision, setPreviewRevision] = useState(0)
   const [contextMenu, setContextMenu] = useState<ArkmeFavoriteStickerMenuState>()
-  const [recentIds, setRecentIds] = useState<string[]>([])
-  const [recentSaveError, setRecentSaveError] = useState<string>()
-  const [recentPhase, setRecentPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const recentSelectionRevision = useRef(0)
-  const recentReadRevision = useRef(0)
-  const recentAccount = useRef(accountKey)
-  recentAccount.current = accountKey
+  const {phase: recentPhase, failedId: recentSaveError} = useRecentEmoji(accountKey)
+  const [visibleRecent, setVisibleRecent] = useState<{accountKey: string | undefined; ids: string[]}>({accountKey, ids: []})
+  const recentOpenGeneration = useRef(0)
+  const selectedDuringOpen = useRef(false)
+  const recentIds = visibleRecent.accountKey === accountKey ? visibleRecent.ids : []
   const [panelGeometry, setPanelGeometry] = useState<ArkmeEmojiPanelGeometry>()
   const previousScopeKey = useRef(scopeKey)
   const recentEmojis = recentIds.map(id => arkmeEmojiById[id]).filter((emoji): emoji is ArkmeEmoji => emoji !== undefined)
@@ -373,52 +372,29 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
   }, [])
 
   const loadRecent = async () => {
-    if (accountKey === undefined) return
-    const revision = recentSelectionRevision.current
-    const readRevision = ++recentReadRevision.current
-    const current = () => !disposedRef.current && recentAccount.current === accountKey
-      && revision === recentSelectionRevision.current && readRevision === recentReadRevision.current
-    setRecentPhase('loading')
+    if (!accountKey) return
+    const generation = recentOpenGeneration.current
     try {
       const ids = await arkmeRecentEmojiStore.recentEmojiIds(accountKey)
-      if (!current()) return
-      setRecentIds(ids)
-      setRecentPhase('ready')
-    } catch {
-      if (current()) setRecentPhase('error')
+      if (!disposedRef.current && generation === recentOpenGeneration.current && !selectedDuringOpen.current) setVisibleRecent({accountKey,ids})
+    } catch { /* The shared cache owns the retry state. */ }
+  }
+  useEffect(() => { setOpen(false) }, [accountKey])
+  useEffect(() => {
+    ++recentOpenGeneration.current
+    if (open) {
+      selectedDuringOpen.current = false
+      setVisibleRecent({accountKey,ids:arkmeRecentEmojiStore.snapshot(accountKey).ids})
+      void loadRecent()
     }
-  }
-
-  useEffect(() => {
-    ++recentSelectionRevision.current
-    setRecentIds([])
-    setRecentSaveError(undefined)
-    setRecentPhase('idle')
-    setOpen(false)
-  }, [accountKey])
-
-  useEffect(() => {
-    if (open) void loadRecent()
+    return () => { ++recentOpenGeneration.current }
   }, [open, accountKey])
-
   const recordRecent = (emojiId: string) => {
-    const revision = ++recentSelectionRevision.current
-    setRecentSaveError(undefined)
-    setRecentPhase('ready')
-    if (accountKey === undefined) return
-    void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).then(
-      ids => {
-        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentIds(ids)
-      },
-      () => {
-        if (!disposedRef.current && recentAccount.current === accountKey && revision === recentSelectionRevision.current) setRecentSaveError(emojiId)
-      },
-    )
+    if (accountKey) void arkmeRecentEmojiStore.recordRecentEmoji(accountKey, emojiId).catch(() => {})
   }
-
   const select = (emoji: ArkmeEmoji) => {
     if (disabled || onSelect(emoji) === false) return
-    setRecentIds(current => nextArkmeRecentEmojiIds(current, emoji.id))
+    selectedDuringOpen.current = true
     recordRecent(emoji.id)
   }
 
@@ -599,8 +575,13 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
       aria-haspopup="dialog"
       aria-expanded={open}
       data-arkme-composer-tool="emoji"
-      onMouseDown={event => { onBeforeToggle?.(); event.preventDefault() }}
-      onClick={() => { setOpen(value => !value) }}
+      onPointerDown={() => { onBeforeToggle?.(); pointerSelectionCaptured.current = true }}
+      onMouseDown={event => {
+        if (!pointerSelectionCaptured.current) onBeforeToggle?.()
+        pointerSelectionCaptured.current = false
+        event.preventDefault()
+      }}
+      onClick={() => { pointerSelectionCaptured.current = false; setOpen(value => !value) }}
     ><span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span></ArkmeComposerToolButton>
     {open && (() => {
       const shell = <div

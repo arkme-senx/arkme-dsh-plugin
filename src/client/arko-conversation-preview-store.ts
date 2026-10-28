@@ -106,7 +106,7 @@ export class ArkmeArkoConversationPreviewStore {
       || this.surfaceRevision !== request.surfaceRevision) return false
     const latest = latestArkoConversationPreview(items.map(item => ({
       key: `history:${String(item.messageId)}`,
-      text: item.text,
+      text: item.text.trim() || (item.contentBlocks?.length ? '[图片]' : ''),
       createdAtMillis: item.createdAtMillis,
       messageId: item.messageId,
     })))

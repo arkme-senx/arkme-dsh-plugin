@@ -26,11 +26,25 @@ function validArticle(article: ComposerArticle | undefined): article is Composer
 /** Independent from the text/files draft: article sends must never consume that draft. */
 export class ComposerArticleStore {
   private states = new Map<string, ComposerArticleState>()
+  private nativePrefixes = new Set<string>()
+  private isNative(key: string): boolean { return [...this.nativePrefixes].some(prefix => key.startsWith(prefix)) }
+  useNativePersistence(prefix: string): void {
+    if (this.nativePrefixes.has(prefix)) return
+    // Import legacy cards once before the native snapshot; native null wins below.
+    try {
+      const keys = Object.keys(localStorage).filter(key => key.startsWith(storagePrefix + prefix)).slice(0, 1000)
+      for (const key of keys) this.get(key.slice(storagePrefix.length))
+    } catch { /* Browser storage may be disabled. */ }
+    this.nativePrefixes.add(prefix)
+  }
+  confirmNativeSave(key: string): void {
+    if (this.isNative(key)) try { localStorage.removeItem(storagePrefix + key) } catch { /* Native state is already durable. */ }
+  }
   private listeners = new Set<() => void>()
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   get = (key?: string): ComposerArticleState | undefined => {
     if (!key) return undefined
-    if (!this.states.has(key)) {
+    if (!this.states.has(key) && !this.isNative(key)) {
       try {
         const saved = JSON.parse(localStorage.getItem(storagePrefix + key) || 'null') as ComposerArticleState | null
         if (saved && validArticle(saved.article) && typeof saved.recordUid === 'string'
@@ -41,19 +55,28 @@ export class ComposerArticleStore {
     }
     return this.states.get(key)
   }
+  entries(): ReadonlyMap<string, ComposerArticleState> { return new Map(this.states) }
+  applyRemote(key: string, value: unknown, restoring = false): void {
+    if (value === null) { this.write(key, undefined); return }
+    const state = value as ComposerArticleState | undefined
+    if (!state || !validArticle(state.article) || typeof state.recordUid !== 'string'
+      || typeof state.relationUid !== 'string' || typeof state.sending !== 'boolean') return
+    this.write(key, restoring ? { ...state, sending: false, error: state.sending ? '上次发送结果待确认，可重试；将使用同一提交标识' : state.error } : state)
+  }
   set(key: string, article: ComposerArticle): void {
     if (this.get(key)?.sending) return
     this.write(key, { article, recordUid: article.kind === 'new' ? article.draft.recordUid : crypto.randomUUID(),
       relationUid: article.kind === 'new' ? article.draft.relationUid : crypto.randomUUID(), sendAtMillis: Date.now(), sending: false, error: '' })
   }
   remove(key: string): void { if (!this.get(key)?.sending) this.write(key, undefined) }
-  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string): Promise<ArkmeSourceSendResult | undefined> {
+  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string, consumed?: () => Promise<void>): Promise<ArkmeSourceSendResult | undefined> {
     const state = this.get(key)
     const sameAccount = () => { const auth = arkmeAuthStore.getSnapshot().auth; return auth?.status === 'authenticated' && auth.userId === expectedUserId && auth.environment === expectedEnvironment }
     if (!state || state.sending || !sameAccount()) return undefined
     const sending = { ...state, sending: true, error: '' }
     this.write(key, sending)
     try {
+      if (consumed) await consumed()
       const article = state.article
       const result = article.kind === 'existing'
         ? await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
@@ -65,20 +88,25 @@ export class ComposerArticleStore {
           title: article.draft.title, textContent: article.draft.textContent, textFormat: article.draft.textFormat,
           images: article.draft.images, recordDurationMillis: article.draft.durationMillis,
         })
-      if (this.states.get(key) === sending) this.write(key, undefined)
+      if (this.ownsSubmission(key, sending)) this.write(key, undefined)
       // Delete only the matching local editor draft, not a newer article opened elsewhere.
       if (article.kind === 'new' && sameAccount()) {
         await callArkme('source.long-article.draft.delete', { sourceRef, expectedRecordUid: state.recordUid }).catch(() => {})
       }
       return sameAccount() ? result : undefined
     } catch (error) {
-      if (this.states.get(key) === sending) this.write(key, { ...state, sending: false, error: error instanceof Error ? error.message : '长文发送失败，请重试' })
+      if (this.ownsSubmission(key, sending)) this.write(key, { ...state, sending: false, error: error instanceof Error ? error.message : '长文发送失败，请重试' })
       return undefined
     }
   }
+  private ownsSubmission(key: string, state: ComposerArticleState): boolean {
+    const current = this.states.get(key)
+    // Replication clones objects. Submission identity survives renderer boundaries.
+    return current?.sending === true && current.recordUid === state.recordUid && current.relationUid === state.relationUid
+  }
   private write(key: string, state: ComposerArticleState | undefined): void {
     if (state) this.states.set(key, state); else this.states.delete(key)
-    try { if (state) localStorage.setItem(storagePrefix + key, JSON.stringify(state)); else localStorage.removeItem(storagePrefix + key) } catch { /* Best effort local recovery. */ }
+    if (!this.isNative(key)) try { if (state) localStorage.setItem(storagePrefix + key, JSON.stringify(state)); else localStorage.removeItem(storagePrefix + key) } catch { /* Best effort browser recovery. */ }
     for (const listener of this.listeners) listener()
   }
 }

@@ -1,7 +1,7 @@
 import { readUiSource } from './helpers/ui-source.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
@@ -9,6 +9,17 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeAttentionSummary } from '../src/client/attention-summary-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
+// These orchestration tests have no DOM; real underline portals are covered by arko-message-marks and message-underlines.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
 
 const productNavigationSource = readUiSource(
   new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url),
@@ -32,7 +43,29 @@ const redesignCss = readUiSource(
 )
 
 describe('Arkme product navigation', () => {
-  it('uses a 60px rail and a 36px footer avatar without resizing navigation controls', () => {
+  it('opens arrangements directly after Calendar and clears the calendar overlay', () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
+    arkmeUi.showConversations()
+    let renderer!: ReactTestRenderer
+    act(() => { renderer = create(<ArkmeProductNavigation compact={false} />) })
+    try {
+      const buttons = renderer.root.findAllByType('button')
+      const calendar = buttons.findIndex(button => button.props['aria-label'] === '日历')
+      expect(buttons[calendar + 1]?.props['aria-label']).toBe('安排')
+      act(() => arkmeUi.showCalendar())
+      act(() => renderer.root.findByProps({ 'aria-label': '安排' }).props.onClick())
+      expect(arkmeUi.getViewSnapshot().mode).toBe('arrangements')
+      expect(arkmeUi.getViewSnapshot().calendarOpen).toBeUndefined()
+      expect(renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('安排')
+      act(() => renderer.root.findByProps({ 'aria-label': '录音' }).props.onClick())
+      expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
+    } finally {
+      act(() => renderer.unmount())
+      arkmeUi.showConversations()
+    }
+  })
+
+  it('uses a 60px icon rail with 44px navigation controls and a permanent membership label above the 36px footer avatar', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
     arkmeUi.showConversations()
     let renderer!: ReactTestRenderer
@@ -41,14 +74,18 @@ describe('Arkme product navigation', () => {
       const nav = renderer.root.findByType('nav')
       expect(nav.props.style.width).toBe(60)
       expect(nav.props.style.minWidth).toBe(60)
+      const brand = renderer.root.findByProps({ 'data-arkme-owned': 'product-brand' })
+      const version = brand.findByType('span')
+      expect(version.children).toEqual([`v${version.props['data-arkme-plugin-version']}`])
+      expect(version.props.style).toMatchObject({ fontSize: 10, lineHeight: '13px', color: arkmeTheme.tertiary })
       const profile = renderer.root.findByProps({ 'aria-label': '个人资料' })
       const avatar = profile.findByProps({ 'data-arkme-avatar': true })
-      expect(profile.children[0]).toEqual(expect.objectContaining({ props: expect.objectContaining({ className: 'arkme-member-label' }) }))
+      expect(profile.findAllByProps({ className: 'arkme-member-label' })).toHaveLength(1)
       expect(avatar.props.style.width).toBe(36)
       expect(avatar.props.style.height).toBe(36)
       const active = renderer.root.findByProps({ 'aria-current': 'page' })
-      expect(active.props.style.minHeight).toBe(52)
-      expect(active.props.style.padding).toBe('6px 2px')
+      expect(active.props.style.minHeight).toBe(44)
+      expect(active.props.style.padding).toBe('0 2px')
     } finally {
       act(() => renderer.unmount())
     }
@@ -64,9 +101,9 @@ describe('Arkme product navigation', () => {
     try {
       expect(mode()).toBe('conversation')
       for (const activate of [() => arkmeUi.showContacts(), () => arkmeUi.showCalls(),
-        () => arkmeUi.showRecordings(), () => arkmeUi.showWorld(),
+        () => arkmeUi.showRecordings(), () => arkmeUi.showArrangements(), () => arkmeUi.showWorld(),
         () => arkmeUi.showCalendar(),
-        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showContactAdd()]) {
+        () => arkmeUi.showSearch(), () => arkmeUi.showVoiceprint(), () => arkmeUi.showRecognizedSpeakers(), () => arkmeUi.showContactAdd()]) {
         act(activate)
         expect(mode()).toBe('fallback')
         act(() => arkmeUi.showConversations())
@@ -100,7 +137,10 @@ describe('Arkme product navigation', () => {
     expect(footerDropdownSource).not.toContain('totalUnreadCount')
   })
 
-  it('moves voiceprint into recordings and keeps only data/settings menu rows', () => {
+  it('keeps existing profile rows and inserts lock immediately above data management', () => {
+    const lockIconIndex = productNavigationSource.indexOf('<ArkmeDeviceLockIcon size={19}')
+    expect(lockIconIndex).toBeGreaterThanOrEqual(0)
+    expect(lockIconIndex).toBeLessThan(productNavigationSource.indexOf('<Database size={19}'))
     expect(productNavigationSource).not.toContain('arkmeUi.showVoiceprint()')
     expect(productNavigationSource).not.toContain('<strong>声纹管理</strong>')
     expect(productNavigationSource).toContain('<strong>数据管理</strong>')
@@ -108,6 +148,7 @@ describe('Arkme product navigation', () => {
     expect(productNavigationSource).toContain("arkmeUi.openDshSettings('arkme-usage')")
     expect(productNavigationSource).not.toContain('<strong>我的账户</strong>')
     expect(productNavigationSource).toContain('arkmeUi.openDshSettings()')
+    expect(productNavigationSource).not.toContain('tr("AI 自动分析")')
   })
 
   it('dismisses the profile menu when pressing Escape or clicking outside it in every desktop layout', () => {
@@ -135,23 +176,24 @@ describe('Arkme product navigation', () => {
 
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-owned="product-brand"')
-    expect(markup).toContain('alt="Arkme"')
+    expect(markup).toContain('alt="即我"')
     expect(markup).toContain('data-arkme-theme-image="light"')
     expect(markup).toContain('data-arkme-theme-image="dark"')
     expect(markup).toContain('width:48px;height:28px;object-fit:cover')
     expect(markup).toContain('min-height:44px')
-    expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('>对话<'))
+    expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('aria-label="对话"'))
     expect(markup).toContain('data-arkme-selection-marker="true"')
-    expect(markup).toContain('aria-label="Arkme 功能导航"')
-    expect(markup).toContain('>对话<')
-    expect(markup).toContain('>通话<')
-    expect(markup).toContain('>录音<')
+    expect(markup).toContain('aria-label="即我 功能导航"')
+    expect(markup).toContain('aria-label="对话"')
+    expect(markup).toContain('aria-label="通话"')
+    expect(markup).toContain('aria-label="录音"')
     expect(markup).not.toContain('>搜索<')
-    expect(markup).toContain('>日历<')
-    expect(markup).toContain('>世界<')
-    expect(markup).toContain('>市集<')
+    expect(markup).toContain('aria-label="日历"')
+    expect(markup).toContain('aria-label="探索"')
+    expect(markup).not.toContain('aria-label="世界"')
+    expect(markup).toContain('aria-label="市集"')
     expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('background:#f1f2f6')
+    expect(markup).toContain(`background:${arkmeTheme.active}`)
     expect(markup).not.toContain('outline:0')
     expect(redesignCss).toContain('[data-arkme-selection-marker],')
     expect(markup).not.toContain('data-slot="conversation"')
@@ -160,8 +202,8 @@ describe('Arkme product navigation', () => {
 
   it('keeps every product entry visible in the locked Web workspace and routes restricted entries to login', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} hosted locked />)
-    for (const label of ['对话', '联系人', '通话', '录音', '日历', '世界', '市集']) {
-      expect(markup).toContain(`>${label}<`)
+    for (const label of ['对话', '联系人', '通话', '录音', '日历', '探索', '市集']) {
+      expect(markup).toContain(`aria-label="${label}"`)
     }
     expect(markup).toContain('aria-current="page"')
     expect(productNavigationSource).toContain("if (locked) {")
@@ -172,8 +214,7 @@ describe('Arkme product navigation', () => {
   it('opens login from locked utility entries while conversations stays on Harness', () => {
     let renderer: ReactTestRenderer
     act(() => { renderer = create(<ArkmeProductNavigation compact={false} hosted locked />) })
-    const buttonFor = (label: string) => renderer!.root.findAllByType('button').find(button => button
-      .findAllByType('span').some(span => span.children.join('') === label))
+    const buttonFor = (label: string) => renderer!.root.findAllByType('button').find(button => button.props['aria-label'] === label)
 
     arkmeUi.showLogin()
     act(() => { buttonFor('录音')!.props.onClick() })
@@ -195,7 +236,8 @@ describe('Arkme product navigation', () => {
   it('uses a horizontal layout contract for compact surfaces', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)
     expect(markup).toContain('flex-direction:row')
-    expect(markup).toContain('border-bottom:1px solid #e7e7e9')
+    expect(markup).toContain('>录音<')
+    expect(markup).toContain(`border-bottom:1px solid ${arkmeTheme.borderSoft}`)
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
@@ -225,7 +267,7 @@ describe('Arkme product navigation', () => {
     expect(unreadMarkup.match(/data-arkme-unread-indicator/g)).toHaveLength(1)
     expect(unreadMarkup).toContain('data-arkme-unread-count="110"')
     expect(unreadMarkup).toMatch(/data-arkme-unread-count="110"[^>]*>99\+<\/span>/)
-    expect(unreadMarkup).toContain('background:#ff5a52')
+    expect(unreadMarkup).toContain(`background:${arkmeTheme.danger}`)
 
     arkmeChatDirectory.publish([])
     arkmeAttentionSummary.apply({
@@ -243,8 +285,8 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation hosted compact={false} currentSessionId="session-1" />)
     expect(markup).toContain('width:100%')
     expect(markup).toContain('padding:28px 4px 12px')
-    expect(markup).toContain('min-height:52px')
-    expect(markup).toContain('aria-label="Arkme 功能导航"')
+    expect(markup).toContain('min-height:44px')
+    expect(markup).toContain('aria-label="即我 功能导航"')
     expect(markup).not.toContain('DSH')
   })
 
@@ -288,6 +330,7 @@ describe('Arkme product navigation', () => {
   })
 
   it('keeps the conversation visible under the calendar overlay and removes it from standalone utility pages', () => {
+    arkmeUi.focusSendToSelf()
     arkmeUi.showSearch()
     const searchMarkup = renderToStaticMarkup(<ArkmeSurface
       initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}
@@ -309,7 +352,7 @@ describe('Arkme product navigation', () => {
     />)
     expect(pluginMarkup).not.toContain('data-arkme-owned="directory-pane"')
     expect(pluginMarkup).toContain('aria-label="Arkme 市集"')
-    expect(pluginMarkup).toContain('>市集<')
+    expect(pluginMarkup).toContain('aria-label="市集"')
 
     arkmeUi.showWorld()
     const worldMarkup = renderToStaticMarkup(<ArkmeSurface
@@ -331,7 +374,7 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeCallSurface />)
 
     expect(markup).toContain('aria-label="通话"')
-    expect(markup).toContain('>通话<')
+    expect(markup).toContain('aria-label="通话"')
     expect(markup).toContain('让每一次重要的声音与相见，都能被好好记住。')
     expect(markup).toContain('placeholder="搜索通话记录"')
     expect(markup).toContain('>最近联系人<')

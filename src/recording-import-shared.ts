@@ -14,6 +14,7 @@ export type RecordingImportPhase =
   | 'cancelled'
 
 export type RecordingImportDisplayStatus =
+  | 'paused'
   | 'preparing'
   | 'uploading'
   | 'accepted'
@@ -67,6 +68,7 @@ export interface PublicRecordingImportProgress {
 }
 
 export interface PublicRecordingImportJob {
+  batch?: import('./recording-workflow-contract.js').RecordingImportBatch
   kind: 'local'
   importRef: string
   revision: number
@@ -115,7 +117,7 @@ export type PublicRecordingImportCurrentItem = PublicRecordingImportJob | Public
 export interface PublicRecordingImportCurrentSnapshot {
   items: PublicRecordingImportCurrentItem[]
   owner:
-    | { state: 'available' }
+    | { state: 'available'; hasMore?: boolean; nextOffset?: number }
     | { state: 'unavailable'; message: string }
 }
 

@@ -171,3 +171,12 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(surfaceSource).toContain('arkmeCalendarInvalidations.subscribeDate')
   })
 })
+
+it.each([{ chat: true }, { call: true }, { recording: true }, { arko: true }, { bot: true }])('anchors activity markers to their date without a recording index: %j', activityMarkers => {
+  const markup = renderToStaticMarkup(<ArkmeCalendarCell date={new Date(2026, 8, 24)}
+    meta={{ bucketDate: '2026-09-24', count: 1, protectedCount: 0, hasRecords: true, activityMarkers }}
+    selected={false} disabled={false} hasRecordingIndex={false} onClick={() => {}} />)
+  const cell = matchStyle(markup, /^<button[^>]*style="([^"]+)"/)
+  expect(markup).toContain('position:absolute;bottom:2px;left:50%')
+  expect(cell.get('position')).toBe('relative')
+})

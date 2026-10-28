@@ -1,3 +1,4 @@
+import { showBrowserNotification } from './browser-notification.js'
 import type { ArkmeChatClientEvent } from '../types.js'
 
 export type ArkmeDesktopNotificationRequest = Extract<
@@ -256,17 +257,10 @@ class ArkmeNativeBrowserNotificationBridge implements ArkmeDesktopNotificationBr
   private readonly listeners = new Set<(sourceRef: string) => void>()
 
   async show(request: ArkmeDesktopNotificationRequest): Promise<{ shown: boolean }> {
-    if (Notification.permission !== 'granted') return { shown: false }
-    const notification = new Notification(request.title, {
-      body: request.body,
-      tag: `arkme-message-${request.eventUid}`,
-    })
-    notification.onclick = () => {
-      window.focus()
+    const close = showBrowserNotification(request.title, request.body, `arkme-message-${request.eventUid}`, () => {
       for (const listener of [...this.listeners]) listener(request.sourceRef)
-      notification.close()
-    }
-    return { shown: true }
+    })
+    return { shown: close !== undefined }
   }
 
   onActivated(listener: (sourceRef: string) => void): () => void {

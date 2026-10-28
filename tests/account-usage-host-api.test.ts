@@ -14,12 +14,15 @@ describe('account usage host operations', () => {
     expect(service.accountTokenUsageCalls).toHaveBeenCalledWith('prod:11', { monthKey: '2026-09', timezone: 'Asia/Shanghai', cursor: 'opaque', operationUid: 'operation-1', bizCode: 12 }, undefined)
   })
   it('passes explicit account scope to independent read owners', async () => {
-    const service = { accountTokenUsage: vi.fn(async () => ({ used: 1 })), accountStorageUsage: vi.fn(async () => ({ usedBytes: 1 })), accountVoiceUsage: vi.fn(async () => ({ usedSeconds: 60 })) } as unknown as ArkmeService
+    const service = { accountTokenUsage: vi.fn(async () => ({ used: 1 })), accountStorageUsage: vi.fn(async () => ({ usedBytes: 1 })), accountVoiceUsage: vi.fn(async () => ({ usedSeconds: 60 })), accountRecordingUsage: vi.fn(async () => ({ usedSeconds: 30 })) } as unknown as ArkmeService
     await expect(dispatchArkmeHostOperation(service, 'account.usage.tokens', { expectedAccountScope: 'prod:11' })).resolves.toEqual({ used: 1 })
     await expect(dispatchArkmeHostOperation(service, 'account.usage.storage', { expectedAccountScope: 'prod:11' })).resolves.toEqual({ usedBytes: 1 })
     expect(service.accountTokenUsage).toHaveBeenCalledWith('prod:11')
     expect(service.accountStorageUsage).toHaveBeenCalledWith('prod:11')
     await expect(dispatchArkmeHostOperation(service, 'account.usage.voice', { expectedAccountScope: 'prod:11' })).resolves.toEqual({ usedSeconds: 60 })
     expect(service.accountVoiceUsage).toHaveBeenCalledWith('prod:11')
+    const signal = new AbortController().signal
+    await expect(dispatchArkmeHostOperation(service, 'account.usage.recording', { expectedAccountScope: 'prod:11', month: '2026-09' }, undefined, undefined, undefined, undefined, signal)).resolves.toEqual({ usedSeconds: 30 })
+    expect(service.accountRecordingUsage).toHaveBeenCalledWith('prod:11', '2026-09', signal)
   })
 })

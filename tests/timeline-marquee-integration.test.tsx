@@ -1,10 +1,25 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ callArkme: vi.fn() }))
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+import { JSDOM } from 'jsdom'
+
+const state = vi.hoisted(() => ({ callArkme: vi.fn(), askRun: vi.fn(), askBusy: false, askStatus: '' }))
+vi.mock('../src/client/use-ask-dsh.js', () => ({ useAskDsh: () => ({ run: state.askRun, busy: state.askBusy, status: state.askStatus }) }))
 vi.mock('react-dom', () => ({ createPortal: (node: unknown) => node }))
 vi.mock('../src/client/api.js', () => ({ callArkme: state.callArkme, ArkmeClientError: class extends Error {} }))
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
+import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { RegionMarquee } from '../src/client/selection/RegionMarquee.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
@@ -33,6 +48,8 @@ function renderedText(node: ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : renderedText(child)).join('')
 }
 beforeEach(() => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
+  state.askRun.mockReset(); state.askBusy = false; state.askStatus = ''
   state.callArkme.mockReset()
   state.callArkme.mockImplementation(async (operation: string) => {
     if (operation === 'source.timeline') return { source, items: messages, hasMore: false }
@@ -134,7 +151,7 @@ it('keeps the 100-item action boundary separate from selecting 101 eligible mess
 })
 it('opens the existing forward picker and suspends marquee until the picker closes', async () => {
   await render(); await select('occurrence-0', 'occurrence-1')
-  await act(async () => action('转发').props.onClick())
+  await act(async () => action('转发').props.onClick({ currentTarget: {} }))
   const dialog = renderer.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
   const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button')
   expect(targets).toHaveLength(2)
@@ -161,7 +178,7 @@ it('freezes selection during copy-link and restores normal interaction after rej
     return previous(operation, params, signal)
   })
   await render(); await select('occurrence-0', 'occurrence-1')
-  await act(async () => action('复制链接').props.onClick())
+  await act(async () => action('复制链接').props.onClick({ currentTarget: {} }))
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(false)
   const calls = state.callArkme.mock.calls.filter(call => call[0] === 'source.message-copy-link')
   expect(calls).toHaveLength(1)
@@ -179,4 +196,78 @@ it('freezes selection during copy-link and restores normal interaction after rej
   expect(JSON.stringify(renderer.toJSON())).toContain('fixture rejection')
   await select('occurrence-3')
   expect(toolbar()!.props['aria-label']).toBe('已选择 3 条消息')
+})
+
+it('offers Ask DSH between forwarding and deletion for selected owned quick notes', async () => {
+  await render(); await select('occurrence-0', 'occurrence-4')
+  const buttons = toolbar()!.findAllByType('button').map(renderedText)
+  expect(buttons.indexOf('问 DSH')).toBe(buttons.indexOf('转发') + 1)
+  expect(buttons.indexOf('删除')).toBe(buttons.indexOf('问 DSH') + 1)
+  expect(action('问 DSH').props.disabled).toBe(false)
+  expect(toolbar()!.props.style.flexWrap).toBe('wrap')
+})
+
+it('does not offer partial Ask DSH batches for missing refs or more than 100 notes, while allowing other authors', async () => {
+  await render(); await select('occurrence-0', 'occurrence-1')
+  expect(action('问 DSH').props.disabled).toBe(false)
+  await select('occurrence-2')
+  expect(action('问 DSH').props.disabled).toBe(true)
+  await select(...messages.map(item => item.timelineItemKey))
+  expect(action('问 DSH').props.disabled).toBe(true)
+})
+
+
+it('offers right-click Ask DSH after forwarding for either author and passes only the clicked note', async () => {
+  await act(async () => { renderer = create(<ArkmeSurface productChrome={false} />, {
+    createNodeMock: element => element.props.className === 'arkme-conversation-panel' ? {} : null,
+  }) })
+  for (const index of [0, 1, 2]) {
+    const row = renderer.root.findAll(node => node.type === 'li' && node.props['data-arkme-selection-key'] === `occurrence-${index}`)[0]!
+    await act(async () => row.findAll(node => node.props['data-arkme-message-direction'])[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 }))
+    const menu = renderer.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '消息操作')!
+    const entries = menu.props.actions.filter(Boolean)
+    const entry = entries.find((item: { id: string }) => item.id === 'ask-dsh')
+    expect(entry).toBeDefined()
+    expect(entries.indexOf(entry)).toBe(entries.findIndex((item: { id: string }) => item.id === (entries.some((item: { id: string }) => item.id === 'world') ? 'world' : 'forward')) + 1)
+    expect(entry.disabled).toBe(index === 2)
+    if (index !== 2) {
+      await act(async () => entry.onSelect())
+      expect(state.askRun).toHaveBeenLastCalledWith(source.sourceRef, [expect.objectContaining({ itemUid: `record-${index}` })])
+      expect(renderer.root.findAllByType(ArkmeActionMenu).filter(menu => menu.props.label === '消息操作')).toHaveLength(0)
+    }
+  }
+})
+
+it('shows single-note preparation feedback outside selection mode and disables duplicate menu actions', async () => {
+  state.askBusy = true; state.askStatus = '正在准备 DSH 附件 1 / 2'
+  await act(async () => { renderer = create(<ArkmeSurface productChrome={false} />, {
+    createNodeMock: element => element.props.className === 'arkme-conversation-panel' ? {} : null,
+  }) })
+  expect(renderer.root.findAll(node => node.props.role === 'status' && renderedText(node) === state.askStatus)).toHaveLength(1)
+  const row = renderer.root.findAll(node => node.type === 'li' && node.props['data-arkme-selection-key'] === 'occurrence-1')[0]!
+  await act(async () => row.findAll(node => node.props['data-arkme-message-direction'])[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 }))
+  const entry = renderer.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '消息操作')!.props.actions.find((item: { id: string }) => item?.id === 'ask-dsh')
+  expect(entry.disabled).toBe(true)
+})
+
+it.each(['copy-selection', 'copy-whole'])('copies the intended text from the production conversation menu: %s', async command => {
+  const dom = new JSDOM('<div id="bubble">消息 1</div>')
+  try {
+    const bubble = dom.window.document.getElementById('bubble')!
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-panel' ? {} : null,
+    }) })
+    const row = renderer.root.findAll(node => node.type === 'li' && node.props['data-arkme-selection-key'] === 'occurrence-1')[0]!
+    dom.window.getSelection()!.setBaseAndExtent(bubble.firstChild!, 1, bubble.firstChild!, 2)
+    await act(async () => row.findAll(node => node.props['data-arkme-message-direction'])[0]!.props.onContextMenu({
+      currentTarget: bubble, preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10,
+    }))
+    const menu = renderer.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '选中文字操作')!
+    expect(menu.props.actions.map((item: { id: string }) => item.id)).toEqual(['copy-selection', 'copy-whole-divider', 'copy-whole'])
+    dom.window.getSelection()!.removeAllRanges()
+    await act(async () => menu.props.actions.find((item: { id: string }) => item.id === command).onSelect())
+    expect(writeText).toHaveBeenCalledWith(command === 'copy-selection' ? '息' : '消息 1')
+  } finally { dom.window.close() }
 })

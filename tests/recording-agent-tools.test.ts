@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { ARKME_TOOL_PROMPT, registerArkmeTools, type ArkmeToolPorts } from '../src/tools/index.js'
 import { arkmeToolCatalog } from '../src/tools/registry/catalog.js'

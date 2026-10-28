@@ -1,10 +1,10 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { ArkmeAttachmentDraftTile } from './ArkmeRichContent.js'
 import { arkmeLocalFileUrl } from './ArkmeFileViewer.js'
 import { arkmeAttachmentId, arkmeAttachmentMetadata, type ArkmeComposerAttachment } from './composer-draft-store.js'
 
-/** Local preparation stays in the existing add button, not in a separate workflow. */
+/** Legacy preparation indicator for the record re-edit composer. */
 export function ArkmeFilePreparingIndicator() {
   return <svg width="18" height="18" viewBox="0 0 20 20" role="progressbar" aria-label={tr("正在准备附件")}>
     <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="30 14">
@@ -23,6 +23,7 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
 }) {
   useArkmeLocale()
   const dragging = useRef<string>()
+  const [focusedId, setFocusedId] = useState<string>()
   return <div role="list" aria-label={tr("待发送附件")} style={{ display: 'flex', gap: 4, overflowX: 'auto', flex: 'none' }}>
     {attachments.map((attachment, index) => {
       const id = arkmeAttachmentId(attachment)
@@ -33,7 +34,8 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
       return <span key={id} role="listitem" tabIndex={canMove ? 0 : -1}
         aria-label={tr("{v0}，第 {v1} 个附件", { v0: metadata.fileName, v1: index + 1 })}
         aria-keyshortcuts={canMove ? 'Alt+ArrowLeft Alt+ArrowRight' : undefined}
-        title={canMove ? '拖动调整顺序；也可按 Alt 加左右方向键' : metadata.fileName}
+        onFocus={event => { if (event.target === event.currentTarget) setFocusedId(id) }}
+        onBlur={() => setFocusedId(undefined)}
         draggable={canMove} style={{ display: 'inline-flex', flex: 'none', cursor: canMove ? 'grab' : undefined }}
         onDragStart={event => {
           if (!canMove) { event.preventDefault(); return }
@@ -56,7 +58,8 @@ export function ArkmeAttachmentStrip({ attachments, disabled, onMove, onRemove, 
           event.preventDefault(); event.stopPropagation()
           if (to >= 0 && to < attachments.length) onMove(index, to)
         }}>
-        <ArkmeAttachmentDraftTile asset={metadata} disabled={disabled}
+        <ArkmeAttachmentDraftTile asset={metadata} disabled={disabled} keyboardFocused={focusedId === id}
+          {...(attachment.preparation === undefined ? {} : { preparation: attachment.preparation })}
           {...(previewUrl === undefined ? {} : { previewUrl })}
           {...((canPreview?.(attachment) ?? attachment.localFile !== undefined) ? { onOpen: () => onPreview(attachment) } : {})}
           onRemove={() => { if (!disabled) onRemove(attachment) }} />

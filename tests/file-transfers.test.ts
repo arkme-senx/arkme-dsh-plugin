@@ -9,6 +9,10 @@ import { createArkmeFileTransfers } from '../src/file-transfer-owner.js'
 import { ArkmePluginError } from '../src/services/service.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 
+// These integration cases stage 256+ real files serially (hash/copy/atomic state writes).
+// Allow shared CI disk contention without relaxing the default timeout for other tests.
+const bulkFileLifecycleTimeout = 30_000
+
 const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 async function fixture() {
@@ -63,17 +67,36 @@ describe('account-bound file lifecycle', () => {
     } finally { clock.mockRestore() }
   })
 
-  it('releases expired abandoned re-edit capacity without raising the 256-file limit', async () => {
+  it('releases expired abandoned re-edit files even beyond 256 cached attachments', async () => {
     const f = await fixture()
     f.ports.retainedFileRefs = async () => []
-    for (let index = 0; index < 256; index++) await f.stage('edit.pdf', 'references')
-    await expect(f.stage('full.pdf')).rejects.toMatchObject({ code: 'file-cache-full' })
+    for (let index = 0; index < 257; index++) await f.stage('edit.pdf', 'references')
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 8 * 24 * 3600_000)
     try {
       const next = await f.stage('next.pdf')
       expect(await f.owner.files()).toEqual([next])
     } finally { clock.mockRestore() }
-  })
+  }, bulkFileLifecycleTimeout)
+
+  it('stages images and files beyond 256 after restart while retaining the byte quota', async () => {
+    const f = await fixture()
+    for (let index = 0; index < 256; index++) await f.stage('draft.pdf')
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    const imagePath = join(f.directory, 'pasted.png'); await writeFile(imagePath, 'image')
+    await expect(restarted.stage(imagePath, { fileName: 'pasted.png', mimeType: 'image/png', size: 5 }))
+      .resolves.toMatchObject({ fileKind: 1 })
+    await expect(restarted.stageBytes('YWJj', { fileName: 'next.txt', mimeType: 'text/plain' }))
+      .resolves.toMatchObject({ size: 3 })
+    expect(await restarted.files()).toHaveLength(258)
+    const statePath = join(f.directory, '42', 'state.json')
+    const state = JSON.parse(await readFile(statePath, 'utf8'))
+    state.files[Object.keys(state.files)[0]!].size = 1024 * 1024 * 1024
+    await writeFile(statePath, JSON.stringify(state))
+    const full = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(full.stageBytes('YQ==', { fileName: 'over.txt', mimeType: 'text/plain' }))
+      .rejects.toMatchObject({ code: 'file-cache-full' })
+    expect(await full.files()).toHaveLength(258)
+  }, bulkFileLifecycleTimeout)
 
   it('persists cleanup even when the subsequent import fails', async () => {
     const f = await fixture()
@@ -915,7 +938,7 @@ describe('long article files', () => {
   })
 })
 
-it('does not impose the ordinary 256-file cache ceiling on long article images', async () => {
+it('keeps long article and ordinary staging independent after restart', async () => {
   const f = await fixture()
   const path = join(f.directory, 'tiny.png')
   await writeFile(path, 'x')
@@ -924,7 +947,7 @@ it('does not impose the ordinary 256-file cache ceiling on long article images',
   const restarted = new FileTransfers(f.directory, f.ports, 1000)
   expect(await restarted.files()).toHaveLength(257)
   await expect(f.stage('ordinary.pdf')).resolves.toMatchObject({fileName:'ordinary.pdf'})
-})
+}, bulkFileLifecycleTimeout)
 
 it('identifies the exact long article image when upload or fixed-limit validation fails', async () => {
   const f=await fixture(); const path=join(f.directory,'failed.png'); await writeFile(path,'image bytes')

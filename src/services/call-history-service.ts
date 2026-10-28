@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeCallDetail,
+  ArkmeCallShareLink,
+  ArkmeCallShareViewers,
   ArkmeCallHistoryItem,
   ArkmeCallHistoryOptions,
   ArkmeCallHistoryPage,
@@ -18,7 +20,7 @@ import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue
 import { ProfileService } from './profile-service.js'
 import type { MediaService } from './media-service.js'
 import type { SourceService } from './source-service.js'
-import { callRecordRoomId, callRecordSource, callSummaryUserIds, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
+import { callRecordRoomId, callRecordSource, callSummaryNeedsDetail, callSummaryUserIds, projectCallRecord, renderCallRecordSummary } from '../call-record-presentation.js'
 import type { ArkmeTimelineItem } from '../types.js'
 
 interface ArkmeCallRefPayload {
@@ -300,11 +302,17 @@ export class CallHistoryService {
     private readonly source?: Pick<SourceService, 'privateRemarksByUserIds'>,
   ) {}
 
-  async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
+  async listCallHistory(options: ArkmeCallHistoryOptions & { startAtMillis?: number; endAtMillis?: number } = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
     const session = await this.runtime.requireSession()
     const limit = this.normalizedLimit(options.limit)
     const cursor = options.cursor?.trim() ?? ''
     const body: Record<string, unknown> = { limit }
+    if (options.startAtMillis !== undefined || options.endAtMillis !== undefined) {
+      if (!Number.isSafeInteger(options.startAtMillis) || !Number.isSafeInteger(options.endAtMillis)
+        || options.startAtMillis! <= 0 || options.endAtMillis! <= options.startAtMillis!
+        || options.endAtMillis! - options.startAtMillis! > 94 * 86_400_000) throw new ArkmePluginError('call-range-invalid', '通话日期范围无效', false)
+      body.start_at = options.startAtMillis; body.end_at = options.endAtMillis; body.direction = 'desc'
+    }
     if (cursor !== '') body.cursor = cursor
     const scope = this.runtime.requestScope(session.userId)
     const raw = await this.runtime.authenticatedDataPost<Record<string, unknown>>(
@@ -314,7 +322,7 @@ export class CallHistoryService {
       signal,
       {
         scope,
-        key: `call-history:${String(limit)}:${cursor}`,
+        key: `call-history:${String(limit)}:${cursor}:${options.startAtMillis ?? ''}:${options.endAtMillis ?? ''}`,
         cacheMs: 2_000,
         failureCooldownMs: 2_000,
       },
@@ -337,6 +345,8 @@ export class CallHistoryService {
         names.set(item.peerUserId, item.peerDisplayName)
       }
       const summary = safeSummary(renderCallRecordSummary(record, session.userId, names))
+      if (item.summaryStatus === 'done' && callSummaryNeedsDetail(record)) item.summaryNeedsDetail = true
+      // Retain searchable text; the UI suppresses this fallback until detail resolves.
       if (summary) item.summaryPreview = summary
     })
     const hasMore = booleanValue(raw.has_more ?? raw.hasMore)
@@ -353,10 +363,60 @@ export class CallHistoryService {
     }
   }
 
+  /** The owner API still validates membership; a provenance locator grants no access. */
+  async arrangementCallDetail(roomId: string, signal?: AbortSignal, source?: {startMillis?: number;quote: string}): Promise<ArkmeCallDetail> {
+    const session = await this.runtime.requireSession()
+    if (!roomId.trim() || roomId.length > 512) throw new ArkmePluginError('call-source-invalid', '通话来源无效', false, 400)
+    return this.detailByRoomId(roomId, { version: 1, userId: session.userId, roomId, stableId: `trtc:${roomId}`, issuedAtMillis: Date.now() }, session, signal, true, source)
+  }
+
   async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> {
     const session = await this.runtime.requireSession()
     const payload = await this.openCallRef(callRef, session.userId)
     return await this.detailByRoomId(payload.roomId, payload, session, signal)
+  }
+
+  async shareLink(callRef: string, signal?: AbortSignal): Promise<ArkmeCallShareLink> {
+    const session = await this.runtime.requireSession()
+    const payload = await this.openCallRef(callRef, session.userId)
+    const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/call-detail-share/ensure', { room_id: payload.roomId }, session, signal,
+      { scope: this.runtime.requestScope(session.userId), lane: 'write', service: 'webrtc' },
+    )
+    const shareRef = stringValue(data.share_ref)
+    if (!/^[a-f0-9]{24}\.[a-f0-9]{64}$/.test(shareRef)) {
+      throw new ArkmePluginError('call-share-invalid', '分享链接暂不可用，请重试', true, 502)
+    }
+    const origin = this.runtime.config.environment === 'prod' ? 'https://jiwo.cc' : 'https://jotmo-app.senguo.me'
+    return { url: `${origin}/share/call/${shareRef}` }
+  }
+
+  async shareViewers(callRef: string, cursor = '', signal?: AbortSignal): Promise<ArkmeCallShareViewers> {
+    const session = await this.runtime.requireSession()
+    const payload = await this.openCallRef(callRef, session.userId)
+    const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/call-detail-share/viewers', { room_id: payload.roomId, cursor, limit: 20 }, session, signal,
+      { scope: this.runtime.requestScope(session.userId), lane: 'interactive-read', service: 'webrtc' },
+    )
+    if (!Array.isArray(data.items) || typeof data.next_cursor !== 'string') {
+      throw new ArkmePluginError('call-viewers-invalid', '查看记录暂不可用，请重试', true, 502)
+    }
+    const items = data.items.map(value => {
+      const row = objectValue(value)
+      const viewId = stringValue(row.view_id)
+      const userId = numberValue(row.user_id)
+      const viewedAtMillis = numberValue(row.viewed_at_ms)
+      if (!/^[a-f0-9]{24}$/.test(viewId) || !Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(viewedAtMillis) || viewedAtMillis <= 0) {
+        throw new ArkmePluginError('call-viewers-invalid', '查看记录暂不可用，请重试', true, 502)
+      }
+      return { viewId, userId, viewedAtMillis, displayName: stringValue(row.display_name).trim() || '即我用户' }
+    })
+    const profiles = await this.profile.publicProfilesByUserIds(items.map(item => item.userId), session, signal).catch(() => new Map())
+    const viewers = await Promise.all(items.map(async item => ({
+      ...item,
+      ...(profiles.get(item.userId)?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, item.userId) }),
+    })))
+    return { items: viewers, nextCursor: data.next_cursor }
   }
 
   async timelineCallRecord(raw: unknown, userId: number): Promise<ArkmeTimelineItem['callRecord']> {
@@ -486,7 +546,7 @@ export class CallHistoryService {
     if (rawContacts.length > 0) {
       const contacts = rawContacts.map(item => this.recentContactFromRaw(objectValue(item)))
         .filter((item): item is ArkmeCallRecentContact => item !== undefined)
-      if (contacts.length > 0) return await this.attachRecentContactAvatars(contacts, session, signal)
+      if (contacts.length > 0) return await this.attachRecentContactPresentation(contacts, session, signal)
     }
     try {
       const data = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
@@ -507,15 +567,8 @@ export class CallHistoryService {
         .filter(userId => userId !== session.userId)
         .slice(0, 20)
       if (ids.length === 0) return []
-      const profiles = await this.profile.publicProfilesByUserIds(ids, session, signal).catch(() => new Map())
-      const contacts = ids.map(userId => {
-        const profile = profiles.get(userId)
-        return {
-          userId,
-          displayName: profile?.displayName?.trim() || `Arkme 用户 ${String(userId)}`,
-        }
-      })
-      return await this.attachRecentContactAvatars(contacts, session, signal, profiles)
+      const contacts = ids.map(userId => ({ userId, displayName: `Arkme 用户 ${String(userId)}` }))
+      return await this.attachRecentContactPresentation(contacts, session, signal)
     } catch {
       return []
     }
@@ -549,18 +602,24 @@ export class CallHistoryService {
     }))
   }
 
-  private async attachRecentContactAvatars(
+  private async attachRecentContactPresentation(
     contacts: ArkmeCallRecentContact[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    knownProfiles?: Map<number, { avatarUrl?: string }>,
   ): Promise<ArkmeCallRecentContact[]> {
     const ids = [...new Set(contacts.map(contact => contact.userId).filter(userId => Number.isSafeInteger(userId) && userId > 0))]
     if (ids.length === 0) return contacts
-    const profiles = knownProfiles ?? await this.profile.publicProfilesByUserIds(ids, session, signal).catch(() => new Map())
+    const [profiles, remarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(ids, session, signal).catch(() => new Map()),
+      this.source?.privateRemarksByUserIds(ids, signal === undefined ? {} : { signal })
+        .catch(() => new Map<number, string>()) ?? Promise.resolve(new Map<number, string>()),
+    ])
     return await Promise.all(contacts.map(async contact => {
-      if (profiles.get(contact.userId)?.avatarUrl === undefined) return contact
-      return { ...contact, avatarRef: await this.profile.sealProfileImageRef(session.userId, contact.userId) }
+      const profile = profiles.get(contact.userId)
+      const displayName = remarks.get(contact.userId)?.trim() || profile?.displayName?.trim()
+        || contact.displayName.trim() || `Arkme 用户 ${String(contact.userId)}`
+      return { ...contact, displayName,
+        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, contact.userId) }) }
     }))
   }
 
@@ -582,6 +641,7 @@ export class CallHistoryService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
     bypassCache = false,
+    source?: {startMillis?: number;quote: string},
   ): Promise<ArkmeCallDetail> {
     const raw = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
       '/api/v1/trtc/call-detail',
@@ -608,7 +668,13 @@ export class CallHistoryService {
     ])
     const mediaType = callMediaType(firstValue(raw, ['call_media_type', 'callMediaType', 'media_type', 'mediaType']))
     const videoRecord = callVideoRecord(raw, mediaType, session.userId)
-    const transcriptSegments = this.transcriptSegments(raw, startedAtMillis, session.userId).slice(0, 200)
+    const allSegments = this.transcriptSegments(raw, startedAtMillis, session.userId)
+    const sourceStart = source?.startMillis === undefined ? undefined : source.startMillis >= 100_000_000_000 ? Math.max(0,source.startMillis-startedAtMillis) : source.startMillis
+    const matches = source ? allSegments.map((segment,index)=>({segment,index})).filter(({segment})=>sourceStart !== undefined ? segment.startMillis === sourceStart : !!source.quote.trim() && segment.text.includes(source.quote.trim())) : []
+    // Keep the existing bounded projection, but include a uniquely located source
+    // even when it occurs beyond the initial 200 transcript segments.
+    const firstSegment = matches.length === 1 ? Math.max(0,matches[0]!.index-5) : 0
+    const transcriptSegments = allSegments.slice(firstSegment,firstSegment+200)
     const hangupUserId = callResult.toLowerCase().replace(/[_\s-]/g, '') === 'normalend'
       ? listValue(raw.member_actions).map(objectValue).reverse().find(action => firstString(action, ['action']).toLowerCase() === 'hangup' && firstNumber(action, ['user_id']) > 0)?.user_id
       : undefined

@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { connectArkmeLocale } from '../src/client/locale.js'
+const selectLocale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })()
+beforeEach(() => { selectLocale('zh') })
 import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/client/ArkmeLogin.js'
 import { ArkmeJiwoBrandMark } from '../src/client/ArkmeJiwoBrandMark.js'
 import {
@@ -17,6 +20,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     submitBusy={false}
     error=""
     phone=""
+    passwordLogin={{ account: '', password: '', onAccountChange() {}, onPasswordChange() {}, onSubmit() {} }}
     smsCode=""
     smsCountdown={0}
     testLoginEnabled={false}
@@ -45,6 +49,27 @@ function darkLoginCss(patch: Partial<ArkmeLoginProps> = {}): string {
 }
 
 describe('ArkmeLogin', () => {
+  it('keeps the password entry below phone sign-in, away from QR and required binding', () => {
+    const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '')
+    const phone = text(renderLogin({ mode: 'phone' }))
+    expect(phone).toContain('账号密码登录')
+    expect(phone.lastIndexOf('登录')).toBeGreaterThan(phone.indexOf('验证码'))
+    expect(text(renderLogin())).not.toContain('账号密码登录')
+    expect(text(renderLogin({ mode: 'phone', phoneBindingRequired: true }))).not.toContain('账号密码登录')
+  })
+
+  it('uses the existing login area for password input, back action and loading state', () => {
+    const html = renderLogin({ mode: 'password', busy: true, submitBusy: true })
+    expect(html).toContain('type="password"')
+    expect(html).toContain('autoComplete="current-password"')
+    expect(html).toContain('返回手机号登录')
+    expect(html).toContain('正在登录…')
+    expect(html).toContain('aria-label="显示密码"')
+    expect(html).toContain('aria-busy="true"')
+    expect(html).not.toContain('role="tablist"')
+    expect(html).not.toContain('获取验证码')
+  })
+
   it('uses the navigation brand assets instead of typeset text in the headline', () => {
     const html = renderLogin()
     const headline = (html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1] ?? '').replaceAll('&quot;', '"')
@@ -75,7 +100,7 @@ describe('ArkmeLogin', () => {
     expect(visibleText).not.toContain('选择你熟悉的方式继续')
     expect(html).not.toContain('数字方舟，真实的我')
     expect(html).not.toContain('你的内容属于你')
-    expect(html).not.toContain('Digital ark, true me')
+    expect(html).not.toContain('See Yourself,Live Smarter.')
     expect(html).toContain('dsh-arkme-login-story')
     expect(html).toContain('dsh-arkme-login-wordmark')
     expect(html).toContain('请使用即我 App 扫码登录')
@@ -147,6 +172,7 @@ describe('ArkmeLogin', () => {
       submitBusy={false}
       error=""
       phone=""
+      passwordLogin={{ account: '', password: '', onAccountChange() {}, onPasswordChange() {}, onSubmit() {} }}
       smsCode=""
       smsCountdown={0}
       testLoginEnabled={false}
@@ -231,6 +257,7 @@ describe('ArkmeLogin', () => {
   })
 
   it('renders the complete login surface in English without Chinese copy', () => {
+    selectLocale('en')
     const html = renderLogin({ t: english, mode: 'phone', phoneBindingRequired: true })
 
     expect(html).toContain('Finish signing in')
@@ -243,14 +270,14 @@ describe('ArkmeLogin', () => {
   it('keeps a concise product description below the English headline and a short Wechat QR tab', () => {
     const html = renderLogin({ t: english })
 
-    expect(html).toContain('Digital ark, true me</h1>')
+    expect(html).toContain('See Yourself,Live Smarter.</h1>')
     expect(html).not.toContain('Arkme,<br/>')
     expect(html).toContain('<p class="dsh-arkme-login-description">Your experiences, connected into a digital you.</p>')
     expect(html).not.toContain('Choose the sign-in method you prefer')
     expect(html).toMatch(/role="tab"[^>]*>Wechat QR<\/button>/)
     expect(html).not.toContain('your digital self.')
     expect(html).not.toContain('Your content belongs to you')
-    expect(html).not.toContain('<strong>Digital ark, true me</strong>')
+    expect(html).not.toContain('<strong>See Yourself,Live Smarter.</strong>')
     expect(html).toContain('Phone number')
     expect(html).toContain('User Agreement')
     expect(html).toContain('Privacy Policy')
@@ -287,7 +314,7 @@ describe('ArkmeLogin', () => {
     expect(darkCss).toMatch(/\.dsh-arkme-login-definition h1 \{[^}]*color: var\(--arkme-login-text\)/)
     expect(darkCss).toContain('.dsh-arkme-login-description,')
     expect(darkCss).toContain('.dsh-arkme-login-agreement')
-    expect(darkCss).toMatch(/\.dsh-arkme-login-wordmark \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/)
+    expect(renderToStaticMarkup(<ArkmeJiwoBrandMark />).replaceAll('&quot;', '"')).toContain('[data-brand-language="en"] { filter: invert(1) hue-rotate(180deg); }')
     expect(darkCss).not.toContain('prefers-color-scheme')
   })
 

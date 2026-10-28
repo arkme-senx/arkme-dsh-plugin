@@ -1,12 +1,24 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// This suite uses the node renderer; native selection has real-DOM coverage in its own suite.
+// Browser highlight geometry has real-DOM coverage in message-underlines.test.tsx.
+// Keep this node-renderer suite focused on conversation state and mutations.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
 const state = vi.hoisted(() => ({ callArkme: vi.fn(), worldRenders: 0 }))
 vi.mock('react-dom', () => ({ createPortal: (node: unknown) => node }))
-vi.mock('../src/client/api.js', () => ({
-  callArkme: state.callArkme,
+vi.mock('../src/client/api.js', async () => { const { emptyTimelineCacheFixture } = await import('./helpers/member-page-fixture.js'); return ({
+  callArkme: emptyTimelineCacheFixture(state.callArkme),
   ArkmeClientError: class ArkmeClientError extends Error {},
-}))
+}) })
 vi.mock('../src/client/ArkmeWorldSurface.js', () => ({
   ArkmeWorldSurface: () => { state.worldRenders += 1; return <div>世界</div> },
 }))
@@ -21,6 +33,7 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 describe('Arkme surface refresh boundaries', () => {
   let renderer: ReactTestRenderer | undefined
   beforeEach(() => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
     state.worldRenders = 0
     state.callArkme.mockReset()
     state.callArkme.mockImplementation(async (operation: string) => {
@@ -38,6 +51,7 @@ describe('Arkme surface refresh boundaries', () => {
     if (renderer !== undefined) act(() => { renderer?.unmount() })
     renderer = undefined
     arkmeUi.showLogin()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -69,6 +83,7 @@ describe('Arkme surface refresh boundaries', () => {
   })
 
   it.each(['private_chat', 'group_chat'] as const)('retries a background %s read on focus and visibility restoration', async kind => {
+    vi.useFakeTimers({ toFake: ['Date'] })
     arkmeChatDirectory.activateAccount(undefined)
     arkmeChatDirectory.activateAccount(42)
     let focused = true
@@ -122,6 +137,8 @@ describe('Arkme surface refresh boundaries', () => {
       expect(arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === source.sourceRef)?.unreadCount).toBe(1)
       focused = true
       doc.visibilityState = 'visible'
+      // These are independent foreground resumptions, beyond the ACK coalescing interval.
+      vi.setSystemTime(Date.now() + 1000)
       await act(async () => {
         if (event === 'preview') resumePreview!()
         else if (event === 'focus') win.dispatchEvent(new Event(event))

@@ -113,7 +113,10 @@ export function ArkmeRelatedQuickNotesCard({
   onOpen: () => void
   onRetry: () => void
 }) {
-  if (state.kind === 'idle' || state.kind === 'loading' || state.kind === 'empty') return null
+  if (state.kind === 'idle' || state.kind === 'empty') return null
+  if (state.kind === 'loading') return <div style={styles.compactError} role="status" data-arkme-related-quick-notes-loading>
+    {tr('正在加载相关快记…')}
+  </div>
   if (state.kind === 'error') {
     return <div style={styles.compactError} data-arkme-related-quick-notes-error title={state.message}>
       <span>{tr("相关快记加载失败")}</span>

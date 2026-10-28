@@ -5,7 +5,7 @@
 ## 准备
 
 1. Node 24、pnpm、Go、Chrome、openssl；Intelligent 任务分支包含 `TestManagedAIPluginBrowserChain`。
-2. 干净的目标官方 DSH checkout，HEAD 与已获取的 origin/master 一致；其官方 web 测试依赖已安装。
+2. 干净的目标官方 DSH checkout，HEAD 与已获取的 origin/master 或 `ARKME_DSH_REF` 指定的官方发布 tag 一致；其官方 web 测试依赖已安装。
 3. 在插件任务 worktree 完成 `pnpm install --frozen-lockfile`、`pnpm pack --out <临时目录>/arkme.tgz`。
 4. 用独立临时 `DSH_HOME` 执行官方 `dsh plugin --profile web add -w <临时目录>/arkme.tgz`。不得使用常驻用户 profile 或 link。`ARKME_PACKED_PROFILE` 指向这个 profile 目录。
 5. 准备本任务独占的 loopback MySQL 8.4（root 可建立测试库/测试用户）。Intelligent 已有 helper 随机建库并自动清理；禁止使用生产数据库。
@@ -27,3 +27,7 @@ bash scripts/run-managed-ai-e2e.sh
 2026-09-10 初验：官方 DSH `d347e703`、插件 dev `562b61d`，确定性四场景与真实 DeepSeek 场景均通过。后续同步 dev `6cdc5b0`，修正其新 Bot 输入法测试的请求 UID/错误类 mock 与现行合同的偏差；没有改 Bot 产品逻辑。串行全量 5,715 tests passed / 8 skipped（492 files passed / 6 skipped）。完整场景/实现/账本矩阵在 Intelligent 同任务分支的 `docs/managed-ai-model-proxy-premerge-review.md`。
 
 12:12:06 最终回归：提交 `b36cc08` 串行重建 tgz 并以另一个全新 profile 正式安装，四场景再次通过；两次成功各扣 19,110 nano-CNY/结算一次，两次失败各释放一次且不扣费，最终预占为零。
+
+## 2026-09-22 积分扩展
+
+当前覆盖 8 个请求场景，并从正式安装包导出的 SDK、实际注册的 Tools、浏览器积分页面核对相同消费。`ARKME_DSH_REF=dsh-v0.1.5-rc.2` 可选择对应干净官方目标。`ARKME_E2E_GIFT_POINTS=20`（也支持 100、200）使用只有赠送积分、无充值的隔离账户，验证长系统/工具描述的真实请求仍可用；未设置时保留原现金账户回归。这里只替换上游收费 HTTP 的线协议 fixture，数据库、服务、插件和 DSH 均真实运行。

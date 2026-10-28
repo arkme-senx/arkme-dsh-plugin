@@ -69,6 +69,10 @@ export class DshRemoteHttpControlPlane implements DshRemoteControlPlane {
     return await this.post(`${BASE}/session-turn-objects/known-sessions`, input, signal)
   }
 
+  async listSessionTurnObjects(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turn-objects/list`, input, signal)
+  }
+
   async prepareSessionTurnUpload(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return await this.post(`${BASE}/session-turns/prepare-upload`, input, signal)
   }

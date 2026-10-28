@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ArkmeAuthSnapshot, ArkmeSourceSendResult } from '../types.js'
 import { openNativeForward, nativeForwardDelivery, type NativeForwardContent } from './native-forward-entry.js'
 import { callArkme } from './api.js'
-import { nativeSelectionForwardSnapshot, type NativeChat } from './harness-native-selection.js'
+import { nativeSelectionSnapshot, type NativeChat } from './harness-native-selection.js'
 import { ArkmeSelectActionIcon, messageSelectionStyles } from './message-selection-presentation.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -32,7 +32,7 @@ export function NativeForwardAction({ chat, keys, sessionId, doc, onComplete, ch
     const timeout = setTimeout(() => controller.abort(), 30_000)
     setLoading(true)
     try {
-      const snapshot = attempt.current?.snapshot ?? nativeSelectionForwardSnapshot(chat, sessionId, keys)
+      const snapshot = attempt.current?.snapshot ?? nativeSelectionSnapshot(chat, sessionId, keys)
       const auth = await callArkme<ArkmeAuthSnapshot>('auth.status', {}, controller.signal)
       if (!alive.current || request.current !== controller) return
       controller.signal.throwIfAborted()

@@ -96,6 +96,12 @@ describe('Arkme source tree', () => {
     ])
   })
 
+  it('matches the hierarchy owner title order before any manual ranks have been saved', () => {
+    const sources = ['阿', '波', '\uE000', '😀'].map(name => source(name, name))
+    expect(sortArkmeSourceTree(buildArkmeSourceTree(sources), 'custom').map(node => node.source.displayName))
+      .toEqual(['波', '阿', '\uE000', '😀'])
+  })
+
   it('aggregates each parent count from direct and descendant topic records without double counting', () => {
     const parent = { ...source('parent', '一级主题'), recordCount: 2 }
     const child = { ...source('child', '二级主题', 'parent'), recordCount: 3 }

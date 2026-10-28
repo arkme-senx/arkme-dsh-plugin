@@ -17,6 +17,27 @@ class MemoryStorage implements Storage {
 }
 
 describe('Arkme navigation cache', () => {
+  it('restores activity freshness together with the preview without account crossover', () => {
+    const storage = new MemoryStorage()
+    writeNavigationCache({ version: 1, userId: 42, directory: 'root', updatedAtMillis: 1,
+      sources: { root: [{ sourceRef: 'group', kind: 'group_chat', displayName: '群', activeAtMillis: 200, unreadCount: 0,
+        latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' }] } }, storage)
+    expect(readNavigationCache(42, storage)?.sources.root?.[0]).toMatchObject({ latestPreview: '李四 加入了群聊', latestActivityAtMillis: 200, latestActivityKind: 'member_joined' })
+    expect(readNavigationCache(43, storage)).toBeUndefined()
+  })
+
+  it('restores persisted custom topic ranks and rejects malformed ranks', () => {
+    const storage = new MemoryStorage()
+    writeNavigationCache({
+      version: 1, userId: 42, directory: 'send_to_self', updatedAtMillis: 1,
+      sources: { send_to_self: [1024, 2048, -1, 0, 1.5, Infinity].map((siblingOrder, index) => ({
+        sourceRef: `topic-${index}`, kind: 'topic', displayName: `主题 ${index}`,
+        activeAtMillis: 1, unreadCount: 0, siblingOrder,
+      })) },
+    }, storage)
+    expect(readNavigationCache(42, storage)?.sources.send_to_self?.map(item => item.siblingOrder))
+      .toEqual([1024, 2048, undefined, undefined, undefined, undefined])
+  })
   it('removes cached DSH topic and its selection without renaming same-name ordinary topics', () => {
     const storage = new MemoryStorage()
     const sources = [3, 1, 2].map(topicKind => ({

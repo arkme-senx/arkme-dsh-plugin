@@ -21,6 +21,7 @@ describe('Backend login-only DSH remote control plane', () => {
     })
     await plane.turnObjectUploadCapabilities()
     await plane.knownHistorySessions({ session_refs: ['session-01'] })
+    await plane.listSessionTurnObjects({ runtime_ref: 'runtime-01', session_ref: 'session-01', limit: 100 })
     await plane.prepareSessionTurnUpload({ runtime_ref: 'runtime-01', session_ref: 'session-01' })
     await plane.commitSessionTurnUpload({ upload_id: 'upload-01', content_sha256: 'abc' })
     await plane.completeSessionTurnObjectHistory({
@@ -40,6 +41,7 @@ describe('Backend login-only DSH remote control plane', () => {
       '/api/v1/dsh-remote/session-turns/complete',
       '/api/v1/dsh-remote/session-turn-objects/capabilities',
       '/api/v1/dsh-remote/session-turn-objects/known-sessions',
+      '/api/v1/dsh-remote/session-turn-objects/list',
       '/api/v1/dsh-remote/session-turns/prepare-upload',
       '/api/v1/dsh-remote/session-turns/commit-upload',
       '/api/v1/dsh-remote/session-turn-objects/complete',

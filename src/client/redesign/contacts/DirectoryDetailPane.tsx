@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
 import type { ArkmeBotSummary, ArkmeDirectoryContactProfile, ArkmeSourceItem } from '../../../types.js'
-import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigation-logo.png'
-import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
+import { ArkmeJiwoBrandMark } from '../../ArkmeJiwoBrandMark.js'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
 import { ConversationProfileDetail } from './ConversationProfileDetail.js'
 import { TeamDetailPane } from './TeamDetailPane.js'
+import { ManualSpeakerDetail } from './ManualSpeakerDetail.js'
 
 export interface DirectoryDetailPaneProps {
   accountKey: string
@@ -29,20 +29,7 @@ export function DirectoryDetailPane({
 }: DirectoryDetailPaneProps) {
   if (selection.kind === 'none') {
     return <div className="arkme-directory-detail-empty">
-      <img
-        className="arkme-directory-detail-logo"
-        src={`data:image/png;base64,${arkmeNavigationLogoBase64}`}
-        alt="Arkme"
-        data-arkme-theme-image="light"
-        draggable={false}
-      />
-      <img
-        className="arkme-directory-detail-logo"
-        src={`data:image/png;base64,${arkmeNavigationLogoDarkBase64}`}
-        alt="Arkme"
-        data-arkme-theme-image="dark"
-        draggable={false}
-      />
+      <ArkmeJiwoBrandMark className="arkme-directory-detail-logo" style={{ width: 96, height: 96 }} />
     </div>
   }
   if (selection.kind === 'unmarked-speaker') {
@@ -50,11 +37,12 @@ export function DirectoryDetailPane({
       {renderUnmarkedSpeakerDetail?.(selection.candidateRef)}
     </div>
   }
+  if (selection.kind === 'manual-speaker') return <ManualSpeakerDetail accountKey={accountKey} speaker={selection}/>
   if (selection.kind === 'group' || selection.kind === 'bot') {
     return <ConversationProfileDetail key={`${accountKey}:${selection.kind}:${selection.kind === 'group' ? selection.sourceRef : selection.bot.botRef}`} item={selection} onSourceActivated={onSourceActivated} {...(onBotActivated === undefined ? {} : { onBotActivated })} />
   }
   if (selection.kind === 'team') {
-    return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} />
+    return <TeamDetailPane key={`${accountKey}:${selection.teamRef}`} accountKey={accountKey} teamRef={selection.teamRef} initialView={selection.view ?? 'members'} />
   }
   return <ContactProfileDetail
     key={`${accountKey}:${selection.contactRef}`}

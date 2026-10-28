@@ -15,7 +15,7 @@ function fixture(visible = true) {
   let resize = () => {}
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: () => void) { resize = callback }
-    observe() {} disconnect() {}
+    observe() {} unobserve() {} disconnect() {}
   })
   document.body.innerHTML = '<main style="overflow:hidden"><span id="seat"></span></main>'
   const seat = document.querySelector<HTMLElement>('#seat')!
@@ -98,6 +98,7 @@ it('exposes only the menu while DSH is inactive, without activating or reloading
   await flush()
   expect(surface.style.visibility).toBe('hidden')
   expect(frame.contentDocument).toBe(native)
+  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(false)
 })
 
 it.each([true, false])('keeps list shadow below overlapping native menus without double painting (DSH visible: %s)', async visible => {
@@ -151,4 +152,95 @@ it('keeps the native shell visible if the optional dropdown adapter stops recogn
   expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
   stop?.(); stop = undefined
   expect(content.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+})
+
+it('bounds native fullscreen sidebars below the task header without moving the iframe or native content', async () => {
+  const { native, frame, seat, resize } = fixture()
+  const shell = native.querySelector('[data-arkme-session-frame]')!
+  const draft = native.querySelector('textarea')!
+  const headerSlot = native.createElement('div')
+  headerSlot.setAttribute('data-slot', 'conversation.session.header')
+  const header = native.createElement('header')
+  headerSlot.append(header); shell.prepend(headerSlot)
+  vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(rect(356, 0, 1044, 73))
+  const panel = native.createElement('div')
+  panel.setAttribute('data-sidebar-right-panel', 'fullscreen')
+  panel.style.width = '100%'
+  panel.textContent = 'Files'
+  shell.querySelector('[data-rightbar-col]')!.append(panel)
+  const frameStyle = frame.style.cssText
+  await flush()
+  const value = (key: string) => native.documentElement.style.getPropertyValue(`--arkme-harness-${key}`)
+  expect(value('panel-top')).toBe('73px')
+  expect(value('panel-height')).toBe('927px')
+  // Resize and reposition the embedding seat, not the iframe viewport.
+  vi.mocked(seat.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 800))
+  vi.mocked(header.getBoundingClientRect).mockReturnValue(rect(184, 20, 536, 96))
+  resize()
+  expect(value('content-left')).toBe('184px')
+  expect(value('content-width')).toBe('536px')
+  expect(value('panel-top')).toBe('116px')
+  expect(value('panel-height')).toBe('704px')
+  const css = [...native.querySelectorAll('style')].map(style => style.textContent).join('')
+  expect(css).toContain('[data-arkme-harness-content-frame] [data-sidebar-right-panel="fullscreen"]')
+  expect(css).toContain('width: var(--arkme-harness-content-width) !important')
+  expect(css).not.toContain('[data-sidebar-right-panel="push"]')
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(native.querySelector('textarea')).toBe(draft)
+  expect(panel.textContent).toBe('Files')
+  header.setAttribute('aria-hidden', 'true')
+  await flush()
+  expect(value('panel-top')).toBe('20px')
+  expect(value('panel-height')).toBe('800px')
+  headerSlot.remove(); await flush()
+  expect(value('panel-top')).toBe('20px')
+  stop?.(); stop = undefined
+  expect(value('panel-top')).toBe('')
+  expect(value('panel-height')).toBe('')
+  expect(native.querySelector('style')).toBeNull()
+  expect(native.querySelector('textarea')).toBe(draft)
+})
+
+it('keeps native boot and error content visible before the session layout exists', async () => {
+  const { native, surface } = fixture()
+  native.body.innerHTML = '<main>Native loading or connection error</main>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+  native.body.innerHTML = '<main><div data-rightbar-col></div></main>'
+  await flush()
+  expect(native.body.hasAttribute('data-arkme-harness-content-frame')).toBe(false)
+  expect(native.querySelector('main')?.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+})
+
+it('keeps an empty document or root clipped until native loading or error UI has painted', async () => {
+  const { native, surface } = fixture()
+  native.body.innerHTML = '<script>boot()</script><div id="root"></div>'
+  await flush()
+  expect(surface.style.visibility).toBe('hidden')
+  expect(surface.style.clipPath).toBe('inset(100%)')
+  native.querySelector('#root')!.innerHTML = '<main data-dsh-boot>Loading plugins…</main>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  native.querySelector('#root')!.innerHTML = '<p role="alert">Connection failed</p>'
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+})
+
+it('keeps the native frame painted while foreign history uses native renderers', async () => {
+  const { surface, column, native, frame } = fixture()
+  surface.setAttribute('data-arkme-history-session', 'arkme:other:same')
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.getAttribute('data-arkme-visible')).toBe('true')
+  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(true)
+  expect(native.documentElement.hasAttribute('data-arkme-session-preview')).toBe(false)
+  column.setAttribute('data-arkme-session-open', ''); await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.clipPath).toContain('M 356 0 H 1400')
+  column.removeAttribute('data-arkme-session-open'); surface.removeAttribute('data-arkme-history-session'); await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(frame.contentDocument).toBe(native)
+  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(false)
 })

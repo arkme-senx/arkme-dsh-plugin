@@ -1,6 +1,7 @@
 import type {
   ArkmeOpenPrivateChatResult,
   ArkmeWorldFeedPage,
+  ArkmeWorldFeedItem,
   ArkmeWorldPublishResult,
   ArkmeWorldRecordList,
   ArkmeWorldVoiceprintInviteResult,
@@ -8,6 +9,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeWorldToolPort {
+  readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem>
   listWorldRecords(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldRecordList>
   listWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   listMyWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>

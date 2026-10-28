@@ -1,3 +1,4 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
 import { mkdtemp, readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,17 @@ import type { ArkmeRecordReeditSubmission } from '../src/record-reedit-contract.
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  it('persists cancellation completion across host relaunch without storing credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-cancellation-'))
+    const store = new ArkmeStateStore(root)
+    const completion = { userId: 7, sessionHash: 'a'.repeat(64), result: { mode: 'immediate' as const, status: 'done' as const, cancel_at: 0, has_phone: false } }
+    await store.writeCancellationCompletion(completion)
+    const restarted = new ArkmeStateStore(root)
+    await expect(restarted.readCancellationCompletion()).resolves.toEqual(completion)
+    await restarted.writeCancellationCompletion(undefined)
+    await expect(new ArkmeStateStore(root).readCancellationCompletion()).resolves.toBeUndefined()
+  })
+
   it.each([undefined, 'b'.repeat(64)])('preserves a checkpoint with a missing or mismatched baseline fingerprint: %s', async fingerprint => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-reedit-checkpoint-baseline-'))
     const store = new ArkmeStateStore(root)
@@ -411,7 +423,7 @@ describe('ArkmeStateStore', () => {
       jobId: 'job-1', userId: 10001, revision: 1, phase: 'prepared',
       fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
       durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-      belongUserId: 10001, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+      belongUserId: 10001, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
       createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
       ...overrides,
     }
@@ -515,6 +527,22 @@ describe('ArkmeStateStore', () => {
     await expect(reloaded.getRecordReeditDraft(10001, 'stable-source-a', 'record-1')).resolves.toBeUndefined()
   })
 
+  it('restores manual import batch identity after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-batch-'))
+    const batch = { batchId: recordingImportBatchID(), itemIndex: 1, itemCount: 3, timeZone: 'Asia/Shanghai' }
+    await new ArkmeStateStore(root).putRecordingImportJob(10001, recordingJob({ batch }))
+    const restored = await new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')
+    expect(restored?.batch).toEqual(batch)
+  })
+
+  it('fails closed on malformed persisted batch identity instead of resuming an ordinary upload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-invalid-batch-'))
+    const batch = { batchId: 'invalid-batch-id', itemIndex: 0, itemCount: 1, timeZone: 'UTC' }
+    await new ArkmeStateStore(root).putRecordingImportJob(10001, recordingJob({ batch }))
+    const restored = await new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')
+    expect(restored).toMatchObject({ phase: 'failed', retryable: false, errorCode: 'recording-import-batch-invalid' })
+  })
+
   it('persists recording import checkpoints and replaces them with revision CAS', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-import-'))
     const store = new ArkmeStateStore(root)
@@ -538,6 +566,18 @@ describe('ArkmeStateStore', () => {
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
     await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('restores a historical recording job without classification as kind zero for server-side all-day compatibility', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-kind-legacy-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+    const path = join(root, 'state.json')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    delete raw.recordingImportJobsByUser['10001']['job-1'].recordingKind
+    await writeFile(path, JSON.stringify(raw))
+
+    await expect(new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({ recordingKind: 0 })
   })
 
   it('removes only the exact account-scoped recording import job', async () => {
@@ -578,8 +618,8 @@ describe('ArkmeStateStore', () => {
     const second = recordingJob({ jobId: 'job-second', sourceHandle: '/private/second.upload' })
 
     const [left, right] = await Promise.all([
-      store.admitRecordingImportJob(10001, first, 20),
-      store.admitRecordingImportJob(10001, second, 20),
+      store.admitRecordingImportJob(10001, first),
+      store.admitRecordingImportJob(10001, second),
     ])
 
     expect(left).toEqual({ kind: 'inserted', job: expect.objectContaining({ jobId: 'job-first' }) })
@@ -598,8 +638,8 @@ describe('ArkmeStateStore', () => {
       sha256: 'b'.repeat(64),
     })
 
-    expect(await store.admitRecordingImportJob(10001, first, 20)).toMatchObject({ kind: 'inserted' })
-    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
+    expect(await store.admitRecordingImportJob(10001, first)).toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second)).resolves.toEqual({ kind: 'duplicate-file-name' })
     await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
   })
 
@@ -612,8 +652,8 @@ describe('ArkmeStateStore', () => {
       fileSize: first.fileSize + 1, sha256: 'b'.repeat(64),
     })
 
-    await expect(store.admitRecordingImportJob(10001, first, 20)).resolves.toMatchObject({ kind: 'inserted' })
-    await expect(store.admitRecordingImportJob(10001, second, 20)).resolves.toEqual({ kind: 'duplicate-file-name' })
+    await expect(store.admitRecordingImportJob(10001, first)).resolves.toMatchObject({ kind: 'inserted' })
+    await expect(store.admitRecordingImportJob(10001, second)).resolves.toEqual({ kind: 'duplicate-file-name' })
   })
 
   it('does not let terminal local history replace the Audio owner duplicate decision', async () => {
@@ -621,7 +661,7 @@ describe('ArkmeStateStore', () => {
     const store = new ArkmeStateStore(root)
     await store.putRecordingImportJob(10001, recordingJob({ phase: 'accepted' }))
 
-    await expect(store.admitRecordingImportJob(10001, recordingJob({ jobId: 'job-new' }), 20))
+    await expect(store.admitRecordingImportJob(10001, recordingJob({ jobId: 'job-new' })))
       .resolves.toMatchObject({ kind: 'inserted', job: { jobId: 'job-new' } })
   })
 
@@ -642,11 +682,11 @@ describe('ArkmeStateStore', () => {
     expect(await reopened.listRecordingImportJobs(10001)).toHaveLength(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)
     expect(await reopened.getRecordingImportJob(10001, 'rejected-0')).toBeUndefined()
     expect(await reopened.getRecordingImportJob(10001, 'recoverable')).toBeDefined()
-    await expect(reopened.admitRecordingImportJob(10001, recordingJob({ jobId: 'new-attempt' }), 2))
+    await expect(reopened.admitRecordingImportJob(10001, recordingJob({ jobId: 'new-attempt' })))
       .resolves.toMatchObject({ kind: 'inserted' })
   })
 
-  it('atomically enforces the unresolved recording import limit across distinct concurrent jobs', async () => {
+  it('atomically admits distinct queued imports beyond the former twenty-job limit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-admission-limit-'))
     const store = new ArkmeStateStore(root)
     for (let index = 0; index < 19; index += 1) {
@@ -665,12 +705,12 @@ describe('ArkmeStateStore', () => {
     })
 
     const results = await Promise.all([
-      store.admitRecordingImportJob(10001, first, 20),
-      store.admitRecordingImportJob(10001, second, 20),
+      store.admitRecordingImportJob(10001, first),
+      store.admitRecordingImportJob(10001, second),
     ])
 
-    expect(results.map(result => result.kind).sort()).toEqual(['inserted', 'limit'])
-    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(20)
+    expect(results.map(result => result.kind).sort()).toEqual(['inserted', 'inserted'])
+    await expect(store.listRecordingImportJobs(10001)).resolves.toHaveLength(21)
   })
 
   it('bounds terminal import history without pruning resumable jobs', async () => {
@@ -722,7 +762,7 @@ describe('ArkmeStateStore', () => {
 it('retains long article image refs, document and stable submit IDs after restart', async () => {
   const root = await mkdtemp(join(tmpdir(), 'arkme-article-draft-'))
   const store = new ArkmeStateStore(root)
-  const draft = {sourceRef:'source',baseVersion:3,title:'article',textContent:'![x](arkme-local:arkme-file-v1.a)',textFormat:'markdown' as const,images:[{fileRef:'arkme-file-v1.a'}],document:{type:'doc',content:[]},recordUid:'record-id',relationUid:'relation-id',durationMillis:10,updatedAtMillis:20}
+  const draft = {sourceRef:'source',autoPublish:true,baseVersion:3,title:'article',textContent:'![x](arkme-local:arkme-file-v1.a)',textFormat:'markdown' as const,images:[{fileRef:'arkme-file-v1.a'}],document:{type:'doc',content:[]},recordUid:'record-id',relationUid:'relation-id',durationMillis:10,updatedAtMillis:20}
   await store.putLongArticleDraft(42, draft)
   const restarted = new ArkmeStateStore(root)
   expect(await restarted.getLongArticleDraft(42,'source')).toEqual(draft)

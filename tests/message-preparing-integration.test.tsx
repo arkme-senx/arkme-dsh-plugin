@@ -167,7 +167,7 @@ describe('preparing production wiring', () => {
   it('wires only genuine composer edits and a scoped successful submit intent', () => {
     const sidebar = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(sidebar).toContain('const messagePreparing = useMessagePreparing({')
-    expect(sidebar).toContain('enabled: activeConversation && activeRecordReeditComposer === undefined && !preparingFiles')
+    expect(sidebar).toContain('enabled: activeConversation && activeRecordReeditComposer === undefined && !directAdmission.blocked')
     expect(sidebar.includes('onInputActivity={messagePreparing.input}')).toBe(true)
     expect(sidebar).toContain('if (sameTargetComposer()) messagePreparing.stop()')
     const submit = sidebar.slice(sidebar.indexOf('const send = async'), sidebar.indexOf('const updateComposerText ='))
@@ -185,7 +185,10 @@ describe('preparing production wiring', () => {
     expect(normalSend.indexOf('if (sameTargetComposer()) messagePreparing.stop()')).toBeGreaterThan(emptyGuard)
     expect(sidebar).toContain('<ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />')
     const atomicEdits = sidebar.slice(sidebar.indexOf('const insertMemberMentionAt'), sidebar.indexOf('const updateComposerRichTrigger'))
-    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(5)
+    // Member, emoji, Bot-avatar, @all, Bot candidate, and hashtag edits.
+    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(6)
+    const botAvatarEdit = atomicEdits.slice(atomicEdits.indexOf('const insertBotMention'), atomicEdits.indexOf('const insertMentionCandidate'))
+    expect(botAvatarEdit).toContain('focusEditedComposer(cursor)')
     const deletionStart = sidebar.indexOf('const caret = arkmeComposerDraftStore.deleteMentionAtSelection')
     const deletion = sidebar.slice(deletionStart, sidebar.indexOf('if (event.key === \'Enter\' && !event.shiftKey', deletionStart))
     expect(deletion.includes('focusEditedComposer(caret)')).toBe(true)

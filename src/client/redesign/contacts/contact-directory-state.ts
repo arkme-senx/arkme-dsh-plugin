@@ -10,8 +10,8 @@ import { contactDirectoryLetter } from '../../../contact-directory-presentation.
 export const CONTACT_DIRECTORY_SECTION_ORDER = [
   'groups',
   'bots',
-  'unmarked-speakers',
   'teams',
+  'manual-speakers',
   'contacts',
 ] as const satisfies readonly ArkmeDirectorySectionKind[]
 
@@ -20,9 +20,9 @@ export type ContactDirectoryLoadMode = 'replace' | 'append' | 'count'
 
 export type ArkmeDirectorySelection =
   | { kind: 'none' }
-  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' }>
+  | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' | 'manual-speaker' }>
   | { kind: 'contact'; contactRef: string }
-  | { kind: 'team'; teamRef: string }
+  | { kind: 'team'; teamRef: string; view?: 'members' | 'activity' }
   | { kind: 'unmarked-speaker'; candidateRef: string }
 
 export interface ContactDirectorySectionState {
@@ -118,6 +118,7 @@ export function createContactDirectoryState(accountKey: string): ContactDirector
       groups: createSection('groups', accountKey),
       bots: createSection('bots', accountKey),
       'unmarked-speakers': createSection('unmarked-speakers', accountKey),
+      'manual-speakers': createSection('manual-speakers', accountKey),
       teams: createSection('teams', accountKey),
       contacts: createSection('contacts', accountKey),
     },
@@ -129,6 +130,7 @@ export function directoryItemKey(item: ArkmeDirectoryItem): string {
     case 'group': return `group:${item.sourceRef}`
     case 'bot': return `bot:${item.bot.botRef}`
     case 'unmarked-speaker': return `unmarked-speaker:${item.candidateRef}`
+    case 'manual-speaker': return `manual-speaker:${item.speakerKey}`
     case 'team': return `team:${item.teamRef}`
     case 'contact': return `contact:${item.contactRef}`
   }
@@ -195,6 +197,9 @@ function selectionAfterReplacement(
     return items.some(item => item.kind === 'team' && item.teamRef === selection.teamRef)
       ? selection
       : { kind: 'none' }
+  }
+  if (section === 'manual-speakers' && selection.kind === 'manual-speaker') {
+    return items.find(item => item.kind === 'manual-speaker' && item.speakerKey === selection.speakerKey) as ArkmeDirectorySelection ?? { kind: 'none' }
   }
   return selection
 }
@@ -272,9 +277,17 @@ export function contactDirectoryReducer(
       // Partial contact identity scans cannot prove removal. Group page coverage is
       // pagination progress, not this failure semantic, and must still replace page one.
       const partialContactRefresh = action.mode === 'replace' && action.section === 'contacts' && action.page.coverage === 'partial'
+      // Team's public account ID is its stable entity identity. Preserve the
+      // account-scoped navigation reference while replacing its presentation.
+      // Requests still reauthorize with the owner; missing teams clear selection.
+      const incoming = action.section === 'teams' ? action.page.items.map(item => {
+        if (item.kind !== 'team' || !item.publicId) return item
+        const previous = current.items.find(row => row.kind === 'team' && row.publicId === item.publicId)
+        return previous?.kind === 'team' ? { ...item, teamRef: previous.teamRef } : item
+      }) : action.page.items
       const items = action.mode === 'append' || partialContactRefresh
-        ? mergeDirectoryItems(current.items, action.page.items)
-        : [...action.page.items]
+        ? mergeDirectoryItems(current.items, incoming)
+        : [...incoming]
       // Contact presentation is hydrated page by page. Audio instead reports its
       // owner's current projection state, so a later fresh result supersedes it.
       const projectionState = action.section === 'contacts' && action.mode === 'append' && current.projectionState !== undefined && current.projectionState !== 'fresh'

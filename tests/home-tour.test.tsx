@@ -28,7 +28,11 @@ let storage: Map<string, string>
 let props: ArkmeHomeTourProps
 
 async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
+  // The owner requires consecutive layout samples. A wall-clock delay can
+  // expire before its RAF callbacks under load; flush frames and React commits.
+  for (let frame = 0; frame < 3; frame++) {
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+  }
 }
 async function render(changes: Partial<ArkmeHomeTourProps> = {}) {
   props = { ...props, ...changes }
@@ -197,6 +201,10 @@ describe('home tour browser behavior', () => {
 
   it.each(['跳过引导', '关闭功能引导', 'Escape'])('remembers explicit dismissal with %s', async action => {
     await render()
+    await vi.waitFor(async () => {
+      await act(async () => {})
+      expect(panel()).not.toBeNull()
+    })
     if (action === 'Escape') {
       await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
       await settle()

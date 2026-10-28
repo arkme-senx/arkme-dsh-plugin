@@ -1,0 +1,68 @@
+.arkme-timed-bubble { position: relative; }
+.arkme-message-timestamp {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 3px 0 -3px auto;
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+/* Reserve the end of the final text line, without creating a footer row. */
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:not([data-arkme-text-collapsible]):only-child):has(.arkme-markdown > p:last-child) > .arkme-message-timestamp {
+  position: absolute;
+  right: 13px;
+  bottom: 10px;
+  margin: 0;
+}
+/* Keep Markdown's reservation even while collapsed so its overflow measurement
+   cannot oscillate when the timestamp pushes the final word onto a new line. */
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:only-child) .arkme-markdown > p:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 42px;
+  height: 1px;
+}
+/* Existing controls/metadata already supply a final row. Keep their hit areas
+   clear of the clock; these rules only apply when that content is last. */
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child) > .arkme-message-timestamp,
+.arkme-timed-bubble:has(> [data-arkme-message-reactions]:nth-last-child(2)) > .arkme-message-timestamp {
+  position: absolute;
+  right: 13px;
+  bottom: 10px;
+  margin: 0;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child > [data-arkme-text-toggle] {
+  margin-right: 42px;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child {
+  width: 100% !important;
+}
+.arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child [data-arkme-file-meta],
+.arkme-timed-bubble > [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child [data-arkme-article-meta] {
+  padding-right: 42px;
+}
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp {
+  bottom: 18px;
+}
+/* A flex spacer participates in wrapping so reactions never cover the time.
+   Full width overrides the reaction component's standalone fit-to-chip width. */
+.arkme-timed-bubble > [data-arkme-message-reactions]:nth-last-child(2) {
+  width: 100% !important;
+}
+.arkme-timed-bubble > [data-arkme-message-reactions]:nth-last-child(2)::after {
+  content: '';
+  flex: 0 0 38px;
+  height: 14px;
+  margin-left: auto;
+  align-self: flex-end;
+}

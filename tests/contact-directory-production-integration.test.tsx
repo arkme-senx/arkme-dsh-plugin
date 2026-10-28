@@ -28,7 +28,7 @@ function text(node: ReactTestInstance): string {
 }
 
 function button(renderer: ReactTestRenderer, label: string): ReactTestInstance {
-  const result = renderer.root.findAllByType('button').find(node => text(node).includes(label))
+  const result = renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label || text(node).includes(label))
   if (result === undefined) throw new Error(`button not found: ${label}`)
   return result
 }
@@ -74,12 +74,13 @@ beforeEach(() => {
   testState.callArkme.mockReset()
   testState.callArkme.mockImplementation(async (operation: string, params?: { section?: string }) => {
     if (operation === 'auth.status') return { status: 'authenticated', environment: 'test', userId: 101 }
+    if (operation === 'people.list') return { source: 'speakers', items: [] }
     if (operation === 'auth.config') return { environment: 'test' }
     if (operation === 'calls.outgoing.intent.claim') return null
     if (operation === 'sources.list') return { items: [], hasMore: false }
-    if (operation === 'directory.list' && params?.section === 'groups') return { section: 'groups', items: [{ kind: 'group', sourceRef: 'group-1', displayName: '测试群' }], total: 1, hasMore: false }
-    if (operation === 'directory.list' && params?.section === 'contacts') return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '', letter: 'X' }], total: 1, hasMore: false }
-    if (operation === 'directory.list' && params?.section !== undefined) return { section: params.section, items: [], total: 0, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section === 'groups') return { section: 'groups', items: [{ kind: 'group', sourceRef: 'group-1', displayName: '测试群' }], total: 1, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section === 'contacts') return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '', letter: 'X' }], total: 1, hasMore: false }
+    if ((operation === 'directory.list' || operation === 'team.app.directory') && params?.section !== undefined) return { section: params.section, items: [], total: 0, hasMore: false }
     if (operation === 'directory.contact.profile') return {
       contactRef: 'contact-1', displayName: '选择联系人', nickname: '选择联系人', remark: '',
     }
@@ -103,14 +104,14 @@ describe('production sibling Contacts tab', () => {
   it('uses real apply slots: conversations remain unmodified until the sibling Contacts tab enters contacts mode', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<>
         <Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
       </>)
       await Promise.resolve()
     })
@@ -127,7 +128,7 @@ describe('production sibling Contacts tab', () => {
     await act(async () => { contacts.props.onClick(); await Promise.resolve() })
     expect(contacts.props['aria-current']).toBe('page')
     expect(renderer.root.findByProps({ 'aria-label': '联系人目录' })).toBeDefined()
-    const brandImages = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).findAllByProps({ alt: 'Arkme' })
+    const brandImages = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).findAllByProps({ alt: '即我' })
     expect(brandImages).toHaveLength(2)
     expect(brandImages.map(image => image.props['data-arkme-theme-image'])).toEqual(['light', 'dark'])
     const hiddenConversationSurface = renderer.root.findByProps({ 'data-test-conversation-surface': true })
@@ -150,14 +151,14 @@ describe('production sibling Contacts tab', () => {
   it('uses the AppFrame seats as a single narrow Contacts view and retains section folds across a conversations round trip', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<div style={{ gridTemplateColumns: '56px minmax(0, 1fr) 0px' }}>
         <Sidebar collapsed useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
         <div data-shell-overlay />
       </div>)
       await Promise.resolve()
@@ -181,14 +182,14 @@ describe('production sibling Contacts tab', () => {
   it('restores cached directory rows immediately without reloading the same fresh Contacts page', async () => {
     const seats = applyProductionSeats()
     const Sidebar = seats.get('sidebar')
-    const Workspace = seats.get('conversation')
+    const Workspace = seats.get('main')
     if (Sidebar === undefined || Workspace === undefined) throw new Error('apply did not register persistent seats')
     const sessions = { current: 'session-1', ids: [], byId: {} }
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = mount(<>
         <Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} />
-        <Workspace sessionId="session-1" closeDetails={vi.fn()} />
+        <Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} />
       </>)
       await Promise.resolve()
     })
@@ -197,15 +198,15 @@ describe('production sibling Contacts tab', () => {
     expect(button(renderer, '选择联系人')).toBeDefined()
     const fullDirectoryLoads = () => testState.callArkme.mock.calls.filter(([operation, params]) => {
       const request = params as { section?: string; countOnly?: boolean } | undefined
-      return operation === 'directory.list' && request?.countOnly !== true
+      return (operation === 'directory.list' || operation === 'team.app.directory') && request?.countOnly !== true
     }).map(([, params]) => (params as { section: string }).section)
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
 
     await act(async () => { button(renderer, '对话').props.onClick() })
     await act(async () => { button(renderer, '联系人').props.onClick() })
 
     expect(button(renderer, '选择联系人')).toBeDefined()
-    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'unmarked-speakers', 'teams', 'contacts'])
+    expect(fullDirectoryLoads()).toEqual(['groups', 'bots', 'teams', 'contacts'])
   })
 
 })
@@ -218,11 +219,11 @@ it('saves a remark through real sibling seats and immediately updates the select
     : original(operation, params))
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '联系人').props.onClick() })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
@@ -287,7 +288,7 @@ it('adds through the real Contacts dialog, refreshes matching counts and keeps a
       added = true
       return { state: 'ready', source: { sourceRef: 'new-chat', kind: 'private_chat', displayName: '选择新联系人' } }
     }
-    if (added && operation === 'directory.list' && params.section === 'contacts') {
+    if (added && (operation === 'directory.list' || operation === 'team.app.directory') && params.section === 'contacts') {
       if (params.cursor === 'next-page') return await new Promise(resolve => { finishRefresh = resolve })
       return { section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-2', displayName: '选择新联系人', nickname: '选择新联系人', remark: '', letter: 'X' }], total: 2, hasMore: true, nextCursor: 'next-page' }
     }
@@ -295,12 +296,12 @@ it('adds through the real Contacts dialog, refreshes matching counts and keeps a
   })
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
     arkmeUi.showContacts()
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
   const directory = renderer.root.findByProps({ 'aria-label': '联系人目录' })
@@ -392,19 +393,19 @@ it('accepts a later server directory refresh after a local remark save on a stab
   let externalUpdate = false
   testState.callArkme.mockImplementation(async (operation, params) => {
     if (operation === 'directory.contact.remark.update') return { contactRef: 'contact-1', nickname: '选择联系人', displayName: params.remark, remark: params.remark }
-    if (externalUpdate && operation === 'directory.list' && params.section === 'contacts') return {
+    if (externalUpdate && (operation === 'directory.list' || operation === 'team.app.directory') && params.section === 'contacts') return {
       section: 'contacts', items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '别端新备注', nickname: '新昵称', remark: '别端新备注', letter: 'B' }], total: 1, hasMore: false,
     }
     return original(operation, params)
   })
   const seats = applyProductionSeats()
   const Sidebar = seats.get('sidebar')!
-  const Workspace = seats.get('conversation')!
+  const Workspace = seats.get('main')!
   const sessions = { current: 'session-1', ids: [], byId: {} }
   let renderer!: ReactTestRenderer
   await act(async () => {
     arkmeUi.showContacts()
-    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace sessionId="session-1" closeDetails={vi.fn()} /></>)
+    renderer = mount(<><Sidebar collapsed={false} useSessions={(select: (s: typeof sessions) => unknown) => select(sessions)} renderSlot={() => null} collapseSidebar={vi.fn()} closeDetails={vi.fn()} /><Workspace useSessions={(select: (state: typeof sessions) => unknown) => select(sessions)} closeDetails={vi.fn()} /></>)
   })
   await act(async () => { button(renderer, '选择联系人').props.onClick() })
   await act(async () => { button(renderer, '编辑').props.onClick() })

@@ -57,19 +57,9 @@ describe('Arkme billing gateway', () => {
         code: 200,
         message: '请求成功',
         data: {
-          currency: 'CNY',
-          total_nano_cny: '9007199254740993000',
-          available_nano_cny: '9007199254740992999',
-          reserved_nano_cny: '1',
-          pricing_version: 'deepseek-v4-flash-public-20260817',
-          pricing_window: 'off_peak',
-          provider: 'arkme-managed',
-          model: 'deepseek-v4-flash',
-          pricing: {
-            cache_hit_input_nano_per_token: '50',
-            cache_miss_input_nano_per_token: '1500',
-            output_nano_per_token: '4500',
-          },
+          unit: 'ai_points', points_per_cny: 100,
+          available_points: '900719925474.0992999', reserved_points: '0.0000001',
+          granted_points: '0', purchased_points: '900719925474.0992999', observed_at: 1, grants: [],
         },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     })
@@ -81,7 +71,7 @@ describe('Arkme billing gateway', () => {
       currency: 'CNY',
     })
     expect(requests).toHaveLength(1)
-    expect(requests[0]?.url).toBe('https://intelligent.example.test/api/v1/managed-ai/balance/query')
+    expect(requests[0]?.url).toBe('https://intelligent.example.test/api/v1/managed-ai/points/query')
     expect(requests[0]?.headers.get('Authorization')).toBe('Bearer access-token')
     await expect(requests[0]?.json()).resolves.toEqual({})
   })
@@ -99,7 +89,7 @@ describe('Arkme billing gateway', () => {
     const requestCount = releases.length
     const response = () => new Response(JSON.stringify({
       code: 200,
-      data: { currency: 'CNY', total_nano_cny: '10', available_nano_cny: '10', reserved_nano_cny: '0' },
+      data: { unit: 'ai_points', points_per_cny: 100, available_points: '0.000001', reserved_points: '0', granted_points: '0', purchased_points: '0.000001', observed_at: 1, grants: [] },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     for (const release of releases) release(response())
     await Promise.all([first, second])

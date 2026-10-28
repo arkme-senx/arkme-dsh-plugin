@@ -40,16 +40,16 @@ describe('Arkme redesign dark theme', () => {
     expect(directoryRule).toContain('overflow-y: auto')
   })
 
-  it('keeps Team identity fixed with one scrolling content owner and a natural-height member card', () => {
+  it('keeps Team details in one scrolling content owner with natural-height sections', () => {
     const teamDetailRule = redesignCss.match(/\.arkme-team-detail\s*\{([^{}]+)\}/)?.[1] ?? ''
     const teamHeaderMainRule = redesignCss.match(/\.arkme-team-detail-header-main\s*\{([^{}]+)\}/)?.[1] ?? ''
     const teamMembersRule = redesignCss.match(/\.arkme-team-members\s*\{([^{}]+)\}/)?.[1] ?? ''
     const memberListRule = redesignCss.match(/\.arkme-team-member-list\s*\{([^{}]+)\}/)?.[1] ?? ''
 
-    expect(teamDetailRule).toContain('grid-template-rows: auto minmax(0, 1fr)')
-    expect(teamDetailRule).toContain('overflow: hidden')
+    expect(teamDetailRule).toContain('display: block')
+    expect(teamDetailRule).toContain('overflow-y: auto')
     expect(teamHeaderMainRule).toContain('width: min(100%, 760px)')
-    expect(teamMembersRule).toContain('overflow-y: auto')
+    expect(teamMembersRule).not.toContain('overflow-y: auto')
     expect(memberListRule).toContain('overflow: hidden')
     expect(memberListRule).not.toContain('min-height: 0')
     expect(memberListRule).not.toContain('overflow-y: auto')
@@ -78,10 +78,11 @@ describe('Arkme redesign dark theme', () => {
     expect(redesignCss).toContain('.arkme-contact-directory-section-header[aria-expanded="true"] .arkme-contact-directory-caret { transform: rotate(90deg); }')
   })
   it('reassigns the real AppFrame grid tracks for Contacts narrow directory and detail seats', () => {
-    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="directory"])')
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]) { grid-template-columns:')
     expect(redesignCss).toContain('grid-template-columns: minmax(0, 1fr) 0px 0px !important')
-    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="content"])')
-    expect(redesignCss).toContain('grid-template-columns: 0px minmax(0, 1fr) 0px !important')
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"]) { grid-template-columns:')
+    expect(redesignCss).toContain('grid-template-columns: var(--arkme-navigation-width) minmax(0, 1fr) 0px !important')
+    expect(redesignCss).not.toContain('[data-arkme-contacts-mobile-view="content"] { display: none')
     expect(redesignCss).not.toContain('.pI_x6G_frame')
     expect(redesignCss).not.toContain('data-details-collapsed]):has([data-arkme-owned="persistent')
   })
@@ -115,7 +116,7 @@ describe('Arkme redesign dark theme', () => {
 
     expect(darkCss).toContain('background: var(--dsw-alias-bg-base)')
     expect(darkCss).toContain('background: var(--dsw-specific-sidebar-fill)')
-    expect(darkCss).toContain('background: var(--dsw-specific-menu)')
+    expect(darkCss).toContain('background: var(--dsw-alias-bg-layer-3, #ffffff)')
     expect(darkCss).toContain('background: var(--dsw-specific-input-major)')
   })
 
@@ -191,7 +192,8 @@ describe('Arkme redesign dark theme', () => {
   it('keeps the task start brand and control hierarchy readable in dark mode', () => {
     const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
 
-    expect(darkCss).toMatch(/\.arkme-redesign-task-greeting img \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/)
+    // Brand theme variants are owned by ArkmeJiwoBrandMark; do not invert Chinese dark assets twice.
+    expect(darkCss).not.toMatch(/\.arkme-redesign-task-greeting img \{[^}]*filter:/)
     expect(darkCss).toMatch(/\.arkme-redesign-hero-input \{[^}]*background: var\(--dsw-specific-input-major\) !important/)
     expect(darkCss).toMatch(/\.arkme-redesign-hero-input textarea \{[^}]*background: transparent !important/)
     for (const selector of [
@@ -251,7 +253,7 @@ describe('Arkme redesign dark theme', () => {
     expect(redesignCss).toContain('[data-arkme-directory-mode="contacts"]')
     expect(redesignCss).toContain('.arkme-contact-directory button:focus-visible')
     expect(redesignCss).toContain('.arkme-directory-detail-pane button:focus-visible')
-    expect(redesignCss).toMatch(/@media \(max-width: 1024px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="content"] > [data-arkme-directory-mode="contacts"]')
     expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[^}]*\.arkme-redesign-chat-panel \{ display: none;/)
     expect(redesignCss).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.arkme-contact-directory-caret/)
 
@@ -263,7 +265,7 @@ describe('Arkme redesign dark theme', () => {
   })
 
   it('keeps both Contacts seats bounded at narrow widths', () => {
-    expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toContain('[data-arkme-sidebar-collapsed="true"][data-arkme-contacts-mobile-view="directory"]')
     expect(redesignCss).toContain('.arkme-directory-detail-pane')
   })
 

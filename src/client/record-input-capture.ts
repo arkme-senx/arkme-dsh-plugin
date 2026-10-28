@@ -1,3 +1,4 @@
+import { dictationActive, subscribeDictationActivity } from './dictation-activity.js'
 import type { ArkmeRecordCaptureContext, ArkmeSourceItem } from '../types.js'
 
 const BACKGROUND_SOUND_ENABLED_PREFIX = 'arkme.record-capture.background-sound.enabled.'
@@ -118,6 +119,7 @@ interface DraftCaptureState {
   failureLatched: boolean
   generation: number
   starting: boolean
+  finalizingSubmission: boolean
   startPromise: Promise<void> | undefined
   startTimer: CaptureTimer | undefined
   captureLimitTimer: CaptureTimer | undefined
@@ -366,9 +368,11 @@ export async function arkmeMicrophonePermissionState(
   }
   try {
     const result = await source.permissions.query({ name: 'microphone' as PermissionName })
-    lastMicrophonePermission = result.state
-    setStoredExplicitMicrophoneGrant(grantScope, result.state === 'granted')
-    return lastMicrophonePermission
+    // Electron's browser grant can precede OS consent; only explicit capture confirms device access.
+    lastMicrophonePermission = result.state === 'granted' && !arkmeMicrophoneCaptureReady(grantScope)
+      ? 'prompt' : result.state
+    if (result.state !== 'granted') setStoredExplicitMicrophoneGrant(grantScope, false)
+    return result.state
   } catch {
     return arkmeMicrophoneCaptureReady(grantScope) ? 'granted' : 'prompt'
   }
@@ -921,6 +925,7 @@ export class ArkmeRecordInputCaptureOwner {
   private readonly now: () => number
   private readonly createCaptureId: () => string
   private readonly captureContext: () => Promise<ArkmeRecordCaptureContext>
+  private contextSample: { startedAtMillis: number; promise: Promise<ArkmeRecordCaptureContext> } | undefined
   private readonly enabledReader: () => boolean
   private readonly microphoneReadyReader: () => boolean
   private readonly requestMicrophonePermission: () => Promise<'granted'>
@@ -938,6 +943,7 @@ export class ArkmeRecordInputCaptureOwner {
   private readonly evictedDraftKeys = new Set<string>()
   private readonly waveformSnapshots = new Map<string, ArkmeRecordInputWaveformSnapshot>()
   private readonly waveformListeners = new Map<string, Set<() => void>>()
+  private unsubscribeDictation: () => void = () => undefined
   private unsubscribePreference: () => void = () => undefined
   private unsubscribeRecorderFailure: () => void = () => undefined
   private activeDraftKey: string | undefined
@@ -982,6 +988,10 @@ export class ArkmeRecordInputCaptureOwner {
     if (this.disposed || this.activated) return
     this.activated = true
     this.activationRevision += 1
+    this.unsubscribeDictation = subscribeDictationActivity(async () => {
+      for (const state of this.sessions.values()) this.reconcile(state)
+      await this.lifecycle
+    })
     this.unsubscribePreference = this.preferenceSubscriber(() => { this.reconcileCaptureGate() })
     this.unsubscribeRecorderFailure = this.recorder.subscribeFailure?.(failure => {
       this.handleRecorderFailure(failure)
@@ -994,6 +1004,7 @@ export class ArkmeRecordInputCaptureOwner {
   deactivate(): void {
     if (this.disposed || !this.activated) return
     this.activated = false
+    this.unsubscribeDictation()
     this.unsubscribePreference()
     this.unsubscribePreference = () => undefined
     this.unsubscribeRecorderFailure()
@@ -1062,6 +1073,7 @@ export class ArkmeRecordInputCaptureOwner {
    * request; focus, effects and re-renders never request permission.
    */
   beginUserInput(draftKeyValue: string | undefined): void {
+    if (!this.disposed && draftKeyValue?.trim()) void this.sampleContext()
     if (this.disposed || !this.readEnabled() || this.readMicrophoneReady()) return
     this.activate()
     const draftKey = draftKeyValue?.trim()
@@ -1106,31 +1118,42 @@ export class ArkmeRecordInputCaptureOwner {
     }
   }
 
+  private sampleContext(): Promise<ArkmeRecordCaptureContext> {
+    const now = this.now()
+    // One account-scoped sample, refreshed by actual input, never a background poll.
+    // At most five seconds of device/network staleness is accepted at submission.
+    if (this.contextSample !== undefined && now - this.contextSample.startedAtMillis >= 0
+      && now - this.contextSample.startedAtMillis < 5_000) return this.contextSample.promise
+    const promise = Promise.resolve().then(() => this.captureContext())
+      .catch((): ArkmeRecordCaptureContext => ({ clientName: '未知电脑（浏览器）' }))
+    this.contextSample = { startedAtMillis: now, promise }
+    return promise
+  }
+
   async finishForSubmit(draftKey: string): Promise<ArkmeRecordInputCaptureResult> {
     const state = this.session(draftKey)
     const completedAtMillis = this.now()
-    const contextPromise = this.captureContext().catch((): ArkmeRecordCaptureContext => ({
-      clientName: '未知电脑（浏览器）',
-    }))
+    const contextPromise = this.sampleContext()
     // A quick send can arrive before the zero-delay timer fires or while
     // getUserMedia/MediaRecorder is still starting. Finalize that same owner
     // generation first; otherwise a valid granted draft silently loses its
     // supplemental background sound and is sent as plain text.
     const shouldFinalizePendingStart = this.shouldRecord(state) && this.recordingSession !== state
+    // Freeze ownership before any await: take() clears this stable draft key,
+    // and the user may already be typing the next message during recorder startup.
+    state.finalizingSubmission = shouldFinalizePendingStart
+    state.isActive = false
+    if (this.activeDraftKey === draftKey) this.activeDraftKey = undefined
+    this.detachSession(state)
     this.cancelStartTimer(state)
     if (shouldFinalizePendingStart) {
       await this.bounded(state.startPromise ?? this.startRecording(state)).catch(() => undefined)
     }
-    state.isActive = false
+    state.finalizingSubmission = false
     state.generation += 1
-    if (this.activeDraftKey === draftKey) this.activeDraftKey = undefined
     this.cancelStartTimer(state)
     this.cancelCaptureLimitTimer(state)
     this.publishWaveform(state)
-    // The composer reuses its stable draftKey immediately after take(). Detach
-    // this exact generation before the first await so new input gets a new
-    // session and late stop/context completion cannot delete or mutate it.
-    this.detachSession(state)
     const preserveBackgroundSound = this.captureGateOpen()
     await this.stopOrCancel(state, preserveBackgroundSound)
     const enabled = this.readEnabled()
@@ -1219,8 +1242,10 @@ export class ArkmeRecordInputCaptureOwner {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.contextSample = undefined
     this.activationRevision += 1
     this.activated = false
+    this.unsubscribeDictation()
     this.unsubscribePreference()
     this.unsubscribeRecorderFailure()
     for (const state of this.sessions.values()) {
@@ -1263,6 +1288,7 @@ export class ArkmeRecordInputCaptureOwner {
       failureLatched: false,
       generation: 0,
       starting: false,
+      finalizingSubmission: false,
       startPromise: undefined,
       startTimer: undefined,
       captureLimitTimer: undefined,
@@ -1332,8 +1358,8 @@ export class ArkmeRecordInputCaptureOwner {
   }
 
   private shouldRecord(state: DraftCaptureState): boolean {
-    return !this.disposed && state.isActive && this.activeDraftKey === state.draftKey
-      && state.hasUserContent && this.readEnabled() && this.readMicrophoneReady()
+    return !this.disposed && (state.finalizingSubmission || (state.isActive && this.activeDraftKey === state.draftKey))
+      && !dictationActive() && state.hasUserContent && this.readEnabled() && this.readMicrophoneReady()
   }
 
   private captureGateOpen(): boolean {

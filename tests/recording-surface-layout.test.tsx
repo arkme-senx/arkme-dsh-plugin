@@ -25,6 +25,13 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeRecordingSurface layout', () => {
+  it('keeps the calendar actions and device list reachable in short wide windows', () => {
+    const markup = renderToStaticMarkup(recordingSurfaceElement())
+    const aside = matchStyle(markup, /<aside style="([^"]+)"/)
+    expect(aside.get('overflow-y')).toBe('auto')
+    expect(aside.get('min-height')).toBe('0')
+  })
+
   it('keeps the desktop workbench behavior while allowing the DSH layout to adapt', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
@@ -57,11 +64,9 @@ describe('ArkmeRecordingSurface layout', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
-    expect(markup).toContain('aria-label="选择月份"')
-    expect(markup).toContain('aria-label="选择年份"')
-    expect(source).toContain('function RecordingCalendarDropdown')
-    expect(source).toContain('interface RecordingDropdownAnchor')
-    expect(source).toContain('useState<RecordingDropdownAnchor>()')
+    expect(markup).toContain('aria-label="选择年月"')
+    expect(markup).toContain('aria-haspopup="dialog"')
+    expect(source).toContain('<ArkmeCalendarMonthHeader')
     expect(source).not.toContain('<select aria-label="月份"')
     expect(source).not.toContain('<select aria-label="年份"')
   })
@@ -107,8 +112,7 @@ describe('ArkmeRecordingSurface layout', () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(source).not.toContain('calendarExpanded')
-    expect(source).toContain('{tr("回到今日")}</button>')
-    expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
+    expect(renderToStaticMarkup(recordingSurfaceElement())).toContain('回到今日')
     expect(source).toContain('disabled={future}')
   })
 
@@ -191,13 +195,14 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(onSelect).toHaveBeenCalledOnce()
   })
 
-  it('reserves a separate tooltip row and lets the outer timeline grow for feedback', async () => {
+  it('keeps detail in a floating panel and lets the header grow for feedback', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
     const timelineSource = await readFile(new URL('../src/client/recordings/ArkmeRecordingTimeline.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain("gridTemplateRows: 'auto minmax(0,1fr)'")
-    expect(timelineSource).toContain('minHeight: 162')
-    expect(timelineSource).toContain("gridTemplateRows: '25px 68px auto auto'")
+    expect(timelineSource).toContain('detailPopover: { position: \'absolute\'')
+    expect(timelineSource).toContain('hidden={!detailOpen || !hasRecording}')
+    expect(timelineSource).toContain('<RecordingDailyMetrics')
   })
 
   it('uses the desktop empty illustration instead of tabs and the legacy placeholder track', async () => {
@@ -238,7 +243,7 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(summaryLoading).toContain('生成总结中...')
     expect(summaryLoading).not.toContain('>点击生成')
     expect(timelineFailure).toContain('时间轴生成失败，')
-    expect(timelineFailure).toContain('>点击生成时间轴</button>')
+    expect(timelineFailure).toContain('>选择模型并重试</button>')
   })
 
   it('formats transcript timestamps and durations with the desktop contract', () => {
@@ -296,7 +301,7 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(row.get('padding')).toBe('3px')
     expect(row.get('display')).toBe('grid')
-    expect(row.get('grid-template-columns')).toBe('minmax(0, min(128px, 45%)) minmax(0, 1fr)')
+    expect(row.get('grid-template-columns')).toBe('fit-content(min(128px, 45%)) minmax(0, 1fr) 24px')
     expect(row.get('border-radius')).toBe('6px')
     expect(row.get('background')).toContain('--dsw-specific-input-major')
     expect(markup).toContain(`aria-label="编辑说话人 ${speakerLabel}"`)
@@ -315,12 +320,13 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('display:inline-flex')
     expect(markup).not.toContain('width:88px')
     expect(markup).toContain('font-size:12px;line-height:22px;letter-spacing:.24px')
-    expect(markup).toContain('float:right')
-    expect(markup).toContain('>12:30:01 1分2秒</time>')
+    expect(markup).not.toContain('float:right')
+    expect(markup).toContain('class="arkme-recording-transcript-timestamp">12:30:01</span>')
+    expect(markup).toContain('class="arkme-recording-transcript-duration">1分2秒</span>')
     expect(markup).not.toContain('>背景音<')
   })
 
-  it('shows the supplied speaker avatar and the timeline speaker color in the transcript', () => {
+  it('shows only the supplied avatar for the viewer while retaining speaker editing and time', () => {
     const markup = renderToStaticMarkup(<recordingSurface.ArkmeRecordingTranscriptRow
       item={{
         itemId: 'self-item', itemRef: 'self-ref', startAtMillis: 1_000, endAtMillis: 2_000,
@@ -333,8 +339,9 @@ describe('ArkmeRecordingSurface layout', () => {
       onSelect={() => undefined}
     />)
     expect(markup).toContain('aria-label="HooXi头像"')
-    const name = matchStyle(markup, /<span style="([^"]+)">HooXi<\/span>/)
-    expect(name.get('color')).toBe('#ec7fa9')
+    expect(markup).not.toContain('>HooXi</span>')
+    expect(markup).toContain('aria-label="编辑说话人 HooXi"')
+    expect(markup).toContain('<time')
     expect(markup).not.toContain('background:#ec7fa9')
   })
 

@@ -1,4 +1,4 @@
-import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { HarnessSessions as ISessions } from './harness-session-state.js'
 type SubagentAddress = ReturnType<ISessions['list']['getSnapshot']>['currentAddress']
 
 export interface DesktopSessionSelectionBridge {
@@ -27,7 +27,7 @@ export function observeHarnessSessionSelection(
   }
   const changed = () => {
     const snapshot = sessions.list.getSnapshot()
-    if (stopped || snapshot.phase !== 'ready' || !snapshot.current || !snapshot.byId[snapshot.current]) return
+    if (stopped || snapshot.phase !== 'ready' || !snapshot.current || snapshot.current.startsWith('arkme:') || !snapshot.byId[snapshot.current]) return
     const key = JSON.stringify([snapshot.current, snapshot.currentAddress])
     if (pending?.key === key) return
     if (retry !== undefined) { clearTimeout(retry); retry = undefined }

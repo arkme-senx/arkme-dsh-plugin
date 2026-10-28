@@ -11,5 +11,14 @@ export function inMenuHoverRegion(x: number, y: number, anchor: Rect, menu: Rect
   if (anchor.right <= menu.left && menu.left - anchor.right <= 24) {
     return contains({ left: anchor.right, right: menu.left, top, bottom })
   }
+  // Portaled dropdowns normally sit below the trigger, and flip above when
+  // space is tight. Their vertical placement gap is also part of the target.
+  const left = Math.max(anchor.left, menu.left), right = Math.min(anchor.right, menu.right)
+  if (anchor.bottom <= menu.top && menu.top - anchor.bottom <= 24) {
+    return contains({ left, right, top: anchor.bottom, bottom: menu.top })
+  }
+  if (menu.bottom <= anchor.top && anchor.top - menu.bottom <= 24) {
+    return contains({ left, right, top: menu.bottom, bottom: anchor.top })
+  }
   return false
 }

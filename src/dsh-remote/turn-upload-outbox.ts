@@ -19,6 +19,7 @@ import { decryptLedgerPayload, encryptLedgerPayload } from './crypto.js'
 import { canonicalHistoryEntry } from './presentation.js'
 import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { projectCompletedTurns } from './turn-projector.js'
+import { parseTurnObjectIndex } from './cloud-turn-history.js'
 import type { DshRemoteHistoryEntry } from './dsh-event-contract.js'
 import type { DshRemoteControlPlane, DshRemoteRuntimeProjection, DshRemoteTimelineNode } from './types.js'
 
@@ -27,6 +28,11 @@ const RETRY_MAX_MILLIS = 30_000
 const COMMITTED_RETENTION_MILLIS = 7 * 24 * 60 * 60_000
 const DEFAULT_MAX_OBJECT_BYTES = 5 * 1024 * 1024 * 1024
 const DEFAULT_MAX_PENDING_SPOOL_BYTES = 512 * 1024 * 1024
+// A Turn-only checkpoint does not prove that the native journal's gaps exist.
+const JOURNAL_REVISION_PREFIX = 'native-journal-v2:'
+function journalRevision(revision: string): string {
+  return JOURNAL_REVISION_PREFIX + createHash('sha256').update(revision).digest('hex')
+}
 
 export type DshRemoteTurnUploadState = 'OPEN' | 'SEALED' | 'PREPARED' | 'UPLOADED' | 'COMMITTED'
 type DshRemoteTurnStatus = 'completed' | 'interrupted' | 'error' | 'max_tokens'
@@ -199,11 +205,11 @@ export class DshRemoteTurnUploadOutbox {
   private runtime: DshRemoteRuntimeProjection | undefined
   private captureTail: Promise<void> = Promise.resolve()
   private drainFlight: Promise<void> | undefined
+  private bindingFlight: Promise<void> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private controller = new AbortController()
   private closed = false
   private pendingSpoolBytes = 0
-  private readonly verifiedHistorySessions = new Set<string>()
 
   constructor(private readonly options: DshRemoteTurnUploadOutboxOptions) {
     if (options.key.length !== 32) throw new TypeError('DshRemoteTurnUploadOutbox key must be 32 bytes')
@@ -271,6 +277,10 @@ export class DshRemoteTurnUploadOutbox {
         created_at_millis INTEGER NOT NULL,
         updated_at_millis INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS dsh_history_source_binding_v1 (
+        session_ref TEXT PRIMARY KEY,
+        revision TEXT NOT NULL
+      );
       DROP TABLE IF EXISTS dsh_history_finalization_v1;
       DROP TABLE IF EXISTS dsh_history_backfill_v1;
     `)
@@ -305,17 +315,65 @@ export class DshRemoteTurnUploadOutbox {
     this.scheduleDrain(0)
   }
 
-  async capture(sessionRef: string, entries: readonly DshRemoteHistoryEntry[]): Promise<void> {
+  /** Reset only derived receipts after the server binds this exact source.
+   * Pending payloads survive; a repeated binding (including after restart) is free.
+   * Stop the journal reader before discarding its checkpoint, and let an active
+   * upload finish before resetting credentials. This never gates metadata ACKs. */
+  isReconcilingSourceBindings(): boolean { return this.bindingFlight !== undefined }
+
+  async reconcileSourceBindings(bindings: Record<string, string>, quiesce: () => Promise<void>): Promise<boolean> {
+    if (this.closed) return false
+    while (this.bindingFlight) await this.bindingFlight
+    if (this.closed) return false
+    const changed = Object.entries(bindings).filter(([ref, revision]) => {
+      const known = this.database.prepare('SELECT revision FROM dsh_history_source_binding_v1 WHERE session_ref = ?').get(ref) as { revision: string } | undefined
+      return known?.revision !== revision
+    })
+    if (!changed.length) return false
+    const flight = (async () => {
+      await this.recovery
+      await quiesce()
+      await this.drainFlight
+      // Capture appends remain intact; all SQLite changes below are synchronous.
+      await this.captureTail
+      if (this.closed) return
+      this.database.exec('BEGIN IMMEDIATE')
+      try {
+        for (const [ref, revision] of changed) {
+          this.database.prepare("DELETE FROM dsh_turn_upload_v2 WHERE session_ref = ? AND state = 'COMMITTED'").run(ref)
+          this.database.prepare('DELETE FROM dsh_history_scan_v2 WHERE session_ref = ?').run(ref)
+          this.database.prepare('DELETE FROM dsh_history_completion_v2 WHERE session_ref = ?').run(ref)
+          this.database.prepare(`UPDATE dsh_turn_upload_v2 SET
+            state = 'SEALED', upload_id = NULL, upload_credential_nonce = NULL,
+            upload_credential_ciphertext = NULL, expires_at_millis = NULL,
+            prepared_host_generation = NULL, attempts = 0, next_attempt_at_millis = 0
+            WHERE session_ref = ? AND state IN ('SEALED', 'PREPARED', 'UPLOADED')`).run(ref)
+          this.database.prepare(`INSERT INTO dsh_history_source_binding_v1 VALUES (?, ?)
+            ON CONFLICT(session_ref) DO UPDATE SET revision = excluded.revision`).run(ref, revision)
+        }
+        this.database.exec('COMMIT')
+      } catch (error) { this.database.exec('ROLLBACK'); throw error }
+    })()
+    this.bindingFlight = flight
+    try { await flight; return !this.closed }
+    finally {
+      if (this.bindingFlight === flight) this.bindingFlight = undefined
+      if (!this.closed) this.scheduleDrain(0)
+    }
+  }
+
+  async capture(sessionRef: string, entries: readonly DshRemoteHistoryEntry[], historyTurnStart?: number): Promise<void> {
     if (this.closed || entries.length === 0) return
-    const operation = this.captureTail.then(async () => { await this.captureEntries(sessionRef, entries) })
+    const operation = this.captureTail.then(async () => { await this.captureEntries(sessionRef, entries, historyTurnStart) })
     this.captureTail = operation.catch(() => undefined)
     return await operation
   }
 
-  private async captureEntries(sessionRef: string, entries: readonly DshRemoteHistoryEntry[]): Promise<void> {
+  private async captureEntries(sessionRef: string, entries: readonly DshRemoteHistoryEntry[], historyTurnStart?: number): Promise<void> {
     await this.recovery
     const sorted = [...entries].sort((left, right) => left.event.seq - right.event.seq)
-    let open = this.openTurn(sessionRef)
+    // Historical chunks carry their own Turn identity; they never borrow the live cursor.
+    let open = historyTurnStart === undefined ? this.openTurn(sessionRef) : this.createOpenTurn(sessionRef, historyTurnStart)
     let lastSeq = open?.end_seq ?? -1
     let lines: string[] = []
     let bytes = 0
@@ -338,7 +396,8 @@ export class DshRemoteTurnUploadOutbox {
       if (entry.event.type === 'turn/start') {
         if (open !== undefined && open.start_seq !== entry.event.seq) {
           await flush()
-          this.seal(open, 'interrupted', open.end_seq)
+          // Replaying an older Turn must never close the current live Turn.
+          if (open.start_seq < entry.event.seq) this.seal(open, 'interrupted', open.end_seq)
           open = undefined
         }
         open ??= this.createOpenTurn(sessionRef, entry.event.seq)
@@ -358,7 +417,7 @@ export class DshRemoteTurnUploadOutbox {
         this.seal(open, turnStatus(entry), open.end_seq)
         open = undefined
         lastSeq = -1
-      }
+      } else if (lines.length >= 50) await flush()
     }
     await flush()
     this.scheduleDrain(0)
@@ -383,8 +442,67 @@ export class DshRemoteTurnUploadOutbox {
         SELECT 1 FROM dsh_history_completion_v2
         WHERE session_ref = ? AND source_revision = ?
       )
-    `).get(sessionRef, sourceRevision, sessionRef, sourceRevision)
+    `).get(sessionRef, journalRevision(sourceRevision), sessionRef, journalRevision(sourceRevision))
     return known === undefined
+  }
+
+  /** Only a finalized full-journal scan may skip the immutable source prefix. */
+  historyResumeSeq(sessionRef: string): number {
+    const row = this.database.prepare(`
+      SELECT source_revision, completed_through_seq FROM dsh_history_scan_v2 WHERE session_ref = ?
+    `).get(sessionRef) as { source_revision: string; completed_through_seq: number } | undefined
+    return row?.source_revision.startsWith(JOURNAL_REVISION_PREFIX) ? row.completed_through_seq + 1 : 0
+  }
+
+  async restoreHistoryReceipts(sessionRef: string, signal: AbortSignal): Promise<void> {
+    await this.recovery
+    const runtime = this.runtime, list = this.options.controlPlane.listSessionTurnObjects
+    if (!runtime || !list) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '无法核对云端历史对象', true)
+    let cursor: string | undefined, lastStart = Infinity
+    // Same bounded metadata scan as the native history reader; no object downloads.
+    for (let page = 0; page < 50; page++) {
+      const value = await list.call(this.options.controlPlane, {
+        runtime_ref: runtime.runtimeRef, session_ref: sessionRef, limit: 100,
+        source_state: true, host_generation: runtime.hostGeneration,
+        ...(cursor === undefined ? {} : { cursor }),
+      }, signal)
+      signal.throwIfAborted()
+      if (this.closed || runtime !== this.runtime) throw new DshRemoteError('HOST_GENERATION_STALE', '历史核对所属实例已切换', true)
+      const items = value.items === null ? [] : value.items
+      const more = value.has_more === true
+      if (!Array.isArray(items) || items.length > 100
+        || (!items.length && Number(value.committed_turn_count ?? 0) > 0)
+        || more !== (typeof value.next_cursor === 'string' && value.next_cursor.length > 0)
+        || (more && (!items.length || value.next_cursor === cursor))) {
+        throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史索引分页无效', true)
+      }
+      for (const raw of items) {
+        const item = parseTurnObjectIndex(raw)
+        if ((raw as Record<string, unknown>).runtime_ref !== undefined && ((raw as Record<string, unknown>).runtime_ref !== runtime.runtimeRef || (raw as Record<string, unknown>).session_ref !== sessionRef)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端回执不属于当前上传来源')
+        if (item.end_seq >= lastStart) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史对象重叠')
+        lastStart = item.start_seq
+        const id = stableTurnId(this.options.profileRef, sessionRef, item.start_seq)
+        if (this.database.prepare('SELECT 1 FROM dsh_turn_upload_v2 WHERE turn_id = ?').get(id)) continue
+        this.createOpenTurn(sessionRef, item.start_seq)
+        this.database.prepare(`
+          UPDATE dsh_turn_upload_v2 SET state = 'COMMITTED', turn_ref = ?, end_seq = ?,
+            turn_status = ?, event_count = ?, content_sha256 = ?, compressed_bytes = ?
+          WHERE turn_id = ?
+        `).run(item.turn_ref, item.end_seq, item.status, item.event_count, item.content_sha256, item.compressed_bytes, id)
+      }
+      if (!more) return
+      cursor = String(value.next_cursor)
+    }
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史索引分页过多')
+  }
+
+  /** Immutable old objects may end before the source Turn; upload that tail as raw events. */
+  historyUncoveredFrom(sessionRef: string, startSeq: number, endSeq: number): number {
+    const row = this.requireRow(stableTurnId(this.options.profileRef, sessionRef, startSeq))
+    if (row.state === 'OPEN' || row.end_seq > endSeq) {
+      throw new DshRemoteError('REMOTE_STORAGE_FAILED', '历史轮次尚未完整捕获')
+    }
+    return row.end_seq + 1
   }
 
   queueHistoryFinalization(sessionRef: string, sourceRevision: string, throughSeq: number): void {
@@ -392,7 +510,7 @@ export class DshRemoteTurnUploadOutbox {
       sourceRevision.length > 1024 || !Number.isSafeInteger(throughSeq) || throughSeq < -1) {
       throw new DshRemoteError('REMOTE_STORAGE_FAILED', '历史重传 checkpoint 无效')
     }
-    this.verifiedHistorySessions.delete(sessionRef)
+    sourceRevision = journalRevision(sourceRevision)
     const now = this.now()
     this.database.prepare(`
       INSERT INTO dsh_history_completion_v2 (
@@ -411,26 +529,9 @@ export class DshRemoteTurnUploadOutbox {
     this.scheduleDrain(0)
   }
 
-  private queueLiveCompletion(sessionRef: string, throughSeq: number): void {
-    if (!this.verifiedHistorySessions.has(sessionRef)) return
-    const now = this.now()
-    this.database.prepare(`
-      INSERT INTO dsh_history_completion_v2 (
-        session_ref, source_revision, through_seq, state, attempts,
-        next_attempt_at_millis, created_at_millis, updated_at_millis
-      ) VALUES (?, NULL, ?, 'PENDING', 0, 0, ?, ?)
-      ON CONFLICT(session_ref) DO UPDATE SET
-        source_revision = NULL, through_seq = excluded.through_seq,
-        state = 'PENDING', attempts = 0, next_attempt_at_millis = 0,
-        updated_at_millis = excluded.updated_at_millis
-      WHERE excluded.through_seq > dsh_history_completion_v2.through_seq
-    `).run(sessionRef, throughSeq, now, now)
-    this.scheduleDrain(0)
-  }
-
   async drain(): Promise<void> {
     await this.recovery
-    if (this.closed || this.runtime === undefined) return
+    if (this.closed || this.runtime === undefined || this.bindingFlight !== undefined) return
     if (this.drainFlight !== undefined) return await this.drainFlight
     const flight = this.performDrain()
     this.drainFlight = flight
@@ -447,6 +548,7 @@ export class DshRemoteTurnUploadOutbox {
     await this.recovery.catch(() => undefined)
     this.controller.abort()
     await this.drainFlight?.catch(() => undefined)
+    await this.bindingFlight?.catch(() => undefined)
     this.database.close()
     this.key.fill(0)
   }
@@ -597,9 +699,6 @@ export class DshRemoteTurnUploadOutbox {
         `).run(row.session_ref, row.source_revision, row.through_seq, now)
       }
       this.database.exec('COMMIT')
-      if (updated.changes > 0 && row.source_revision !== null) {
-        this.verifiedHistorySessions.add(row.session_ref)
-      }
       if (updated.changes > 0) this.options.onFinalized?.(row.session_ref)
     } catch (error) {
       this.database.exec('ROLLBACK')
@@ -608,7 +707,7 @@ export class DshRemoteTurnUploadOutbox {
   }
 
   private async performDrain(): Promise<void> {
-    while (!this.closed && this.runtime !== undefined) {
+    while (!this.closed && this.runtime !== undefined && this.bindingFlight === undefined) {
       const row = this.nextReady()
       if (row === undefined) {
         const finalization = this.nextFinalizationReady()
@@ -678,7 +777,6 @@ export class DshRemoteTurnUploadOutbox {
         `).run(runtime.hostGeneration, this.now(), row.turn_id)
         this.pendingSpoolBytes = Math.max(0, this.pendingSpoolBytes - row.spool_bytes)
         this.removePayloadFiles(row)
-        this.queueLiveCompletion(row.session_ref, row.end_seq)
         return
       }
       const credential = encryptLedgerPayload(
@@ -749,7 +847,6 @@ export class DshRemoteTurnUploadOutbox {
       `).run(this.now(), row.turn_id)
       this.pendingSpoolBytes = Math.max(0, this.pendingSpoolBytes - row.spool_bytes)
       this.removePayloadFiles(row)
-      this.queueLiveCompletion(row.session_ref, row.end_seq)
     }
   }
 
@@ -954,13 +1051,16 @@ export class DshRemoteTurnUploadOutbox {
     `).all() as unknown as TurnRow[]
     for (const row of committed) this.removePayloadFiles(row)
     const cutoff = this.now() - COMMITTED_RETENTION_MILLIS
-    this.database.prepare(`
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const expired = this.database.prepare(`
       DELETE FROM dsh_turn_upload_v2
       WHERE state = 'COMMITTED' AND updated_at_millis < ? AND session_ref NOT IN (
         SELECT session_ref FROM dsh_history_completion_v2 WHERE state = 'PENDING'
       )
-    `).run(cutoff)
-    this.database.prepare(`
+      RETURNING session_ref
+    `).all(cutoff)
+      const evicted = this.database.prepare(`
       DELETE FROM dsh_turn_upload_v2
       WHERE state = 'COMMITTED' AND session_ref NOT IN (
         SELECT session_ref FROM dsh_history_completion_v2 WHERE state = 'PENDING'
@@ -968,7 +1068,19 @@ export class DshRemoteTurnUploadOutbox {
         SELECT turn_id FROM dsh_turn_upload_v2
         WHERE state = 'COMMITTED' ORDER BY updated_at_millis DESC LIMIT 10000
       )
-    `).run()
+      RETURNING session_ref
+    `).all()
+      // Completion counts use retained Turn receipts. If any receipt is pruned,
+      // replay that source journal before asserting another complete snapshot.
+      for (const ref of new Set([...expired, ...evicted].map(row => String(row.session_ref)))) {
+        this.database.prepare('DELETE FROM dsh_history_scan_v2 WHERE session_ref = ?').run(ref)
+        this.database.prepare('DELETE FROM dsh_history_completion_v2 WHERE session_ref = ?').run(ref)
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   private async recoverOpenTurnsFromDisk(): Promise<void> {
@@ -1019,7 +1131,6 @@ export class DshRemoteTurnUploadOutbox {
     this.database.prepare('DELETE FROM dsh_turn_upload_v2 WHERE turn_id = ?').run(row.turn_id)
     this.database.prepare('DELETE FROM dsh_history_completion_v2 WHERE session_ref = ?').run(row.session_ref)
     this.database.prepare('DELETE FROM dsh_history_scan_v2 WHERE session_ref = ?').run(row.session_ref)
-    this.verifiedHistorySessions.delete(row.session_ref)
     this.removePayloadFiles(row)
   }
 

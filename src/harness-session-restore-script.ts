@@ -6,6 +6,7 @@
  * This must precede every boot script, including asynchronously loaded modules.
  */
 export const HARNESS_SESSION_RESTORE_SCRIPT = `(() => {
+  if (window.location?.search?.includes('arkme-runtime=')) return;
   const bridge = window.parent?.arkmeDesktop?.sessionSelection;
   if (typeof bridge?.restore !== 'function') return;
   const storage = window.localStorage;

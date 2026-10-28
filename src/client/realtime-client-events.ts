@@ -1,7 +1,16 @@
+import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
+import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
+import { invalidateMessageMarks } from './message-mark-invalidations.js'
+import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
+import { arkmeMessageSync } from './message-sync-store.js'
+import { callArkme } from './api.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+import { officialNotifications } from './official-notification-store.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { publishMemberEventHint } from './member-event-hints.js'
 import { arkmeMemberEvents } from './member-event-cache.js'
 import { invalidateDirectMessageAdmission } from './direct-message-admission.js'
@@ -66,15 +75,33 @@ export function useArkmeRealtimeClientEvents(
   auth: ArkmeAuthSnapshot | undefined,
   authRevision: number,
   refreshDirectoryBaseline: boolean,
-  { ownsMessagePreparing = false }: { ownsMessagePreparing?: boolean } = {},
+  { ownsMessagePreparing = false, ownsNotifications = true }: { ownsMessagePreparing?: boolean; ownsNotifications?: boolean } = {},
 ): void {
   useEffect(() => {
     void arkmeAuthStore.refresh().catch(() => undefined)
   }, [authRevision])
 
+  // Notification lifetime follows the account, not token refresh or transport
+  // reconnection. A routine auth revision must not dismiss an unread notice.
+  const teamNotifications = useRef<ReturnType<typeof createTeamMessageNotificationPresenter> | undefined>(undefined)
+  useEffect(() => {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) return
+    const userId = auth.userId, environment = auth.environment
+    const presenter = createTeamMessageNotificationPresenter(() => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return current?.status === 'authenticated' && current.userId === userId && current.environment === environment
+    })
+    teamNotifications.current = presenter
+    return () => {
+      presenter.dispose()
+      if (teamNotifications.current === presenter) teamNotifications.current = undefined
+    }
+  }, [auth?.environment, auth?.status, auth?.userId])
+
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       resetSelfTopicDirectories()
+      arkmeMessageSync.activateAccount(undefined)
       arkmeCalendarMonths.activateAccount(undefined)
       privateChatActions.activateAccount(undefined)
       arkmeConversationMembers.activateAccount(undefined)
@@ -90,6 +117,7 @@ export function useArkmeRealtimeClientEvents(
     const authenticatedUserId = auth.userId
     const authenticatedAccountScope = `${auth.environment}:${String(authenticatedUserId)}`
     activateSelfTopicDirectoryAccount(authenticatedAccountScope)
+    arkmeMessageSync.activateAccount(authenticatedAccountScope)
     arkmeCalendarMonths.activateAccount(authenticatedAccountScope)
     privateChatActions.activateAccount(authenticatedAccountScope)
     arkmeConversationMembers.activateAccount(authenticatedAccountScope)
@@ -212,6 +240,7 @@ export function useArkmeRealtimeClientEvents(
               }
               observedRevision = undefined
               arkmeAttentionSummary.clear()
+              arkmeMessageSync.activateAccount(authenticatedAccountScope, true)
             }
             providerInstanceId = update.providerInstanceId
             awaitingBaseline = false
@@ -220,16 +249,27 @@ export function useArkmeRealtimeClientEvents(
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
         diagnoseAttention('accepted', update)
+        if (update.type === 'message-sync-progress') {
+          arkmeMessageSync.apply(update.progress)
+          if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
+            arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
+          }
+          return
+        }
+        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true)
+        if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
           void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
           if (update.page.projection?.avatarRefs !== undefined) void arkmeAvatarImages.revalidateActive(update.page.projection.avatarRefs)
           return
         }
         if (update.type === 'members-invalidated') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           return
         }
         if (update.type === 'member-events-invalidated') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           publishMemberEventHint({ account:authenticatedAccountScope, sourceKey:update.sourceKey,
             eventId:update.eventId, occurredAtMillis:update.occurredAtMillis })
@@ -244,6 +284,11 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
+          publishNativeAnnotationInvalidation(authenticatedAccountScope)
+          void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
+          officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate()
@@ -266,11 +311,13 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'read-ack') {
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeChatDirectory.updateReadAck(
             update.sourceRef,
             update.sourceKey,
             update.effectiveReadSequence,
             update.unreadCount,
+            update.latestSequence,
           )
           return
         }
@@ -278,14 +325,36 @@ export function useArkmeRealtimeClientEvents(
           arkmeAttentionSummary.apply(update.summary)
           return
         }
-        if (update.type === 'message-notification') {
-          void arkmeDesktopNotifications.show(update.notification)
+        if (update.type === 'team-message-notification') {
+          if (ownsNotifications) teamNotifications.current?.show(update.notification)
           return
         }
+        if (update.type === 'message-notification') {
+          if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
+          return
+        }
+        if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
+        if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
+          if (update.projection === 'offline_context') {
+            const active = arkmeUi.getSnapshot().selectedSource
+            arkmeChatTimelineDelta.invalidateWindows(active ? [active.sourceKey ?? active.sourceRef] : [])
+            return
+          }
+          if (update.projection === 'record') invalidateMessageQuoteSources()
+          invalidateMessageMarks(true)
+          if (update.projection === 'self_role') { window.dispatchEvent(new Event('arkme-self-roles-changed')); return }
           if (update.projection === 'chat.direct_message_admission') { invalidateDirectMessageAdmission(); return }
+          if (update.projection === 'topic-directory') {
+            invalidateSelfTopicDirectories()
+            arkmeUi.topicDirectoryChanged()
+            return
+          }
           if (update.projection !== 'record') return
-          invalidateSelfTopicDirectories(update.retainTopicCounts !== true)
+          // A metadata-only hint does not identify a removed/locked topic. Reconcile
+          // the existing directory atomically; account changes and access errors still clear it.
+          invalidateSelfTopicDirectories()
           arkmeInterwovenInvalidation.invalidate()
           // Includes privacy/hierarchy changes: never retain an old visible count.
           arkmeCalendarInvalidations.publishAll({ hard: true })
@@ -296,7 +365,13 @@ export function useArkmeRealtimeClientEvents(
           arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
           return
         }
+        if (update.type === 'timeline-items') {
+          arkmeChatTimelineDelta.publish([{ source: update.source, items: update.items }])
+          return
+        }
         if (update.type === 'timeline-changed') {
+          invalidateMessageQuoteSources(update.sourceKey)
+          invalidateMessageMarks(true)
           arkmeChatTimelineDelta.applyTimelineChange(update)
           arkmeInterwovenInvalidation.invalidate(update.sourceKey)
           arkmeCalendarInvalidations.publishAll()
@@ -307,11 +382,16 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'chat-policy-invalidated') {
+          invalidateMessageQuoteSources()
+          arkmeInterwovenInvalidation.invalidate()
+          if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()
           void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => undefined)
           return
         }
         if (update.type === 'conversation-list-preference-invalidated') {
+          arkmeInterwovenInvalidation.invalidate()
+          if (update.refresh === 'none') return
           arkmeUi.chatChanged()
           return
         }
@@ -337,7 +417,9 @@ export function useArkmeRealtimeClientEvents(
           browserDocument?.visibilityState,
           browserDocument?.hasFocus?.() ?? true,
         )
-        if (foreground && timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        // Retain delivered bodies in the bounded account cache even while unfocused.
+        // Read acknowledgement has its own visible/focused conversation guard.
+        if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
         for (const dateStamp of arkmeChatDeltaCalendarDateStamps(update)) {
           arkmeCalendarInvalidations.publish({ dateStamp })
         }
@@ -361,6 +443,7 @@ export function useArkmeRealtimeClientEvents(
       updateForeground()
       connectEvents()
       if (browserDocument?.visibilityState !== 'hidden') {
+        arkmeInterwovenInvalidation.invalidate()
         reconcileReceipts()
         void refreshUnread(true)
           .then(() => { if (!stopped) arkmeUi.chatChanged() })
@@ -377,6 +460,7 @@ export function useArkmeRealtimeClientEvents(
     }
     browserWindow?.addEventListener('online', recoverDirectory)
     const handleWindowFocus = () => {
+      arkmeInterwovenInvalidation.invalidate()
       if (ownsMessagePreparing) recoverDirectory()
       arkmeConversationMembers.refreshActive()
       reconcileReceipts()
@@ -392,5 +476,5 @@ export function useArkmeRealtimeClientEvents(
       browserWindow?.removeEventListener('focus', handleWindowFocus)
       browserWindow?.removeEventListener('online', recoverDirectory)
     }
-  }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline, ownsMessagePreparing])
+  }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline, ownsMessagePreparing, ownsNotifications])
 }

@@ -86,7 +86,7 @@ describe('.arkext v1 artifact', () => {
 })
 
 describe('extension signature and runtime bridge', () => {
-  it('verifies the fixed canonical Ed25519 envelope and rejects tampering', () => {
+  it('verifies the fixed canonical Ed25519 envelope after status projection and rejects tampering', async () => {
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')
     const resolution = {
       format_version: ARKME_EXTENSION_FORMAT_VERSION,
@@ -101,6 +101,11 @@ describe('extension signature and runtime bridge', () => {
     const trusted = new Map([['test-key-1', publicKey.export({ format: 'der', type: 'spki' }).toString('base64')]])
 
     expect(() => { verifyExtensionResolutionSignature({ ...resolution, signature }, trusted) }).not.toThrow()
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({ ...resolution, signature, status: 'published', upload_url: 'SECRET' }) as T)
+    const projected = await client.publishStatus('pub_legacy_vector')
+    expect(projected.manifest_sha256).toBe(resolution.manifest_sha256)
+    expect(projected).not.toHaveProperty('upload_url')
+    expect(() => verifyExtensionResolutionSignature(projected as Parameters<typeof verifyExtensionResolutionSignature>[0], trusted)).not.toThrow()
     expect(() => {
       verifyExtensionResolutionSignature({ ...resolution, artifact_sha256: 'c'.repeat(64), signature }, trusted)
     }).toThrow('签名验证失败')

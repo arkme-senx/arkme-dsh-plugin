@@ -29,6 +29,7 @@ import {
 } from '../src/client/ArkmeVirtualWorkspace.js'
 import { arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
+import { arkmeTheme } from '../src/client/arkme-theme.js'
 
 function renderDialog(mode: 'topic' | 'child', parentTopicPath?: readonly string[]): string {
   return renderToStaticMarkup(<ArkmeTopicCreateDialog
@@ -158,7 +159,7 @@ describe('topic create UI', () => {
     expect(`${child}${root}`).toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
     expect(`${child}${root}`).toContain('background:var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))')
     expect(`${child}${root}`).toContain('box-shadow:var(--dsw-shadow-lv3')
-    expect(`${child}${root}`).toContain('--dsw-specific-menu')
+    expect(`${child}${root}`).toContain('--dsw-alias-bg-layer-3')
     expect(`${child}${root}`).toContain('--dsw-alias-state-business-tertiary')
     expect(`${child}${root}`).not.toContain('--dsw-specific-dialog-fill')
     expect(`${child}${root}`).not.toContain('--dsw-alias-brand-disabled')
@@ -227,12 +228,12 @@ describe('topic create UI', () => {
     expect(hovered).not.toContain('＋')
     expect(resting).not.toContain('transition:')
     expect(hovered).not.toContain('transition:')
-    expect(selected).toContain('background:#f1f2f6')
-    expect(selected).toContain('inset 2px 0 #9eadff')
-    expect(created).toContain('background:#f1f2f6')
+    expect(selected).toContain(`background:${arkmeTheme.active}`)
+    expect(selected).toContain(`inset 2px 0 ${arkmeTheme.accent}`)
+    expect(created).toContain(`background:${arkmeTheme.active}`)
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
-    expect(created).not.toContain('inset 2px 0 #9eadff')
+    expect(created).not.toContain(`inset 2px 0 ${arkmeTheme.accent}`)
     expect(nestedBranch).toContain('left:14px')
     expect(nestedBranch).toContain('margin-left:20px')
     expect(nestedLeaf).toContain('left:14px')

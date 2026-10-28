@@ -158,7 +158,9 @@ it('reuses loaded interactions for counts and selection without another API requ
   await act(async () => button().click())
   const day = document.querySelector<HTMLButtonElement>('[data-calendar-date="2020-01-03"]')!
   expect(day.disabled).toBe(false)
-  expect(day.title).toBe('群聊互动 1 条')
+  expect(day.hasAttribute('title')).toBe(false)
+  await act(async () => day.dispatchEvent(new MouseEvent('pointerover', { bubbles: true })))
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('群聊互动 1 条')
   expect(day.textContent).toBe('31条')
   expect(document.body.textContent).toContain('历史统计可能不完整')
   await act(async () => day.click())

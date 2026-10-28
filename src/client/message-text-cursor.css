@@ -1,0 +1,13 @@
+/* Selectable message text must not inherit the enclosing card's hand cursor.
+   Media, buttons, and other controls keep their own explicit cursor styles. */
+[data-arkme-message-content] {
+  cursor: text;
+}
+
+[data-arkme-message-content] :is(a[href], [role="link"]) {
+  cursor: pointer;
+}
+
+[data-arkme-message-selecting="true"] [data-arkme-message-content] {
+  cursor: pointer;
+}

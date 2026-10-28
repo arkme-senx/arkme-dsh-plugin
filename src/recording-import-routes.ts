@@ -1,9 +1,11 @@
+import { validRecordingImportBatch, type RecordingImportBatch } from './recording-workflow-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import {
   MAX_RECORDING_IMPORT_BYTES,
+  validRecordingImportTaskId,
   recordingImportFileKind,
   type PublicRecordingImportJob,
 } from './recording-import-contract.js'
@@ -43,9 +45,10 @@ export async function scavengeRecordingImportTemporaryFiles(
 
 interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
+  recordingImportReceipt?(taskId: string, expectedUserId: number): Promise<PublicRecordingImportJob | null>
   acceptRecordingImport(
     sourceHandle: string,
-    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number },
+    metadata: { clientTaskId?: string; batch?: RecordingImportBatch; fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number; belongUserId: number; recordingKind: 0 | 1 | 3 },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
@@ -104,10 +107,29 @@ export function createArkmeRecordingImportHandler(
     try {
       if (req.method !== 'POST') throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       assertLocalRequest(req, options)
+      const taskId = headerText(req, 'x-arkme-import-task')
+      if (taskId && !validRecordingImportTaskId(taskId)) throw new ArkmePluginError('recording-import-task-expired', '此队列已超过 30 天续传期限或编号无效，请先核对已导入文件', false, 409)
+      if (headerText(req, 'x-arkme-import-lookup') === '1') {
+        if (!taskId || !service.recordingImportReceipt) throw new ArkmePluginError('recording-import-recovery-unavailable', '请更新插件以恢复导入队列', false, 409)
+        const userId = await service.recordingImportUserId()
+        writeJson(res, 200, { ok: true, value: await service.recordingImportReceipt(taskId, userId) })
+        return
+      }
       const fileSize = nonNegativeIntegerHeader(req, 'content-length')
       const mimeType = headerText(req, 'content-type').split(';')[0]?.trim().toLowerCase() ?? ''
       const startAtMillis = nonNegativeIntegerHeader(req, 'x-arkme-start-at')
       const belongUserId = nonNegativeIntegerHeader(req, 'x-arkme-belong-user')
+      const recordingKindHeader = headerText(req, 'x-arkme-recording-kind').trim()
+      const recordingKind = recordingKindHeader === '' ? 0 : Number(recordingKindHeader)
+      if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) {
+        throw new ArkmePluginError('recording-import-kind-invalid', '录音来源分类无效', false)
+      }
+      let batch: RecordingImportBatch | undefined
+      const batchHeader = headerText(req, 'x-arkme-import-batch')
+      if (batchHeader) {
+        try { if (batchHeader.length <= 2048) batch = JSON.parse(decodeURIComponent(batchHeader)) } catch { /* Validated below. */ }
+        if (!validRecordingImportBatch(batch)) throw new ArkmePluginError('recording-import-batch-invalid', '录音导入批次无效', false, 400)
+      }
       let fileName = ''
       try { fileName = decodeURIComponent(headerText(req, 'x-arkme-file-name')).trim() } catch { fileName = '' }
       if (fileName === '' || fileName.length > 255) {
@@ -150,12 +172,15 @@ export function createArkmeRecordingImportHandler(
       }
       if (received !== fileSize) throw new ArkmePluginError('recording-import-size-mismatch', '录音文件上传不完整', false)
       const value = await service.acceptRecordingImport(temporaryPath, {
+        ...(taskId ? { clientTaskId: taskId } : {}),
         fileName,
         mimeType,
         fileSize: received,
         sha256: hash.digest('hex'),
         startAtMillis,
         belongUserId,
+        recordingKind,
+        ...(batch ? { batch } : {}),
       }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })

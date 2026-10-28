@@ -4,6 +4,8 @@ import { PencilSimple } from '@phosphor-icons/react/PencilSimple'
 import { ChatCircle } from '@phosphor-icons/react/ChatCircle'
 import { Phone } from '@phosphor-icons/react/Phone'
 import { VideoCamera } from '@phosphor-icons/react/VideoCamera'
+import { Users } from '@phosphor-icons/react/Users'
+import { openTeamOutbound } from '../../team-outbound.js'
 import type { ArkmeOutgoingCallMediaType } from '../../../outgoing-call-contract.js'
 import { outgoingCallUi } from '../../outgoing-call-ui-controller.js'
 import { ContactRemarkDialog, type ContactRemarkSaver } from './ContactRemarkDialog.js'
@@ -279,6 +281,7 @@ export function ContactProfileContent({
   onOpenMessage,
   onOpenCall,
   onEditRemark,
+  onContactAsTeam,
   children,
 }: {
   state: ContactProfileState
@@ -288,6 +291,7 @@ export function ContactProfileContent({
   onOpenMessage(): void
   onOpenCall?(mediaType: ArkmeOutgoingCallMediaType): void
   onEditRemark?(): void
+  onContactAsTeam?: (() => void) | undefined
   children?: ReactNode
 }) {
   const profile = state.status === 'ready' ? state.profile : undefined
@@ -300,6 +304,7 @@ export function ContactProfileContent({
         <span className="arkme-contact-profile-avatar">
           <ArkmeUserAvatar
             {...(profile.avatarRef === undefined ? {} : { avatarRef: profile.avatarRef })}
+            {...(profile.avatarFallback === undefined ? {} : { fallback: profile.avatarFallback })}
             size={72}
             label={tr("{v0}的头像", { v0: displayName })}
           />
@@ -329,7 +334,7 @@ export function ContactProfileContent({
       {onRetry !== undefined && <button data-arkme-feedback="neutral" type="button" onClick={onRetry}>{tr("重试")}</button>}
     </div>}
     {children}
-    <footer className="arkme-contact-profile-actions" aria-label={tr("联系操作")} aria-busy={messageBusy}>
+    <footer className="arkme-contact-profile-actions" data-team-outbound={onContactAsTeam ? 'available' : undefined} aria-label={tr("联系操作")} aria-busy={messageBusy}>
       <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onOpenMessage}>
         <ChatCircle size={28} weight="regular" aria-hidden /><span>{messageBusy ? tr("正在打开…") : tr("发消息")}</span>
       </button>
@@ -339,6 +344,9 @@ export function ContactProfileContent({
       <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy || onOpenCall === undefined} onClick={() => { onOpenCall?.('video') }}>
         <VideoCamera size={28} weight="regular" aria-hidden /><span>{tr("视频聊天")}</span>
       </button>
+      {onContactAsTeam && <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={messageBusy} onClick={onContactAsTeam}>
+        <Users size={28} aria-hidden /><span>{tr('以团队联系')}</span>
+      </button>}
     </footer>
     {messageError !== undefined && <div role="alert" className="arkme-contact-profile-message-error">{messageError}</div>}
   </section>
@@ -428,6 +436,11 @@ export function ContactProfileDetail({
       onOpenMessage={() => { coordinatorRef.current?.openMessage() }}
       onOpenCall={mediaType => { coordinatorRef.current?.openCall(mediaType) }}
       onEditRemark={() => { setEditingIdentity(identity) }}
+      onContactAsTeam={visibleProfile.status === 'ready' && visibleProfile.profile ? () => openTeamOutbound({
+        accountKey, person: { recipient: { kind: 'directory-contact', contactRef },
+          displayName: visibleProfile.profile!.remark || visibleProfile.profile!.displayName,
+          avatarRef: visibleProfile.profile!.avatarRef },
+      }) : undefined}
     >
       <ContactWorldList
         state={visibleWorld}

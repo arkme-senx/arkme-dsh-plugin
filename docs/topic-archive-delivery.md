@@ -1,0 +1,193 @@
+# 主题归档能力矩阵
+
+本任务基于用户指定的 `dev`，不修改插件版本、根 README 或 DSH 源码。归档事实由 Record owner 裁决，插件不推导主题树状态。
+
+| 能力面 | 接入 | 验证 |
+| --- | --- | --- |
+| Host | ArchiveService：账号引用、状态验证、CAS、目录失效 | archive-service / archive-host-api 测试覆盖越权引用、换账号、冲突、未知写结果和隐私；9 个相关测试文件共 201 项通过 |
+| UI | 主题菜单；设置 → 数据管理 → 已归档主题；自身和继承分别呈现 | React 交互测试通过；打包产物装入隔离的官方 DSH Profile 后，Chrome 实际页面完成父子归档、父恢复、子恢复和空列表验收 |
+| Tools | 列表、状态读取；独立标记写入使用 explicit-user-write | archive-runtime.test.ts 使用官方 Session / Inbox / ToolRuntime 验证发现、授权后写入及生命周期；打包端到端测试同时验证真实会话可见和读取 |
+| SDK | listArchives/getArchiveStates/setArchiveState，能力发现、AbortSignal | 公开 SDK 单测通过；仓外 Consumer 只导入打包后的公开入口，严格类型编译及 Node 执行通过，包含不支持能力和 AbortSignal |
+
+恢复父主题仅撤销该主题自身标记，子主题独立标记保留。已归档列表直接显示“随「具体主题名」一起归档”；仅继承的条目没有单独归档或查看来源入口，也不自动恢复祖先。隐私标题不从 sourceRef 的历史名称补齐；内容按原权限读取。复用 settings.section、Tools 正式注册与既有 Host API；不增加 DSH 私有扩展点。以下各轮记录保留历史验收过程，最终行为和证据以末尾记录为准。
+
+## 可复现验证
+
+测试目标：未修改的官方 DSH `fb2c4b9e698e30edb738bca4cf0618587db7d203`，版本 `0.1.5-rc.2`；Node `24.19.0`。插件最初基于用户指定的 dev `e9ac7f135769d0569417d8c7dd13ff8cf040036a`，审查收口合入 dev `d5cc136bede1f4e1c70d20bfed990168d8880a38`。当前 0.1.60 版本及元数据全部来自 dev 的同步提交，归档差异不修改版本。
+
+先运行仓库 typecheck、build，再用 `pnpm pack` 生成产物。使用官方 `dsh plugin --profile web add <artifact.tgz> --ignore-scripts --ignore-workspace` 装入独立的 `DSH_HOME`，避免接触用户 Profile。
+
+```bash
+ARKME_DSH_CHECKOUT=<official-unmodified-checkout> \
+ARKME_DSH_REF=refs/tags/dsh-v0.1.5-rc.2 \
+ARKME_PACKED_PROFILE=<fresh-profile-with-packed-plugin> \
+bash scripts/run-topic-archive-e2e.sh
+```
+
+runner 创建隔离 Record / Mongo / Redis / search 测试服务，并在结束时清理。本地真实链路通过；不代表修改或发布了 DSH。仓外 SDK 验证入口为 `scripts/verify-archive-consumer.mjs`，Consumer 源文件为 `tests/consumers/archive-consumer.mts`。
+
+初次实现日志在任务父目录：`dsh-archive-regression-final.log`、`dsh-archive-build.log`、`dsh-profile-install-v2.log`、`dsh-archive-consumer.log`、`topic-archive-cross-e2e.log`，对应早期 dev 与 DSH 0.1.3-alpha.1；最终基线证据以下方复验为准。没有修改版本、根 README 或依赖锁文件，没有发布。
+
+## 合并前审查与修复复验
+
+- 目录消费刷新通知，归档成功后及时隐藏；归档专用目录通知与 Record 内容通知的区分见下方最新复验。直接打开的主题和草稿保持原 owner。
+- 按用户反馈，归档/取消归档改为单击直接提交，不显示二次确认弹窗。写请求仍由稳定 breadcrumb / 管理页持有，不随目录行消失或普通投影通知取消；在途禁止重复写，失败重读事实并显示简短提示，CAS 不自动改用新 revision 重试。
+- 分页按账号内稳定的 topicHierarchyKey 去重；带显示名的 sourceRef 更新不会生成重复条目。
+- 列表分页和归档来源查询共用页面加载状态，避免交叉取消后一直显示加载中；切换账号取消旧请求。
+- 同步新的共享主题目录 owner 与外置菜单机制；归档写入仍由稳定 surface 持有。新建子主题回执早于/晚于父归档时，创建后重新核对目录归属，已打开主题保持可访问，继承归档节点不能被创建缓存重新显示。
+- 上轮完整 `pnpm test`：593 个文件通过、8 个跳过，6953 项通过、11 项跳过；typecheck、build、pack 通过。
+- 最终不可变 tgz 通过官方 CLI 装入新的临时 Profile。真实 Chrome 从主题操作菜单归档 B/A，再从设置的数据管理恢复 A/B；确认目录及时更新、父恢复保留子标记、继承条目无误导性恢复入口。另验证归档前记录仍可读、归档后仍可写入/读取、CAS 冲突，以及真实会话 Tool 和仓外 SDK Consumer。
+
+复验日志：`review-dsh-ux-full-tests.log`、`review-dsh-ux-typecheck.log`、`review-dsh-ux-build.log`。最终打包链路和截图见下方本轮反馈验收。运行证据为 macOS 官方 DSH + Chrome，不代表 Windows/Linux 已进行真实平台验收。
+
+同步最新 dev 后，曾用旧官方 0.1.3-alpha.1 重跑；其页面缺少当前 dev 使用的会话视口结构，浏览器在业务操作前超时。最终改用与 dev 已验收基线匹配的官方 0.1.5-rc.2，没有为旧宿主添加兼容分支，也没有修改 DSH 源码。runner 允许指定官方目标 ref，并继续要求 checkout 的 tracked 状态干净。官方依赖安装与构建分别记录在 `review-dsh-official-install.log`、`review-dsh-official-build.log`。
+
+
+## 本轮体验修复
+
+- 数据管理位于我的账户下方；通过既有生命周期可清理的设置导航图标适配器显示 Archive 图标。公开 settings.section 尚无 icon 参数，因此复用单一导航适配器，不伪造公共接口、不修改官方 DSH、不复用其他业务 section id。
+- 页面使用既有 settings surface、shell、group 与标题间距；长标题省略、隐私标题受保护、操作区可换行。空状态仅显示归档图形，保留屏幕阅读器名称；移除常驻刷新按钮和业务实现说明。失败时提供重试读取，聚焦、联网及 Record 通知自动刷新。
+- 主题菜单归档项与相邻操作复用同一 hover 样式。点击后直接提交并通过目录 owner 刷新移除，不出现确认弹窗；恢复操作也直接提交。查看来源是行内信息，必须点击该来源的取消按钮才会撤销其独立标记。
+- 新增重复点击、切换同用户环境、旧响应隔离回归；菜单行被移除、通知先于回执、CAS 失败不重放、分页重命名去重等异步回归保留。
+- 本轮修改仅为现有能力的 UI/客户端状态修复；Host、Tools、SDK 协议不变。仍以真实 Record + 打包插件浏览器验收核对跨层语义，并复跑公开 SDK Consumer。
+
+上一轮不可变验收包为 `senguoyun-dsh-arkme-review6-0.1.60.tgz`，SHA-256 `bca5651a455e02b68bb6c993b1aa046e0b88fdcc251aa1cdd8e86a0e9a125b93`。官方 CLI 安装成功，真实浏览器跨仓链路 31 秒通过，公开 SDK Consumer 通过。日志为 `review-dsh-ux-install6.log`、`review-dsh-ux-cross-e2e.log`、`review-dsh-ux-consumer.log`；列表与空状态截图为 `review-dsh-ux-e2e.png`、`review-dsh-ux-e2e.png.empty.png`，已人工查看布局。包后只调整验收文档与测试说明，无运行代码差异。用户已有 3081 服务和真实 Profile 保持不变，本轮未替换常驻服务。
+
+## 2026-09-17 选中主题归档刷新与视觉层级
+
+归档写入原来复用整个 Record 内容失效通知，浏览器会硬清目录、刷新消息读取及日历/关联投影。旧打包产物的真实浏览器用例捕获到了归档后的额外 `source.timeline` 请求；旧包 DOM 节点保留检查本身通过，因此不把它描述为已复现整页 DOM 被卸载。
+
+现在由既有实时通知 owner 发出 `topic-directory` 投影失效，仅失效发给自己主题目录。浏览器保留目录现有数据进行重读，目录刷新代次与消息内容代次分离；归档列表和菜单状态消费同一目录代次。既有 Record 内容、隐私和层级通知保持原处理。菜单回执不确定时仍重读 owner，不自动重放写入。已打开主题不在目录时向 archive owner 确认，确认为归档则保留选择与内容，不误切换到「全部」。普通 breadcrumb 和导航目录均遵循这一语义。
+
+数据管理分类标题改为「已归档主题」。分类用字体和留白分层，去掉标题下重复横线；条目间才使用从文字处开始的细分割线，并统一紧凑行高。列表、空态最终截图已查看。
+
+最终验证：5 个聚焦文件 112 项通过；完整 `pnpm test` 为 593 文件通过/8 跳过、6956 项通过/11 跳过；typecheck/build/pack 通过。真实 Chrome 选中 B 后归档 B，再归档父 A，验证两次操作均无额外消息列表请求、仍选中 B 且原消息节点一直连接；再完整验证父恢复保留 B/D、自身恢复及空态、CAS、实际 Record 内容读写和 Session Tool。公开 SDK Consumer 严格类型与 Node 运行通过。
+
+最终不可变包 `senguoyun-dsh-arkme-review7-0.1.60.tgz`，SHA-256 `df39f0305208eb22ac4c9e7dba0172906480f1b2ad081a7c0286e51b064e1de8`。使用未修改官方 DSH 0.1.5-rc.2，由官方 CLI 装入新的 review7 临时 Profile。日志：`review-dsh-directory-unit.log`、`review-dsh-directory-full-tests.log`、`review-dsh-directory-typecheck.log`、`review-dsh-directory-build.log`、`review-dsh-directory-pack.log`、`review-dsh-directory-install7.log`、`review-dsh-directory-cross-e2e.log`、`review-dsh-directory-consumer.log`。旧包请求回归失败证据为 `review-dsh-flash-before.log`。截图：`review-dsh-directory-e2e.png`、`review-dsh-directory-e2e.png.empty.png`。包后仅调整测试断言和验收文档，业务产物不变；没有替换用户 3081 服务或真实 Profile。
+
+
+最终继续同步 dev `437fda1c4af2280539fea51b2df27328d327cd59`，逐项核对重叠 facade/Host/SDK/types 中的文件接口与归档接口互不覆盖。补齐基线新增 `fileOpenLocalFolder` 的公共方法测试清单，未更改文件业务。默认并发下两条发布测试超过原 5 秒限制，最终使用命令级 `pnpm test --maxWorkers=4`（未改超时或仓库配置）完整通过：603 文件通过/8 跳过，7096 项通过/11 跳过。typecheck/build/pack 与仓外 Consumer 再次通过。
+
+最终包为 `senguoyun-dsh-arkme-review8-0.1.60.tgz`，SHA-256 `d94ac8e9a78a6676cc504862d1df03be6cfcd970508ffe03f97e94dbba10f435`。官方 CLI 安装到全新 review8 Profile 后，真实浏览器完整归档场景 32 秒通过；最终列表/空态截图 `review-dsh-integrated-e2e.png`、`review-dsh-integrated-e2e.png.empty.png` 已查看。日志为 `review-dsh-integrated-tests-final.log`、`review-dsh-integrated-typecheck.log`、`review-dsh-integrated-build.log`、`review-dsh-integrated-pack.log`、`review-dsh-integrated-install8.log`、`review-dsh-integrated-cross-e2e.log`、`review-dsh-integrated-consumer.log`。打包后仅补充验收文档，无业务代码改动。用户 3081 服务与真实 Profile 未替换，官方 DSH tracked 状态干净。
+
+## 2026-09-17 主题窗口后台更新闪动
+
+上一轮已消除归档触发的内容读取，但完整目录后台重读时，菜单仍按 `loading` 插入「加载更多主题」行，改变窗口高度。本轮用 review8 包和实际浏览器 MutationObserver 复现：菜单及保留行没有卸载，但加载行确实被插入。证据为 `review-quiet-directory-before-e2e.log`；新增单测在修复前有两项失败，见 `review-quiet-directory-before.log`。
+
+现在使用已有 `countsReady` 完整快照状态控制加载展示：只有不完整目录才显示加载行，完整目录后台校准期间保留原有菜单，owner 返回后仅更新实际成员。子主题加载行遵循同一条件；首次加载和失败重试仍可见。不新增本地归档状态，不在回执前猜测后代删除，不改变 Host/Tools/SDK、CAS 或账号隔离语义。
+
+同步 dev `d7daef1` 后，5 个聚焦文件 52 项通过；完整 `pnpm test --maxWorkers=4` 为 604 文件通过/8 跳过，7098 项通过/11 跳过。typecheck、build、pack、仓外 SDK Consumer 通过。日志为 `review-quiet-directory-{tests,full-tests,typecheck,build,pack,consumer}.log`。
+
+新不可变包 `senguoyun-dsh-arkme-review9-0.1.60.tgz`，SHA-256 `5912886940dd67e2a1fae7861e6573f0bb262bd788a992705c0cbe180d0b0abc`。经官方 DSH 0.1.5-rc.2 CLI 装入全新 review9 Profile，完整浏览器 UI → Host → Record 链路 37 秒通过。归档当前 B 和父 A 的全过程均断言菜单/保留行持续连接、无加载行插入、无额外内容读取；父恢复保留独立子标记、子恢复、内容读写、CAS 和真实 Session Tool 验证继续通过。证据为 `review-quiet-directory-install9.log`、`review-quiet-directory-cross-e2e.log`。列表及空态截图 `review-quiet-directory-e2e.png`、`.empty.png` 已核验。用户 3081 服务、真实 Profile 和官方 DSH 源码未修改。
+
+## 2026-09-17 异步状态返回后的归档 hover
+
+review9 的真实浏览器复现了此前遗漏的顺序：打开菜单后归档按钮等待 owner 状态而禁用，鼠标先停在该按钮，状态返回后按钮已启用但背景仍透明；相邻重命名按钮为 `rgb(243, 244, 247)`。旧测试先等启用再移入鼠标，因此未覆盖此顺序。新测试仅延迟真实 Host 响应，不替换归档结果，失败证据为 `review-archive-hover-before-e2e.log`。
+
+根因是手动悬停状态依赖 React mouse-enter 事件，禁用按钮期间不会按可用按钮方式更新；启用也不会自动重放移入事件。现删除这组菜单的悬停状态及事件回调，四个操作共用菜单作用域内的 CSS `:hover` / `:focus-visible`，按 `:disabled` 排除不可用动作。浏览器在状态变化后自动计算高亮，工作区及 body portal 使用同一规则，颜色消费现有主题 token。原生禁用、owner 状态读取、点击时 revision 和稳定页面写入 owner 保留。
+
+本轮仅修改 UI 展示：Host 路由、SDK、Tools 和持久化能力没有变化，后面三者无需新增适配；既有跨仓测试仍验证其调用链。组件回归补充状态返回前不能写入、返回后使用实际 revision；浏览器回归覆盖提前悬停后启用、四项一致高亮、移出清除、键盘 Tab 聚焦，同时保留归档后不闪动及父子恢复闭环。
+
+最终验证：3 个聚焦文件 21 项通过；受支持的 Node 24.19.0 下全量 604 文件通过/8 跳过、7099 项通过/11 跳过；typecheck/build/pack 通过。新包 review10 经官方 CLI 安装至全新临时 Profile，官方 DSH `fb2c4b9` 上实际浏览器 → Host → Record 完整场景 86 秒通过。已查看 `review-archive-hover-e2e.png.hover.png`，归档高亮与相邻项一致。日志为 `review-archive-hover-focused.log`、`review-archive-hover-node24-tests.log`、`review-archive-hover-typecheck.log`、`review-archive-hover-build.log`、`review-archive-hover-pack.log`、`review-archive-hover-install10.log`、`review-archive-hover-cross-e2e.log`。
+
+不可变包为 `senguoyun-dsh-arkme-review10-0.1.60.tgz`，SHA-256 `61069d028fd0868d999b2f9a7400fdaa6311b2bab1467de38f43c3e8a1c05360`。清单未包含意外路径，client 产物及 source map 无本机用户绝对路径。仍在原任务分支、以已同步的 dev `d7daef1` 为开发基线；本轮读取的最新 dev `ae9c02e` 未改动这三个 UI 文件，没有为局部修复引入其他业务集成。官方 DSH tracked 状态干净，3081 常驻进程/真实 Profile、Flutter 和后端代码保持原状。运行证据为 macOS Chrome，未新增其他系统的运行结论。
+
+## 2026-09-17 删除普通目录菜单的前置归档查询
+
+用户再次指出刷新后首次打开菜单仍有禁用阶段。上节修复只解决了异步启用后的 hover，没有消除菜单展示对网络的依赖。本轮用 review10 包执行浏览器 reload 后打开操作菜单，明确复现按钮未立即可用，见 `review-archive-demand-before-e2e.log`。
+
+普通目录由 Record owner 过滤归档成员，因此这里的用户意图固定为「归档」，无需为了显示按钮读取自身/继承状态。已删除独立 `ArkmeArchiveAction` 状态读取组件，改为与相邻项相同的普通菜单按钮；打开、悬停、重开或刷新后重新挂载均不为该动作发出状态请求。原生 hover/focus 样式保留，仅已有归档操作执行中禁止重复提交。
+
+目录结构没有自身标记 revision；正常可见的主题可能曾取消过归档，不能假设 revision=0，也不能移除既有 CAS 保护。因此只在明确点击后由稳定页面的 mutation owner 执行「读取一次版本 → 明确设置 selfArchived=true」。读和写共用账号作用域、AbortController 与在途锁；管理页已有状态及 revision 的取消/独立归档继续直接提交，不增加一次读取。读取失败、不可用实体或账号/环境变化不会继续写入；冲突不重新读取并自动重放。过期目录中的主题即使已经归档，也只提交幂等的归档意图，绝不反转成取消。选中归档主题的状态提示读取属于独立展示场景，保留原语义。
+
+这次只调整 UI 现有查询/命令的调用时机，无新 Host/Tools/SDK 接口、目录字段、集合、索引或缓存。聚焦 31 项、Node 24.19.0 全量 7109 项通过（604 文件通过/8 跳过，11 项跳过），typecheck/build/pack 通过。测试覆盖冷挂载零前置查询、点击后读取、在途重复点击、通知早于读取回执、过期行仍保留归档意图、读取失败/不可用/错实体、CAS 不重放、账号与环境变化。日志为 `review-archive-demand-focused.log`、`review-archive-demand-full-tests.log`、`review-archive-demand-typecheck.log`、`review-archive-demand-build.log`、`review-archive-demand-pack.log`。
+
+review11 不可变包 SHA-256 `af54429bd2f491f9c696506bd6c10bfd2ba4f0afc1023eed4deb4ff787e7f986`，官方 CLI 安装到全新临时 Profile 后，真实 Chrome reload → 菜单立即可用/零动作前置查询 → 点击后读取一次版本 → 提交一次归档 → 父子恢复完整链路 32 秒通过。直接内容读写、CAS、SDK 和 Session Tool 验证继续通过。日志为 `review-archive-demand-install11.log`、`review-archive-demand-cross-e2e-final.log`；`review-archive-demand-e2e.png.hover.png` 已核验。首次链路的业务断言通过但测试拦截器延迟了后续可取消的状态展示请求，出现重复响应处理错误；拦截范围收敛为首次写入前置读取后重跑通过，未屏蔽错误，业务包未改变，失败日志保留为 `review-archive-demand-cross-e2e.log`。
+
+本轮只提交原插件任务分支。版本、根 README、锁文件、官方 DSH 源码与用户 3081/Profile 均未修改；没有新增 Flutter/后端改动或生产写入。新截图来自隔离官方 DSH 0.1.5-rc.2 和真实 Record 测试服务。
+
+## 2026-09-22 rebase 最新 dev
+
+本次将归档开发分支 rebase 到 dev `a5b2c5b075d0686f817ae8e21eb8a1fec9edae72`，保留原开发分支备份。版本 0.1.76、依赖与发布元数据全部来自 dev；归档差异不修改这些字段。
+
+- dev 已有数据管理 owner，因此将「已归档主题」接入其首页与内容页，不重复注册第二个数据管理。最近删除、导入、导出以及账号切换隔离保留。导航中的数据管理紧接我的账户，中文/英文图标匹配均保留。
+- 主题归档使用 dev 的原生 DSH 行菜单，保留搜索、拖动、分配、排序与外置菜单。移除旧自绘菜单的悬停样式；只有点击归档才读取 CAS 前提，稳定 breadcrumb 持有写请求，只关闭行操作菜单，主题列表不卸载。隐藏的 picker trigger 不挂载不可见状态读取。
+- 重放时逐文件对照原分支与新基线合成结果，保留原合并提交中的读取 deadline、查询失败不丢草稿、创建回执到达后重新校验祖先归档等修复；对应并发场景测试保留。
+
+验证结果：
+
+- 完整测试 734 个文件通过、9 个跳过；8698 项通过、13 项跳过。类型检查、构建、打包及仓外 SDK Consumer 通过。
+- 最终不可变包 `senguoyun-dsh-arkme-rebase-final-20260922-0.1.76.tgz`，SHA-256 为 `29ea9c4a4154945a54f8207f09ebf817f6de548f334e38eb8e8ddf1a0f40aef5`。
+- 使用未修改的官方 DSH 0.1.5-rc.2（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）。空 Profile 自动解析预发布 peer 时因上游稳定版本范围而失败；正式安装时按目标 DSH 的包清单，通过官方 CLI 显式安装同版本运行时依赖及 tgz，未改宿主源码或插件依赖声明。
+- 真实 Chrome 中文界面 → 正式安装包 UI / SDK / 会话 Tool → 隔离 Record/Mongo 链路 32 秒通过。验证冷刷新后打开菜单零前置状态请求、正常悬停和键盘访问、一次点击一次归档、菜单及消息 DOM 保留且不出现加载行、不重读内容、独立父子归档恢复、数据管理入口及空态。测试改用官方中文工作区 helper 和新基线设置按钮；没有放宽业务断言。
+- 日志：`rebase-20260922-plugin-full-tests-final.log`、`rebase-20260922-plugin-typecheck.log`、`rebase-20260922-plugin-build-final.log`、`rebase-20260922-plugin-install-final.log`、`rebase-20260922-plugin-consumer.log`、`rebase-20260922-plugin-verified.log`。已查看 `rebase-20260922-plugin-verified.png` 的实际页面。验证范围仍为 macOS/Chrome；未替换用户常驻实例。
+
+
+## 2026-09-22 连续归档与即时隐藏
+
+用户明确要求：普通目录中的归档按钮始终可用，点击即隐藏当前主题树，下一主题不等待前一请求。此前的请求锁属于整个 breadcrumb，导致其他行同步禁用；Record 的归档完成还发布通用 `record` 通知，经 IM 到插件后走隐私/内容硬失效，清空目录。旧浏览器回归只在前一笔完成后操作下一笔，并且未接通上游 SSE 通知，遗漏了这两条链路。
+
+本轮改变：
+- `useArchiveMutation` 按主题去重与限时，打开/hover 仍不查询；点击后在后台读取 CAS 并固定提交归档意图，不因其他主题的请求禁用按钮。
+- 现有账号目录缓存统一管理临时隐藏。立即隐藏当前已知子树、覆盖回读中新出现的后代；未确认意图不持久化。重叠操作失败只撤销自身隐藏，使用最新快照，不把陈旧标题、已删除或隐私隐藏条目回填。已确认隐藏抵挡提交前的旧读取，只由提交后发起的完整读取收敛。
+- 导航持久化/选中主题校对读取已确认视图，待提交隐藏不能被当成删除；请求由稳定栏持有，行消失不取消命令。30 秒超时释放当前操作；未知写结果重新读事实、不自动重放。
+- Record 的成功归档/恢复改为通过既有 `projection.invalidated.v1` 发布 `entity_archive`，未改变 owner 时不通知。IM 的现有通用投影协议可透传。插件将它映射为已有 `topic-directory` 软更新，同时淘汰归档旧读取；真正 `record` 通知保留原内容/隐私处理。Flutter 接收新名称后沿已有同步链处理，不新增 PC 归档能力。
+
+能力覆盖：本轮无新 HTTP、Tool 或 SDK 命令。UI 的立即隐藏、连续操作、失败恢复及 Host 实时适配为改动面；正式包 E2E 同时保持 SDK 读写/CAS、真实 Session 中三个归档 Tool 的可见性和状态 Tool 调用。独立仓外 SDK Consumer 编译通过。
+
+验证：
+- 旧不可变包在真实 Chrome 中复现了点击后行仍存在（`archive-interaction-before-e2e.log`）；组件回归同样先失败。
+- 聚焦 5 文件 98 项通过；Node 24.19.0 全量 734 文件、8,705 项通过，9 文件/13 项按原条件跳过。首次全量的既有 400 条消息用例出现一次目录读取次数偏差，原样单独复跑以及后续完整重跑均通过，未放宽断言。日志：`archive-interaction-focused-final.log`、`archive-interaction-content-rerun.log`、`archive-interaction-full-tests-final.log`。
+- typecheck、build、不可变包、官方 CLI 全新临时 Profile 安装、仓外 Consumer 通过。DSH 使用未修改 `dsh-v0.1.5-rc.2`（`fb2c4b9`）。包 `senguoyun-dsh-arkme-optimistic-20260922-0.1.76.tgz`，SHA-256 `eb552cb874265a1340650619ba46f777bd4a5c4e9cd108588bff155493d97fc4`。
+- 正式包 Chrome → Host → 隔离 Record/Mongo 的最终 E2E 29 秒通过，覆盖一笔失败恢复而另一笔仍 pending、两个成功操作的前置读取同时 pending、第二个 hover 仍正确、行立即隐藏、通知先于回执、列表与消息 DOM 不卸载、不新增内容读取、独立父子归档恢复。记录 `archive-interaction-final-e2e.log`，截图 `archive-interaction-final.png.hover.png` 已核验。
+- SSE 在测试中使用协议传输 fixture，将真实 Record 提交结果转成同名元数据提示；MQ producer 的真实名称、账号、取消隔离、不阻塞完成、无变化/冲突不通知由 Go 单测和 race 验证。没有声称测试已部署生产 RabbitMQ/IM。
+- Flutter 通知/主题绑定/归档 32 项通过，改动文件 analyze 无问题。Record 通知/MQ 测试及 race 通过。没有修改集合、索引、依赖、插件版本、DSH 源码或用户常驻 3081 实例；Windows/Linux 本轮未实机验收。
+
+上线需同步采用 Record 和客户端分支的新通知合同，不能只替换插件包却仍期待旧服务端的通用 record 通知具备目录专用语义。此次是一次性完整收口，没有双发通知或过渡配置。
+
+## 2026-09-22 归档来源就地展开（已被下方直接展示方案替代）
+
+原来源区域渲染在整个列表之后，长列表中与点击条目脱离。本轮将来源详情放回对应条目下方，支持展开/收起，并明确标注“取消来源归档”。已在列表中的来源直接复用当前 owner 返回的条目；未加载的来源仍通过原分页接口定位，加载、重试及请求取消由当前展开区域负责，不改变归档事实或恢复语义。
+
+| 能力面 | 本轮范围 |
+| --- | --- |
+| UI | 条目内展示、折叠、局部加载/失败恢复、键盘可访问性和实际页面验收 |
+| Host owner | 沿用 ArchiveService 的列表、权限与 CAS；不新增路由、命令、查询协议或持久化 |
+| Tools | N/A：现有能力和语义不变，本轮只调整内置 UI 的展示位置与读取生命周期 |
+| SDK | N/A：公开接口不变，无新增外部插件能力；既有跨仓合同继续验证 |
+
+验证结果：
+
+- 新增断言在旧实现中先出现 4 项失败，确认来源与条目脱离、重复读取、局部错误恢复和分页生命周期问题；修复后聚焦 4 文件 64 项通过。覆盖就地展开/切换/收起、已加载来源零新增请求、未加载来源分页定位、取消后丢弃迟到响应、局部重试、隐私标题遮蔽，以及按来源 revision 取消独立归档。
+- 全量 734 文件、8,708 项通过，原有 9 文件/13 项条件跳过；typecheck、build、pack 通过。日志为 `archive-source-style-before.log`、`archive-source-style-focused-final.log`、`archive-source-style-full-tests.log`、`archive-source-style-typecheck.log`、`archive-source-style-build.log`。
+- 不可变包 `senguoyun-dsh-arkme-0.1.76.tgz`，SHA-256 `5516150d829194f80ec2602d1906ca7af66d97fd4c9432406b592e6fc33610d4`。已检查打包清单和运行产物，无本机用户路径耦合。通过官方 CLI 安装到全新、路径含空格的临时 Profile；CLI 自建 workspace 的安装按公开参数添加 `--workspace-root`，未修改全局包管理配置。
+- 官方 DSH `dsh-v0.1.5-rc.2`（`fb2c4b9e698e30edb738bca4cf0618587db7d203`）中，正式包 Chrome → Host → 隔离 Record/Mongo 链路通过。实际检查展开区域位于当前行内、无横向溢出、按钮可操作、键盘收起，以及取消来源后父/子有效归档状态正确恢复。此前连续归档、DOM 保留、独立父子归档和 SDK/会话 Tool 断言继续通过。最终日志 `archive-source-style-e2e-final.log`，已核验截图 `archive-source-style-verified.png`；首次窗口缩放的过渡帧截图未用作验收证据。
+
+继续原任务分支 `codex/c20260917-topic-archive-plan`，dev 基线仍为 `a5b2c5b075d0686f817ae8e21eb8a1fec9edae72`；本轮已核对最新 master `140d5ec27627de1b96229c8917b209f8fc7bc9c4`。未改插件版本、根 README、锁文件、DSH tracked 源码或用户常驻 3081/Profile。运行态验收为 macOS Chrome，本轮没有新增 Windows/Linux 实机结论。
+
+## 2026-09-22 来源直接展示与操作简化
+
+根据最新反馈，两端已归档列表直接在标题下显示“随「具体主题名」一起归档”。删除查看/收起来源和单独归档入口，也删除用于寻找来源的额外分页查询。只有自身归档标记存在时保留取消归档；已独立归档且同时继承的条目显示“也随…”，取消只改自身标记，既有父子恢复规则保持不变。
+
+| 能力面 | 实现与验收 |
+| --- | --- |
+| Host owner | ArchiveService 验证 Record 新增的列表展示摘要 inherited_from_summary，遮蔽私密来源；UI/Tools/SDK 共用该 owner，无新增路由或写入语义 |
+| UI | 当前页直接显示来源名，不要求来源也在当前页；移除展开区及其状态/请求，保留普通目录的乐观归档和恢复错误处理 |
+| Tools | 真实官方 DSH 会话执行 arkme_archives_list，返回相同的 inheritedFromSummary；原有明确授权的标记写入继续保留 |
+| SDK | ArkmeArchiveEntry 增加可选 inheritedFromSummary；仓外 Consumer 编译/执行验证类型、读取、能力探测和取消生命周期；真实 Host SDK 读取来源摘要 |
+
+本次 Record 摘要在同一 owner 快照中对分页条目和来源 UID 去重并一次批量查询；没有新增存储字段、集合或索引。联调需要更新配套 Record 分支，客户端不通过旧接口额外扫描分页作兼容。
+
+验证：聚焦 47 项、全量 8,712 项通过（13 项原条件跳过），typecheck/build 通过。不可变包 SHA-256 `c8ec7b13ba91b24d8c6ff08e612f8a96dbd0764f6ceb3b718ce7507b6dde2f14`；打包清单及 lib 产物检查无临时凭据或本机路径。官方 CLI 安装到全新含空格路径 Profile 后，官方 DSH `dsh-v0.1.5-rc.2` / `fb2c4b9` 中 Chrome → 打包插件 → Record/Mongo 场景通过。除本次来源展示，还保留了连续归档、hover、目录/内容 DOM 不卸载、消息内容不重刷、失败恢复、独立父子归档、SDK/真实会话 Tool 验收。已核验 `archive-simple-plugin.png`。
+
+日志：`archive-simple-plugin-full-results.json`、`archive-simple-plugin-typecheck.log`、`archive-simple-plugin-build.log`、`archive-simple-plugin-install.log`、`archive-simple-plugin-consumer.log`、`archive-simple-plugin-e2e.log`。本轮仍使用上述任务分支/基线，没有更新用户常驻服务、真实 Profile、DSH 源码、根 README、版本或锁文件。macOS Chrome 运行通过，不据此推断其他操作系统完成实机验收。
+
+## 2026-09-22 PR 前整合 dev
+
+合入用户指定的最新 dev `114ad18a0852e77b0ff69b1b08ae6169e8e56c4a`，保留其新主题置顶、统一创建 owner 和目录软更新。归档继续由账号目录 owner 投影隐藏，创建回执不能在展示或持久化层重新拼回已归档条目。部分创建成功也后台核对目录归属，不重复创建；已有独立子主题归档、连续归档和失败回滚语义不变。
+
+冲突文件为主题目录组件和共享缓存测试，双方测试均保留。新增创建与父主题归档并发的成功/部分成功场景；创建回执早于或晚于目录读取、后台读取后警告仍可见且不影响继续发送均通过。聚焦 101 项、会话目录 335 项、最终全量 8,730 项通过，13 项沿用原条件跳过；typecheck/build 通过。最终测试日志为 `archive-pr-integration-full-final-results.json`、`archive-pr-integration-typecheck.log`、`archive-pr-integration-build-final.log`。
+
+联调和部署需配套 Record 分支 `codex/c20260917-topic-archive-plan` 的 `ad6025c`（含归档来源摘要及前序归档专用通知）。旧后端无法提供新客户端所需的来源摘要，不能仅升级客户端后据此判断列表异常。此处不引入兼容过渡查询或新配置。
+
+最终运行产物 SHA-256 `c6a3326e7fa129754fa7948b0c2cd40df4675c3e4e177d1801074fe9adca131a`，打包清单无额外临时文件，运行代码无本机绝对路径。官方 CLI 安装到全新临时 Profile 后，仓外 SDK Consumer 通过；未修改的官方 DSH `dsh-v0.1.5-rc.2` 中真实 Chrome → Host → Record/Mongo 链路 47 秒通过，包含实际 Session Tool。已检查来源直接展示的最终截图。日志为 `archive-pr-integration-install.log`、`archive-pr-integration-consumer.log`、`archive-pr-integration-e2e.log`，截图为 `archive-pr-integration.png`。用户常驻实例、DSH tracked 源码、根 README、版本和锁文件保持不变。

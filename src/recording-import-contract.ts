@@ -1,3 +1,4 @@
+import { recordingImportDeadline, RECORDING_IMPORT_RECOVERY_MILLIS, type RecordingImportBatch } from './recording-workflow-contract.js'
 import {
   MAX_RECORDING_IMPORT_BYTES,
   MAX_RECORDING_IMPORT_DURATION_MILLIS,
@@ -23,6 +24,12 @@ export type {
   PublicRecordingImportProgress,
   RecordingImportDisplayStatus,
   RecordingImportPhase,
+}
+
+export function validRecordingImportTaskId(value: unknown, now = Date.now()): value is string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) return false
+  const created = Number.parseInt(value.slice(0, 8) + value.slice(9, 13), 16)
+  return created <= now + 5 * 60_000 && created >= now - RECORDING_IMPORT_RECOVERY_MILLIS
 }
 
 export interface RecordingFileImportInput {
@@ -79,6 +86,9 @@ export interface RecordingImportOwnerSession {
 }
 
 export interface RecordingImportOwnerProgress {
+  serviceUnavailable?: boolean
+  pausedCount?: number
+  completedCount?: number
   displayStatus?: Extract<RecordingImportDisplayStatus,
     'speaker-waiting' | 'speaker-recognizing' | 'transcript-waiting' | 'transcribing' | 'completed' | 'partial' | 'failed' | 'unavailable'>
   importProgress?: PublicRecordingImportProgress
@@ -141,8 +151,13 @@ export interface RecordingImportOwnerGateway {
 }
 
 export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
+/** Zero preserves compatibility for restored jobs and callers which predate source classification. */
+export type RecordingImportRecordingKind = 0 | 1 | 3
 
 export interface RecordingImportJob {
+  clientTaskId?: string
+  createRequestUID?: string
+  batch?: RecordingImportBatch
   jobId: string
   userId: number
   revision: number
@@ -154,6 +169,7 @@ export interface RecordingImportJob {
   sha256: string
   startAtMillis: number
   belongUserId: number
+  recordingKind: RecordingImportRecordingKind
   sourceHandle: string
   uploadedBytes: number
   createdAtMillis: number
@@ -172,7 +188,6 @@ export type RecordingImportAdmission =
   | { kind: 'inserted'; job: RecordingImportJob }
   | { kind: 'existing'; job: RecordingImportJob }
   | { kind: 'duplicate-file-name' }
-  | { kind: 'limit' }
 
 export function isRecordingImportDuplicateRejection(job: RecordingImportJob): boolean {
   return job.phase === 'failed' && job.failedFromPhase === 'prepared'
@@ -303,13 +318,13 @@ export function toPublicRecordingImportJob(
   importRef: string,
 ): PublicRecordingImportJob {
   const progress = job.fileSize <= 0 ? 0 : Math.min(1, Math.max(0, job.uploadedBytes / job.fileSize))
-  const status = job.phase === 'prepared' ? 'preparing'
+  const status = job.phase === 'prepared' ? 'waiting'
     : job.phase === 'uploading' ? 'uploading'
       : job.phase === 'finalizing' ? 'processing'
         : job.phase === 'accepted' ? 'accepted'
-        : job.phase === 'failed' ? 'failed'
+        : job.phase === 'failed' ? (job.errorCode === 'recording_storage_exhausted' ? 'paused' : 'failed')
           : 'cancelled'
-  const statusDetail = job.phase === 'prepared' ? '准备中'
+  const statusDetail = job.phase === 'prepared' ? '排队中'
     : job.phase === 'uploading' ? '上传中'
       : job.phase === 'finalizing' ? '处理中'
         : job.phase === 'accepted' ? 'Audio 已接收'
@@ -317,6 +332,7 @@ export function toPublicRecordingImportJob(
           : '已取消'
   return {
     kind: 'local',
+    ...(job.batch ? { batch: { ...job.batch } } : {}),
     importRef,
     revision: job.revision,
     phase: job.phase,
@@ -335,4 +351,14 @@ export function toPublicRecordingImportJob(
     ...(job.errorMessage === undefined ? {} : { errorMessage: job.errorMessage }),
     ...(job.retryable === undefined ? {} : { retryable: job.retryable }),
   }
+}
+
+/** Applied before a new transfer/recovery attempt; already-uploaded finalization remains safe. */
+export function assertRecordingImportBatchActive(batch: RecordingImportBatch | undefined, now = Date.now()): void {
+  if (!batch) return
+  const deadline = recordingImportDeadline(batch.batchId)
+  if (deadline === undefined || deadline - RECORDING_IMPORT_RECOVERY_MILLIS > now + 300_000) {
+    throw new RecordingImportContractError('recording-import-batch-invalid', '导入批次无效，请检查设备时间后重新导入')
+  }
+  if (now >= deadline) throw new RecordingImportContractError('recording-import-expired', '本批次的 30 天续传期限已到；已有录音仍保留，请只重新导入未上传的文件')
 }

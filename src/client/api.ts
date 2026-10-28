@@ -1,6 +1,15 @@
+export { connectRealtimeDictation } from '../realtime-dictation-client.js'
+import type { RecordingImportBatch } from '../recording-workflow-contract.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { ArkmeClientError } from '../sdk/index.js'
+import type { TeamAppOperation } from '../team-app-contract.js'
+import type { RecordAppOperation } from '../record-app-contract.js'
+import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
 import type { ArkmePluginOperation } from '../types.js'
+import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
+import { socialWriteAction } from './social-write-policy.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
@@ -12,8 +21,12 @@ export interface RecordingImportUploadProgress {
 }
 
 export interface RecordingImportUploadOptions {
+  clientTaskId?: string
+  batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
+  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  recordingKind?: 1 | 3
 }
 
 function recordingImportMime(file: File): string {
@@ -54,6 +67,9 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
+    request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.clientTaskId) request.setRequestHeader('X-Arkme-Import-Task', options.clientTaskId)
+    if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
       options.onProgress?.({
         uploadedBytes: Math.max(0, Math.min(file.size, Math.trunc(event.loaded))),
@@ -87,13 +103,29 @@ export async function uploadArkmeRecording(
   })
 }
 
-type ArkmeUiOperation = ArkmePluginOperation
+/** Check durable Host receipt before reading or re-uploading a restored source. */
+export async function lookupArkmeRecordingImport(importPath: string, taskId: string, signal: AbortSignal): Promise<PublicRecordingImportJob | null> {
+  const response = await fetch(importPath, { method: 'POST', signal, headers: {
+    'X-Arkme-Import-Lookup': '1', 'X-Arkme-Import-Task': taskId,
+  } })
+  const result = await response.json() as { ok: boolean; value: PublicRecordingImportJob | null; error?: { message?: string } }
+  if (!response.ok || !result.ok) throw new Error(result.error?.message ?? '导入状态核对失败，请重试')
+  return result.value
+}
+
+type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
+  | 'dictation.transcribe'
   | 'emoji.recent.list'
+  | 'conversation.viewport.read'
+  | 'conversation.viewport.write'
   | 'emoji.recent.record'
   | 'topic.candidates'
   | 'provider.instance'
   | 'link.metadata'
+  | 'share.preview'
   | 'directory.list'
+  | 'private-interaction.summary'
+  | 'private-interaction.query'
   | 'directory.contact.profile'
   | 'directory.contact.remark.update'
   | 'directory.contact.world'
@@ -122,18 +154,26 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'calendar.buckets'
+  | 'calendar.activity'
   | 'calendar.records'
+  | 'recordings.history'
+  | 'recordings.presence'
+  | 'recordings.presence.capture'
   | 'recordings.calendar'
+  | 'recordings.totals.index'
+  | 'recordings.totals.bucket'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
   | 'recordings.forward.capabilities'
+  | 'recordings.copy-link'
   | 'recordings.forward'
   | 'recordings.summary-model-config'
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
   | 'recordings.import.list'
   | 'recordings.import.history'
+  | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.status'
   | 'recordings.import.retry'
@@ -141,11 +181,30 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'
   | 'recordings.import.session.delete'
+  | 'recordings.import.transcription.retry'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'speaker-directory.summary'
+  | 'speaker-directory.list'
+  | 'speaker-directory.seen'
+  | 'speaker-directory.open'
+  | 'speaker-directory.avatars'
+  | 'speaker-directory.similar'
+  | 'speaker-directory.voice-samples'
+  | 'recordings.speaker.presence'
+  | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'
   | 'recordings.speaker.recommendation'
+  | 'recordings.speaker.evidence'
+  | 'recordings.speaker.consistency'
   | 'recordings.speaker.assign-item'
+  | 'recordings.speaker.unassign-item'
+  | 'recordings.entities.feedback'
+  | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.context'
+  | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.apply'
+  | 'recordings.speaker.correction.undo'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.home-visibility'
@@ -153,14 +212,26 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
   | 'arko.profile'
+  | 'arko.local-mark.capabilities'
+  | 'arko.local-mark.list'
+  | 'arko.local-mark.change'
   | 'arko.session'
   | 'arko.new-session'
   | 'arko.models'
   | 'arko.model.activate'
   | 'arko.history'
+  | 'arko.pending.read'
+  | 'arko.pending.prepare'
+  | 'arko.pending.acknowledge'
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
+  | 'app.migration.status'
+  | 'app.migration.check'
+  | 'app.migration.download'
+  | 'app.migration.cancel'
+  | 'app.migration.install' | 'app.migration.reveal'
+  | 'app.migration.dismiss'
   | 'plugin.update.status'
   | 'plugin.update.check'
   | 'plugin.update.acknowledge'
@@ -168,6 +239,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'plugin.update.install-status'
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
+  | 'source.interwoven-read-receipts'
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
@@ -176,13 +248,33 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
+  | 'source.message-extension.capabilities'
+  | 'transcript.local.read'
+  | 'transcript.local.change'
+  | 'source.local-message-mark.capabilities'
+  | 'source.local-message-mark.list'
+  | 'source.local-message-mark.change'
+  | 'source.message-anchor.capture'
+  | 'source.message-underline.capabilities'
+  | 'source.message-underline.list'
+  | 'source.message-underline.change'
+  | 'source.message-extension.parent'
   | 'source.message-extension.extend'
   | 'source.record-delete'
   | 'source.record-topic.assign'
   | 'source.forward-messages'
   | 'message-actions.copy-link'
   | 'message-actions.forward'
+  | 'codex.forward'
+  | 'codex.local-mark.capabilities'
+  | 'codex.local-mark.list'
+  | 'codex.local-mark.change'
   | 'native-chat.forward'
+  | 'native-chat.copy-link'
+  | 'native-chat.annotations'
+  | 'native-chat.local-mark.capabilities'
+  | 'native-chat.local-mark.list'
+  | 'native-chat.local-mark.change'
   | 'source.shared-recording-detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
@@ -211,6 +303,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'search.history.create'
   | 'search.records'
   | 'search.conversations'
+  | 'search.locations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'
@@ -223,6 +316,92 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: { priority?: 'background' },
 ): Promise<T> {
-  return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
+  if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
+  const auth = arkmeAuthStore.getSnapshot().auth
+  const accountKey = (operation.startsWith('team.app.') || operation === 'contacts.team-join') && auth?.status === 'authenticated'
+    ? `${auth.environment}:${auth.userId}` : undefined
+  // A retained view can still hold the previous account's refs during teardown.
+  // Reject it locally instead of replacing its scope with the latest login.
+  if (accountKey !== undefined && params?.expectedAccountKey !== undefined && params.expectedAccountKey !== accountKey) {
+    throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+  }
+  const socialAction = socialWriteAction(operation, params)
+  if (socialAction !== undefined) {
+    const { requirePhoneForSocialAction } = await import('./social-action-guard.js')
+    const before = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (before?.status !== 'authenticated' || before.environment !== auth.environment || before.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
+    await requirePhoneForSocialAction(socialAction, signal)
+    const current = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status === 'authenticated' && (current?.status !== 'authenticated' || current.environment !== auth.environment || current.userId !== auth.userId)) {
+      throw new ArkmeClientError({ code: 'social-account-changed', message: '登录账号已变化，请重新操作', retryable: false })
+    }
+  }
+  let cleanupBackground: (() => void) | undefined
+  try {
+    const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
+    const background = options?.priority === 'background' && supportsBackgroundRead(operation)
+    const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+    const currentScope = () => {
+      const current = arkmeAuthStore.getSnapshot().auth
+      return current?.status === 'authenticated' ? `${current.environment}:${current.userId}` : undefined
+    }
+    const changedAccount = () => new ArkmeClientError({
+      code: 'read-account-changed', message: '登录账号已变化，请重新读取', retryable: false,
+    })
+    let backgroundSignal: AbortSignal | undefined
+    if (background) {
+      // Avatar reads have no component AbortSignal. Account changes must still
+      // cancel their fetches so old work cannot occupy the new account's budget.
+      const controller = new AbortController()
+      const abort = () => controller.abort(signal?.reason)
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      const unsubscribe = arkmeAuthStore.subscribe(() => {
+        if (currentScope() !== scope) controller.abort(changedAccount())
+      })
+      cleanupBackground = () => { unsubscribe(); signal?.removeEventListener('abort', abort) }
+      backgroundSignal = controller.signal
+    }
+    const dispatch = async (requestSignal?: AbortSignal): Promise<T> => {
+      if (background && currentScope() !== scope) throw changedAccount()
+      const value = await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+      if (background) {
+        requestSignal?.throwIfAborted()
+        if (currentScope() !== scope) throw changedAccount()
+      }
+      return value
+    }
+    // Keep the permit until callProvider has consumed the entire JSON body.
+    // No key/recovery: existing owners retain deduplication and retry semantics.
+    const value = background ? await backgroundUiReads.run({
+      scope: scope ?? 'anonymous', lane: 'background-read', service: 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
+      operation: dispatch,
+    }) : await dispatch(signal)
+    if (background) {
+      // Account changes can arrive while the coordinator unwinds after dispatch.
+      backgroundSignal?.throwIfAborted()
+      if (currentScope() !== scope) throw changedAccount()
+    }
+    const current = arkmeAuthStore.getSnapshot().auth
+    if (accountKey !== undefined && (current?.status !== 'authenticated' || `${current.environment}:${current.userId}` !== accountKey)) {
+      throw new ArkmeClientError({ code: 'team-account-changed', message: '登录账号已变化，请重新打开团队消息', retryable: false })
+    }
+    return value
+  } catch (error) {
+    if ((error as { body?: { code?: string } })?.body?.code === 'team-account-changed') {
+      void arkmeAuthStore.refresh().catch(() => undefined)
+    }
+    if (operation === 'auth.logout' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('arkme:logout-failed', {
+        detail: error instanceof Error ? error.message : String(error),
+      }))
+    }
+    throw error
+  } finally {
+    cleanupBackground?.()
+  }
 }

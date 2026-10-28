@@ -9,14 +9,27 @@ const allowed = new Set([
   'user_id', 'client_id', 'runtime_ref', 'desktop_ref', 'connection_generation', 'lease_generation',
   'host_generation', 'error_code', 'reason', 'retryable', 'closeCode', 'last_receive_age_ms',
   'duration_ms', 'attempt_id', 'phase', 'request_id', 'trace_id', 'suspended',
+  'snapshot_ref', 'request_ref', 'operation', 'stage', 'status', 'transport_seq',
+  'workspace_count', 'session_count', 'workspace_items_acked', 'session_items_acked',
+  'page_index', 'item_count', 'projection_at', 'server_completed',
+  'workspace_list_supported', 'session_list_supported',
+  'queue_ms', 'publish_ack_ms', 'completed',
+  'after_seq', 'server_seq', 'last_transport_seq', 'target_lease_generation',
+  'command_id', 'frame_type', 'sender_role', 'listener_ready', 'duplicate',
+  'channel_count', 'last_channel_event_age_ms', 'fragment_index', 'fragment_count', 'transfer_ref',
 ])
 
 /** Bounded, per-Profile incident reporting. Never installs global Sentry instrumentation. */
 export class DshConnectionDiagnostics {
   private readonly client: NodeClient | undefined
   private readonly pending: Event[] = []
+  private readonly trace: Record<string, unknown>[] = []
+  private traceDirty = false
   private history: Record<string, unknown>[] = []
   private episode: { id: string; at: number; failures: number; reported: boolean } | undefined
+  private projectionEpisode: typeof this.episode
+  private projectionProgress: { at: number; fields: Record<string, unknown> } | undefined
+  private readonly requestFailures = new Map<string, number>()
   private saveTail = Promise.resolve()
   private saveRequested = false
   private saving = false
@@ -71,7 +84,12 @@ export class DshConnectionDiagnostics {
     this.accountId = accountId
     const generation = ++this.accountGeneration
     this.episode = undefined
+    this.projectionEpisode = undefined
+    this.projectionProgress = undefined
+    this.requestFailures.clear()
     this.history = []
+    this.trace.length = 0
+    this.traceDirty = true
     // A new account must not inherit another account's incident backlog.
     void this.loaded.then(() => {
       if (generation !== this.accountGeneration || this.closed) return
@@ -90,7 +108,39 @@ export class DshConnectionDiagnostics {
       if (allowed.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string' && value.length <= 160)) safe[key] = value
     }
     try { this.options.log({ service: 'arkme-dsh-host', deploy_env: this.options.environment, release: this.options.release, ...safe }) } catch { /* Diagnostics cannot break connectivity. */ }
+    if (this.accountId !== undefined && fields.user_id !== undefined && String(fields.user_id) !== this.accountId) return
+    // Keep successful delivery evidence locally even when the Host logger is muted.
+    // Body-free rows, bounded to 512 x 2 KiB; flushed by the existing session poll.
+    if (!['projection_sync_started', 'projection_sync_progress', 'projection_sync_completed', 'live_delivery_window'].includes(phase)
+      && Buffer.byteLength(JSON.stringify(safe)) <= 2048) {
+      this.trace.push(safe)
+      if (this.trace.length > 512) this.trace.shift()
+      this.traceDirty = true
+    }
+    if (phase === 'projection_sync_started' || phase === 'projection_sync_progress') {
+      this.projectionProgress = { at: now, fields: safe }
+      return
+    }
+    if (phase === 'projection_sync_failed' || phase === 'projection_sync_completed' || phase === 'projection_sync_cancelled') {
+      if (this.projectionProgress !== undefined && safe.snapshot_ref !== this.projectionProgress.fields.snapshot_ref) return
+      this.projectionProgress = undefined
+      if (phase === 'projection_sync_cancelled') { this.projectionEpisode = undefined; return }
+    }
+    if (phase.startsWith('host_request_') || phase.startsWith('host_response_')) {
+      if (phase === 'host_request_failed' || phase === 'host_response_publish_failed' || phase === 'host_request_processed' && safe.status === 'rejected') {
+        // At most 32 distinct failure groups per minute per account/Profile.
+        for (const [key, at] of this.requestFailures) if (now - at >= 60_000) this.requestFailures.delete(key)
+        const key = JSON.stringify([phase, safe.runtime_ref, safe.operation, safe.error_code])
+        if (!this.requestFailures.has(key) && this.requestFailures.size < 32) {
+          this.requestFailures.set(key, now)
+          this.report('remote_request_failed', false, { id: randomUUID(), at: now, failures: 1, reported: false }, [safe])
+        }
+      }
+      return
+    }
+    // High-volume progress belongs in logs, not in the bounded incident history.
     if (phase === 'live_delivery_window') return
+    if (phase === 'projection_sync_completed' && this.projectionEpisode === undefined) return
     this.history.push(safe)
     if (this.history.length > 32) this.history.shift()
     if (phase === 'connection_failed') {
@@ -101,14 +151,28 @@ export class DshConnectionDiagnostics {
     } else if (phase === 'host_registered') {
       if (this.episode?.reported) this.report('recovered', true)
       this.episode = undefined
-      this.history = []
+      if (this.projectionEpisode === undefined) this.history = []
+    } else if (phase === 'projection_sync_failed' || phase === 'projection_sync_stalled') {
+      this.projectionEpisode ??= { id: randomUUID(), at: now, failures: 0, reported: false }
+      this.projectionEpisode.failures += 1
+      if (phase === 'projection_sync_stalled' || this.projectionEpisode.failures >= 3 || fields.retryable === false) this.report('projection_sync_failed', false, this.projectionEpisode)
+    } else if (phase === 'projection_sync_completed') {
+      if (this.projectionEpisode?.reported) this.report('projection_sync_recovered', true, this.projectionEpisode)
+      this.projectionEpisode = undefined
     }
   }
 
   /** Called by the existing session poll; no independent retry timer. */
   tick(): void {
     if (this.closed || this.accountId === undefined) return
+    if (this.traceDirty) this.save()
+    if (this.projectionProgress !== undefined && this.now() - this.projectionProgress.at >= 60_000) {
+      const progress = this.projectionProgress
+      this.projectionProgress = undefined
+      this.record('projection_sync_stalled', { ...progress.fields, phase: 'projection_sync_stalled', reason: 'no_progress', duration_ms: this.now() - progress.at })
+    }
     if (this.episode !== undefined && this.now() - this.episode.at >= 60_000) this.report('connection_failed')
+    if (this.projectionEpisode !== undefined && this.now() - this.projectionEpisode.at >= 60_000) this.report('projection_sync_failed', false, this.projectionEpisode)
     if (this.draining !== undefined || this.now() < this.nextAttempt || this.client === undefined) return
     const generation = this.accountGeneration
     const flight = this.loaded.then(async () => {
@@ -125,6 +189,7 @@ export class DshConnectionDiagnostics {
 
   async close(): Promise<void> {
     this.closed = true
+    if (this.traceDirty) this.save()
     let timer: ReturnType<typeof setTimeout> | undefined
     const finish = async () => {
       await this.draining
@@ -139,15 +204,14 @@ export class DshConnectionDiagnostics {
   }
 
   private now(): number { return (this.options.now ?? Date.now)() }
-  private report(phase: string, recovered = false): void {
-    const episode = this.episode
+  private report(phase: string, recovered = false, episode = this.episode, transitions = this.history): void {
     if (episode === undefined || episode.reported && !recovered) return
     episode.reported = true
     const event: Event = {
       event_id: randomUUID().replaceAll('-', ''), timestamp: this.now() / 1000,
       message: `DSH Host ${phase}`, level: recovered ? 'info' : 'warning',
       tags: { feature: 'dsh_remote', phase },
-      contexts: { dsh_connection: { episode_id: episode.id, failures: episode.failures, duration_ms: this.now() - episode.at, transitions: [...this.history] } },
+      contexts: { dsh_connection: { episode_id: episode.id, failures: episode.failures, duration_ms: this.now() - episode.at, transitions: [...transitions] } },
     }
     const user = this.accountId ?? this.history.findLast(value => value.user_id !== undefined)?.user_id
     if (user !== undefined) event.user = { id: String(user) }
@@ -172,7 +236,7 @@ export class DshConnectionDiagnostics {
             event.timestamp * 1000 > this.now() || Buffer.byteLength(JSON.stringify(event)) > 24 * 1024) continue
         const phase = event.tags?.phase
         const context = event.contexts?.dsh_connection
-        if ((phase !== 'connection_failed' && phase !== 'recovered') || !context || !Array.isArray(context.transitions) ||
+        if (!['connection_failed', 'recovered', 'projection_sync_failed', 'projection_sync_recovered', 'remote_request_failed'].includes(phase) || !context || !Array.isArray(context.transitions) ||
             typeof context.episode_id !== 'string' || context.episode_id.length > 64 || !Number.isFinite(context.duration_ms) ||
             !Number.isSafeInteger(context.failures) || !/^\d{1,20}$/.test(String(event.user?.id))) continue
         const transitions = context.transitions.slice(-32).map((row: unknown) => {
@@ -181,7 +245,7 @@ export class DshConnectionDiagnostics {
             (allowed.has(key) || key === 'at') && (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) || typeof value === 'string' && value.length <= 160)))
         })
         this.pending.push({ event_id: event.event_id, timestamp: event.timestamp, message: `DSH Host ${phase}`,
-          level: phase === 'recovered' ? 'info' : 'warning', user: { id: String(event.user.id) }, tags: { feature: 'dsh_remote', phase },
+          level: phase.endsWith('recovered') ? 'info' : 'warning', user: { id: String(event.user.id) }, tags: { feature: 'dsh_remote', phase },
           contexts: { dsh_connection: { episode_id: context.episode_id, duration_ms: context.duration_ms, failures: context.failures, transitions } } })
       }
     } catch { /* Missing or invalid diagnostic cache does not block startup. */ }
@@ -198,6 +262,11 @@ export class DshConnectionDiagnostics {
         await mkdir(dirname(this.options.path), { recursive: true })
         await writeFile(`${this.options.path}.tmp`, data, { mode: 0o600 })
         await rename(`${this.options.path}.tmp`, this.options.path)
+        if (this.traceDirty) {
+          this.traceDirty = false
+          await writeFile(`${this.options.path}.trace.tmp`, JSON.stringify(this.trace), { mode: 0o600 })
+          await rename(`${this.options.path}.trace.tmp`, `${this.options.path}.trace.json`)
+        }
       }
     })().catch(() => undefined).finally(() => { this.saving = false })
   }

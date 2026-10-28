@@ -1,4 +1,5 @@
-import { importStagedRecording } from '../src/recording-tool-import.js'
+import { importStagedRecording, importStagedRecordingBatch } from '../src/recording-tool-import.js'
+import { planRecordingToolBatch } from '../src/recording-tool-batch.js'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -39,7 +40,7 @@ describe('authorized local file to recording import', () => {
       expect(path).not.toBe(original.path)
       expect(await readFile(path)).toEqual(f.bytes)
       expect((await stat(path)).mode & 0o777).toBe(0o600)
-      expect(metadata).toMatchObject({ fileName: 'voice.wav', fileSize: f.bytes.length, sha256: createHash('sha256').update(f.bytes).digest('hex'), belongUserId: 42 })
+      expect(metadata).toMatchObject({ fileName: 'voice.wav', fileSize: f.bytes.length, sha256: createHash('sha256').update(f.bytes).digest('hex'), belongUserId: 42, recordingKind: 3 })
       expect(expectedUserId).toBe(42)
       await unlink(path) // existing coordinator can discard on acceptance/duplicate
       return { importRef: 'opaque', phase: 'accepted' }
@@ -120,6 +121,77 @@ describe('authorized local file to recording import', () => {
   })
 })
 
+describe('staged multi-file workflow', () => {
+  async function batchFixture() {
+    const f = await fixture()
+    const original = await f.files.readLocal(f.file.fileRef)
+    const second = await f.files.stage(original.path, { fileName: 'second.wav', mimeType: 'audio/wav', size: f.bytes.length })
+    const inputs = [f.input, { ...f.input, fileRef: second.fileRef }]
+    const snapshot = { local: [], existingFileNames: [], owner: [] }
+    const recording = { ...f.recording, recordingImportReceipt: vi.fn(async () => null),
+      recordingDirectorySnapshot: vi.fn(async () => snapshot) }
+    let journal: unknown
+    const planner = vi.fn(async (_user, candidates) => {
+      const plan = planRecordingToolBatch(journal, candidates, 'Asia/Shanghai'); journal = plan.journal
+      return { supported: true, members: plan.members }
+    })
+    return { ...f, inputs, snapshot, recording, planner,
+      run: () => importStagedRecordingBatch(f.files, recording, f.directory, inputs, planner) }
+  }
+  it('passes one frozen batch to every admission and retains it after partial failure', async () => {
+    const f = await batchFixture()
+    f.accept.mockRejectedValueOnce(new Error('copy admission interrupted'))
+    const first = await f.run()
+    expect(first.items[0]!.errorCode).toBeDefined()
+    expect(first.items[1]!.job).toBeDefined()
+    const firstMetadata = f.accept.mock.calls.map(call => call[1])
+    expect(firstMetadata.map(meta => meta.batch.itemIndex)).toEqual([0, 1])
+    expect(firstMetadata[0].batch.batchId).toBe(firstMetadata[1].batch.batchId)
+    expect(firstMetadata[0].batch.itemCount).toBe(2)
+    f.accept.mockClear()
+    await f.run()
+    expect(f.accept.mock.calls.map(call => call[1].batch)).toEqual(firstMetadata.map(meta => meta.batch))
+    expect(f.accept.mock.calls.map(call => call[1].clientTaskId)).toEqual(firstMetadata.map(meta => meta.clientTaskId))
+  })
+  it('excludes a cloud metadata match from the new batch without claiming content hash verification', async () => {
+    const f = await batchFixture()
+    Object.assign(f.snapshot, { existingFileNames: ['voice.wav'], owner: [{ sessionId: 'existing', fileName: 'voice.wav',
+      fileSize: f.bytes.length, durationMillis: 1000, startAtMillis: f.input.startAtMillis, belongUserId: 42, hasFinishedUpload: true }] })
+    const result = await f.run()
+    expect(result.items[0]).toMatchObject({ outcome: 'matched_uploaded' })
+    expect(f.accept).toHaveBeenCalledOnce()
+    expect(f.accept.mock.calls[0]![1].batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
+  })
+  it('does not stage or upload if capability lookup fails', async () => {
+    const f = await batchFixture()
+    f.planner.mockRejectedValueOnce(new Error('offline'))
+    await expect(f.run()).rejects.toThrow('offline')
+    expect(f.accept).not.toHaveBeenCalled()
+    await expect(readdir(f.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it('explicitly returns unsupported and omits batch metadata for legacy servers', async () => {
+    const f = await batchFixture()
+    f.planner.mockResolvedValueOnce({ supported: false, members: {} })
+    expect((await f.run()).supported).toBe(false)
+    expect(f.accept.mock.calls.every(call => call[1].batch === undefined)).toBe(true)
+  })
+  it('rejects duplicate filenames from different attachments before assigning any slots', async () => {
+    const f = await batchFixture(), original = await f.files.readLocal(f.file.fileRef)
+    const same = await f.files.stage(original.path, { fileName: 'voice.wav', mimeType: 'audio/wav', size: f.bytes.length })
+    f.inputs[1]!.fileRef = same.fileRef
+    const result = await f.run()
+    expect(result.batchIds).toEqual([])
+    expect(result.items.every(item => item.errorCode === 'recording-import-file-name-conflict')).toBe(true)
+    expect(f.accept).not.toHaveBeenCalled()
+  })
+  it('stops a changed account before any file admission', async () => {
+    const f = await batchFixture()
+    f.planner.mockImplementationOnce(async () => { f.setUser(77); return { supported: true, members: {} } })
+    await expect(f.run()).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+    expect(f.accept).not.toHaveBeenCalled()
+  })
+})
+
 // Full in-process path: tool -> facade -> FileTransfers -> RecordingService -> coordinator.
 // Only the remote Audio gateway is replaced; no real account data is written.
 describe('recording import tool integration', () => {
@@ -133,7 +205,10 @@ describe('recording import tool integration', () => {
     let userId = 42
     const sessions = { read: async () => ({ userId, accessToken: 'test', refreshToken: 'test' }), write: async () => {}, delete: async () => {} }
     const store = new ArkmeStateStore(root)
-    const network = vi.fn(async () => { throw new Error('unexpected network access') })
+    const network = vi.fn(async (url: string) => {
+      if (!String(url).endsWith('/api/v1/audio/import-batches/capabilities')) throw new Error('unexpected network access')
+      return Response.json({ code: 200, data: { supported: true, contract_version: 2 } })
+    })
     const service = new ArkmeService({
       environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
       recordBaseUrl: 'https://record.test', chatBaseUrl: 'https://chat.test', botBaseUrl: 'https://bot.test',
@@ -144,6 +219,7 @@ describe('recording import tool integration', () => {
       fileStateDirectory: join(root, 'files'), recordingImportDirectory: join(root, 'recording-imports'),
     }, sessions, store, network as typeof fetch)
     const ensureSession = vi.spyOn(AudioRecordingImportGateway.prototype, 'ensureSession').mockResolvedValue('private-session')
+    vi.spyOn(AudioRecordingImportGateway.prototype, 'findExistingFileNames').mockResolvedValue([])
     const createChild = vi.spyOn(AudioRecordingImportGateway.prototype, 'createChild').mockResolvedValue('private-child')
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
@@ -181,7 +257,10 @@ describe('recording import tool integration', () => {
       expect(finishChild).toHaveBeenCalledOnce()
       expect(finishSession).toHaveBeenCalledOnce()
       expect(await readFile((await service.fileReadLocal(file.fileRef)).path)).toEqual(f.bytes)
-      expect(network).not.toHaveBeenCalled()
+      expect(network).toHaveBeenCalledTimes(2)
+      const jobs = await store.listRecordingImportJobs(42)
+      expect(jobs[0]!.batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
+      expect(ensureSession.mock.calls[0]![0].batch).toEqual(jobs[0]!.batch)
       userId = 77
       await expect(tool.execute({ action: 'status', import_ref: first.import_ref }, exec)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
     } finally {

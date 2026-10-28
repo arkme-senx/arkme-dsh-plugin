@@ -1,7 +1,7 @@
 import { type ComponentType } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { act, create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeRecordingTimeline,
   RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS,
@@ -15,6 +15,96 @@ import {
   recordingTimelineWheelZoom,
   recordingVisibleTimelineItems,
 } from '../src/client/recordings/ArkmeRecordingTimeline.js'
+
+describe('responsive all-day speaker legend', () => {
+  let renderer: ReactTestRenderer | undefined
+  afterEach(() => {
+    act(() => { renderer?.unmount() })
+    renderer = undefined
+    vi.unstubAllGlobals()
+  })
+
+  function mountLegend(count = 8, loading = false) {
+    const summary = { clientWidth: 350 }
+    let resize = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const dayStart = new Date(2026, 9, 1).getTime()
+    const items = Array.from({ length: count }, (_, index) => ({
+      itemId: `item-${index}`, itemRef: `ref-${index}`, speakerKey: `speaker-${index}`,
+      speakerLabel: index === 0 ? '一个需要省略显示的很长的说话人名称' : `说话人 ${index + 1}`,
+      speakerColorIndex: index, speakerNumber: index + 1, sameSpeakerItemCount: 1,
+      text: '内容', startAtMillis: dayStart + index * 60_000,
+      endAtMillis: dayStart + index * 60_000 + 1_000, isBackground: false,
+    }))
+    const element = (isLoading: boolean) => <ArkmeRecordingTimeline items={items} loading={isLoading}
+      dayStartMillis={dayStart} isPlaying={false} onSelectAtMillis={() => {}} onTogglePlayback={() => {}} />
+    act(() => {
+      renderer = create(element(loading), { createNodeMock: node => node.type === 'summary' ? summary : null })
+    })
+    return {
+      resize(width: number) { summary.clientWidth = width; act(resize) },
+      setLoading(value: boolean) { act(() => { renderer!.update(element(value)) }) },
+      visible() { return renderer!.root.findByType('summary').findAllByType('button') },
+      overflow() {
+        return renderer!.root.findByType('summary').findAllByType('span')
+          .filter(node => node.children[0] === '+').map(node => node.children.join(''))
+      },
+      disconnect,
+    }
+  }
+
+  it('fills available width, removes overflow when everyone fits, and shrinks again', () => {
+    const legend = mountLegend()
+    expect(legend.visible()).toHaveLength(3)
+    expect(legend.overflow()).toEqual(['+5'])
+    legend.resize(650)
+    expect(legend.visible()).toHaveLength(6)
+    expect(legend.overflow()).toEqual(['+2'])
+    // Exact fit without the badge: 8 * 96 + 12 padding + 16 caret.
+    legend.resize(796)
+    expect(legend.visible()).toHaveLength(8)
+    expect(legend.overflow()).toEqual([])
+    expect(legend.visible()[0]?.props.title).toBe('一个需要省略显示的很长的说话人名称')
+    expect(legend.visible()[0]?.findAllByType('span').flatMap(node => node.children)).not.toContain('一致性')
+    expect(renderer!.root.findAllByType('button').filter(node => node.children.includes('一致性'))).toHaveLength(8)
+    legend.resize(250)
+    expect(legend.visible()).toHaveLength(2)
+    expect(legend.overflow()).toEqual(['+6'])
+    legend.resize(90)
+    expect(legend.visible()).toHaveLength(0)
+    expect(legend.overflow()).toEqual(['+8'])
+  })
+
+  it('measures when loading finishes and disconnects when the legend disappears', () => {
+    const legend = mountLegend(8, true)
+    legend.resize(650)
+    legend.setLoading(false)
+    expect(legend.visible()).toHaveLength(6)
+    legend.setLoading(true)
+    expect(legend.disconnect).toHaveBeenCalledTimes(1)
+    legend.resize(350)
+    legend.setLoading(false)
+    expect(legend.visible()).toHaveLength(3)
+  })
+
+  it('keeps multi-digit overflow counts accurate as the container grows', () => {
+    const legend = mountLegend(15)
+    expect(legend.visible()).toHaveLength(2)
+    expect(legend.overflow()).toEqual(['+13'])
+    legend.resize(740)
+    expect(legend.visible()).toHaveLength(7)
+    expect(legend.overflow()).toEqual(['+8'])
+    legend.resize(1_468)
+    expect(legend.visible()).toHaveLength(15)
+    expect(legend.overflow()).toEqual([])
+  })
+})
 
 describe('recording timeline math', () => {
   it('projects real segments into the visible time window', () => {
@@ -172,12 +262,12 @@ describe('recording timeline math', () => {
     expect(markup).toContain('说话人 1，选择该片段')
     expect(markup).not.toContain('播放该片段')
     expect(markup).toContain('24 小时缩略导航')
-    expect(markup).toContain('当前窗口说话人')
-    expect(markup).toMatch(/style="[^"]*min-height:162px[^"]*" aria-label="真实录音时间轴"/)
-    expect(markup).toContain('aria-label="录音覆盖图例"')
+    expect(markup).toContain('全天说话人')
+    expect(markup).toMatch(/aria-label="录音片段详情" hidden=""/)
+    expect(markup).not.toContain('aria-label="录音覆盖图例"')
   })
 
-  it('renders the three desktop timeline layers as independent rows', () => {
+  it('keeps only the overview visible while detail is in a hidden floating panel', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const items = [
       { itemId: 'a', itemRef: 'a-ref', speakerKey: 'speaker-a', speakerLabel: '说话人 A', speakerColorIndex: 1, text: '第一段', startAtMillis: dayStart + 18 * 3_600_000 + 30 * 60_000, endAtMillis: dayStart + 18 * 3_600_000 + 31 * 60_000, isBackground: false },
@@ -194,7 +284,7 @@ describe('recording timeline math', () => {
 
     const overviewIndex = markup.indexOf('aria-label="24 小时概览"')
     const detailIndex = markup.indexOf('aria-label="详细时间轴')
-    const legendIndex = markup.indexOf('aria-label="当前窗口说话人图例"')
+    const legendIndex = markup.indexOf('aria-label="全天说话人图例"')
     expect(overviewIndex).toBeGreaterThan(-1)
     expect(detailIndex).toBeGreaterThan(overviewIndex)
     expect(legendIndex).toBeGreaterThan(detailIndex)
@@ -265,7 +355,7 @@ describe('recording timeline math', () => {
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="播放录音"/)
   })
 
-  it('keeps the complete desktop timeline and import entry on an empty day', () => {
+  it('keeps the reusable timeline detail hidden when there are no recordings', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const markup = renderToStaticMarkup(<ArkmeRecordingTimeline
       items={[]}
@@ -341,7 +431,7 @@ describe('recording timeline math', () => {
       onTogglePlayback={() => {}}
     />)
     const speakerButton = renderer.root.findAllByType('button')
-      .find(node => node.props['aria-label'] === '编辑说话人 说话人 1')
+      .find(node => node.props['aria-label'] === '查看 说话人 1 声音一致性')
     const stopPropagation = vi.fn()
     const preventDefault = vi.fn()
 
@@ -389,7 +479,7 @@ describe('recording timeline math', () => {
     }
   })
 
-  it('derives the speaker legend from the visible window while keeping owner identities separate', () => {
+  it('derives the speaker legend from the full day while keeping owner identities separate', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const items = [
       { itemId: 'morning', itemRef: 'morning-ref', speakerKey: 'morning-speaker', speakerLabel: '早间说话人', speakerColorIndex: 0, text: '早', startAtMillis: dayStart + 1_000, endAtMillis: dayStart + 2_000, isBackground: false },
@@ -397,10 +487,10 @@ describe('recording timeline math', () => {
     ] as never
     const markup = renderToStaticMarkup(<ArkmeRecordingTimeline items={items} dayStartMillis={dayStart} isPlaying={false} onSelectAtMillis={() => {}} onTogglePlayback={() => {}} />)
     expect(markup).toContain('早间说话人')
-    expect(markup).not.toContain('晚间说话人')
+    expect(markup).toContain('晚间说话人')
   })
 
-  it('shows the desktop voice-presence legend instead of speaker identities at 24-hour zoom', () => {
+  it('keeps the all-day speaker legend available at 24-hour zoom', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = {
       itemId: 'item-1', itemRef: 'ref-1', speakerKey: 'speaker-1', speakerLabel: '说话人 1',
@@ -414,9 +504,8 @@ describe('recording timeline math', () => {
     }
 
     const serialized = JSON.stringify(renderer.toJSON())
-    expect(serialized).toContain('有录音')
-    expect(serialized).toContain('已识别人声')
-    expect(serialized).not.toContain('当前窗口说话人图例')
+    expect(serialized).not.toContain('录音覆盖图例')
+    expect(serialized).toContain('全天说话人图例')
   })
 
   it('labels dense mixed-speaker aggregates without borrowing the first speaker identity', () => {
@@ -584,6 +673,99 @@ describe('recording timeline math', () => {
       { startAtMillis: 2000, endAtMillis: 3000 },
     ] as never
     expect(recordingVisibleTimelineItems(items, 1000, 2000)).toEqual([])
+  })
+
+})
+
+describe('compact timeline focus and reading sync', () => {
+  let renderer: ReactTestRenderer
+  afterEach(() => { act(() => renderer?.unmount()); vi.useRealTimers() })
+  const day = new Date(2026, 9, 13).getTime()
+  const items = [8, 18].map(hour => ({ itemId: String(hour), itemRef: String(hour), speakerKey: 's', speakerLabel: '说话人', speakerColorIndex: 0,
+    sameSpeakerItemCount: 2, startAtMillis: day + hour * 3600000, endAtMillis: day + hour * 3600000 + 60000, text: '内容', isBackground: false }))
+  const select = vi.fn(), toggle = vi.fn(), navigate = vi.fn()
+  const view = (reading = 8) => <ArkmeRecordingTimeline items={items} dayStartMillis={day} playheadMillis={items[0]!.startAtMillis} isPlaying
+    readingRange={{ startAtMillis: day + reading * 3600000, endAtMillis: day + reading * 3600000 + 60000 }}
+    onSelectAtMillis={select} onTogglePlayback={toggle} onNavigateAtMillis={navigate} />
+  it('opens on hover/focus and closes after leaving without selecting or playing', () => {
+    vi.useFakeTimers(); select.mockClear(); toggle.mockClear(); navigate.mockClear()
+    act(() => { renderer = create(view()) })
+    const panel = () => renderer.root.findByProps({ 'aria-label': '录音片段详情' })
+    const overview = () => renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' })
+    expect(panel().props.hidden).toBe(true)
+    const target = { getBoundingClientRect: () => ({ left: 0, width: 1440 }) }
+    act(() => overview().props.onPointerMove({ pointerType: 'mouse', clientX: 480, currentTarget: target }))
+    expect(panel().props.hidden).toBe(false)
+    act(() => { renderer.root.findByProps({ 'data-timeline-layer': 'overview' }).props.onPointerLeave(); vi.advanceTimersByTime(100) })
+    act(() => { panel().props.onPointerEnter(); vi.advanceTimersByTime(200) })
+    expect(panel().props.hidden).toBe(false)
+    act(() => { renderer.root.findByProps({ 'data-timeline-layer': 'overview' }).props.onPointerLeave(); vi.advanceTimersByTime(200) })
+    expect(panel().props.hidden).toBe(true)
+    act(() => overview().props.onFocus())
+    expect(panel().props.hidden).toBe(false)
+    act(() => renderer.root.findByProps({ 'data-timeline-layer': 'overview' }).props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
+    expect(panel().props.hidden).toBe(true)
+    expect(select).not.toHaveBeenCalled(); expect(toggle).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled()
+  })
+  it('moves the reading window while retaining the independent playback marker', () => {
+    select.mockClear(); toggle.mockClear()
+    act(() => { renderer = create(view()) })
+    act(() => renderer.update(view(18)))
+    const start = renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' }).props['aria-valuenow']
+    expect(start).toBeLessThan(items[1]!.startAtMillis)
+    expect(start).toBeGreaterThan(items[1]!.startAtMillis - 1800000)
+    expect(renderer.root.findByProps({ 'data-recording-reading-at': items[1]!.startAtMillis })).toBeDefined()
+    expect(renderer.root.findByProps({ 'data-recording-playhead-at': items[0]!.startAtMillis })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': '暂停录音' }).props.disabled).toBe(false)
+    expect(select).not.toHaveBeenCalled(); expect(toggle).not.toHaveBeenCalled()
+  })
+  it('previews any hovered time, including gaps and day edges, without moving the reading focus', () => {
+    select.mockClear(); toggle.mockClear(); navigate.mockClear()
+    act(() => { renderer = create(view()) })
+    const overview = () => renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' })
+    const detail = () => renderer.root.findByProps({ role: 'slider' })
+    const focus = overview().props['aria-valuenow']
+    const target = { getBoundingClientRect: () => ({ left: 50, width: 1440 }) }
+    const hover = (minute: number) => act(() => overview().props.onPointerMove({ pointerType: 'mouse', clientX: 50 + minute, currentTarget: target }))
+    hover(14 * 60)
+    expect(detail().props['aria-valuenow']).toBe(day + 13.75 * 3600000)
+    expect(detail().findAllByType('button')).toHaveLength(0)
+    hover(18 * 60)
+    expect(detail().props['aria-valuenow']).toBe(day + 17.75 * 3600000)
+    expect(detail().findAllByType('button')).toHaveLength(1)
+    expect(overview().props['aria-valuenow']).toBe(focus)
+    hover(0)
+    expect(detail().props['aria-valuenow']).toBe(day)
+    hover(1440)
+    expect(detail().props['aria-valuenow']).toBe(day + 23.5 * 3600000)
+    act(() => renderer.root.findByProps({ 'aria-label': '关闭片段详情' }).props.onClick())
+    act(() => overview().props.onFocus())
+    expect(overview().props['aria-valuenow']).toBe(focus)
+    expect(detail().findAllByType('button')[0]!.props['data-recording-segment-index']).toBe(0)
+    expect(select).not.toHaveBeenCalled(); expect(toggle).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled()
+  })
+  it('keeps preview zoom around the hovered time and restores the latest reading focus on close', () => {
+    act(() => { renderer = create(view()) })
+    const overview = () => renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' })
+    const detail = () => renderer.root.findByProps({ role: 'slider' })
+    act(() => overview().props.onPointerEnter({ pointerType: 'mouse', clientX: 840, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 1440 }) } }))
+    act(() => renderer.root.findByProps({ 'aria-label': '放大' }).props.onClick())
+    expect(detail().props['aria-valuenow']).toBe(day + 13.875 * 3600000)
+    act(() => renderer.update(view(18)))
+    expect(detail().props['aria-valuenow']).toBe(day + 13.875 * 3600000)
+    act(() => renderer.root.findByProps({ 'aria-label': '关闭片段详情' }).props.onClick())
+    act(() => overview().props.onFocus())
+    expect(overview().props['aria-valuenow']).toBe(day + 17.75 * 3600000)
+    expect(detail().props['aria-valuetext']).toBe('30分钟')
+  })
+  it('resumes audio following when playback starts, then yields to a later reading scroll', () => {
+    const props = { items, dayStartMillis: day, onSelectAtMillis: select, onTogglePlayback: toggle }
+    const reading = { startAtMillis: items[0]!.startAtMillis, endAtMillis: items[0]!.endAtMillis }
+    act(() => { renderer = create(<ArkmeRecordingTimeline {...props} isPlaying={false} readingRange={reading} />) })
+    act(() => renderer.update(<ArkmeRecordingTimeline {...props} isPlaying readingRange={reading} playheadMillis={items[1]!.startAtMillis} />))
+    expect(renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' }).props['aria-valuenow']).toBeGreaterThan(day + 17 * 3600000)
+    act(() => renderer.update(<ArkmeRecordingTimeline {...props} isPlaying readingRange={{ startAtMillis: day + 10 * 3600000, endAtMillis: day + 10 * 3600000 + 1000 }} playheadMillis={items[1]!.startAtMillis + 1000} />))
+    expect(renderer.root.findByProps({ 'aria-label': '24 小时缩略导航' }).props['aria-valuenow']).toBeLessThan(day + 10 * 3600000)
   })
 
 })

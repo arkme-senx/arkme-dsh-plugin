@@ -1,5 +1,22 @@
+import { realtimeDictationTool } from './recordings/realtime-dictation.js'
+import { articlesTool } from './records/articles.js'
+import {teamMessageTools} from './conversation/team-messages.js'
+import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import {teamExternalChatTools} from './contacts/team-external-chat.js'
+import { analyticsToolModules } from './conversation/analytics.js'
+import {teamNotificationTools} from './contacts/team-notifications.js'
+import { nativeAnnotationTools } from './conversation/native-annotations.js'
+import { relationPagesTool } from './relations/pages.js'
+import { dayReviewReadTool, dayReviewWriteTool } from './calendar/day-review.js'
+import { messageSyncToolModules } from './conversation/message-sync.js'
+import {teamProfileTools} from './contacts/team-profile.js'
+import { officialNotificationToolModules } from './account/official-notifications.js'
+import { selfRoleToolModules } from './records/self-roles.js'
+import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './conversation/private-interactions.js'
+import { archiveToolModules } from './conversation/archive.js'
 import { memberPageToolModules } from './conversation/member-pages.js'
 import { arkoToolModules } from './arko/index.js'
+import { readReactionsToolModule, writeReactionsToolModule } from './conversation/reactions.js'
 import { botToolModules } from './bots/index.js'
 import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
@@ -12,10 +29,11 @@ import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFav
 import { readSourceToolModule } from './conversation/read-source.js'
 import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
-import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
+import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
+import { sharedRecordingDetailToolModule } from './conversation/shared-recording-detail.js'
 import { userBanToolModules } from './conversation/user-ban.js'
 import { directMessageAdmissionToolModule, directMessageRefusalToolModule } from './conversation/direct-message-refusal.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -51,7 +69,16 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  realtimeDictationTool,
+  ...nativeAnnotationTools,
+  ...messageSyncToolModules,
+  ...selfRoleToolModules,
+  ...officialNotificationToolModules,
   directoryReadToolModule,
+  ...teamProfileTools,
+  ...teamExternalChatTools,
+  ...teamMessageTools,
+  ...teamNotificationTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,
@@ -59,6 +86,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...arkoToolModules,
   searchRecordsToolModule,
   ...recordCalendarToolModules,
+  dayReviewReadTool, dayReviewWriteTool,
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
@@ -72,28 +100,39 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
+  relationPagesTool,
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
   pinBotDirectoryToolModule,
   topicHomeVisibilityToolModule,
+  ...archiveToolModules,
   unreadConversationsToolModule,
+  privateInteractionSummaryToolModule,
+  privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
+  ...analyticsToolModules,
   copyLinkExtendToolModule,
+  articlesTool,
   sourceMembersToolModule,
   ...memberPageToolModules,
   sourceMemberRecordsToolModule,
+  personRecordsToolModule,
   ...messageReadReceiptToolModules,
   conversationMarkReadToolModule,
   reportMessageToolModule,
   withdrawMessageToolModule,
   relatedRecordingsToolModule,
+  sharedRecordingDetailToolModule,
   ...userBanToolModules,
   directMessageAdmissionToolModule,
   directMessageRefusalToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  readReactionsToolModule,
+  writeReactionsToolModule,
+  readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

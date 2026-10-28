@@ -5,7 +5,7 @@
 .arkme-model-trigger { display: flex; align-items: center; gap: 5px; max-width: min(360px, 45vw); height: 28px; padding: 0 8px; border: 0; border-radius: 14px; background: transparent; color: var(--dsw-alias-label-secondary, #626772); font-size: 13px !important; }
 .arkme-model-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arkme-model-trigger small { flex-shrink: 0; }
-.arkme-model-menu { position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 30; box-sizing: border-box; width: max-content; min-width: min(280px, calc(100vw - 32px)); max-width: min(420px, calc(100vw - 32px)); max-height: min(400px, calc(100vh - 96px)); overflow-y: auto; padding: 5px; border: 1px solid var(--dsw-alias-border-inverted, #e8e8eb); border-radius: 12px; background: var(--dsw-specific-menu, #fff); color: var(--dsw-alias-label-primary, #20232c); box-shadow: 0 8px 30px #0002; }
+.arkme-model-menu { position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 30; box-sizing: border-box; width: max-content; min-width: min(280px, calc(100vw - 32px)); max-width: min(420px, calc(100vw - 32px)); max-height: min(400px, calc(100vh - 96px)); overflow-y: auto; padding: 5px; border: 1px solid var(--dsw-alias-border-inverted, #e8e8eb); border-radius: 12px; background: var(--dsw-alias-bg-layer-3, #ffffff); color: var(--dsw-alias-label-primary, #20232c); box-shadow: 0 8px 30px #0002; }
 .arkme-model-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 7px 9px 4px; color: var(--dsw-alias-label-tertiary, #8a8e96); font-size: 12px; }
 .arkme-model-balance-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .arkme-model-balance-actions button { padding: 2px 0; border: 0; background: transparent; color: #3478e5; white-space: nowrap; }
@@ -17,3 +17,11 @@
 .arkme-model-status, .arkme-model-error { padding: 8px 10px; font-size: 12px; }
 .arkme-model-error { color: var(--dsw-alias-state-error-primary, #b54841); }
 .arkme-model-error button { border: 0; color: inherit; background: transparent; text-decoration: underline; }
+
+.arkme-model-price { margin-top: 4px; padding: 10px; border-top: 1px solid var(--dsw-alias-border-inverted, #e8e8eb); font-size: 12px; color: var(--dsw-alias-label-tertiary, #8a8e96); }
+.arkme-model-price summary { cursor: pointer; }
+.arkme-model-price summary:focus-visible { outline: 2px solid #3578e5; outline-offset: 2px; }
+.arkme-model-price dl { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.arkme-model-price dl > div { margin-top: 10px; }
+.arkme-model-price dt { color: var(--dsw-alias-label-primary, #20232c); }
+.arkme-model-price dd { margin: 2px 0 0; }

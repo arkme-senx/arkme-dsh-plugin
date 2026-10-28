@@ -7,12 +7,44 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
-  'updateProfile', 'invitationRewards',
-  'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
+  'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
+  'loginByPassword',
+  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
+  'deletedArrangements', 'deletedArrangementDetail',
+  // Independent World namespaces, authenticated original reads and selected-text forwarding.
+  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
+  'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
+  'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
+  'nativeAnnotations', 'setNativeAnnotationSource',
+  'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
+  'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
+  'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
+  'statisticsRead', 'personalKeywordsRead', 'personalKeywordRecords', 'analyticsRead',
+  'recordingSpeechState', 'recordingSpeechCreate', 'recordingSpeechOccurrences', 'recordingSpeechSource',
+  'conversationWordsState', 'conversationWordsCreate', 'conversationWordsParticipants', 'conversationWordsMessages', 'conversationWordsSource',
+  'automaticCapabilities', 'updateAutomaticCapability',
+  'relationPage', 'relationRecords', 'peopleList', 'peopleOpenChat', 'exploreEnrich', 'recordingImportReceipt', 'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
+  'messageSyncStatus', 'retryMessageSync',
+  'externalChats',
+  'listTeamNotificationConversations', 'getTeamNotificationPolicy', 'setTeamNotificationPolicy',
+  'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
+  'readWorldRecord',
+  'listOfficialNotifications', 'offlineContext', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
+  'teamCodexPost', 'changeCodexLocalMark', 'codexLocalMarkCapabilities', 'codexLocalMarks', 'forwardCodexChat', 'sendQuotedSelfNote',
+  'interwovenReadReceipts', 'sourceMessageExtensionParent',
+  'reactions',
+  'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
+  'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
+  'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
+  'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
+  'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
+  'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
-  'recentEmojiIds', 'recordRecentEmoji', 'publishLongArticle', 'stageLongArticleImage',
+  'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'localTranscriptEntries', 'publishLongArticle', 'stageLongArticleImage',
+  'listArchives', 'getArchiveStates', 'setArchiveState',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
   'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileOpenLocalFolder', 'fileRemove', 'fileSend',
@@ -26,38 +58,44 @@ const expectedPublicMethods = [
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
-  'listCallHistory', 'callDetail', 'retryCallSummary',
+  'listCallHistory', 'callDetail', 'callShareLink', 'callShareViewers', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
-  'resolveLinkMetadata',
-  'searchContact', 'addContact',
+  'resolveLinkMetadata', 'resolveSharePreview',
+  'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
-  'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'recordingComparison', 'startRecordingComparison', 'recordingForwardCapabilities', 'forwardRecording',
-  'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
-  'recordingDay', 'recordingPlayback',
-  'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
-  'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport',
+  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTranscript', 'recordingProjection',
+  'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording', 'copyRecordingLink',
+  'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
+  'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
+  'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences', 'recordingEntityFeedback', 'undoRecordingEntityFeedback',
+  'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
+  'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
+  'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
+  'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
+  'importRecordingFiles', 'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
-  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
-  'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
+  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',
+  'arkoPendingTurns', 'arkoPrepareTurn', 'arkoAcknowledgeTurn',
+  'arkoLocalMarkCapabilities', 'arkoLocalMarks', 'changeArkoLocalMark',
+  'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
   'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setBotDirectoryPin', 'setChatDirectoryPin', 'conversationDirectoryVisibilitySnapshot', 'setConversationDirectoryVisibility', 'cachedSourceMembers', 'pageSourceMembers', 'sourceMembersPresentation', 'listSourceMembers', 'sourceMemberRecords',
-  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'interwovenMoments', 'interwovenMomentDetail',
+  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
   'relatedQuickNotesFromMessage', 'relatedQuickNotesFromMoment', 'relatedQuickNoteDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
   'prepareEnableGroupAiPolish', 'prepareEnableGroupAiPolishRuleForSource', 'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'groupSelfNickname', 'setGroupSelfNickname', 'removeGroupMember', 'listGroupJoinRestrictions', 'setGroupJoinRestriction',
-  'createGroup', 'groupSettings', 'setGroupMessageDnd',
+  'createGroup', 'groupSettings', 'setGroupMessageDnd', 'conversationNotification',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
   'userBanStatus', 'banPrivateChatUser', 'unbanPrivateChatUser',
   'memberEvents', 'memberEventProfile', 'memberEventPrivateChat',
   'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'readSourceAround', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'messageSnapshotDetail', 'saveMessageLocation', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions', 'forwardNativeChat',
+  'recordRelatedRecordingsToolEvent', 'shareRelatedRecording', 'withdrawRelatedRecording', 'reportMessage', 'withdrawGroupMessage', 'copySourceMessageLink', 'copyMessageActionsLink', 'copyNativeChatLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'sourceMessageExtensionContext', 'extendSourceMessage', 'forwardSourceMessages', 'forwardMessageActions', 'forwardNativeChat',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'ownLongArticle', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'recordEditHistoryPage', 'recordReeditEditor', 'prepareRecordReedit', 'commitRecordReedit',
@@ -69,10 +107,11 @@ const expectedPublicMethods = [
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
   'beginWechatLogin', 'pollWechatLogin', 'testLogin',
-  'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
-  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
+  'sendEmailBindCode', 'bindEmail', 'sendPhoneCode', 'verifyPhoneCode', 'checkPhoneUnbindEligibility', 'sendPhoneUnbindCode', 'transcribeDictation', 'realtimeDictationCommand', 'unbindPhone', 'previewCancellation', 'submitCancellation', 'resolveCancellationLogin', 'logout', 'logoutFailureFeedback', 'cachedSnapshot', 'queryCached', 'refreshLatest',
+  'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages', 'searchLocations',
   'searchScene', 'searchRecordings', 'searchTagRecords', 'syncHistory', 'summary', 'list', 'listRecordTags', 'calendarBuckets', 'calendarChatStatistics', 'calendarRecords',
   'listWorldRecords',
+  'arrangementSourceRead', 'arrangementSourceOpen', 'arrangementBoardCache', 'arrangementRecognition', 'createArrangement', 'reorderArrangement',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
@@ -81,16 +120,32 @@ const expectedPublicMethods = [
   'myVoiceprint', 'outboundVoiceprintGrants', 'recognizedVoiceprintPeople', 'recognizedVoiceprintPerson',
   'recognizedPersonVoiceprints', 'createVoiceprintInvitation', 'revokeVoiceprintPlaybackGrant', 'restoreVoiceprintPlayback',
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
-  'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
+  'listWorldInteractions', 'worldNotificationSources', 'worldNotificationTarget', 'worldInteractionSummary', 'markWorldInteractionsViewed', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
   'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
+  'saveSelfRoleAvatar', 'listSelfRoles', 'createSelfRole', 'updateSelfRole', 'deleteSelfRole',
+  'bindSelfRole', 'unbindSelfRole', 'rebindSelfRole',
   'retryPending', 'extensionPost',
 ].sort()
 
 const expectedServiceFiles = [
-  'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
+  'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
+  'personal-keyword-service.ts',
+  'device-control-realtime.ts', 'device-lock-service.ts',
+  'conversation-activity-service.ts',
+  'statistics-service.ts', 'recording-speech-statistics-service.ts', 'conversation-word-frequency-service.ts',
+  'capability-service.ts',
+  'explore-projection.ts', 'explore-service.ts',
+  'chat-message-sync-service.ts',
+  'profile-image.ts',
+  'team-codex-transport.ts', 'team-message-forward-service.ts', 'selected-text-self-note.ts',
+  'team-message-notification-service.ts',
+  'reaction-service.ts',
+  'reaction-notification-context.ts',
+  'ai-points-service.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
+  'archive-service.ts',
   'chat-policy.ts',
-  'direct-message-admission-service.ts',
+  'dictation-service.ts', 'realtime-dictation-service.ts', 'direct-message-admission-service.ts',
   'record-topic-assignment-service.ts',
   'record-deletion-service.ts',
   'topic-metadata.ts',
@@ -98,6 +153,7 @@ const expectedServiceFiles = [
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
   'membership-service.ts',
+  'native-annotations-service.ts', 'native-local-marks.ts',
   'file-transfers.ts',
   'record-reedit-attachments.ts',
   'record-reedit-mentions.ts',
@@ -106,16 +162,22 @@ const expectedServiceFiles = [
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
-  'member-event-service.ts',
+  'member-event-service.ts', 'official-notification-service.ts', 'offline-context-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-import-gateway.ts', 'recording-forward-gateway.ts', 'search-service.ts',
-  'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
-  'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
-  'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
-  'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
-  'team-service.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-entity-personalization.ts', 'recording-entity-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
+  'recording-presence-writer.ts',
+  'recording-tool-workflow.ts',
+  'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
+  'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
+  'arko-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
+  'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
+  'calendar-day-review-service.ts',
+  'people-service.ts',
+  'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
+  'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
+  'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts',
+  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -264,8 +326,10 @@ describe('Arkme service architecture', () => {
     expect(service).not.toMatch(/from ['"]node:crypto['"]/)
     expect(service).not.toMatch(/\/api\/v1\//)
     expect(service).not.toMatch(/\bServiceRuntime\b|\bSourceService\b|\bBotService\b/)
-    expect(infrastructure).toMatch(/createCipheriv|createDecipheriv/)
-    expect(infrastructure).toContain('/api/v1/chats/messages/copy-link/get-or-create')
+    expect(infrastructure).toContain('EncryptedReferenceCodec')
+    expect(readFileSync(join(root, 'src/encrypted-reference.ts'), 'utf8')).toMatch(/createCipheriv|createDecipheriv/)
+    expect(infrastructure).toContain('createMessageCopyLink')
+    expect(readFileSync(join(root, 'src/services/message-copy-link-create.ts'), 'utf8')).toContain('/api/v1/chats/messages/copy-link/get-or-create')
     expect(infrastructure).toContain('/api/v1/chats/records/forward')
   })
 
@@ -380,14 +444,17 @@ describe('Arkme service architecture', () => {
     expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(1)
   })
 
-  it('does not invent recording speaker mutation contracts that the Audio owner does not expose', () => {
+  it('uses the verified item-unassign contract without widening cancellation to session tracks', () => {
     const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
     const hostApi = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
     const clientApi = readFileSync(join(root, 'src/client/api.ts'), 'utf8')
 
-    expect(recordingService).not.toContain('/api/v1/audio/unassign-asr-item-spk')
+    // Audio now exposes conditional item cancellation with explicit indices.
+    // Keep bulk UI cancellation on that exact-item path, including deep pages.
+    expect(recordingService).toContain('/api/v1/audio/unassign-asr-item-spk')
+    expect(recordingService).toContain('expected_spk_id: item.formalSpeakerId')
     expect(recordingService).not.toContain('/api/v1/audio/batch-unassign-session-num-spk')
-    expect(hostApi).not.toContain('recordings.speaker.unassign-item')
-    expect(clientApi).not.toContain('recordings.speaker.unassign-item')
+    expect(hostApi).toContain('recordings.speaker.unassign-item')
+    expect(clientApi).toContain('recordings.speaker.unassign-item')
   })
 })

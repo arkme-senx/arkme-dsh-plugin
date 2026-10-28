@@ -1,6 +1,7 @@
 import type { BotDisplayProfiles } from '../chat-sender-display.js'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
+import { arkmeBotDirectoryKey } from '../bot-directory-key.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
 import { SecretValue } from '../secret-value.js'
@@ -448,7 +449,9 @@ export class BotService {
     for (const value of listValue(data.bots)) {
       const raw = objectValue(value)
       const provider = arkmeNormalizeBotProvider(raw.provider)
-      if (provider !== 'openclaw') continue
+      // Membership is independent of mention capability: notification/Webhook
+      // Bots still belong to the group and must remain manageable by its owner.
+      if (provider === undefined) continue
       const summary = await this.groupBotSummaryFromData(raw, session.userId)
       items.push({ ...summary, installed: booleanValue(raw.installed) })
     }
@@ -770,10 +773,7 @@ export class BotService {
   }
 
   private async botDirectoryKey(userId: number, botId: string): Promise<string> {
-    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
-      .update(`arkme-bot-directory-v1:${String(userId)}:${botId}`)
-      .digest('base64url')
-    return `arkme-bot-directory-v1.${digest}`
+    return arkmeBotDirectoryKey(userId, botId, await this.runtime.stateStore.uniqueCode())
   }
 
   /** A cached directory entry is a lookup, never a persisted live target/capability. */

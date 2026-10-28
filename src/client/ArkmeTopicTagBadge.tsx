@@ -14,13 +14,15 @@ const badgeStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-export function ArkmeTopicTagBadge({ label, selected = false }: { label: string, selected?: boolean }) {
+export function ArkmeTopicTagBadge({ label, selected = false, truncate = false }: { label: string, selected?: boolean, truncate?: boolean }) {
   return <span
     data-arkme-topic-tag={label}
+    title={truncate ? label : undefined}
     style={{
       ...badgeStyle,
+      ...(truncate ? { flex: '0 1 auto', minWidth: 0, maxWidth: '50%' } : {}),
       background: selected ? '#e8eaf0' : 'rgba(36, 38, 41, .05)',
       color: selected ? '#50545d' : 'var(--dsw-alias-label-secondary, #777d85)',
     }}
-  >{label}</span>
+  >{truncate ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span> : label}</span>
 }

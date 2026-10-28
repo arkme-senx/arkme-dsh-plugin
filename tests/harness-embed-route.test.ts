@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -45,6 +46,19 @@ function htmlWithGraph(
 }
 
 describe('core-only DeepSeek Harness iframe route', () => {
+  it('rebases the 0.2 relative document base and resources when embedded under arkme-self', async () => {
+    const full = graph()
+    const response = responseDouble()
+    const root = htmlWithGraph(full).replace('<head>', '<head><base href="./"><script src="./assets/app.js"></script><link rel="preload" href="./plugins/batch.js">')
+    await createHarnessEmbedRouteHandler({
+      getGraph: () => full, installedPackageNames: () => [], readRootHtml: async () => root,
+    })({ method: 'GET' } as IncomingMessage, response.value)
+    const dom = new JSDOM(response.body(), { url: 'http://127.0.0.1:1234/arkme-self/harness-frame' })
+    expect(dom.window.document.querySelectorAll('base')).toHaveLength(1)
+    expect(dom.window.document.querySelector<HTMLScriptElement>('script[src]')!.src).toBe('http://127.0.0.1:1234/assets/app.js')
+    expect(dom.window.document.querySelector<HTMLLinkElement>('link')!.href).toBe('http://127.0.0.1:1234/plugins/batch.js')
+    dom.window.close()
+  })
   it('advertises optional selection without adding it to native boot dependencies', async () => {
     const full = graph()
     const response = responseDouble()
@@ -53,6 +67,8 @@ describe('core-only DeepSeek Harness iframe route', () => {
       readRootHtml: async () => htmlWithGraph(full),
     })({ method: 'GET' } as IncomingMessage, response.value)
     expect(response.status()).toBe(200)
+    expect(response.body()).toContain('<base href="/">')
+    expect(response.body()).toContain('<head><script data-arkme-theme-bootstrap>')
     expect(response.body()).toContain('<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=abcd1234">')
     const projected = projectHarnessBootGraph(full, [])
     expect(response.body()).toContain(bootAssignment(projected, 'dsh-v0.1.1-rc.2'))

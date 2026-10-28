@@ -1,3 +1,12 @@
+import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
+import type {TeamMessagePort} from '../../team-message-contract.js'
+import type { TeamNotificationPort } from '../../team-notification-contract.js'
+import type { ArkmeDeviceLockPort } from '../../device-lock-contract.js'
+import type {ExploreQuery,ExplorePage,ExploreDetail} from '../../explore-contract.js'
+import type {ArkmeTeamProfileToolPort} from '../../team-profile-contract.js'
+import type { ArkmeOfficialNotificationPort } from '../../official-notification-contract.js'
+import type { ArkmeSelfRolePort } from '../../self-role-contract.js'
+import type { ArkmeArchivePort } from '../../archive-contract.js'
 import type { ArkmeAiVideoToolPort } from './ai-video.js'
 import type { ArkmeArkoToolPort } from './arko.js'
 import type { ArkmeBotToolPort } from './bots.js'
@@ -21,6 +30,13 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  TeamMessagePort,
+  ArkmeDeviceLockPort,
+  ArkmeTeamProfileToolPort,
+  TeamNotificationPort,
+  ArkmeOfficialNotificationPort,
+  ArkmeSelfRolePort,
+  ArkmeArchivePort,
   ArkmeDirectMessageAdmissionPort,
   ArkmeFileToolPort,
   ArkmeAiVideoToolPort,
@@ -40,7 +56,13 @@ export interface ArkmeCoreToolPorts extends
   ArkmeGroupToolPort,
   ArkmeWechatToolPort,
   ArkmeUserBanToolPort,
-  ArkmeVoiceprintToolPort {}
+  ArkmeVoiceprintToolPort {
+  realtimeDictationCommand(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot>
+
+  externalChats(operation: import('../../team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown>
+  relationPage(query:Omit<ExploreQuery,'module'>,signal?:AbortSignal):Promise<ExplorePage>
+  relationRecords(query:{ref:string;cursor?:string},signal?:AbortSignal):Promise<ExploreDetail>
+}
 
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
 

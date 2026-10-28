@@ -1,14 +1,88 @@
+import { connectRealtimeDictation, type RealtimeDictationOptions } from '../realtime-dictation-client.js'
+import type { RealtimeDictationRequest, RealtimeDictationSnapshot, RealtimeDictationHandle } from '../realtime-dictation-contract.js'
+export type * from '../realtime-dictation-contract.js'
+export type { RealtimeDictationOptions } from '../realtime-dictation-client.js'
+export type { PersonRecordsPage } from '../person-records.js'
+import type { ArkmeArkoLifecycleCommand, ArkmeArkoLifecycleResult, ArkmeArkoLifecycleSnapshot, ArkmeArkoDeletedPage } from '../arko-lifecycle-contract.js'
+export type * from '../arko-lifecycle-contract.js'
+import type {TeamMessageReadOptions,TeamConversation,TeamPage,TeamSide,TeamTimeline,TeamSendInput,TeamSendTask} from '../team-message-contract.js'
+export type * from '../team-message-contract.js'
+export type { ArkmeMessageQuote, ArkmeQuoteReplyCapabilities } from '../message-quote.js'
+export type { MessageUnderline, MessageUnderlineChange, MessageUnderlineSnapshot, MessageUnderlineCapabilities } from '../message-annotations.js'
+
+export type { PersonalKeywordSummary, PersonalKeywordRecords, PersonalKeywordRecordsQuery, AnalyticsReadInput } from '../analytics-contract.js'
+export type { ConversationWordsQuery, ConversationWordsState, ConversationWordParticipants, ConversationWordMessages } from '../conversation-word-frequency.js'
+export type { ConversationActivityState, ConversationActivityMessages } from '../conversation-activity.js'
+import type { TeamNotificationPage, TeamNotificationPolicy } from '../team-notification-contract.js'
+export type { TeamNotificationEntry, TeamNotificationPage, TeamNotificationPolicy, TeamNotificationPort } from '../team-notification-contract.js'
+import type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
+export type { NativeAnnotationRequest, NativeAnnotationTarget, NativeAnnotationContext, NativeAnnotationSnapshot, NativeAnnotationCapabilities } from '../native-annotations.js'
+import type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
+export type { ArkmeDeviceLockSnapshot } from '../device-lock-contract.js'
+import type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
+export type { ExploreQuery, ExplorePage, ExploreDetail, ExploreItem, ExploreEvidence } from '../explore-contract.js'
+import type { ArkmeArkoAskOptions, ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+import type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoHistoryPage,ArkmeArkoRunStatus } from '../types.js'
+export type { ArkmeArkoAskOptions,ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
+export type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoModelOption,ArkmeArkoImageInput,ArkmeArkoHistoryPage,ArkmeArkoHistoryItem,ArkmeArkoRunStatus } from '../types.js'
+export type { DayReviewModels } from '../calendar-day-review.js'
+import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
+export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
+import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress } from '../arko-history-contract.js'
+export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
+import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
+export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
+import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
+export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
+import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
+export type { OfflineContextRangeOptions,OfflineContextRequest,OfflineContextCommand,OfflineContextPreview,OfflineContextCommandResult,OfflineContextList,OfflineContextPort,OfflineContextTranscript,OfflineContextPlayback,OfflineContextCapability,OfflineContextCoverage } from '../offline-context-contract.js'
+export type { OfflineContextEntry,OfflineContextEvidence,OfflineContextMessage } from '../offline-context.js'
+import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+export type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
+import { connectArkmeRealtime } from '../client/realtime-connection.js'
+export { recordingImportBatchID } from '../recording-workflow-contract.js'
+import type { RecordingWorkflowPage } from '../recording-workflow-contract.js'
+export type { RecordingWorkflowPage, RecordingWorkflowNotice, RecordingWorkflowDay, RecordingWorkflowState } from '../recording-workflow-contract.js'
+import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
+export type {ArkmeTeamAvatar,ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} from '../team-profile-contract.js'
+export type { ArkmeUnifiedTimelineQuery, ArkmeUnifiedTimelineWindow, ArkmeUnifiedTimelineEvent, ArkmeTimelineSourceStatus } from '../unified-chat-timeline.js'
+import type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary } from '../official-notification-contract.js'
+export type { ArkmeOfficialNotification, ArkmeOfficialNotificationPage, ArkmeOfficialNotificationRead, ArkmeOfficialNotificationSummary, ArkmeOfficialNotificationPort } from '../official-notification-contract.js'
+import type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
+export type { ArkmeSelfRole, ArkmeSelfRoleSnapshot } from '../types.js'
+export type { ArkmeSelfRolePort } from '../self-role-contract.js'
+import type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
+export type { ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerPresence, ArkmeRecordingSpeakerMembers } from '../types.js'
+import type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery } from '../ai-points.js'
+export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, ArkmeAiPointsConsumption } from '../ai-points.js'
+import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
+import type { ArkmeCommonGroupPage } from '../common-groups.js'
+export type { ArkmeCommonGroupPage } from '../common-groups.js'
+import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
+export type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveEntry, ArkmeArchiveSetInput, ArkmeArchiveSetResult, ArkmeArchivePort } from '../archive-contract.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type { ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
 export type { ArkmeDirectMessageAdmission, ArkmeDirectMessageAdmissionPort } from '../direct-message-admission.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
+  ArkmeAiLetterItem,
+  ArkmeAiLetterPage,
+  ArkmeAiLetterUnread,
+  ArkmeArrangementReorderInput,
+  ArkmeArrangementReorderResult,
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
   ArkmeArrangementMutationIntent,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
   ArkmeArrangementReminderToggleResult,
@@ -31,6 +105,7 @@ import type {
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteStickerList,
   ArkmeFavoriteStickerAddInput,
@@ -114,12 +189,14 @@ import type {
   ArkmeUploadedAsset,
   ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
+  ArkmeWorldFeedItem,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishResult,
   ArkmeWorldPublishTextInput,
@@ -151,6 +228,9 @@ import type { ArkmeLinkMetadata } from '../link-metadata.js'
 export type { ArkmeLinkMetadata } from '../link-metadata.js'
 
 export type {
+  ArkmeAiLetterItem,
+  ArkmeAiLetterPage,
+  ArkmeAiLetterUnread,
   ArkmeArrangementDetail,
   ArkmeArrangementItem,
   ArkmeArrangementListStatus,
@@ -158,6 +238,8 @@ export type {
   ArkmeArrangementMutationOutcome,
   ArkmeArrangementMutationResult,
   ArkmeArrangementPage,
+  ArkmeRecordingArrangementQuery,
+  ArkmeRecordingArrangementPage,
   ArkmeArrangementReminderEvent,
   ArkmeArrangementReminderPage,
   ArkmeArrangementReminderSummary,
@@ -189,6 +271,7 @@ export type {
   ArkmeContactAddResult,
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
+  ArkmeContactTeamSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
@@ -310,6 +393,7 @@ export type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
+  ArkmeWorldInteractionSummary,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintAvailabilityItem,
@@ -372,7 +456,7 @@ export type {
 
 const DEFAULT_ROUTE = '/arkme-self/api'
 export type { ArkmeMembership, ArkmeMembershipCatalog, ArkmeMembershipProduct } from '../types.js'
-export type { ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage, ArkmeStorageBreakdown, ArkmeStorageCategory } from '../account-usage.js'
+export type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage, ArkmeRecordingKind, ArkmeRecordingUsageBreakdown, ArkmeStorageBreakdown, ArkmeStorageCategory } from '../account-usage.js'
 export type { ArkmeUsageTokens, ArkmeTokenUsageSummary, ArkmeTokenUsageOperation, ArkmeTokenUsageCall, ArkmeTokenUsagePage, ArkmeTokenUsageQuery } from '../account-usage-details.js'
 export type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
 
@@ -396,6 +480,8 @@ export class ArkmeClientError extends Error {
     this.name = 'ArkmeClientError'
   }
 }
+
+export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
 
 export interface ArkmeSdkOptions {
   route?: string
@@ -432,6 +518,37 @@ function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
 }
 
 export class ArkmeSdk {
+  private async requireRealtimeDictation(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.realtimeDictationV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持实时听写，请升级', retryable: false })
+  }
+  async realtimeDictation(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot> {
+    await this.requireRealtimeDictation(signal)
+    return await this.call('dictation.realtime', { request }, signal)
+  }
+  async openRealtimeDictation(options: RealtimeDictationOptions): Promise<RealtimeDictationHandle> {
+    await this.requireRealtimeDictation(options.signal)
+    return await connectRealtimeDictation(this.route, options)
+  }
+
+  async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }
+  async nativeAnnotationContexts(targets: NativeAnnotationTarget[], signal?: AbortSignal): Promise<NativeAnnotationContext[]> { return await this.call('native-chat.annotations', { request: { action: 'contexts', targets } }, signal) }
+  async listNativeAnnotations(messageRefs: string[], signal?: AbortSignal): Promise<NativeAnnotationSnapshot[]> { return await this.call('native-chat.annotations', { request: { action: 'list', messageRefs } }, signal) }
+  async changeNativeAnnotation(request: Extract<NativeAnnotationRequest, { action: 'add' | 'remove' }>, signal?: AbortSignal): Promise<NativeAnnotationSnapshot> { return await this.call('native-chat.annotations', { request }, signal) }
+  observeNativeAnnotations(messageRefs: string[], onChange: (rows: NativeAnnotationSnapshot[]) => void, onError: (error: unknown) => void, signal?: AbortSignal): () => void {
+    const controller = new AbortController()
+    const scoped = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const read = async () => {
+      try { const rows = await this.listNativeAnnotations(messageRefs, scoped); if (!scoped.aborted) onChange(rows) }
+      catch (error) { if (!scoped.aborted) onError(error) }
+      finally { if (!scoped.aborted) timer = setTimeout(() => { void read() }, 15000) }
+    }
+    const dispose = () => { if (timer) clearTimeout(timer); controller.abort() }
+    scoped.addEventListener('abort', () => { if (timer) clearTimeout(timer) }, { once: true })
+    if (!scoped.aborted) void read()
+    return dispose
+  }
+
   private readonly route: string
   private readonly fetchImpl: typeof fetch
 
@@ -444,7 +561,211 @@ export class ArkmeSdk {
     // Browser fetch is a Web IDL method whose receiver must remain the global object.
     // Storing it unbound and later calling this.fetchImpl(...) makes the SDK instance
     // the receiver and Chrome rejects the call with "Illegal invocation".
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    this.fetchImpl = async (input, init) => {
+      try { return await fetchImpl(input, init) }
+      catch (error) {
+        if (init?.signal?.aborted || !(error instanceof TypeError)) throw error
+        throw new ArkmeClientError({ code: 'local-network-unavailable',
+          message: '无法连接本机插件，请确认插件正在运行后重试', retryable: true })
+      }
+    }
+  }
+
+  private async requireArkoLifecycle(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoLifecycleV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持消息删除与恢复，请升级', retryable: false })
+  }
+  async arkoLifecycle(messageRefs: readonly string[] = [], signal?: AbortSignal): Promise<ArkmeArkoLifecycleSnapshot> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.query', { messageRefs }, signal)
+  }
+  async arkoChangeLifecycle(command: ArkmeArkoLifecycleCommand, signal?: AbortSignal): Promise<ArkmeArkoLifecycleResult> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.lifecycle.change', { ...command }, signal)
+  }
+  async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal): Promise<ArkmeArkoDeletedPage> {
+    await this.requireArkoLifecycle(signal)
+    return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
+  }
+  private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
+  }
+  async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.messages', { ...query }, signal)
+  }
+  async arkoSearch(query: ArkmeArkoSearchQuery, signal?: AbortSignal): Promise<ArkmeArkoSearchPage> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.search', { ...query }, signal)
+  }
+  async arkoContext(query: ArkmeArkoContextQuery, signal?: AbortSignal): Promise<ArkmeArkoContextWindow> {
+    await this.requireArkoHistory(signal)
+    return this.call('arko.context', { ...query }, signal)
+  }
+  async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
+    await this.requireArkoHistory(signal)
+    if (!onProgress) return this.call('arko.export', {}, signal)
+    const response = await this.fetchImpl(this.route, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation: 'arko.export', params: {} }), ...(signal ? { signal } : {}) })
+    const invalid = () => new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应不完整，请重试', retryable: true })
+    if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+      let failure: ArkmePluginResponse<unknown>
+      try { failure = await response.json() as ArkmePluginResponse<unknown> } catch { throw invalid() }
+      if (!failure.ok) throw new ArkmeClientError(failure.error)
+      throw invalid()
+    }
+    if (!response.body) throw invalid()
+    const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true })
+    let pending = '', wireBytes = 0, count = 0, result: ArkmeArkoExport | undefined
+    try {
+      while (true) {
+        signal?.throwIfAborted()
+        const part = await reader.read()
+        signal?.throwIfAborted()
+        if (part.done) break
+        wireBytes += part.value.byteLength
+        if (wireBytes > 2 * 1024 * 1024) throw invalid()
+        pending += decoder.decode(part.value, { stream: true })
+        let newline: number
+        while ((newline = pending.indexOf('\n')) >= 0) {
+          if (newline > 16 * 1024 || result) throw invalid()
+          const line = pending.slice(0, newline); pending = pending.slice(newline + 1)
+          const frame = JSON.parse(line) as { kind?: string; count?: number; value?: ArkmeArkoExport; error?: ArkmePluginErrorBody }
+          if (frame.kind === 'error' && frame.error) throw new ArkmeClientError(frame.error)
+          if (frame.kind === 'progress' && Number.isSafeInteger(frame.count) && frame.count! >= count) {
+            count = frame.count!
+            try { onProgress({ count }) } catch { /* A view observer cannot disrupt the owner. */ }
+          } else if (frame.kind === 'result' && frame.value && Number.isSafeInteger(frame.value.count) && frame.value.count >= count
+            && typeof frame.value.fileRef === 'string' && typeof frame.value.fileName === 'string') result = frame.value
+          else throw invalid()
+        }
+        if (pending.length > 16 * 1024) throw invalid()
+      }
+      if (decoder.decode() !== '' || pending !== '' || !result) throw invalid()
+      return result
+    } catch (error) {
+      if (error instanceof ArkmeClientError || signal?.aborted) throw error
+      throw invalid()
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+  }
+  async relationPage(query: Omit<ExploreQuery,'module'> = {}, signal?: AbortSignal): Promise<ExplorePage> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.list',{...query},signal)
+  }
+  async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal): Promise<ExploreDetail> {
+    if ((await this.capabilities(signal)).features.relationPages !== true) throw new Error('当前 Provider 不支持关系分页')
+    return this.call('relations.records',{...query},signal)
+  }
+  private async requireArkoImages(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoImagesV1!==true) throw new Error('当前 Provider 不支持可靠 Arko 图文输入')
+  }
+  async arkoModels(signal?:AbortSignal):Promise<ArkmeArkoModelCatalog> {
+    await this.requireArkoImages(signal);return this.call('arko.models',{},signal)
+  }
+  /** Explicit human instruction. Images are owned staged file refs, never paths or URLs. */
+  async arkoAsk(text:string,options:ArkmeArkoAskOptions={},signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    await this.requireArkoImages(signal);return this.call('arko.ask',{text,...options},signal)
+  }
+  async arkoPendingTurns(signal?:AbortSignal):Promise<ArkmeArkoPendingTurn[]> {
+    await this.requireArkoImages(signal);return this.call('arko.pending.read',{},signal)
+  }
+  async arkoResumeTurn(clientTurnUid:string,signal?:AbortSignal):Promise<ArkmeArkoAskResult> {
+    const turn=(await this.arkoPendingTurns(signal)).find(turn=>turn.clientTurnUid===clientTurnUid)
+    if (!turn) throw new Error('待确认 Arko 消息不存在或账号已切换')
+    return this.arkoAsk(turn.text,{sessionId:turn.sessionId,clientTurnUid:turn.clientTurnUid,expectedUserId:turn.userId,
+      ...(turn.images ? {imageFileRefs:turn.images.map(file=>file.fileRef)} : {}),
+      ...(turn.modelRouteKey ? {modelRouteKey:turn.modelRouteKey} : {}),
+      ...(turn.replyToRunUid ? {replyToRunUid:turn.replyToRunUid,replyToAssistantMsgId:turn.replyToAssistantMsgId!} : {})},signal)
+  }
+  async arkoHistory(limit=50,offset=0,signal?:AbortSignal):Promise<ArkmeArkoHistoryPage> {
+    await this.requireArkoImages(signal);return this.call('arko.history',{limit,offset},signal)
+  }
+  async arkoRunStatus(sessionId:number,runUid:string,signal?:AbortSignal):Promise<ArkmeArkoRunStatus> {
+    await this.requireArkoImages(signal);return this.call('arko.run.status',{sessionId,runUid},signal)
+  }
+
+  /** Explicit user command; idempotently starts recognition for the current account/day. */
+  async startRecordingEntities(query: RecordingEntityStartQuery, signal?: AbortSignal): Promise<RecordingEntityStartResult> {
+    if ((await this.capabilities(signal)).features.recordingEntityStart !== true) throw new Error('当前 Provider 不支持开始实体识别')
+    return this.call('recordings.entities.start', { ...query }, signal)
+  }
+
+  /** Existing recognition for one recording day. Does not start an extraction job. */
+  async recordingEntities(query: RecordingEntityQuery, signal?: AbortSignal): Promise<RecordingEntityDay> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities', { ...query }, signal)
+  }
+
+  /** Account-bound mention page; refresh the list when its opaque reference becomes stale. */
+  async recordingPersonReferences(query: RecordingPersonReferencesQuery, signal?: AbortSignal): Promise<RecordingPersonReferences> {
+    if ((await this.capabilities(signal)).features.recordingPersonReferences !== true) throw new Error('当前 Provider 不支持录音人物指代')
+    return this.call('recordings.person-references', { ...query }, signal)
+  }
+
+  async recordingEntityOccurrences(query: RecordingEntityOccurrenceQuery, signal?: AbortSignal): Promise<RecordingEntityOccurrences> {
+    if ((await this.capabilities(signal)).features.recordingEntities !== true) throw new Error('当前 Provider 不支持录音实体')
+    return this.call('recordings.entities.occurrences', { ...query }, signal)
+  }
+
+  async offlineContext(input:OfflineContextRequest,signal?:AbortSignal):ReturnType<OfflineContextPort['offlineContext']> {
+    if((await this.capabilities(signal)).features.offlineContextV1!==true)throw new Error('当前服务不支持录音聊天上下文')
+    return this.call('offline-context',input,signal)
+  }
+  async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
+    if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
+    return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
+  }
+  async recordingNotifications(cursor = '', signal?: AbortSignal): Promise<RecordingWorkflowPage> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'query', cursor }, signal)
+  }
+  async readRecordingNotifications(input: { accountKey: string; items?: Array<{ id: string; sequence: string }>; readThrough?: string }, signal?: AbortSignal): Promise<void> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    await this.call('recordings.workflow', { ...input, operation: 'read' }, signal)
+  }
+  async recordingNotificationVersion(versionId: string, kind: 'summary' | 'timeline', signal?: AbortSignal): Promise<{ version: import('../types.js').ArkmeRecordingVersion | null }> {
+    if (!(await this.recordingWorkflowCapabilities(signal)).supported) throw new Error('当前服务不支持录音批次通知')
+    return this.call('recordings.workflow', { operation: 'version', versionId, kind }, signal)
+  }
+
+  /** Account-scoped marked speaker candidates; refs can be used only with this provider/account. */
+  async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
+    await this.requireSpeakerPresence(signal)
+    return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
+    return this.call('recordings.speaker.correction.items', { ...query }, signal)
+  }
+
+  /** Human correction uses the same account-bound item references as the UI. */
+  /** Read only: null means no committed receipt was observed, not a failed write. */
+  async recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null> {
+    return this.call('recordings.speaker.correction.result', { ...query }, signal)
+  }
+  async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext> {
+    return this.call('recordings.speaker.correction.context', { itemRef }, signal)
+  }
+  async applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.apply', { ...input }, signal)
+  }
+  async undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult> {
+    return this.call('recordings.speaker.correction.undo', { ...input }, signal)
+  }
+
+  async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> {
+    await this.requireSpeakerPresence(signal)
+    return await this.call('recordings.speaker.presence', {}, signal)
+  }
+
+  async recordingSpeakerMembers(speakerRef: string, options: { expectedVersion?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordingSpeakerMembers> {
+    if (speakerRef.trim() === '') throw new TypeError('speakerRef is required')
+    await this.requireSpeakerPresence(options.signal)
+    return await this.call('recordings.speaker.members', { speakerRef, ...(options.expectedVersion === undefined ? {} : { expectedVersion: options.expectedVersion }) }, options.signal)
+  }
+
+  private async requireSpeakerPresence(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.speakerPresence !== true) throw new Error('当前 Provider 不支持全历史说话人统计')
   }
 
   async capabilities(signal?: AbortSignal): Promise<ArkmeProviderCapabilities> {
@@ -453,6 +774,25 @@ export class ArkmeSdk {
       throw new Error(`Unsupported Arkme provider contract version ${String(capabilities.contractVersion)}`)
     }
     return capabilities
+  }
+
+  async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.query', { expectedAccountScope }, signal)
+  }
+  /** Enable only after a human explicitly accepts ongoing actual-usage charges. */
+  async updateAutomaticCapability(expectedAccountScope: string, input: ArkmeCapabilityUpdate, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
+    if ((await this.capabilities(signal)).features.automaticCapabilitiesV1 !== true) throw new Error('当前 Provider 不支持自动 AI 设置')
+    return this.call('account.capabilities.update', { expectedAccountScope, ...input }, signal)
+  }
+  async aiPointsAccount(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeAiPointsAccount> {
+    if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
+    return this.call('account.points.query', { expectedAccountScope }, signal)
+  }
+
+  async aiPointsConsumption(expectedAccountScope: string, query: ArkmeAiPointsQuery, signal?: AbortSignal): Promise<ArkmeAiPointsPage> {
+    if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
+    return this.call('account.points.consumption', { expectedAccountScope, ...query }, signal)
   }
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
@@ -468,6 +808,47 @@ export class ArkmeSdk {
   async retryOpenApiMcp(signal?: AbortSignal): Promise<OpenApiMcpStatus> {
     return await this.call<OpenApiMcpStatus>('openapi.mcp.retry', undefined, signal)
   }
+
+  async externalChats<O extends import('../team-external-chat-contract.js').ExternalChatOperation>(operation: O, params: import('../team-external-chat-contract.js').ExternalChatParameters[O], signal?: AbortSignal): Promise<import('../team-external-chat-contract.js').ExternalChatResults[O]> {
+    if ((await this.capabilities(signal)).features.teamExternalChats !== true) throw new Error('当前 Provider 不支持对外私聊')
+    return await this.call<import('../team-external-chat-contract.js').ExternalChatResults[O]>('team.external', { operation, params }, signal)
+  }
+  private async requireTeamMentions(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamPersonMentions!==1)throw new Error('当前 Provider 不支持 Team 人员提及，请升级')}
+  private async requireTeamMessages(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageInteractions!==1)throw new Error('当前 Provider 不支持 Team 消息交互，请升级')}
+  async forwardTeamMessages(input:import('../team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('../types.js').ArkmeSourceSendResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.forward',{input},signal)}
+  async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../types.js').ArkmeMessageCopyLinkResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.copy-link',{conversationRef,selections},signal)}
+  async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('../team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamReportResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.report',{conversationRef,messageRef,version,reason,description},signal)}
+  async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamMessage[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.preflight',{conversationRef,selections},signal)}
+  async readTeamMarks(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('../message-annotations.js').MessageUnderlineSnapshot}[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-read',{conversationRef,audience,markRefs},signal)}
+  async changeTeamMark(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRef:string,change:import('../message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('../message-annotations.js').MessageUnderlineSnapshot>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-change',{conversationRef,audience,markRef,change},signal)}
+  async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>>{await this.requireTeamMessages(signal);return await this.call('team.messages.conversations',{side,options},signal)}
+  async readTeamExtensions(conversationRef:string,messageRef:string,options:import('../team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamExtensionPage>{
+    if((await this.capabilities(signal)).features.teamMessageExtensions!==1)throw new Error('当前 Provider 不支持团队延展浏览，请升级')
+    return await this.call('team.messages.extensions',{conversationRef,messageRef,options},signal)
+  }
+  async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline>{await this.requireTeamMessages(signal);if(options.personRef)await this.requireTeamMentions(signal);return await this.call('team.messages.read',{conversationRef,options},signal)}
+  async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);if(command.content.mentions?.length)await this.requireTeamMentions(signal);return await this.call('team.messages.send',{command},signal)}
+  async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
+  async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.task-update',{conversationRef,taskRef,action},signal)}
+  private async requireTeamNotifications(signal?:AbortSignal):Promise<void> {
+    if ((await this.capabilities(signal)).features.teamNotificationPoliciesV1!==true) throw new Error('当前 Provider 不支持团队消息通知设置')
+  }
+  async listTeamNotificationConversations(side:'team'|'external',cursor?:string,signal?:AbortSignal):Promise<TeamNotificationPage> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.list',{side,...(cursor?{cursor}:{})},signal)
+  }
+  async getTeamNotificationPolicy(conversationRef:string,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.get',{conversationRef},signal)
+  }
+  async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
+    await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
+  /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
+  async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile>{await this.requireTeamProfiles(signal);return await this.call('team.profile.get',{jotmoId},signal)}
+  async updateTeamProfile(profileRef:string,command:ArkmeTeamProfileUpdate,signal?:AbortSignal):Promise<ArkmeTeamProfileResult>{await this.requireTeamProfiles(signal);return await this.call('team.profile.update',{profileRef,command},signal)}
+  /** Upload a normalized/cropped image <=2MiB. Use a stable UID when retrying. */
+  async uploadTeamAvatar(profileRef:string,contentBase64:string,uploadUid:string,signal?:AbortSignal):Promise<{uploadRef:string}>{await this.requireTeamProfiles(signal);return await this.call('team.profile.avatar.upload',{profileRef,contentBase64,uploadUid},signal)}
+  async abortTeamAvatar(uploadRef:string,signal?:AbortSignal):Promise<void>{await this.requireTeamProfiles(signal);await this.call('team.profile.avatar.abort',{uploadRef},signal)}
 
   /** List every Team visible to the current account using opaque OpenAPI references. */
   async listTeams(
@@ -691,8 +1072,24 @@ export class ArkmeSdk {
     return await this.call<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId: extensionId.trim() }, signal)
   }
 
+  async deviceLockStatus(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.status', undefined, signal) }
+  async lockDevice(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.lock', undefined, signal) }
+  /** Requests the ordinary phone/native flow; never accepts authentication proof from callers. */
+  async requestDeviceUnlock(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.unlock', undefined, signal) }
+
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
+  }
+
+  /** User-entered credentials only: never persist them or pass them to model tools. */
+  async loginByPassword(account: string, password: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    if (account.trim() === '' || account.trim().length > 254 || password === '' || password.length > 1024) {
+      throw new TypeError('Account and password must be non-empty and within the supported length')
+    }
+    if ((await this.capabilities(signal)).features.passwordLogin !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号密码登录，请升级', retryable: false })
+    }
+    return await this.call('auth.password.login', { account: account.trim(), password }, signal)
   }
 
   /** Read recent call history through Browser-safe opaque call references. */
@@ -721,6 +1118,31 @@ export class ArkmeSdk {
     const normalized = callRef.trim()
     if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
     return await this.call<ArkmeCallSummaryRetryResult>('calls.history.summary.retry', { callRef: normalized }, signal)
+  }
+
+  private async requireSelfRoles(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.selfRoles !== true) throw new Error('当前 Arkme Provider 不支持跨端角色，请升级')
+  }
+  async listSelfRoles(expectedUserId: number, signal?: AbortSignal): Promise<ArkmeSelfRole[]> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.list', { expectedUserId }, signal)
+  }
+  async createSelfRole(expectedUserId: number, name: string, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.create', { expectedUserId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
+  }
+  async updateSelfRole(expectedUserId: number, roleId: string, name: string | undefined, avatarRef?: string, signal?: AbortSignal): Promise<ArkmeSelfRole> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.update', { expectedUserId, roleId, name, ...(avatarRef === undefined ? {} : { avatarRef }) }, signal)
+  }
+  async deleteSelfRole(expectedUserId: number, roleId: string, signal?: AbortSignal): Promise<{ok:true}> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.delete', { expectedUserId, roleId }, signal)
+  }
+
+  async bindSelfRole(expectedUserId: number, sourceRef: string, recordUid: string, roleId: string, signal?: AbortSignal): Promise<ArkmeSelfRoleSnapshot> {
+    await this.requireSelfRoles(signal)
+    return await this.call('self-roles.bind', { expectedUserId, sourceRef, recordUid, roleId }, signal)
   }
 
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {
@@ -815,13 +1237,31 @@ export class ArkmeSdk {
     return await this.call<{ sent: true }>('auth.phone.send', { phone: normalized, captcha }, signal)
   }
 
-  /** Verify a phone code and refresh the account auth/profile state. */
+  async checkPhoneUnbindEligibility(expectedUserId: number, signal?: AbortSignal): Promise<{ allowed: boolean }> {
+    return await this.call('auth.phone.unbind.check', { expectedUserId }, signal)
+  }
+
+  async sendPhoneUnbindCode(captcha: ArkmeCaptchaResult, signal?: AbortSignal): Promise<{ sent: true }> {
+    return await this.call('auth.phone.unbind.send', { captcha }, signal)
+  }
+
+  async unbindPhone(code: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    return await this.call('auth.phone.unbind', { code: code.trim() }, signal)
+  }
+
   async verifyPhoneCode(phone: string, code: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     const normalized = phone.replace(/[\s-]/g, '')
     const normalizedCode = code.trim()
     if (!/^1[3-9][0-9]{9}$/.test(normalized)) throw new TypeError('Phone number is invalid')
     if (!/^[0-9]{6}$/.test(normalizedCode)) throw new TypeError('Phone verification code is invalid')
     return await this.call<ArkmeAuthSnapshot>('auth.phone.verify', { phone: normalized, code: normalizedCode }, signal)
+  }
+
+  /** Join an open team or submit an approval request; reuse requestUid when retrying. */
+  async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal): Promise<{ state: string }> {
+    if ((await this.capabilities(signal)).features.contactTeamDiscovery !== true) throw new Error('当前 Provider 不支持搜索团队并申请加入，请升级')
+    const result = await this.call<{ state: string }>('contacts.team-join', { jotmoId, requestUid }, signal)
+    return { state: result.state }
   }
 
   /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
@@ -963,6 +1403,30 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** List this account's publication receipts without starting validation or audit. */
+  async extensionPublishSessions(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<import('../extensions/types.js').ArkmeExtensionPublishPage> {
+    await this.requireExtensionPublishRecovery(options.signal)
+    return await this.call('extensions.publish.list', { limit: options.limit ?? 20, offset: options.offset ?? 0 }, options.signal)
+  }
+
+  /** Read-only: this never starts an audit or retries publication. */
+  async extensionPublishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.status', { publishSessionId }, signal)
+  }
+
+  /** Write: call only for an explicit current human action. Never automatically retry. */
+  async resumeExtensionPublish(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    await this.requireExtensionPublishRecovery(signal)
+    if (publishSessionId.trim() === '') throw new TypeError('Publish session id must not be empty')
+    return await this.call('extensions.publish.resume', { publishSessionId }, signal)
+  }
+
+  private async requireExtensionPublishRecovery(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.extensionPublishRecovery !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持发布状态查询与恢复', retryable: false })
+  }
+
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
   publishMyExtension(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
     if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
@@ -1042,9 +1506,27 @@ export class ArkmeSdk {
     return await this.call<ArkmeImagePayload>('image.read', { imageRef }, signal)
   }
 
+  /** Probe immutable image bytes without starting an upstream request. */
+  async readCachedImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload | undefined> {
+    if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')
+    if ((await this.capabilities(signal)).features.imageCacheRead !== true) throw new Error('当前 Arkme Provider 不支持本地头像探测，请升级')
+    try { return await this.call<ArkmeImagePayload>('image.read', { imageRef, cacheOnly: true }, signal) }
+    catch (error) {
+      if (error instanceof ArkmeClientError && error.body.code === 'image-cache-miss') return undefined
+      throw error
+    }
+  }
+
   /** Convert a Provider image payload into a browser-renderable data URL. */
   imageDataUrl(image: ArkmeImagePayload): string {
     return `data:${image.mediaType};base64,${image.dataBase64}`
+  }
+
+  /** Open an opaque public-note reference from World or a unified timeline. */
+  async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
+    const capabilities = await this.capabilities(signal)
+    if (!capabilities.features.worldRecordRead) throw new Error('当前 Host 不支持公开快记详情')
+    return await this.call<ArkmeWorldFeedItem>('world.record.read', { recordRef }, signal)
   }
 
   /** Read the public World feed through the authenticated Provider boundary. */
@@ -1159,6 +1641,47 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read AI letters for the current account. */
+  async aiLetters(options: {
+    periodType?: number
+    cursorStartAt?: number
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeAiLetterPage> {
+    return await this.call<ArkmeAiLetterPage>('ai-letter.list', {
+      ...(options.periodType === undefined ? {} : { periodType: options.periodType }),
+      ...(options.cursorStartAt === undefined ? {} : { cursorStartAt: options.cursorStartAt }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Read the AI letter unread badge and latest unread item. */
+  async aiLetterUnread(signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    return await this.call<ArkmeAiLetterUnread>('ai-letter.unread', undefined, signal)
+  }
+
+  /** Mark AI letters read. */
+  async markAiLettersRead(letterIds: readonly string[], signal?: AbortSignal): Promise<ArkmeAiLetterUnread> {
+    const ids = [...new Set(letterIds.map(value => value.trim()).filter(value => value !== ''))].slice(0, 50)
+    return await this.call<ArkmeAiLetterUnread>('ai-letter.mark-read', { letterIds: ids }, signal)
+  }
+
+  /** Read the server-owned aggregate unread state for World interactions. */
+  async worldInteractionSummary(signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    return await this.call<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, signal)
+  }
+
+  /** Advance the server-owned World interaction read cursor. */
+  async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {
+    const sequence = Math.trunc(seenThroughSequence)
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new TypeError('Arkme World interaction read sequence must be a positive integer')
+    }
+    return await this.call<ArkmeWorldInteractionSummary>('world.interactions.mark-viewed', {
+      seenThroughSequence: sequence,
+    }, signal)
+  }
+
   /** Publish a text comment or reply using a caller-stable mutation id. */
   async createWorldTextInteraction(
     input: { targetRef: string; textContent: string; clientMutationId: string },
@@ -1209,13 +1732,19 @@ export class ArkmeSdk {
 
   /** Read the current account's Arrangement owner projection. */
   async arrangements(
-    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; order?: 'board'; boardVersion?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeArrangementPage> {
     return await this.call<ArkmeArrangementPage>('arrangements.list', {
       ...(options.status === undefined ? {} : { status: options.status }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
+      ...(options.order === 'board' ? { order: 'board', ...(options.boardVersion ? { boardVersion: options.boardVersion } : {}) } : {}),
     }, options.signal)
+  }
+
+  /** Read plans by their source recording day, never by creation or due date. */
+  async recordingDayArrangements(query: ArkmeRecordingArrangementQuery, signal?: AbortSignal): Promise<ArkmeRecordingArrangementPage> {
+    return this.call<ArkmeRecordingArrangementPage>('arrangements.recording-day', { ...query }, signal)
   }
 
   /** Read public reviews and rating summary for one extension. */
@@ -1232,6 +1761,11 @@ export class ArkmeSdk {
   }
 
   /** Read one Arrangement through a Provider-issued, account-bound reference. */
+  async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
+    if (!input.arrangementRef.trim() || !input.boardVersion.trim() || !input.requestId.trim()) throw new TypeError('Arrangement reorder requires reference, version and request id')
+    return await this.call<ArkmeArrangementReorderResult>('arrangements.reorder', { ...input }, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
     return await this.call<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal)
@@ -1349,12 +1883,58 @@ export class ArkmeSdk {
     await this.call('conversation.directory.bot-pin', { botRef, pinned }, signal)
   }
 
+  /** Official notification queries never acknowledge user reading. */
+  private async requireOfficialNotifications(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.officialNotificationsV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持官方通知',retryable:false})
+  }
+  async listOfficialNotifications(cursor?: string, signal?: AbortSignal): Promise<ArkmeOfficialNotificationPage> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.list', { cursor }, signal)
+  }
+  async officialNotificationSummary(signal?: AbortSignal): Promise<ArkmeOfficialNotificationSummary> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.summary', undefined, signal)
+  }
+  async officialNotificationDetail(id: string, signal?: AbortSignal): Promise<ArkmeOfficialNotification> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.detail', { id }, signal)
+  }
+  async readOfficialNotifications(input: ArkmeOfficialNotificationRead, signal?: AbortSignal): Promise<ArkmeOfficialNotificationSummary> {
+    await this.requireOfficialNotifications(signal); return this.call('official-notifications.read', { ...input }, signal)
+  }
+  /** List effective archives, including topics covered by an ancestor. */
+  async listArchives(cursor?: string, signal?: AbortSignal): Promise<ArkmeArchivePage> {
+    await this.requireArchiveCapability(signal)
+    return this.call('archives.list', { ...(cursor === undefined ? {} : { cursor }) }, signal)
+  }
+  async getArchiveStates(sourceRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeArchiveState[]> {
+    await this.requireArchiveCapability(signal)
+    return this.call('archives.state', { sourceRefs }, signal)
+  }
+  async setArchiveState(input: ArkmeArchiveSetInput, signal?: AbortSignal): Promise<ArkmeArchiveSetResult> {
+    await this.requireArchiveCapability(signal)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0 || typeof input.selfArchived !== 'boolean') throw new TypeError('Invalid archive precondition')
+    return this.call('archives.set', { ...input }, signal)
+  }
+  private async requireArchiveCapability(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.entityArchive !== true) throw new Error('当前 Provider 不支持归档管理')
+  }
+
   /** Read or explicitly set the existing topic home preference. */
   async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme topic source reference must not be empty')
     return await this.call('topic.home-visibility', {
       sourceRef, ...(showInHome === undefined ? {} : { showInHome }),
     }, signal)
+  }
+
+  async listCommonGroups(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeCommonGroupPage> {
+    if (!sourceRef.trim()) throw new TypeError('Private chat reference is required')
+    if ((await this.capabilities(options.signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
+    return await this.call('group.common.list', { sourceRef, ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+  }
+
+  async syncCommonGroups(sourceRef: string, signal?: AbortSignal): Promise<ArkmeCommonGroupPage> {
+    if (!sourceRef.trim()) throw new TypeError('Private chat reference is required')
+    if ((await this.capabilities(signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
+    return await this.call('group.common.sync', { sourceRef }, signal)
   }
 
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
@@ -1442,6 +2022,14 @@ export class ArkmeSdk {
     return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  /** One server page across current common chats; no read state mutation. */
+  async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}): Promise<import('../person-records.js').PersonRecordsPage> {
+    const { signal, ...params } = options
+    if ((await this.capabilities(options.signal)).features.personRecordsV1 !== true) throw new Error('Unsupported Arkme person records contract')
+    const result = await this.call<import('../person-records.js').PersonRecordsPage>('source.person-records.page', { sourceRef, memberRef, ...params }, signal)
+    if (result.version !== 1) throw new Error('Unsupported Arkme person records contract')
+    return result
+  }
   async sourceMemberRecords(
     sourceRef: string,
     memberRef: string,
@@ -1551,15 +2139,82 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupBotAddResult>('group.bot.add', { sourceRef, botRef }, signal)
   }
 
+  async removeGroupBot(sourceRef: string, botRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotAddResult> {
+    if (sourceRef.trim() === '' || botRef.trim() === '') {
+      throw new TypeError('Arkme group source and Bot references must not be empty')
+    }
+    return await this.call<ArkmeGroupBotAddResult>('group.bot.remove', { sourceRef, botRef }, signal)
+  }
+
+  async messageSyncStatus(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.status', {}, signal)
+  }
+
+  async retryMessageSync(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
+    if ((await this.capabilities(signal)).features.accountMessageSync !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持账号消息同步', retryable: false })
+    return this.call('chat.sync.retry', {}, signal)
+  }
+
+  /** One bounded subscription per SDK instance; returned dispose/AbortSignal releases it. No polling. */
+  observeMessageSync(changed: (progress: ArkmeMessageSyncProgress) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    if (this.syncObservers.size >= 64) throw new Error('Message sync observer capacity exceeded')
+    const controller = new AbortController()
+    let active = true
+    const listener = (progress: ArkmeMessageSyncProgress) => { if (active) changed(progress) }
+    this.syncObservers.add(listener)
+    const stop = () => {
+      if (!active) return
+      active = false; controller.abort(); options.signal?.removeEventListener('abort', stop); this.syncObservers.delete(listener)
+      if (!this.syncObservers.size) { this.syncConnection?.close(); this.syncConnection = undefined; this.syncSequence++ }
+    }
+    options.signal?.addEventListener('abort', stop, { once: true })
+    if (options.signal?.aborted) { stop(); return stop }
+    const sequence = this.syncSequence
+    void this.messageSyncStatus(controller.signal).then(progress => {
+      if (!active) return
+      if (sequence === this.syncSequence) listener(progress)
+      if (!this.syncConnection) this.syncConnection = connectArkmeRealtime({
+        onOpen: () => {}, onDisconnect: () => {},
+        onMessage: event => {
+          try {
+            const update = JSON.parse(event.data) as import('../types.js').ArkmeChatClientEvent
+            if (update.type === 'message-sync-progress') {
+              this.syncSequence++
+              for (const notify of this.syncObservers) { try { notify(update.progress) } catch { /* A consumer cannot disrupt another listener. */ } }
+            } else if (update.type === 'reconcile') {
+              const sequence = ++this.syncSequence
+              void this.messageSyncStatus().then(progress => {
+                if (!this.syncConnection || sequence !== this.syncSequence) return
+                for (const notify of this.syncObservers) { try { notify(progress) } catch { /* Consumer isolation. */ } }
+              }).catch(error => options.onError?.(error))
+            }
+          } catch (error) { options.onError?.(error) }
+        },
+      }, `${this.route}/events`)
+    }).catch(error => { if (active) { options.onError?.(error); stop() } })
+    return stop
+  }
+  private syncObservers = new Set<(progress: ArkmeMessageSyncProgress) => void>()
+  private syncConnection: { close(): void } | undefined
+  private syncSequence = 0
+
+  async readChatTimeline(sourceRef: string, query: import('../unified-chat-timeline.js').ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal): Promise<ArkmeTimelinePage> {
+    const features = (await this.capabilities(signal)).features
+    if (features.unifiedChatTimeline !== true || (query.reconcile || query.anchorId) && features.durableChatTimeline !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持所请求的聊天时间线能力', retryable: false })
+    return await this.readSource(sourceRef, { cursor: { unified: query }, ...(query.limit === undefined ? {} : { limit: query.limit }), ...(signal === undefined ? {} : { signal }) })
+  }
+
   async readSource(
     sourceRef: string,
-    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {},
   ): Promise<ArkmeTimelinePage> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
     return await this.call<ArkmeTimelinePage>('source.timeline', {
       sourceRef,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.background === true ? { background: true } : {}),
     }, options.signal)
   }
 
@@ -1739,6 +2394,31 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  private async requireMessageTextAnchors(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.messageTextAnchorsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持同步标记与局部引用，请升级', retryable: false })
+  }
+  async messageMarkCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.capabilities', { sourceRef }, signal)
+  }
+  async messageMarks(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../message-annotations.js').MessageUnderlineSnapshot }[]> {
+    await this.requireMessageTextAnchors(signal)
+    if (actionRefs.length < 1 || actionRefs.length > 40) throw new TypeError('Expected 1-40 signed message action references')
+    return this.call('source.message-underline.list', { sourceRef, actionRefs }, signal)
+  }
+  async changeMessageMark(sourceRef: string, messageActionRef: string, change: import('../message-annotations.js').MessageUnderlineChange, signal?: AbortSignal): Promise<import('../message-annotations.js').MessageUnderlineSnapshot> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-underline.change', { sourceRef, messageActionRef, change }, signal)
+  }
+  async captureMessageQuote(sourceRef: string, messageActionRef: string, start: number, end: number, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeMessageQuote> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-anchor.capture', { sourceRef, messageActionRef, start, end }, signal)
+  }
+  async messageQuoteCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../message-quote.js').ArkmeQuoteReplyCapabilities> {
+    await this.requireMessageTextAnchors(signal)
+    return this.call('source.message-extension.capabilities', { sourceRef }, signal)
+  }
+
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
@@ -1756,8 +2436,9 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
       throw new TypeError('Arkme source message extension requires a target and text or attachments')
@@ -1768,6 +2449,7 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+      ...(options.quote === undefined ? {} : { quote: options.quote }),
       fileRefs,
     }, options.signal)
   }
@@ -1844,6 +2526,11 @@ export class ArkmeSdk {
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
     return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
+  }
+
+  async reactions<R extends import('../reaction-contract.js').ReactionRequest>(input: R, signal?: AbortSignal): Promise<import('../reaction-contract.js').ReactionResponse<R>> {
+    if ((await this.capabilities(signal)).features.reactionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持表态，请升级', retryable: false })
+    return await this.call('reactions', input, signal)
   }
 
   async addFavoriteSticker(
@@ -1923,6 +2610,15 @@ export class ArkmeSdk {
     if (policy.version !== 1) throw new Error(`Unsupported Arkme file contract version ${String(policy.version)}`)
     return policy
   }
+  /** Browse authorized articles by actual sharing direction. Unsupported servers fail explicitly. */
+  async listArticles(options: { scope?: import('../types.js').ArkmeLongArticleBrowseScope; limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeRecordSearchResult> {
+    const scope = options.scope ?? 'recent'
+    if (!['recent', 'shared_by_me', 'shared_with_me'].includes(scope)) throw new TypeError('Invalid article scope')
+    if ((await this.capabilities(options.signal)).features.articleLibraryV1 !== true) throw new Error('Unsupported Arkme article library contract')
+    const result = await this.call<import('../types.js').ArkmeRecordSearchResult>('articles.list', { scope, limit: options.limit ?? 30, ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+    if (scope !== 'recent' && result.appliedArticleScope !== scope) throw new Error('Unsupported Arkme article sharing contract')
+    return result
+  }
   async searchFiles(options: { query?: string; limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeRecordSearchResult> {
     const { signal, ...params } = options
     return this.call('files.search', params, signal)
@@ -1951,7 +2647,7 @@ export class ArkmeSdk {
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
   localFileUrl(fileRef: string, download = false): string {
-    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-generated-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 
@@ -2045,13 +2741,39 @@ export class ArkmeSdk {
   }
 
   /** Read a device-location fact using a short-lived capability from the personal calendar. */
+  private async requireDayReview(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.calendarDayReview !== true) throw new Error('当前 Provider 不支持完整日回顾')
+  }
+  async dayReviewState(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.state', { ...query }, signal) }
+  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.create', { ...input }, signal) }
+  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
+  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
+  async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
+  async dayReviewModels(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review.js').DayReviewModels> { await this.requireDayReview(signal); return this.call('calendar.day-review.models', { ...query }, signal) }
+  async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
+  /** Permission-checked original evidence. Raw navigation locators remain Host-only. */
+  async dayReviewEvidence(query: DayReviewEvidenceQuery, signal?: AbortSignal): Promise<DayReviewOriginalEvidence> { await this.requireDayReview(signal); return this.call('calendar.day-review.evidence', { ...query }, signal) }
+
   async calendarRecordLocation(locationRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeCalendarRecordLocation> {
     return await this.call('calendar.record-location', { locationRef }, signal)
   }
 
   /** Service-owned daily chat counts and exact first-message anchors, shared with Flutter. */
+  private async requireAnalytics(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.analyticsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持统计能力 v1', retryable: false })
+  }
+  async personalKeywords(query: import('../statistics-contract.js').StatisticsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordSummary> { await this.requireAnalytics(signal); return this.call('statistics.keywords', { ...query }, signal) }
+  async personalKeywordRecords(query: import('../analytics-contract.js').PersonalKeywordRecordsQuery, signal?: AbortSignal): Promise<import('../analytics-contract.js').PersonalKeywordRecords> { await this.requireAnalytics(signal); return this.call('statistics.keyword-records', { ...query }, signal) }
+  async conversationWordsState(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.state', { ...query }, signal) }
+  async conversationWordsCreate(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { requestId: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordsState> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.create', { ...query }, signal) }
+  async conversationWordParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.participants', { ...query }, signal) }
+  async conversationWordMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; wordKey: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordMessages> { await this.requireAnalytics(signal); return this.call('chat.word-frequency.messages', { ...query }, signal) }
+  async conversationActivity(query: import('../conversation-word-frequency.js').ConversationWordsQuery, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityState> { await this.requireAnalytics(signal); return this.call('chat.activity.read', { ...query }, signal) }
+  async conversationActivityParticipants(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { search?: string; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-word-frequency.js').ConversationWordParticipants> { await this.requireAnalytics(signal); return this.call('chat.activity.participants', { ...query }, signal) }
+  async conversationActivityMessages(query: import('../conversation-word-frequency.js').ConversationWordsQuery & { resultId: string; hour: number; weekday: number | null; cursor?: string }, signal?: AbortSignal): Promise<import('../conversation-activity.js').ConversationActivityMessages> { await this.requireAnalytics(signal); return this.call('chat.activity.messages', { ...query }, signal) }
+
   async calendarChatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     const { signal, ...params } = options
     return await this.call<ArkmeCalendarBucketPage>('calendar.chat-statistics', params, signal)
@@ -2156,6 +2878,30 @@ export class ArkmeSdk {
     }
   }
 
+  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
+    const result = await this.call<DshAccountSessionPage>('remote.sessions.list', options, signal)
+    if (result.contractVersion !== 1) throw new Error('账号会话协议版本不受支持')
+    return result
+  }
+
+  async readDshAccountSession(options: { runtimeRef: string; sessionRef: string; cursor?: DshSessionHistoryCursor; source?: 'host' | 'cloud' }, signal?: AbortSignal): Promise<DshAccountSessionHistory> {
+    return await this.call('remote.session.read', options, signal)
+  }
+
+  async commandDshAccountSession(options: DshAccountSessionCommandOptions, signal?: AbortSignal): Promise<unknown> {
+    return await this.call('remote.session.command', options, signal)
+  }
+
+  /** Event-driven invalidation only. Abort or dispose closes the Host subscription. */
+  observeDshAccountSession(target: { runtimeRef: string; sessionRef: string }, changed: () => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    return observeDshAccountSession(this.route, this.fetchImpl, target, changed, options)
+  }
+
+  /** Account-authorized native DSH carrier. Callers retain native RPC result semantics. */
+  async nativeDshRequest(options: { runtimeRef: string; requestRef: string; body: { mode: 'call' | 'pull' | 'close'; endpoint?: string; payload?: { args: Record<string, unknown> }; streamRef?: string } }, signal?: AbortSignal): Promise<unknown> {
+    return await this.call('remote.session.native', options, signal)
+  }
+
   async currentDesktopSession(signal?: AbortSignal): Promise<{ session: { sessionRef: string; workspaceRef: string; title?: string; running?: boolean; projectionAsOfSeq?: number } | null }> {
     return await this.call('remote.currentSession', undefined, signal)
   }
@@ -2213,6 +2959,7 @@ export class ArkmeSdk {
         retryable: true,
       })
     }
+
     if (!body.ok) throw new ArkmeClientError(body.error)
     return body.value
   }
@@ -2234,3 +2981,11 @@ export async function callArkme<T>(
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
 
 export type { ArkmeDshInputOrigin } from '../types.js'
+export type { ReactionNotification, ReactionNotificationPage, ReactionRequest, ReactionResponse, ReactionExpression, ReactionTargetRef, ReactionSnapshot, ReactionState, ReactionLibrary, ReactionLibraryResult, ReactionSetResult, ReactionActor, ReactionActorPage, ReactionGroupPage, ReactionOriginalMessage, ReactionHistoryEvent, ReactionHistoryPage, ReactionReceivedEvent, ReactionReceivedPage, ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
+
+export type { ExternalChatOperation, ExternalChatShare, ExternalChatDirectory, ExternalChatTimeline, ExternalChatTimelineItem } from '../team-external-chat-contract.js'
+export type {TeamForwardInput,TeamForwardDestination} from '../team-message-contract.js'
+
+export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contract.js'
+
+export type {TeamMention} from '../team-app-contract.js'

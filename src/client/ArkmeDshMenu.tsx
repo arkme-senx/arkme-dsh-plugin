@@ -1,6 +1,6 @@
 import { tr, useArkmeLocale } from './locale.js'
 import {
-  IconCheckOutline16, IconEllipsisOutline16, IconPersonalizationOutline16, Menu, Tooltip, type MenuEntry,
+  IconCheckOutlineMedium, IconEllipsisOutlineMedium, IconPersonalizationOutlineMedium, Menu, Tooltip, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { watchFrameMenuDismissal } from './frame-menu-dismissal.js'
@@ -60,7 +60,7 @@ export function ArkmeDshRowActionsMenu(props: {
     anchor={<button type="button" className="arkme-dsh-row-actions-button"
       title={tr("主题操作")} aria-label={props.label} aria-haspopup="menu" aria-expanded={props.open}
       onClick={event => { event.stopPropagation(); props.onToggle() }}
-    ><IconEllipsisOutline16 /></button>}
+    ><IconEllipsisOutlineMedium /></button>}
   />
 }
 
@@ -124,7 +124,7 @@ export function ArkmeDshMenu(props: {
         return <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled}
           aria-label={typeof entry.label === 'string' ? entry.label : undefined}
           onClick={() => { if (!entry.disabled) props.onSelect(entry.id) }}>
-          {entry.icon}<span>{entry.label}</span>{selected ? <IconCheckOutline16 /> : null}
+          {entry.icon}<span>{entry.label}</span>{selected ? <IconCheckOutlineMedium /> : null}
         </button>
       })}
     </div>}
@@ -157,8 +157,12 @@ export function ArkmeActionMenu(props: {
   align?: 'start' | 'end'
   side?: 'top' | 'bottom' | 'right'
   autoFocus?: boolean
+  /** Keep menus in the native dialog top layer when used inside a modal. */
+  portal?: boolean
   /** Hover menus dismiss immediately outside the trigger, menu and crossing gap. */
   hoverAnchor?: HTMLElement | undefined
+  /** Optional grace for pointer overshoot; other dismissal paths remain immediate. */
+  hoverCloseDelayMs?: number
 }) {
   useArkmeLocale()
   const open = props.open ?? true
@@ -182,7 +186,7 @@ export function ArkmeActionMenu(props: {
     }
   }, [props.autoFocus])
   useEffect(() => {
-    if (!open || !props.autoFocus || focused.current) return
+    if (!open || !props.autoFocus || focused.current || typeof requestAnimationFrame === 'undefined') return
     const frame = requestAnimationFrame(focusFirstItem)
     return () => cancelAnimationFrame(frame)
   }, [open, props.autoFocus, focusFirstItem])
@@ -219,9 +223,43 @@ export function ArkmeActionMenu(props: {
     return () => { stopFrames(); document.removeEventListener('keydown', onKey) }
   }, [open])
   useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    // The native Menu dismisses from a bubble-phase document listener, so one
+    // stopPropagation() between the pointer target and document (custom scroll
+    // thumbs, drag surfaces, card wrappers) silently disables outside dismissal
+    // for the whole surface. Capture on document runs before every other handler
+    // and cannot be blocked, so it arms a fallback; a bubble listener on the same
+    // document cancels it whenever propagation arrives normally. That keeps the
+    // native single-close contract instead of closing twice per click.
+    const own = root.current?.ownerDocument ?? document
+    if (typeof own?.addEventListener !== 'function') return
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const cancel = () => { if (pending !== undefined) { clearTimeout(pending); pending = undefined } }
+    const outside = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (root.current?.contains(target) === true) return
+      if (menu.current?.contains(target) === true) return
+      cancel()
+      pending = setTimeout(() => { pending = undefined; closeRef.current() }, 0)
+    }
+    const arrived = () => cancel()
+    own.addEventListener('pointerdown', outside, true)
+    own.addEventListener('pointerdown', arrived)
+    return () => {
+      cancel()
+      own.removeEventListener('pointerdown', outside, true)
+      own.removeEventListener('pointerdown', arrived)
+    }
+  }, [open])
+  useEffect(() => {
     if (!open || !props.point || typeof document === 'undefined' || typeof document.createElement !== 'function') return
     const doc = props.pointDocument ?? document
+    const openedAt = doc.defaultView?.performance.now() ?? 0
     const closeOnScroll = (event: Event) => {
+      // A scroll queued before opening can arrive after the menu mounts. It
+      // describes the position already used by the pointer anchor, not a move.
+      if (event.timeStamp < openedAt) return
       // Scrolling a long native menu is allowed; scrolling its source dismisses
       // the pointer anchor rather than leaving commands over unrelated content.
       if (event.target && menu.current?.contains(event.target as Node)) return
@@ -242,26 +280,39 @@ export function ArkmeActionMenu(props: {
     const anchor = props.hoverAnchor
     if (!open || !anchor || typeof document === 'undefined') return
     const doc = anchor.ownerDocument
-    const close = () => closeRef.current()
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const cancel = () => { if (pending !== undefined) { clearTimeout(pending); pending = undefined } }
+    const close = () => { cancel(); closeRef.current() }
+    const scheduleClose = () => {
+      if (!props.hoverCloseDelayMs) { close(); return }
+      // Do not restart on each pointermove: continuous movement outside must
+      // still close, while re-entering either target cancels the pending close.
+      if (pending === undefined) pending = setTimeout(close, props.hoverCloseDelayMs)
+    }
     const move = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return
+      if (!anchor.isConnected) { close(); return }
       const list = menu.current
-      if (!anchor.isConnected || (list && !inMenuHoverRegion(event.clientX, event.clientY,
-        anchor.getBoundingClientRect(), list.getBoundingClientRect()))) close()
+      if (!list || inMenuHoverRegion(event.clientX, event.clientY,
+        anchor.getBoundingClientRect(), list.getBoundingClientRect())) cancel()
+      else scheduleClose()
     }
-    const leave = (event: PointerEvent) => { if (event.relatedTarget === null) close() }
+    const leave = (event: PointerEvent) => { if (event.relatedTarget === null) scheduleClose() }
     const observer = new MutationObserver(() => { if (!anchor.isConnected) close() })
     observer.observe(doc.body, { childList: true, subtree: true })
     doc.addEventListener('pointermove', move, true)
+    doc.addEventListener('pointerover', move, true)
     doc.addEventListener('pointerout', leave, true)
-    doc.defaultView?.addEventListener('blur', close)
+    doc.defaultView?.addEventListener('blur', scheduleClose)
     return () => {
+      cancel()
       observer.disconnect()
       doc.removeEventListener('pointermove', move, true)
+      doc.removeEventListener('pointerover', move, true)
       doc.removeEventListener('pointerout', leave, true)
-      doc.defaultView?.removeEventListener('blur', close)
+      doc.defaultView?.removeEventListener('blur', scheduleClose)
     }
-  }, [open, props.hoverAnchor])
+  }, [open, props.hoverAnchor, props.hoverCloseDelayMs])
   const actions = props.actions.filter((action): action is ArkmeMenuAction => !!action)
   const items: MenuEntry[] = actions.map(action => 'type' in action ? action : ({
     id: action.id, label: typeof document === 'undefined' || typeof document.createElement !== 'function' ? action.label : <span ref={node => {
@@ -280,13 +331,19 @@ export function ArkmeActionMenu(props: {
     ...(action.disabled === undefined ? {} : { disabled: action.disabled }),
     ...(action.danger === undefined ? {} : { danger: action.danger }),
   }))
-  return <span ref={root} style={{ display: props.anchor ? 'inline-flex' : 'contents' }}
+  // The native Menu still renders an empty inline-flex anchor when anchor=null.
+  // Keep pointer-only anchors out of flow so a menu cannot add a line to its list.
+  return <span ref={root} style={props.anchor ? { display: 'inline-flex' }
+    : props.point ? { position: 'fixed', width: 0, height: 0, display: 'block' } : { display: 'contents' }}
     data-arkme-command-menu={props.label}
     onContextMenu={event => { if (menu.current?.contains(event.target as Node)) event.preventDefault() }}
     onKeyDown={event => {
       if (!open) return
       if (event.key === 'Escape') {
-        event.preventDefault(); event.stopPropagation(); props.onClose()
+        // DSH 0.2 handles Escape at document capture before React's portal event.
+        const closedByNative = event.defaultPrevented
+        event.preventDefault(); event.stopPropagation()
+        if (!closedByNative) props.onClose()
         const trigger = root.current?.querySelector<HTMLButtonElement>('button')
         if (trigger) trigger.focus()
         else returnFocus.current?.focus()
@@ -303,7 +360,7 @@ export function ArkmeActionMenu(props: {
       buttons[index]?.focus()
     }}>
     <ArkmeDshMenu open={open} label={props.label} anchor={props.anchor ?? null}
-      items={items} portal getAnchorRect={getAnchorRect}
+      items={items} portal={props.portal ?? true} getAnchorRect={getAnchorRect}
       {...(props.selectedIds === undefined ? {} : { selectedIds: props.selectedIds })}
       {...(props.align === undefined ? {} : { align: props.align })}
       {...(props.side === undefined ? {} : { side: props.side })}
@@ -349,7 +406,7 @@ export function ArkmeDshViewOptionsMenu(props: {
         aria-expanded={props.open}
         data-arkme-self-topic-sort-trigger={props.dataArkmeSelfTopicSortTrigger}
         onClick={() => { props.open ? props.onClose() : props.onOpen() }}
-      ><IconPersonalizationOutline16 /></button>
+      ><IconPersonalizationOutlineMedium /></button>
     </Tooltip>}
   />
 }

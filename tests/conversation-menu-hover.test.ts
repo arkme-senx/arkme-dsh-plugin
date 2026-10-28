@@ -7,7 +7,7 @@ const menuRect = { left: 308, right: 628, top: 80, bottom: 600 }
 let stop: (() => void) | undefined
 afterEach(() => { stop?.(); stop = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
 
-function fixture() {
+function fixture(clickToOpen = false) {
   vi.useFakeTimers()
   const card = document.createElement('button'), menu = document.createElement('div'), outside = document.createElement('button')
   document.body.append(card, menu, outside)
@@ -18,7 +18,7 @@ function fixture() {
   const open = vi.fn((value: ConversationMenuHoverRequest) => { request = value; return true })
   stop = watchConversationMenuHover(card, {
     open, close, position: vi.fn(), contains: target => menu.contains(target as Node | null), bounds: () => [menuRect],
-  })
+  }, clickToOpen)
   const pointer = (target: Element, type: string, x: number, y: number, relatedTarget: EventTarget | null = null) => {
     target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, relatedTarget }))
   }
@@ -79,4 +79,16 @@ it('restricts the bridge to adjacent horizontal edges, including left-flipped me
   expect(conversationMenuHoverBridge(cardRect, { ...menuRect, top: 200 })).toBeUndefined()
   expect(conversationMenuHoverBridge(cardRect, { ...menuRect, left: 400 })).toBeUndefined()
   expect(conversationMenuHoverBridge(cardRect, { ...menuRect, left: 250 })).toBeUndefined()
+})
+
+it('opens the header selector on click, stays open across pointer movement and closes on outside click', () => {
+  const f = fixture(true)
+  f.enter(); expect(f.open).not.toHaveBeenCalled()
+  f.card.click(); expect(f.open).toHaveBeenCalledOnce()
+  f.pointer(document.body, 'pointermove', 700, 400); expect(f.close).not.toHaveBeenCalled()
+  f.outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })); expect(f.close).toHaveBeenCalledOnce()
+  f.card.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+  expect(f.open).toHaveBeenCalledTimes(2)
+  stop?.(); stop = undefined
+  f.card.click(); expect(f.open).toHaveBeenCalledTimes(2)
 })

@@ -22,7 +22,7 @@ const source: ArkmeSourceItem = { sourceRef: 'preview-ref', sourceKey: 'preview-
 const other: ArkmeSourceItem = { ...source, sourceRef: 'other', sourceKey: 'other', displayName: '当前会话', unreadCount: 0 }
 let root: Root, host: HTMLDivElement
 const onActivateSurface = vi.fn()
-const row = () => document.querySelector<HTMLButtonElement>('button[aria-label="未读群聊，5 条未读"]')!
+const row = () => document.querySelector<HTMLElement>('[role="treeitem"][aria-label="未读群聊，5 条未读"]')!
 const menuItem = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent === text)
 const dialog = () => document.querySelector('[aria-label="未读群聊的聊天预览"]')
 
@@ -61,7 +61,7 @@ async function preview() {
   await act(async () => menuItem('预览')!.click())
 }
 
-it('opens preview from the actual menu without optimistic read or navigation; a normal click still marks read', async () => {
+it('opens preview without navigation and leaves click/reselect read state to the actual viewport', async () => {
   const mark = vi.spyOn(arkmeChatDirectory, 'markReadOptimistic')
   const before = arkmeUi.getSnapshot().selectedSource
   const activations = onActivateSurface.mock.calls.length
@@ -76,20 +76,33 @@ it('opens preview from the actual menu without optimistic read or navigation; a 
   expect(dialog()).toBeNull()
   expect(document.activeElement).toBe(row())
   await act(async () => row().click())
-  expect(mark).toHaveBeenCalledOnce()
+  expect(mark).not.toHaveBeenCalled()
+  expect(row()).not.toBeNull()
+  // The selected conversation may restore history, including on repeated clicks.
+  const release = arkmeChatDirectory.registerReadingIntent(source.sourceKey!, () => false)
+  try {
+    for (let i = 0; i < 3; i++) await act(async () => row().click())
+    expect(mark).not.toHaveBeenCalled()
+    expect(row()).not.toBeNull()
+    expect(state.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+  } finally { release() }
   expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(source.sourceRef)
 })
 
-it('keeps the actual navigation badge and native count equal to the row after a click and delayed Host replay', async () => {
+it('keeps the row and native badge until the viewport follows latest, including delayed Host replay', async () => {
   await act(async () => root.render(<><ArkmeProductNavigation compact={false} /><ArkmeNavigation /></>))
   const apply = vi.fn(async () => true)
   const stop = startArkmeDirectoryBadge(apply, 'test:7001')
+  let release: (() => void) | undefined
   try {
     await act(async () => { await Promise.resolve() })
     expect(document.querySelector('[data-arkme-unread-count="5"]')).not.toBeNull()
     expect(row()).not.toBeNull()
     expect(apply).toHaveBeenLastCalledWith(5)
     await act(async () => row().click())
+    expect(row()).not.toBeNull()
+    expect(apply).toHaveBeenLastCalledWith(5)
+    await act(async () => { release = arkmeChatDirectory.registerReadingIntent(source.sourceKey!, () => true) })
     expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
     expect(row()).toBeNull()
     expect(apply).toHaveBeenLastCalledWith(0)
@@ -97,7 +110,7 @@ it('keeps the actual navigation badge and native count equal to the row after a 
     expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
     expect(row()).toBeNull()
     expect(apply).toHaveBeenLastCalledWith(0)
-  } finally { stop() }
+  } finally { arkmeChatDirectory.confirmDisplayedRead(source.sourceKey!, 10); release?.(); stop() }
 })
 
 

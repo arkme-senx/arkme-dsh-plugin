@@ -17,6 +17,7 @@ interface MessageActionReferenceBase {
 
 export interface AgentMessageActionReference extends MessageActionReferenceBase {
   ownerKind: 'agent'
+  shareableAgentReply?: boolean
   agentSessionId: number
   agentMessageId: number
   entryRecordUid?: string
@@ -42,7 +43,7 @@ export type MessageActionReference =
   | SubjectBotMessageActionReference
 
 /** Local DSH snapshots are deliberately outside the signed MessageActionReference union. */
-export interface NativeMessageForwardSnapshot {
+export interface NativeMessageSnapshot {
   ownerKind: 'dsh_native'
   sessionId: string
   messageIdentity: string
@@ -53,7 +54,8 @@ export interface NativeMessageForwardSnapshot {
   senderUserId: number
   senderName: string
 }
-export type ForwardMessage = MessageActionReference | NativeMessageForwardSnapshot
+export interface CodexMessageSnapshot extends Omit<NativeMessageSnapshot, 'ownerKind'> { ownerKind: 'codex'; taskTitle: string }
+export type MessageActionSource = MessageActionReference | NativeMessageSnapshot | CodexMessageSnapshot
 
 export interface AgentMessageActionConversation {
   version: 2
@@ -78,6 +80,7 @@ export interface MessageActionBotRegistryPort {
 }
 
 export interface MessageActionCapabilityCodec {
+  fingerprint(payload: unknown): string
   seal(prefix: string, payload: unknown): Promise<string>
   open(prefix: string, value: string): Promise<Record<string, unknown>>
 }
@@ -87,14 +90,14 @@ export interface MessageActionGateway {
   maxTextLength(): number
   openTarget(targetSourceRef: string, userId: number): Promise<MessageActionTarget>
   createCopyLink(
-    references: readonly MessageActionReference[],
+    references: readonly MessageActionSource[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeMessageCopyLinkResult>
   forwardToChat(input: {
     targetSourceRef: string
     target: Extract<MessageActionTarget, { kind: 'private_chat' }> | Extract<MessageActionTarget, { kind: 'group_chat' }>
-    references: readonly ForwardMessage[]
+    references: readonly MessageActionSource[]
     requestId: string
     sendAtMillis: number
     commentText: string
@@ -104,7 +107,7 @@ export interface MessageActionGateway {
   forwardToRecord(input: {
     targetSourceRef: string
     target: Exclude<MessageActionTarget, { kind: 'private_chat' | 'group_chat' }>
-    references: readonly ForwardMessage[]
+    references: readonly MessageActionSource[]
     requestId: string
     recordUid: string
     sendAtMillis: number
@@ -122,7 +125,12 @@ export interface MessageActionGateway {
 }
 
 export function messageActionCanCopyLink(reference: MessageActionReference): boolean {
-  if (reference.ownerKind === 'agent') return reference.role === 'assistant' || reference.entryRecordUid !== undefined
+  if (reference.ownerKind === 'agent') return (reference.role === 'assistant' && reference.shareableAgentReply !== false) || reference.entryRecordUid !== undefined
   if (reference.ownerKind === 'bot_chat') return true
   return reference.role === 'user'
+}
+
+/** The history owner revalidates a bounded selection in one consistent read. */
+export interface ArkoMessageActionReader {
+  read(anchors: readonly { sessionId: number; messageId: number }[], userId: number, signal?: AbortSignal): Promise<import('./types.js').ArkmeArkoHistoryItem[]>
 }

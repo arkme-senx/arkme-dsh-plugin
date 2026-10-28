@@ -59,7 +59,7 @@ describe('Arkme settings policy', () => {
     expect(source).toContain('const [notificationBusy, setNotificationBusy] = useState(false)')
     expect(source).toContain("{logoutBusy ? '正在退出…' : '退出登录'}</button>")
     expect(source).toContain('disabled={notificationBusy}')
-    expect(source).not.toContain('const [busy, setBusy] = useState(false)')
+    expect(source.slice(source.indexOf('export function ArkmeSettingsSurface('))).not.toContain('const [busy, setBusy] = useState(false)')
   })
 
   it('shows a read-only plugin version without exposing update controls or polling', () => {
@@ -74,7 +74,6 @@ describe('Arkme settings policy', () => {
     expect(source).not.toContain('复制更新命令')
     expect(source).toContain('arkmeAppUpdateStore')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
-    expect(source).toContain('actionLabel="打开 APP 更新"')
     expect(source).toContain('arkmeAppUpdateStore.open()')
     expect(source).not.toContain('arkmeUpdateUi')
     expect(source).not.toContain('arkmeAppUpdateStore.download')

@@ -1,7 +1,20 @@
+import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
+import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
+import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
+import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
+import { screenshotWindowRequested } from './native-screenshot.js'
+import { registerConversationWindowRoot } from './conversation-window-root.js'
+import { conversationWindowRequested } from './conversation-window.js'
+import { bindConversationWindows } from './conversation-window-sync.js'
 import { createRoot } from 'react-dom/client'
-import { ArkmeLongArticleWindow } from './ArkmeLongArticleWindow.js'
+import { registerLongArticleWindowRoot } from './long-article-window-root.js'
 import { bindLongArticleWindowAccount, longArticleWindowRequested } from './long-article-window.js'
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import { bindAttachmentPreviewAccount } from './attachment-preview-auth-binding.js'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import { AppMigrationDialog } from './AppMigrationDialog.js'
+import { ArkmeSocialBindingDialog } from './ArkmeSocialBindingDialog.js'
+import { appMigrationStore, localMigrationDesktop } from './app-migration-store.js'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -11,6 +24,7 @@ import './composer-draft-auth-binding.js'
 import './private-chat-actions-auth-binding.js'
 import { callArkme } from './api.js'
 import { connectArkmeLocale, tr } from './locale.js'
+import { connectDesktopBranding, type DesktopBrandingBridge } from './desktop-branding.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -36,7 +50,7 @@ import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installHarnessConversationLayoutLoader } from './harness-conversation-layout.js'
-import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
+import { installArkmeSettingsNavIcons } from './settings-nav-icons.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
@@ -98,18 +112,51 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
-  if (longArticleWindowRequested()) {
-    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
+  // Explicit loopback-only review surface; never inject synthetic events into a real chat.
+  if (typeof window !== 'undefined' && offlineContextPreviewRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: offline context preview language')
     ctx.effect(() => {
-      const disposeStyles = installArkmeRedesignStyles()
       const host = document.createElement('div')
-      host.dataset.arkmeOwned = 'long-article-window'
-      Object.assign(host.style, { position: 'fixed', inset: '0', zIndex: '2147483000' })
       document.body.append(host)
       const root = createRoot(host)
-      root.render(<ArkmeLongArticleWindow />)
-      return () => { root.unmount(); host.remove(); disposeStyles() }
-    }, 'dsh-arkme: independent article editor')
+      root.render(<OfflineContextPreview />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: offline context interaction preview')
+    return
+  }
+  if (!deepSeekHarnessEmbedRequested() && !screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeSocialBindingDialog />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: social action binding prompt')
+  }
+  if (screenshotWindowRequested()) {
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      host.dataset.arkmeOwned = 'screenshot-window'
+      Object.assign(host.style, {position:'fixed',inset:'0',zIndex:'2147483000',background:'#181a20'})
+      document.body.append(host)
+      const root = createRoot(host)
+      root.render(<ArkmeScreenshotWindow />)
+      return () => { root.unmount(); host.remove() }
+    }, 'dsh-arkme: screenshot editor')
+    return
+  }
+
+  if (conversationWindowRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: conversation language')
+    ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation sync')
+    ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: conversation preview lifetime')
+    registerConversationWindowRoot(ctx)
+    return
+  }
+
+  if (longArticleWindowRequested()) {
+    ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: article language')
+    registerLongArticleWindowRoot(ctx)
     return
   }
 
@@ -137,8 +184,30 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
   ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: product language')
+  ctx.effect(() => connectDesktopBranding((window as Window & {
+    arkmeDesktop?: { branding?: DesktopBrandingBridge }
+  }).arkmeDesktop?.branding), 'dsh-arkme: desktop brand language')
 
+  ctx.effect(() => {
+    if (!localMigrationDesktop()) return () => undefined
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const root = createRoot(element)
+    root.render(<AppMigrationDialog />)
+    const stop = appMigrationStore.start()
+    return () => { stop(); root.unmount(); element.remove() }
+  }, 'dsh-arkme: desktop migration download')
+  ctx.effect(() => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    root.render(<ArkmeLogoutFailureToast />)
+    return () => { root.unmount(); host.remove() }
+  }, 'dsh-arkme: logout failure feedback')
+  ctx.effect(() => bindScreenshotAskDsh(), 'dsh-arkme: screenshot ask DSH')
+  ctx.effect(() => bindConversationWindows(), 'dsh-arkme: conversation window lifetime')
   ctx.effect(() => bindLongArticleWindowAccount(), 'dsh-arkme: article window account')
+  ctx.effect(() => bindAttachmentPreviewAccount(), 'dsh-arkme: attachment preview account lifetime')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update bridge')
   ctx.effect(() => installHarnessConversationLayoutLoader(ctx, document), 'dsh-arkme: native wide conversation exports')
   ctx.effect(() => {
@@ -226,6 +295,13 @@ export function apply(ctx: ClientContext): void {
 
   ctx.slots.inject('arkme.topic.actions', () => ctx.slots.register({ name: 'arkme.topic.actions', priority: 100 }, props => props.renderDefault()))
   ctx.slots.inject('arkme.send-to-self.entry', () => ctx.slots.register({ name: 'arkme.send-to-self.entry', priority: 100 }, props => props.renderEntry()))
+
+  // 0.2's account plugin replaces the settings launcher with an account menu.
+  // Use the public owner callback to preserve Arkme's direct dialog entry.
+  ctx.slots.inject('settings.launcher', () => ctx.slots.register({
+    name: 'settings.launcher', priority: -100,
+  }, props => <button type="button" aria-label="设置" aria-haspopup="dialog"
+    aria-expanded={props.settingsOpen} onClick={props.openSettings} />))
 
   ctx.effect(() => {
     let disposeSidebar: (() => void) | undefined
@@ -328,26 +404,25 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-arkme: install redesign visual system')
 
   ctx.effect(
-    () => installArkmeAccountSettingsNavIcon(),
-    'dsh-arkme: render account settings navigation icon',
+    () => installArkmeSettingsNavIcons(),
+    'dsh-arkme: render Arkme settings navigation icons',
   )
 
   ctx.effect(() => {
-    const disposeConversations = ['conversation', 'main.conversation'].map(name =>
-      ctx.slots.inject(name as 'conversation', () => ctx.slots.register({
-        name: name as 'conversation',
-        priority: -100,
-        locale: ARKME_LOGIN_LOCALE_NAMESPACE,
-        inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
-      }, ArkmePersistentWorkspace)),
-    )
-    const disposeDetails = ctx.slots.inject('details', () => ctx.slots.register({
-      name: 'details',
+    const disposeConversation = ctx.slots.inject('main', () => ctx.slots.register({
+      name: 'main',
+      key: 'conversation',
+      priority: -100,
+      locale: ARKME_LOGIN_LOCALE_NAMESPACE,
+      inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
+    }, ArkmePersistentWorkspace))
+    const disposeDetails = ctx.slots.inject('rightbar', () => ctx.slots.register({
+      name: 'rightbar',
       priority: -100,
       inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
     }, ArkmePersistentDetails))
     return () => {
-      disposeConversations.forEach(dispose => { dispose() })
+      disposeConversation()
       disposeDetails()
     }
   }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')
@@ -364,7 +439,7 @@ export function apply(ctx: ClientContext): void {
   }, ArkmeAccountUsageSettings))
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'arkme-data', order: -1, label: () => tr('数据管理'),
+    name: 'settings.section', id: 'arkme-data', order: -2.5, label: () => tr('数据管理'),
   }, ArkmeDataManagementSettings))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
@@ -456,7 +531,7 @@ export {
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeCallSurface } from './ArkmeCallSurface.js'
-export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeNotificationsRow, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export { ArkmeLayoutController } from './redesign/layout-controller.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps, ArkmeSendToSelfEntryOwnerProps, ArkmeTopicActionsOwnerProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'

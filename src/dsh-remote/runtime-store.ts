@@ -234,7 +234,7 @@ export class DshRemoteRuntimeStore {
               if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('session inventory schema mismatch')
               const session = value as Record<string, unknown>
               if (typeof session.sessionRef !== 'string' || session.sessionRef.trim() === ''
-                || typeof session.workspaceRef !== 'string' || session.workspaceRef.trim() === ''
+                || typeof session.workspaceRef !== 'string'
                 || !Number.isSafeInteger(session.sourceUpdatedAt) || Number(session.sourceUpdatedAt) <= 0) {
                 throw new Error('session inventory schema mismatch')
               }

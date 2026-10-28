@@ -4,6 +4,7 @@ import backBottomIcon from '../../assets/icons/icon_back_bottom_green.svg'
 import { arkmeTheme } from './arkme-theme.js'
 
 interface Props {
+  historical?: boolean
   showBackToBottom: boolean
   newMessageCount: number
   onReturnToLatest: () => Promise<void>
@@ -16,8 +17,9 @@ const button: CSSProperties = {
 }
 
 /** Mount per conversation/account. Data loading and viewport movement belong to the caller. */
-export function ArkmeConversationBottomControl({ showBackToBottom, newMessageCount, onReturnToLatest }: Props) {
+export function ArkmeConversationBottomControl({ showBackToBottom, newMessageCount, onReturnToLatest, historical = false }: Props) {
   useArkmeLocale()
+  const label = historical ? tr('回到最新') : tr('回到底部')
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
   const inFlight = useRef(false)
@@ -49,12 +51,13 @@ export function ArkmeConversationBottomControl({ showBackToBottom, newMessageCou
       {newMessageCount > 0 && <button data-arkme-feedback="neutral" type="button" disabled={pending} onClick={() => { void activate() }}
         style={{ ...button, position: 'absolute', left: '50%', transform: 'translateX(-50%)', padding: '7px 13px', fontSize: 12 }}>
         {newMessageCount} {tr("条新消息")}</button>}
-      {(showBackToBottom || pending || failed) && <button data-arkme-feedback="neutral" type="button" aria-label={tr("回到底部")}
-        title={pending ? '正在回到底部…' : tr("回到底部")} aria-busy={pending} disabled={pending}
-        onClick={() => { void activate() }} style={{ ...button, width: 50, height: 30, flexShrink: 0, opacity: pending ? 0.6 : 1 }}>
+      {(showBackToBottom || pending || failed) && <button data-arkme-feedback="neutral" type="button" aria-label={label}
+        title={pending ? `${label}…` : label} aria-busy={pending} disabled={pending}
+        onClick={() => { void activate() }} style={{ ...button, minWidth: 50, padding: historical ? '0 12px' : 0, height: 30, flexShrink: 0, opacity: pending ? 0.6 : 1 }}>
+        {historical && <span style={{ fontSize: 12 }}>{label}</span>}
         <img src={`data:image/svg+xml;base64,${backBottomIcon}`} width={24} height={24} style={{ objectFit: 'none', filter: 'brightness(0)' }} alt="" aria-hidden />
       </button>}
     </div>
-    {failed && <div role="alert" data-arkme-bottom-error style={{ textAlign: 'right', color: arkmeTheme.danger, background: arkmeTheme.base, fontSize: 12, marginTop: 6 }}>{tr("暂时无法回到底部，请重试")}</div>}
+    {failed && <div role="alert" data-arkme-bottom-error style={{ textAlign: 'right', color: arkmeTheme.danger, background: arkmeTheme.base, fontSize: 12, marginTop: 6 }}>{historical ? tr('暂时无法回到最新，请重试') : tr('暂时无法回到底部，请重试')}</div>}
   </div>
 }

@@ -15,14 +15,16 @@ const cacheLabel = (value: number) => tr(({ 2: '未命中', 3: '已命中', 4: '
 
 export function ArkmeStorageUsageBreakdown({ usage, formatBytes }: { usage: ArkmeAccountStorageUsage; formatBytes(value: number): string }) {
   useArkmeLocale()
-  const labels: Record<ArkmeStorageCategory, string> = { image: '图片', video: '视频', file: '文件', backgroundVoice: '背景音', callRecording: '通话录音', other: '其他' }
+  const labels: Record<ArkmeStorageCategory, string> = { image: '图片', video: '视频', file: '文件', backgroundVoice: '背景音', callRecording: '通话录音', recording: '录音', other: '其他' }
+  const breakdown = usage.breakdown === undefined ? undefined : usage.breakdown.some(item => item.category === 'recording')
+    ? usage.breakdown : [...usage.breakdown, { category: 'recording' as const, bytes: 0, fileCount: 0 }]
   return <div className="arkme-usage-breakdown" data-usage-detail="storage">
+    {usage.breakdown !== undefined && usage.usedBytes === 0 && <p>{tr('当前未使用云存储空间')}</p>}
     {usage.breakdown === undefined ? <p role="status">{tr('存储分类明细暂不可用，汇总用量仍有效，请稍后刷新。')}</p>
-      : usage.usedBytes === 0 ? <p>{tr('当前未使用云存储空间')}</p>
       : <ul className="arkme-storage-composition" aria-label={tr('空间构成')}>
-        {usage.breakdown.map(item => <li key={item.category}>
+        {breakdown!.map(item => <li key={item.category}>
           <span>{tr(labels[item.category])}</span><strong>{formatBytes(item.bytes)}</strong>
-          <span>{new Intl.NumberFormat(arkmeIntlLocale(), { style: 'percent', maximumFractionDigits: 1 }).format(item.bytes / usage.usedBytes)}</span>
+          <span>{new Intl.NumberFormat(arkmeIntlLocale(), { style: 'percent', maximumFractionDigits: 1 }).format(usage.usedBytes > 0 ? item.bytes / usage.usedBytes : 0)}</span>
         </li>)}
       </ul>}
     <small>{tr('占比按已用空间计算。文字、快记短语音和缩略图不计入存储空间。')}</small>

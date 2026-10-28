@@ -1,3 +1,4 @@
+import { AttachmentPreviewSurface } from '../src/client/attachment-preview-window.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeFileActions, ArkmeFileViewer, arkmeClipboardImageBlob, useArkmeOriginal } from '../src/client/ArkmeFileViewer.js'
@@ -7,6 +8,7 @@ import { ArkmeFileQuickView } from '../src/client/ArkmeFileQuickView.js'
 import { ArkmeFileCard } from '../src/client/ArkmeRichContent.js'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
+import { ArkmeMediaAccessContext } from '../src/client/media-access.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
@@ -16,6 +18,25 @@ const original = { localRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('file save UI', () => {
+  it('uses contextual bytes for Save As without treating a URL as a native file grant', async () => {
+    vi.stubGlobal('document', { body: {}, activeElement: null })
+    const writable = { write: vi.fn(), close: vi.fn(), abort: vi.fn() }
+    vi.stubGlobal('window', { showSaveFilePicker: async () => ({ createWritable: async () => writable }) })
+    const fetcher = vi.fn(async () => new Response('contextual bytes'))
+    vi.stubGlobal('fetch', fetcher)
+    const receive = vi.spyOn(ArkmeSdk.prototype, 'receiveFile')
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeMediaAccessContext.Provider value={{ url: () => '/authorized-context-file' }}><ArkmeFileViewer block={block} onClose={() => {}} /></ArkmeMediaAccessContext.Provider>) })
+      expect(view.root.findByProps({ 'aria-label': '打开文件' }).props.disabled).toBe(true)
+      const save = view.root.findByProps({ 'aria-label': '另存为文件' })
+      expect(save.props.disabled).toBe(false)
+      await act(async () => { save.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(fetcher).toHaveBeenCalledWith('/authorized-context-file', { signal: expect.any(AbortSignal) })
+      expect(writable.close).toHaveBeenCalledOnce()
+      expect(receive).not.toHaveBeenCalled()
+    } finally { if (view) await act(async () => view.unmount()) }
+  })
   it.each(['a.pdf', 'a.md', 'a.txt'])('pairs the portaled %s preview surface and text with host theme tokens', async fileName => {
     vi.stubGlobal('document', { body: {}, activeElement: null })
     vi.stubGlobal('fetch', async () => new Response('Preview text'))
@@ -980,4 +1001,60 @@ describe('file quick search UI', () => {
     expect(JSON.stringify(view.toJSON())).toContain('report.pdf')
     await act(async () => view.unmount())
   })
+})
+
+describe('session independent preview', () => {
+  it('renders into a nonmodal surface and hides navigation for a single file', async () => {
+    const doc = { body: {}, activeElement: null } as unknown as Document
+    const close = vi.fn()
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<AttachmentPreviewSurface.Provider value={doc}><ArkmeFileViewer block={block} onClose={close} /></AttachmentPreviewSurface.Provider>) })
+    expect(view.root.findByProps({role:'dialog'}).props['aria-modal']).toBeUndefined()
+    expect(view.root.findByProps({role:'dialog'}).props.style.outline).toBe('none')
+    expect(view.root.findAllByProps({'aria-label':'关闭文件预览'})).toHaveLength(0)
+    expect(view.root.findAllByProps({'aria-label':'上一个文件'})).toHaveLength(0)
+    const overlay = view.root.findAllByType('div').find(node => node.props.onMouseDown !== undefined)!
+    const target = {}
+    act(() => overlay.props.onMouseDown({target,currentTarget:target}))
+    expect(close).not.toHaveBeenCalled()
+    await act(async () => view.unmount())
+  })
+  it('routes cached non-previewable files through the session preview when opted in', async () => {
+    const open = vi.spyOn(ArkmeSdk.prototype, 'openLocalFile').mockResolvedValue(undefined)
+    const onOpen = vi.fn()
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeFileCard alwaysPreview block={{...block, localFileRef:original.localRef}} onOpen={onOpen} />) })
+    await act(async () => view.root.findByType('button').props.onClick({stopPropagation(){}}))
+    expect(onOpen).toHaveBeenCalledOnce()
+    expect(open).not.toHaveBeenCalled()
+    await act(async () => view.unmount())
+  })
+})
+
+it('uses the preview window save picker and treats its cross-realm cancellation as cancellation', async () => {
+  const mainPicker = vi.fn(async () => { throw new Error('wrong window') })
+  const childPicker = vi.fn(async () => { throw { name: 'AbortError', message: 'cancelled' } })
+  vi.stubGlobal('window', { showSaveFilePicker: mainPicker })
+  const doc = { body: {}, activeElement: null, defaultView: { showSaveFilePicker: childPicker } } as unknown as Document
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(<AttachmentPreviewSurface.Provider value={doc}><ArkmeFileViewer block={{...block,localFileRef:original.localRef}} onClose={() => {}} /></AttachmentPreviewSurface.Provider>) })
+  await act(async () => { view.root.findByProps({'aria-label':'另存为文件'}).props.onClick(); await Promise.resolve() })
+  expect(childPicker).toHaveBeenCalledOnce()
+  expect(mainPicker).not.toHaveBeenCalled()
+  expect(JSON.stringify(view.toJSON())).not.toContain('保存失败')
+  expect(JSON.stringify(view.toJSON())).not.toContain('cancelled')
+  await act(async () => view.unmount())
+})
+
+it('shows a completion toast in the independent file window after saving bytes', async () => {
+  const writable = { write: vi.fn(async () => {}), close: vi.fn(async () => {}), abort: vi.fn(async () => {}) }
+  const doc = { body: {}, activeElement: null, defaultView: { showSaveFilePicker: async () => ({createWritable: async () => writable}) } } as unknown as Document
+  vi.stubGlobal('fetch', async () => new Response('file bytes'))
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(<AttachmentPreviewSurface.Provider value={doc}><ArkmeFileViewer block={{...block,localFileRef:original.localRef}} onClose={() => {}} /></AttachmentPreviewSurface.Provider>) })
+  await act(async () => { view.root.findByProps({'aria-label':'另存为文件'}).props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
+  expect(view.root.findByProps({'data-arkme-file-action-toast':'success'}).children).toContain('保存成功')
+  expect(view.root.findAllByType('p').filter(node => node.children.includes('保存成功'))).toHaveLength(0)
+  expect(writable.close).toHaveBeenCalledOnce()
+  await act(async () => view.unmount())
 })

@@ -1,4 +1,4 @@
-import type { NativeChatForwardSnapshot } from '../native-chat-forward-contract.js'
+import type { NativeChatSelectionSnapshot } from '../native-chat-selection-contract.js'
 import type { ArkmeSourceItem, ArkmeSourceSendResult } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 
@@ -8,7 +8,7 @@ export interface NativeForwardDelivery {
   send(target: ArkmeSourceItem, comment: string, signal: AbortSignal): Promise<ArkmeSourceSendResult>
 }
 export interface NativeForwardContent {
-  snapshot: NativeChatForwardSnapshot
+  snapshot: NativeChatSelectionSnapshot
   userId: number
   delivery: NativeForwardDelivery
 }
@@ -31,7 +31,7 @@ export function isNativeForwardCaller(host: Window, caller: Window): boolean {
     .some(frame => frame.contentWindow === caller)
 }
 
-export function nativeForwardPreview(snapshot: NativeChatForwardSnapshot) {
+export function nativeForwardPreview(snapshot: NativeChatSelectionSnapshot) {
   const first = snapshot.messages[0]
   return {
     title: `我和DeepSeek Harness的${snapshot.messages.length > 1 ? `${snapshot.messages.length}条` : ''}快记`,

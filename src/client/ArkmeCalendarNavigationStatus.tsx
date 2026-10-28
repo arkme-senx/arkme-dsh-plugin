@@ -1,5 +1,5 @@
 import { tr } from './locale.js'
-import { IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconLoadingOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { arkmeTheme } from './arkme-theme.js'
 import type { SelfCalendarNavigationStatus } from './use-self-calendar-navigation.js'
 
@@ -17,7 +17,7 @@ export function ArkmeCalendarNavigationStatus({ status, onCancel, onRetry }: {
     margin: '8px 16px', padding: '10px 12px', borderRadius: 10,
     background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13,
   }}>
-    {status.phase === 'loading' && <IconLoadingOutline16 className="arkme-icon-spin" />}
+    {status.phase === 'loading' && <IconLoadingOutlineMedium className="arkme-icon-spin" />}
     <span style={{ flex: 1 }}>{status.phase === 'loading'
       ? tr("正在定位 {v0}…", { v0: date }) : `${date}：${status.error ?? '定位失败'}`}</span>
     {status.phase === 'error' && <button type="button" style={actionStyle} data-arkme-feedback onClick={onRetry}>{tr("重试")}</button>}

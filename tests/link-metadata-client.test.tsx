@@ -129,7 +129,7 @@ describe('Arkme link metadata presentation', () => {
     expect(failedRenderer!.root.findByProps({ 'data-arkme-text-link': 'true' }).props['data-arkme-link-title']).toBe('fallback')
   })
 
-  it('uses the fallback label when Host returns a generic page title', async () => {
+  it('keeps internal links readable without sending them to generic webpage scraping', async () => {
     const generic: ArkmeLinkMetadataResolver = {
       resolve: vi.fn(async () => ({ url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef', title: '即我' })),
     }
@@ -143,8 +143,30 @@ describe('Arkme link metadata presentation', () => {
       await Promise.resolve()
     })
 
-    expectLinkLabel(renderer!, '分享链接')
-    expect(renderer!.root.findByProps({ 'data-arkme-text-link': 'true' }).props['data-arkme-link-title']).toBe('fallback')
+    expectLinkLabel(renderer!, 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef')
+    expect(generic.resolve).not.toHaveBeenCalled()
+    expect(renderer!.root.findByProps({ 'data-arkme-text-link': 'true' }).props['data-arkme-link-title']).toBe('raw')
+  })
+
+  it('keeps a supplied internal-link name without webpage fetching and honors raw mode', async () => {
+    const url = 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef'
+    const resolver: ArkmeLinkMetadataResolver = { resolve: vi.fn(async () => null) }
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ArkmeLinkText text={url} fallbackLabel="井字棋（联机版）" metadataResolver={resolver} />)
+    })
+    expectLinkLabel(renderer!, '井字棋（联机版）')
+    expect(renderer!.root.findByType('a').props.href).toBe(url)
+    expect(renderer!.root.findByType('a').props['data-arkme-link-title']).toBe('fallback')
+    expect(renderer!.root.findByProps({ 'data-arkme-link-label': 'true' }).props.style.whiteSpace).toBe('nowrap')
+    expect(resolver.resolve).not.toHaveBeenCalled()
+    await act(async () => {
+      renderer!.update(<ArkmeLinkText text={url} fallbackLabel="井字棋（联机版）" linkLabelMode="raw" metadataResolver={resolver} />)
+    })
+    expectLinkLabel(renderer!, url)
+    expect(renderer!.root.findByType('a').props['data-arkme-link-title']).toBe('raw')
+    expect(resolver.resolve).not.toHaveBeenCalled()
+    renderer!.unmount()
   })
 
   it('keeps IP links clickable without fetching metadata, matching Jotmo link-title eligibility', async () => {

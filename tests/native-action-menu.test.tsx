@@ -31,6 +31,10 @@ it('uses the real native Menu and retains its viewport fitting for pointer ancho
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
   expect(menu.getAttribute('aria-label')).toBe('统一菜单')
   expect(host.contains(menu)).toBe(false)
+  // Even the native empty anchor must not create a line between conversation rows.
+  const anchor = host.querySelector<HTMLElement>('[data-arkme-command-menu]')!
+  expect(getComputedStyle(anchor).position).toBe('fixed')
+  expect(anchor.style.height).toBe('0px')
   expect(menu.style.left).toBe('970px'); expect(menu.style.top).toBe('660px')
   const buttons = [...menu.querySelectorAll('button')]
   await act(async () => buttons[0]!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })))
@@ -59,7 +63,7 @@ it('navigates enabled items by keyboard and restores focus on Escape', async () 
   expect(document.activeElement).toBe(buttons[2])
   await act(async () => buttons[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })))
   expect(document.activeElement).toBe(buttons[0])
-  await act(async () => buttons[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  await act(async () => buttons[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
   expect(close).toHaveBeenCalledOnce(); expect(document.activeElement).toBe(host.querySelector('button'))
 })
 
@@ -102,4 +106,35 @@ it('dismisses when clicking inside the embedded Harness document', async () => {
     actions={[{ id: 'one', label: '第一项', onSelect: vi.fn() }]} />))
   await act(async () => frame.contentDocument!.body.dispatchEvent(new frame.contentWindow!.MouseEvent('pointerdown', { bubbles: true })))
   expect(close).toHaveBeenCalledOnce(); frame.remove()
+})
+
+it('keeps an opted-in modal menu inside the dialog and retains keyboard dismissal', async()=>{
+ const close=vi.fn()
+ await act(async()=>root.render(<dialog open><ArkmeActionMenu open portal={false} label="头像操作" autoFocus onClose={close} anchor={<button>更换头像</button>} actions={[{id:'image',label:'上传图片',onSelect:vi.fn()}]}/></dialog>))
+ const menu=document.querySelector<HTMLElement>('[role="menu"]')!
+ expect(host.querySelector('dialog')!.contains(menu)).toBe(true)
+ expect(document.activeElement).toBe(menu.querySelector('button'))
+ await act(async()=>menu.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})))
+ expect(close).toHaveBeenCalledOnce()
+ expect(document.activeElement).toBe(host.querySelector('dialog button'))
+})
+
+
+it('ignores scroll notifications queued before the point menu opened, but dismisses on subsequent source scrolling', async () => {
+  const close = vi.fn()
+  const scrollport = document.createElement('div')
+  document.body.append(scrollport)
+  const queued = new Event('scroll')
+  Object.defineProperty(queued, 'timeStamp', { value: window.performance.now() - 1 })
+  try {
+    await act(async () => root.render(<ArkmeActionMenu label="滚动中的消息菜单" point={{ x: 30, y: 40 }} onClose={close}
+      actions={[{ id: 'reply', label: '延展', onSelect: vi.fn() }]} />))
+    await act(async () => scrollport.dispatchEvent(queued))
+    expect(close).not.toHaveBeenCalled()
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+    await act(async () => menu.dispatchEvent(new Event('scroll')))
+    expect(close).not.toHaveBeenCalled()
+    await act(async () => scrollport.dispatchEvent(new Event('scroll')))
+    expect(close).toHaveBeenCalledOnce()
+  } finally { scrollport.remove() }
 })

@@ -33,6 +33,43 @@ afterEach(() => {
 })
 
 describe('compact conversation directory styles', () => {
+  it.each([
+    { compactDirectory: false, isMuted: false },
+    { compactDirectory: true, isMuted: false },
+    { compactDirectory: false, isMuted: true },
+    { compactDirectory: true, isMuted: true },
+  ])('keeps group attention out of private unread indicators (compact=$compactDirectory, muted=$isMuted)', ({ compactDirectory, isMuted }) => {
+    const interaction = { latest: { interactionRef: 'interaction', privateSourceRef: privateChat.sourceRef,
+      peerName: privateChat.displayName, groupSourceRef: 'group', groupName: '原群', sequence: 8,
+      occurredAtMillis: 80, senderIsMe: false, summary: '@ 我', unread: true, attention: true },
+      unreadCount: 2, attentionCount: 2, version: 'v1' }
+    // Unread arrivals and read-to-zero must behave identically with or without
+    // outstanding group mentions, including mute and 99+ display rules.
+    for (const directUnread of [0, 3, 103, 0]) {
+      const source = { ...privateChat, isMuted, unreadCount: directUnread }
+      arkmeChatDirectory.publish([])
+      arkmeChatDirectory.publish([source])
+      const baseline = new JSDOM(renderToStaticMarkup(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />))
+      arkmeChatDirectory.publish([])
+      arkmeChatDirectory.publish([{ ...source, privateInteraction: interaction }])
+      const dom = new JSDOM(renderToStaticMarkup(<ArkmeNavigation compactDirectory={compactDirectory} embeddedProductShell />))
+      try {
+        const row = dom.window.document.querySelector('[data-arkme-directory-row="source"]')!
+        const baselineRow = baseline.window.document.querySelector('[data-arkme-directory-row="source"]')!
+        const avatar = row.querySelector('[data-arkme-conversation-content]')!.previousElementSibling!
+        const baselineAvatar = baselineRow.querySelector('[data-arkme-conversation-content]')!.previousElementSibling!
+        expect(avatar.outerHTML).toBe(baselineAvatar.outerHTML)
+        expect(row.getAttribute('aria-label')).toBe(baselineRow.getAttribute('aria-label'))
+        if (directUnread === 0) expect(row.getAttribute('aria-label')).toBe(privateChat.displayName)
+        else if (isMuted) expect(row.getAttribute('aria-label')).toContain('有未读消息，已免打扰')
+        else expect(row.getAttribute('aria-label')).toContain(`${directUnread} 条未读`)
+        expect(arkmeChatDirectory.getSnapshot().sources[0]).toMatchObject({ unreadCount: directUnread,
+          privateInteraction: { unreadCount: 2, attentionCount: 2 } })
+        expect(arkmeChatDirectory.totalBadgeUnreadCount()).toBe(isMuted ? 0 : directUnread)
+      } finally { dom.window.close(); baseline.window.close() }
+    }
+  })
+
   it.each([false, true])('shares the rail marker and follows only the selected conversation (compact=%s)', compactDirectory => {
     const markerRules = css.match(/[^{}]*\[data-arkme-selection-marker\][^{}]*\{[^{}]*\}/g) ?? []
     for (const [label, select] of [
@@ -54,7 +91,7 @@ describe('compact conversation directory styles', () => {
         const shared = rules.find(rule => rule.style.position === 'absolute')!
         expect(shared, 'navigation and conversation rows must use one marker rule').toBeDefined()
         const railMarker = document.querySelector('[data-arkme-selection-marker]')!
-        const selectors = shared.selectorText.split(',').map(selector => selector.trim())
+        const selectors = shared.selectorText.split(/,(?![^()]*\))/).map(selector => selector.trim())
         expect(selectors.some(selector => railMarker.matches(selector))).toBe(true)
         expect(shared.style.width).toBe('2px')
         expect(shared.style.height).toBe('33px')
@@ -65,7 +102,7 @@ describe('compact conversation directory styles', () => {
         expect(shared.style.getPropertyValue('pointer-events')).toBe('none')
         expect(shared.style.background).toBe('var(--arkme-directory-accent)')
         expect(rules.find(rule => rule.selectorText === ':root')!.style.getPropertyValue('--arkme-directory-accent')).toBe('#9eadff')
-        const rows = [...document.querySelectorAll('button[role="treeitem"]')]
+        const rows = [...document.querySelectorAll('[role="treeitem"]')]
         // jsdom cannot compute pseudo-elements; match their originating rows.
         const marked = rows.filter(row => selectors.some(selector => selector.endsWith('::before')
           && row.matches(selector.replace(/::before$/, ''))))
@@ -130,7 +167,7 @@ describe('compact conversation directory styles', () => {
       const { document } = dom.window
       const directory = document.querySelector('[aria-label="Arkme 会话列表"]')!
       expect(directory.getAttribute('data-arkme-directory-compact')).toBe(compactDirectory ? 'true' : null)
-      const rows = Array.from(directory.querySelectorAll<HTMLButtonElement>('button[role="treeitem"]'))
+      const rows = Array.from(directory.querySelectorAll<HTMLElement>('[role="treeitem"]'))
       const ordinary = rows.find(row => row.getAttribute('aria-label')?.startsWith('普通私聊'))!
       expect(ordinary.closest('[data-arkme-directory-chunk]')).not.toBeNull()
       expect(ordinary.getAttribute('aria-selected')).toBe('true')
@@ -139,7 +176,7 @@ describe('compact conversation directory styles', () => {
       for (const label of ['DeepSeek Harness', '发给自己', 'Arko', '普通私聊', '免打扰群聊']) {
         const row = rows.find(row => row.textContent?.includes(label))!
         expect(row, label).toBeDefined()
-        expect(row.disabled).toBe(false)
+        expect(row.getAttribute('aria-disabled')).not.toBe('true')
         expect(row.style.padding).toBe(ordinary.style.padding)
         expect(row.style.gap).toBe(ordinary.style.gap)
         expect(row.style.paddingLeft).toBe('10px')

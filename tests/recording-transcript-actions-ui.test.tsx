@@ -241,14 +241,19 @@ describe('transcript forwarding interaction', () => {
 
   it('keeps a renamed topic in the same delivery attempt when its capability ref rotates', async () => {
     const draft = attempt(); let renamed = false
+    let confirm!: () => void
     mocks.call.mockImplementation(async operation => {
       if (operation === 'recordings.forward.capabilities') return { recordTargetsSupported: true }
       if (operation === 'sources.list') return { items: [{ ...target('topic'), sourceKey: undefined, kind: 'topic', topicHierarchyKey: 'stable-topic', sourceRef: renamed ? 'new-topic-ref' : 'old-topic-ref' }], hasMore: false }
+      if (operation === 'recordings.forward') return new Promise(resolve => { confirm = () => resolve({ recordUid: 'confirmed' }) })
       return { recordUid: 'confirmed' }
     })
     await act(async () => { renderer = create(<RecordingTranscriptForward attempt={draft} onClose={() => {}} onComplete={() => {}} />) })
     await act(async () => { renderer.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
-    await act(async () => { sendButton().props.onClick(); renderer.unmount() })
+    await act(async () => { sendButton().props.onClick() })
+    expect(mocks.call.mock.calls.filter(([operation]) => operation === 'recordings.forward')).toHaveLength(1)
+    // The owner has accepted the request; a later receipt must survive view teardown.
+    await act(async () => { renderer.unmount(); confirm() })
     renamed = true
     await act(async () => { renderer = create(<RecordingTranscriptForward attempt={draft} onClose={() => {}} onComplete={() => {}} />) })
     expect(renderer.root.findByProps({ type: 'checkbox' }).props.disabled).toBe(true)
@@ -327,16 +332,21 @@ describe('transcript forwarding interaction', () => {
   })
 })
 
-it('searches every occurrence, navigates cyclically, clears on date changes, and restricts selection to one recording', async () => {
+it('searches every occurrence, navigates cyclically, clears on date changes, and permits copying or playback across recordings while keeping the forwarding restriction', async () => {
   vi.setSystemTime(new Date(2026, 8, 4, 12))
   const scroll = vi.fn()
+  vi.stubGlobal('requestAnimationFrame', () => 1)
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  vi.stubGlobal('document', { ...document, body: {}, getSelection: () => null })
+  vi.stubGlobal('window', { innerWidth: 1400, innerHeight: 900, addEventListener() {}, removeEventListener() {} })
   mocks.call.mockImplementation(async (operation, params) => {
     if (operation === 'recordings.calendar') return { days: [] }
     if (operation === 'recordings.summary-model-config') return { options: [] }
     if (operation === 'recordings.day') return { dateStamp: params.dateStamp, transcript: section([item('one'), item('two', 'other')]), summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } } as ArkmeRecordingDay
     throw new Error(operation)
   })
-  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />, { createNodeMock: () => ({ querySelector: () => ({ scrollIntoView: scroll }) }) }) })
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />, { createNodeMock: () => ({ setAttribute() {}, removeAttribute() {}, querySelector: () => ({ scrollIntoView: scroll }), querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} }) }) })
+  await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索' }).props.onClick() })
   await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onChange({ target: { value: '你好' } }) })
   expect(renderer.root.findAllByType('mark')).toHaveLength(4)
   await act(async () => { renderer.root.findByProps({ 'aria-label': '上一个匹配' }).props.onClick() })
@@ -344,20 +354,25 @@ it('searches every occurrence, navigates cyclically, clears on date changes, and
   expect(scroll).toHaveBeenCalled()
   await act(async () => { renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onKeyDown({ key: 'Enter', preventDefault() {} }) })
   expect(JSON.stringify(renderer.toJSON())).toContain('1/4')
-  await act(async () => { renderer.root.findByProps({ 'aria-label': '多选' }).props.onClick() })
-  await act(async () => { renderer.root.findAllByProps({ type: 'checkbox' })[0]!.props.onChange({ target: { checked: true } }) })
+  expect(renderer.root.findAllByProps({ 'aria-label': '多选' })).toHaveLength(0)
+  await act(async () => { renderer.root.findAllByProps({ 'data-recording-transcript-item': 'one' })[0]!.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 }) })
+  await act(async () => { renderer.root.findByProps({ role: 'menuitem', 'aria-label': '多选' }).props.onClick() })
+  expect(renderer.root.findAllByProps({ type: 'checkbox' })[0]!.props.checked).toBe(true)
   await act(async () => { renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.onChange({ target: { checked: true } }) })
-  expect(renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.checked).toBe(false)
-  expect(JSON.stringify(renderer.toJSON())).toContain('请选择同一次录音')
+  expect(renderer.root.findAllByProps({ type: 'checkbox' })[1]!.props.checked).toBe(true)
+  expect(renderer.root.findByProps({ 'aria-label': '转发' }).props.disabled).toBe(true)
+  expect(renderer.root.findByProps({ 'aria-label': '复制链接' }).props.disabled).toBe(true)
+  expect(JSON.stringify(renderer.toJSON())).toContain('复制和播放不受影响')
   expect(renderer.root.findByProps({ 'aria-label': '录音多选操作' })).toBeTruthy()
   await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
-  expect(renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.value).toBe('')
+  expect(renderer.root.findAllByProps({ 'aria-label': '搜索当天转写' })).toHaveLength(0)
+  expect(renderer.root.findByProps({ 'aria-label': '搜索' }).props['aria-expanded']).toBe(false)
   expect(renderer.root.findAllByProps({ type: 'checkbox' })).toHaveLength(0)
   expect(renderer.root.findAllByProps({ 'aria-label': '编辑转写（开发中）' })).toHaveLength(0)
   for (const label of ['总结', '时间轴']) {
     await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes(label))!.props.onClick() })
     const pane = renderer.root.findByProps({ 'aria-label': '录音内容' }).parent!
-    expect(pane.props.style.gridTemplateRows).toBe('40px minmax(0,1fr)')
+    expect(pane.props.style.gridTemplateRows).toBe('32px minmax(0,1fr)')
   }
 })
 
@@ -372,7 +387,7 @@ it('does not open a comparison for a previously selected date when its response 
     throw new Error(operation)
   })
   await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
-  await act(async () => { renderer.root.findByProps({ 'aria-label': '对比' }).props.onClick() })
+  await act(async () => { renderer.root.findByProps({ 'aria-label': '转写对比' }).props.onClick() })
   expect(renderer.root.findByProps({ 'aria-label': '正在准备转写对比' }).props.disabled).toBe(true)
   const signal = mocks.call.mock.calls.find(([op]) => op === 'recordings.compare')?.[2] as AbortSignal
   await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
@@ -380,5 +395,5 @@ it('does not open a comparison for a previously selected date when its response 
   await act(async () => { resolveComparison(old) })
   expect(signal.aborted).toBe(true)
   expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
-  expect(renderer.root.findByProps({ 'aria-label': '对比' }).props.disabled).toBe(false)
+  expect(renderer.root.findByProps({ 'aria-label': '转写对比' }).props.disabled).toBe(false)
 })

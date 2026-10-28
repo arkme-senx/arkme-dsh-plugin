@@ -11,14 +11,14 @@ import { membershipDescription, membershipLabel, type MembershipState } from './
 // Summary from Flutter's shared H5 membership-rights definitions. Full comparison
 // opens the SAME mobile page, not a second desktop-only entitlement table.
 export const MEMBERSHIP_SUMMARY = {
-  1: ['50 GB 存储空间', '每月 1,200 分钟转写', '共享主题最多 200 位协作者', '2 级主题整理', 'AI 润色与隐私锁'],
-  2: ['100 GB 存储空间', '每月 3,600 分钟转写', '共享主题最多 500 位协作者', '5 级主题整理', 'AI 润色与隐私锁'],
+  1: ['50 GB 存储空间', '每月赠送 AI 额度', '每月 1,200 分钟转写', '共享主题最多 200 位协作者', '2 级主题整理', 'AI 润色与隐私锁'],
+  2: ['100 GB 存储空间', '每月赠送 AI 额度', '每月 3,600 分钟转写', '共享主题最多 500 位协作者', '5 级主题整理', 'AI 润色与隐私锁'],
 } as const
 
 export function ArkmeMembershipDialog({ userId, state, onRefresh, onClose, returnFocusRef }: {
   userId: number; state: MembershipState; onRefresh: () => void; onClose: () => void; returnFocusRef?: RefObject<HTMLElement>
 }) {
-  useArkmeLocale()
+  const locale = useArkmeLocale()
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
   const [chosenTier, setTier] = useState<1 | 2>()
   const tier = chosenTier ?? (state.status === 'ready' && state.value.memberType === 2 ? 2 : 1)
@@ -72,7 +72,7 @@ export function ArkmeMembershipDialog({ userId, state, onRefresh, onClose, retur
       {([1, 2] as const).map(value => <button type="button" key={value} aria-pressed={tier === value} onClick={() => { setTier(value); setGuidance(false) }}>{value === 1 ? 'VIP' : 'SVIP'}</button>)}
     </div>
     <div className="arkme-member-columns">
-      <section className="arkme-member-benefits"><h3>{label} {tr("核心权益")}</h3><ul>{MEMBERSHIP_SUMMARY[tier].map(text => <li key={text}><Check size={18} aria-hidden />{text}</li>)}</ul><a href={`https://jiwo.cc/app/membership/rights?member_type=${tier === 1 ? 'vip' : 'svip'}&lang=zh&theme=system`} target="_blank" rel="noopener noreferrer">{tr("查看完整权益对比 ↗")}</a><small>{tr("与手机端共用权益说明")}</small></section>
+      <section className="arkme-member-benefits"><h3>{label} {tr("核心权益")}</h3><ul>{MEMBERSHIP_SUMMARY[tier].map(text => <li key={text}><Check size={18} aria-hidden />{tr(text)}</li>)}</ul><small>{tr('一次性额度永久有效；月度额度月底到期。')}</small><a href={`https://jiwo.cc/app/membership/rights?member_type=${tier === 1 ? 'vip' : 'svip'}&highlight_right_id=ai_points&lang=${locale}&theme=system`} target="_blank" rel="noopener noreferrer">{tr("查看完整权益对比 ↗")}</a></section>
       <section className="arkme-member-plans" aria-label={tr("会员套餐")}><h3>{lifetime ? '你已享有永久会员权益' : '选择套餐'}</h3>
         {lifetime ? <p>{tr("无需重复开通，当前会员权益可在同一账号下使用。")}</p> : <>
           {failed ? <p role="status">{tr("套餐暂时无法读取。")}<button type="button" onClick={() => setRevision(value => value + 1)}>{tr("重试")}</button></p> : !catalog ? <p role="status">{tr("正在读取在售套餐…")}</p> : products.length === 0 ? <p>{tr("暂无在售")} {label} {tr("套餐")}</p> : <div className="arkme-member-products" role="radiogroup" aria-label={tr("{v0} 套餐", { v0: label })}>

@@ -33,6 +33,10 @@ export function restoreArkmeComposerFocus(
   activeElementBelongsToComposer: boolean,
 ): boolean {
   if (target === null || target.disabled) return false
+  // A delayed send/unlock focus must not collapse a selection the reader made
+  // after the request started, even when the active element is still the body.
+  const selection = bodyElement?.ownerDocument?.getSelection?.()
+  if (selection && !selection.isCollapsed) return false
   if (activeElement !== null && activeElement !== bodyElement && !activeElementBelongsToComposer) return false
 
   target.focus({ preventScroll: true })

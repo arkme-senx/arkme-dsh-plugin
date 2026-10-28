@@ -1,3 +1,5 @@
+import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
+import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from '../src/client/message-selection-presentation.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -7,7 +9,20 @@ import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({
+  ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(),
+  ArkmeMessageTextSelectionToolbar: () => null,
+}))
+
+// These orchestration tests have no DOM; real underline portals are covered by arko-message-marks and message-underlines.
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({
+  useMessageUnderlines: () => ({ mark: undefined, getMarks: undefined, remove: undefined, layer: null }),
+}))
+
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
+// Orchestration uses react-test-renderer; real underline portals have dedicated DOM tests.
+vi.mock('../src/client/ArkmeMessageTextSelection.js', async original => ({ ...await original<typeof import('../src/client/ArkmeMessageTextSelection.js')>(), ArkmeMessageTextSelectionToolbar: () => null }))
+vi.mock('../src/client/ArkmeMessageUnderlines.js', () => ({ useMessageUnderlines: () => ({ layer: null }) }))
 vi.mock('../src/client/ArkmeDocumentComposerInput.js', async () => {
   const { forwardRef } = await import('react')
   return { ArkmeDocumentComposerInput: forwardRef(() => null) }
@@ -20,15 +35,16 @@ const item = (id: number, extra: Partial<ArkmeArkoHistoryItem> = {}): ArkmeArkoH
   messageActionConversationRef: 'session-88', messageActionCapabilities: { copyLink: true, forward: true }, ...extra,
 })
 beforeEach(() => {
+  arkoModelCache.clear()
   history = [item(1), item(2, { messageActionRef: undefined, messageActionConversationRef: undefined }), item(3, { role: 'divider' })]
   vi.stubGlobal('requestAnimationFrame', () => 0); vi.stubGlobal('cancelAnimationFrame', vi.fn())
-  vi.stubGlobal('document', { activeElement: null, body: {} })
+  vi.stubGlobal('document', { activeElement: null, body: {}, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   arkmeArkoProfileStore.activateUser(undefined)
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
   vi.mocked(callArkme).mockReset()
   vi.mocked(callArkme).mockImplementation(async operation => {
     if (operation === 'arko.session') return { sessionId: 88 } as never
-    if (operation === 'arko.history') return { items: history } as never
+    if (operation === 'arko.messages') return { items: history } as never
     if (operation === 'arko.models') return { options: [], effectiveRouteKey: 'model' } as never
     if (operation === 'arko.profile') return { displayName: 'Arko', version: 1 } as never
     if (operation === 'user.profile') return { profile: {} } as never
@@ -69,7 +85,7 @@ it('keeps display selection separate from cross-session action eligibility', asy
   await mount(); await select('history:1', 'history:2')
   expect(bar()!.props['aria-label']).toBe('已选择 2 条消息')
   expect(button('转发').props.disabled).toBe(true)
-  await act(async () => button('转发').props.onClick())
+  await act(async () => button('转发').props.onClick({ currentTarget: {} }))
   expect(vi.mocked(callArkme).mock.calls.some(([op]) => op === 'sources.list')).toBe(false)
 })
 it('clears selection on account changes and blocks marquee while a dialog is open', async () => {
@@ -78,7 +94,7 @@ it('clears selection on account changes and blocks marquee while a dialog is ope
   await act(async () => arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10002 }))
   expect(bar()).toBeUndefined()
   expect(renderer.root.findByType(RegionMarquee).props.scopeKey).not.toBe(before)
-  await act(async () => renderer.root.findByProps({ title: '清除上下文' }).props.onClick())
+  await act(async () => renderer.root.findByType(ArkmeArkoHistoryTools).props.onClear())
   expect(renderer.root.findByType(RegionMarquee).props.enabled).toBe(false)
 })
 
@@ -112,10 +128,10 @@ it('uses the common left selection rail for both message roles and the labeled e
 it('copies selected emoji messages as visible text using the same projection as menu actions', async () => {
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
-  vi.stubGlobal('document', { activeElement: null, body: {}, defaultView: { navigator } })
+  vi.stubGlobal('document', { activeElement: null, body: {}, addEventListener: vi.fn(), removeEventListener: vi.fn(), defaultView: { navigator } })
   vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout: vi.fn() }))
   history = [item(1, { text: '你好[jm_emoji:smiling_face]', messageActionRef: undefined })]
   await mount(); await select('history:1')
-  await act(async () => button('复制文本').props.onClick())
+  await act(async () => button('复制文本').props.onClick({ currentTarget: {} }))
   expect(writeText).toHaveBeenCalledWith('你好😊')
 })

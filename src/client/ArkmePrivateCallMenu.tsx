@@ -1,3 +1,4 @@
+import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties } from 'react'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
@@ -5,9 +6,12 @@ import { ARKME_CONVERSATION_HEADER_BUTTON_STYLE } from './ArkmeGroupChatControls
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 
 export interface ArkmePrivateCallMenuProps {
-  sourceRef: string
+  sourceRef?: string
   displayName: string
   assetBasePath?: string
+  onStart?: (mediaType: 'audio' | 'video') => void
+  personalIdentity?: boolean
+  busy?: boolean
 }
 
 const maskStyle: CSSProperties = {
@@ -23,24 +27,28 @@ function MenuAssetIcon({ assetBasePath, iconAsset, size = 16 }: { assetBasePath:
 }
 
 export function ArkmePrivateCallMenu({
-  sourceRef, displayName, assetBasePath = '/arkme-self/api/call',
+  sourceRef, displayName, assetBasePath = '/arkme-self/api/call', onStart, personalIdentity, busy,
 }: ArkmePrivateCallMenuProps) {
   useArkmeLocale()
   const [open, setOpen] = useState(false)
   const start = (mediaType: 'audio' | 'video') => {
     setOpen(false)
+    if (busy) return
+    if (onStart) { onStart(mediaType); return }
+    if (!sourceRef) return
+    if (conversationWindowRequested()) { void conversationWindowBridge()?.requestCall(mediaType).catch(() => {}); return }
     outgoingCallUi.request({ sourceRef, displayName, mediaType })
   }
   return <ArkmeActionMenu open={open} label={tr("选择通话方式")} align="end" onClose={() => setOpen(false)}
-    anchor={<button data-arkme-feedback="neutral" type="button" aria-label={tr("呼叫{v0}", { v0: displayName })}
+    anchor={<button data-arkme-feedback="neutral" type="button" disabled={busy} aria-busy={busy || undefined} aria-label={tr("呼叫{v0}", { v0: displayName })}
       aria-haspopup="menu" aria-expanded={open} title={tr("发起通话")}
       style={{ ...ARKME_CONVERSATION_HEADER_BUTTON_STYLE, appearance: 'none' }}
       onClick={() => setOpen(value => !value)}>
       <MenuAssetIcon assetBasePath={assetBasePath} iconAsset="call-linear-strong.svg" size={20} />
     </button>}
     actions={[
-      { id: 'audio', label: '语音通话', icon: <MenuAssetIcon assetBasePath={assetBasePath} iconAsset="call-linear.svg" />, onSelect: () => start('audio') },
-      { id: 'video', label: '视频通话', icon: <MenuAssetIcon assetBasePath={assetBasePath} iconAsset="video-linear.svg" />, onSelect: () => start('video') },
+      { id: 'audio', label: personalIdentity ? '以个人身份语音通话' : '语音通话', icon: <MenuAssetIcon assetBasePath={assetBasePath} iconAsset="call-linear.svg" />, onSelect: () => start('audio') },
+      { id: 'video', label: personalIdentity ? '以个人身份视频通话' : '视频通话', icon: <MenuAssetIcon assetBasePath={assetBasePath} iconAsset="video-linear.svg" />, onSelect: () => start('video') },
     ]}
   />
 }

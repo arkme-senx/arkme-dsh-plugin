@@ -15,9 +15,9 @@ describe('composer and message viewport resize', () => {
     })
     let height = 2000
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn(), removeEventListener: vi.fn() }
     const ref = { current: body as unknown as HTMLDivElement }
-    const content = { current: { getBoundingClientRect: () => ({ height }) } as HTMLElement }
+    const content = { current: { getBoundingClientRect: () => ({ height }), querySelectorAll: () => [] } as HTMLElement }
     function Harness({ grown }: { grown: boolean }) {
       useLayoutEffect(() => {
         if (grown) { height += 85; body.scrollHeight += 85 }
@@ -46,8 +46,8 @@ describe('composer and message viewport resize', () => {
       disconnect() {}
     })
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
-    const content = { getBoundingClientRect: () => ({ height }) }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
+    const content = { getBoundingClientRect: () => ({ height }), querySelectorAll: () => [] }
     const cleanup = observeConversationResize(body as unknown as HTMLElement, undefined, content as unknown as HTMLElement)
     resized()
     height += 500; body.scrollHeight += 500
@@ -75,7 +75,7 @@ describe('composer and message viewport resize', () => {
       disconnect = disconnect
     })
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn(), removeEventListener: vi.fn() }
     const ref = { current: body as unknown as HTMLDivElement }
     function Harness({ selecting }: { selecting: boolean }) {
       useLayoutEffect(() => {
@@ -101,9 +101,9 @@ describe('composer and message viewport resize', () => {
       disconnect = disconnect
     })
     let height = 2000
-    const content = { current: { getBoundingClientRect: () => ({ height }) } as HTMLElement }
+    const content = { current: { getBoundingClientRect: () => ({ height }), querySelectorAll: () => [] } as HTMLElement }
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn(), removeEventListener: vi.fn() }
     const ref = { current: body as unknown as HTMLDivElement }
     const restoreIntent = { current: undefined as boolean | undefined }
     function Harness({ revision, active = true }: { revision: number; active?: boolean }) {
@@ -147,7 +147,7 @@ describe('composer and message viewport resize', () => {
       disconnect = disconnect
     })
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
     const cleanup = observeConversationResize(body as unknown as HTMLElement)
     body.clientHeight = 400
     scrolled()
@@ -173,8 +173,8 @@ describe('composer and message viewport resize', () => {
       disconnect = disconnect
     })
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      addEventListener: vi.fn(), removeEventListener: vi.fn() }
-    const accessory = { getBoundingClientRect: () => ({ height }) }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const accessory = { getBoundingClientRect: () => ({ height }), querySelectorAll: () => [] }
     const cleanup = observeConversationResize(body as unknown as HTMLElement, accessory as unknown as HTMLElement)
     expect(observe.mock.calls.map(([node]) => node)).toEqual([body, accessory])
     resized() // initial delivery must not move the viewport

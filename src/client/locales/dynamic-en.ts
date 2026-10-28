@@ -1,5 +1,13 @@
 /** Interpolated UI messages. Values remain untouched (including user content). */
 export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
+{v0} 条相关消息|{v0} related messages
+录音 {v0}|Recorded {v0}
+始于前一天|Started the previous day
+延续至下一天|Continues into the next day
+暂无内容预览，展开查看详情|No preview available. Expand for details
+已有摘要：|Existing summary:
+群互动同步暂未完成，点击重试|Group interactions could not sync. Click to retry
+较早群互动暂未加载，点击重试|Earlier group interactions are not loaded. Click to retry
 {v0}的头像|Avatar of {v0}
 {v0} 的头像|Avatar of {v0}
 {v0}头像|Avatar of {v0}
@@ -39,6 +47,7 @@ export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 个月前|{v0} months ago
 {v0} 年前|{v0} years ago
 今天 {v0}|Today {v0}
+今年 {v0}|This year, {v0}
 昨天 {v0}|Yesterday {v0}
 前天 {v0}|Two days ago {v0}
 {v0}月{v1}日|{v0}/{v1}
@@ -46,6 +55,7 @@ export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 像素|{v0} px
 来源：{v0}|Source: {v0}
 私聊 {v0} 条|{v0} direct messages
+多来源活动|Activity from multiple sources
 群聊互动 {v0} 条|{v0} group interactions
 查看地点：{v0}|View location: {v0}
 查看小结来源：{v0}|View recap source: {v0}
@@ -252,4 +262,59 @@ Arkme 用户 {v0}|Arkme user {v0}
 {v0}；录音仍保留在本机，可重试或下载|{v0}; recording remains on this device. Retry or download it.
 参与者: {v0}|Participants: {v0}
 说话人 {v0}|Speaker {v0}
+
+AI 额度|AI allowance
+积分|points
+赠送积分|Granted points
+充值积分|Purchased points
+赠送积分到期时间|Grant expires
+月度|Monthly
+一次性|One-time
+永久 {v0}|Permanent {v0}
+{v0} {v1}（{v2} 到期）|{v0} {v1} (expires {v2})
+每月赠送 AI 额度|AI allowance granted every month
+一次性额度永久有效；月度额度月底到期。|One-time allowances never expire; monthly allowances expire at month end.
+任务进行中暂占|Reserved by running tasks:
+积分，结束后返还未用部分|points; unused points return when the task finishes
+赠送 {v0} · 充值 {v1}|Granted {v0} · Purchased {v1}
+赠送 {v0}|Granted {v0}
+充值 {v0}|Purchased {v0}
+查看赠送额度说明|View gift allowance details
+DSH 对话|DSH chat
+录音实体识别|Recording entity recognition
+AI 调用|AI usage
+（赠送）| (Gift)
+（充值）| (Purchased)
+（赠送 {v0} · 充值 {v1}）| (Gift {v0} · Purchased {v1})
+消费记录|Spending history
+模型调用|Model usage
+附加服务|Additional service
+消费月份|Spending month
+该月消费|Spent in selected month
+该月暂无积分消费|No point spending in selected month
+暂时无法读取|Could not load
+暂时无法读取消费明细。|Spending details could not be loaded.
+输入 Token|Input tokens
+输出 Token|Output tokens
+缓存命中|Cache hit
+缓存未命中|Cache miss
+加载失败，已有明细已保留。|Loading failed. Existing entries have been kept.
+积分充值|Buy points
+可用积分|Available points
+预占积分|Reserved points
+预占积分说明|About reserved points
+当前运行的任务预先占用的积分，任务完成后将返还未用积分。|Running tasks reserve points. Unused points return when the task finishes.
+正在加载积分…|Loading points…
+积分读取失败，点击重试|Points could not be loaded. Click to retry.
+积分加载中…|Loading points…
+积分读取失败|Points could not be loaded
+积分到账中，到账后会自动刷新可用积分。|Your points are being credited. Available points will refresh automatically.
+已到账，正在刷新可用积分|Credited. Refreshing available points…
+可用积分已刷新：|Available points refreshed:
+积分暂未刷新：|Points have not refreshed:
+刷新积分|Refresh points
+AI 额度 {v0}|AI allowance {v0}
+AI 额度充值流程|AI point purchase
+次调用|calls
+按用量扣积分 · 计费说明|Usage-based points · Pricing details
 `.trim().split('\n').map(line => { const p = line.indexOf('|'); return [line.slice(0, p), line.slice(p + 1)] }))

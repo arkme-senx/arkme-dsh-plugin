@@ -16,11 +16,11 @@ beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   mocks.call.mockReset()
-  mocks.call.mockImplementation(async (operation: string) => operation === 'data.deleted' ? { accountScope: 'prod:11', items: [{ recordUid: 'rec1', version: 2, title: '已删快记', text: '详情', sendAtMillis: 12345 }], mayHaveMore: false } : { accountScope: 'prod:11', canExport: true, recordCount: 10, voiceCount: 1, imageCount: 2, message: '', latestAtMillis: 0 })
+  mocks.call.mockImplementation(async (operation: string) => operation === 'arko.deleted' ? { items: [], hasMore: false } : operation === 'data.deleted' ? { accountScope: 'prod:11', items: [{ recordUid: 'rec1', version: 2, title: '已删快记', text: '详情', sendAtMillis: 12345 }], mayHaveMore: false } : { accountScope: 'prod:11', canExport: true, recordCount: 10, voiceCount: 1, imageCount: 2, message: '', latestAtMillis: 0 })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 11 })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent === text)!
+const button = (text: string) => [...document.querySelectorAll('button')].find(b => b.textContent === text)!
 describe('profile/settings navigation', () => {
   it('opens mine explicitly every time and public World stays all', () => {
     const ui = new ArkmeUiController()
@@ -41,14 +41,16 @@ describe('profile/settings navigation', () => {
     expect(selectArkmeSettingsSection('arkme-data')).toBe(false)
     host.innerHTML = ''
   })
-  it('registers usage immediately after account and has no profile usage modal', () => {
+  it('keeps data and usage next to account without a second profile usage modal', () => {
     const index = readFileSync(`${process.cwd()}/src/client/index.tsx`, 'utf8')
     expect(index).toMatch(/id: 'arkme-account',\s+order: -3/)
     expect(index).toContain("id: 'arkme-usage', order: -2")
+    expect(index).toContain("id: 'arkme-data', order: -2.5")
     const nav = readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')
     expect(nav.indexOf('className="arkme-member-entry"')).toBeGreaterThan(nav.indexOf('className="arkme-profile-identity-row"'))
     const trigger = nav.slice(nav.indexOf('<button ref={profileTriggerRef}'))
-    expect(trigger.indexOf('className="arkme-member-label"')).toBeLessThan(trigger.indexOf('<ArkmeUserAvatar'))
+    expect(trigger).toContain('className="arkme-member-label"')
+    expect(trigger).toContain("navigationHint.describedBy('profile')")
     expect(nav).not.toContain('ArkmeAccountUsageDialog')
     expect(nav).not.toContain('设置声音识别')
     expect(nav).not.toContain('打开 DSH 应用设置')
@@ -56,7 +58,8 @@ describe('profile/settings navigation', () => {
   it('shows data entries without requesting or mutating data on entry', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     expect(mocks.call).not.toHaveBeenCalled()
-    expect([...host.querySelectorAll('button')].map(b => b.textContent)).toEqual(['最近删除', '导入数据', '导出数据'])
+    expect([...host.querySelectorAll('.arkme-data-entries button')].map(b => b.textContent)).toEqual(['已归档主题', '最近删除', '导入数据', '导出数据'])
+    expect(host.querySelector('.arkme-data-open-platform a')?.getAttribute('href')).toBe('https://openapi.jotmo.cc/docs')
     await act(async () => button('导入数据').click())
     expect(host.querySelector('a')?.href).toBe('https://jiwo.cc/import')
     expect(host.querySelector('a')?.rel).toContain('noopener')
@@ -65,16 +68,27 @@ describe('profile/settings navigation', () => {
   it('requires explicit restore confirmation; cancel never writes', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('最近删除').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('恢复').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('取消').click())
-    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(mocks.call.mock.calls.filter(call => call[0] === 'data.deleted')).toHaveLength(1)
     await act(async () => button('恢复').click())
     await act(async () => button('确认恢复').click())
-    expect(mocks.call).toHaveBeenLastCalledWith('data.recover', { expectedAccountScope: 'prod:11', recordUid: 'rec1', version: 2 })
+    expect(mocks.call).toHaveBeenLastCalledWith('data.recover', { expectedAccountScope: 'prod:11', recordUid: 'rec1', version: 2 }, expect.any(AbortSignal))
     expect(host.textContent).toContain('已恢复')
     expect(host.querySelectorAll('li')).toHaveLength(0)
+  })
+  it('uses the existing list and controls for both independent data owners', async () => {
+    await act(async () => root.render(<ArkmeDataManagementSettings />))
+    await act(async () => button('最近删除').click())
+    expect(host.querySelector('[aria-label="Arko 对话消息"]')).toBeNull()
+    expect(host.querySelectorAll('.arkme-data-deleted-list')).toHaveLength(1)
+    expect(host.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
+    expect(host.textContent).not.toMatch(/刷新核对|恢复所选|下一页|上一页/)
+    expect(button('刷新')).toBeDefined()
+    expect(mocks.call.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['data.deleted', 'arko.deleted']))
+    expect(button('恢复')).toBeDefined()
   })
   it('makes export limitations explicit without creating an export session', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
@@ -98,7 +112,7 @@ describe('profile/settings navigation', () => {
     expect(host.textContent).not.toContain('暂无最近删除')
   })
   it('does not claim the whole bin is empty when the first batch is filtered out', async () => {
-    mocks.call.mockResolvedValue({ accountScope: 'prod:11', items: [], mayHaveMore: true, unverifiedCount: 0 })
+    mocks.call.mockImplementation(async op => op === 'arko.deleted' ? { items: [], hasMore: false } : { accountScope: 'prod:11', items: [], mayHaveMore: true, unverifiedCount: 0 })
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('最近删除').click())
     expect(host.textContent).toContain('本次读取范围内暂无可恢复记录，更多记录请在手机端查看。')
@@ -115,7 +129,7 @@ describe('profile/settings navigation', () => {
   })
   it('aborts data reads when switching accounts and does not reveal late results', async () => {
     let finish!: (value: unknown) => void
-    mocks.call.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    mocks.call.mockImplementation(op => op === 'arko.deleted' ? Promise.resolve({ items: [], hasMore: false }) : new Promise(resolve => { finish = resolve }))
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('最近删除').click())
     const signal = mocks.call.mock.calls[0]![2] as AbortSignal

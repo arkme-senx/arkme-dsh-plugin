@@ -15,6 +15,16 @@ const item: ArkmeTimelineItem = {
 }
 
 describe('message snapshot dialog', () => {
+  it('renders the persisted duration after details load and the captured duration while loading', () => {
+    const loading = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={{ ...item, recordDurationMillis: 3_500 }} loading />)
+    const loaded = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} detail={{
+      itemUid: item.itemUid, textContent: item.textContent, backgroundSound: 'not-recorded',
+      recordDurationMillis: 3_500, editDurationMillis: 1_500,
+    }} />)
+    expect(loading).toContain('00:03')
+    expect(loaded).toContain('00:05')
+  })
+
   it('makes a failed detail load explicit instead of presenting sparse timeline data as a snapshot', () => {
     const markup = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} loadError="完整记录读取失败，请稍后重试" />)
 
@@ -103,4 +113,16 @@ describe('message snapshot dialog', () => {
     expect(unknown).toContain('暂时无法确认会员权益')
     expect(unknown).not.toContain('去开启')
   })
+})
+
+it('keeps unavailable Team metadata unknown and distinguishes creation from completion', () => {
+  const markup = renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} createdAtMillis={item.sendAtMillis}
+    metadataUnavailable="团队消息元数据暂未接通" />)
+  expect(markup).toContain('创建时间')
+  expect(markup).toContain('团队消息元数据暂未接通')
+  expect(markup).not.toContain('00:00')
+  expect(markup).not.toContain('0次')
+  expect(markup).not.toContain('去开启')
+  expect(markup).toMatch(/完成时间<\/span><div[^>]*>未记录<\/div>/)
+  expect(markup).toMatch(/终端<\/span><div[^>]*>未记录<\/div>/)
 })

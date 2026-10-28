@@ -1,5 +1,5 @@
 import { arkmeIntlLocale, tr } from './locale.js'
-import type { ArkmeRecordingCoverage, ArkmeRecordingDay, ArkmeTimelineItem, ArkmeRecordLocationObservation, ArkmeCallDetail, ArkmeCallHistoryItem } from '../types.js'
+import type { ArkmeRecordingCoverage, ArkmeRecordingDay, ArkmeTimelineItem, ArkmeRecordLocationObservation, ArkmeCallDetail, ArkmeCallHistoryItem, ArkmeSourceItem } from '../types.js'
 
 /** Frontend read model, NOT a deployed HTTP contract. See docs/my-day-calendar.md. */
 export type DayActivityKind = 'note' | 'private_chat' | 'group_chat' | 'call' | 'recording' | 'arko' | 'bot' | 'dsh'
@@ -17,7 +17,18 @@ export interface DayActivityQuery {
 }
 
 export interface DayActivityEntry {
+  /** Adapter-owned detail content version within the read session; independent of list cursors. */
+  detailRevision?: string
+  /** Shared text is distinct from the viewer's physical audio coverage. */
+  sharedRecording?: { detailRef?: string; sourceDigest: string; sourceLabel: string }
+  /** Presentation only; image references retain the existing authorized image reader. */
+  avatar?: { [Key in 'avatarRef' | 'avatarRefs' | 'groupAvatar']?: ArkmeSourceItem[Key] | undefined }
+  previewAuthor?: { name: string; remark?: string }
+  /** Selected verbatim excerpts from the bounded loaded segment, never an AI summary. */
+  excerpts?: DayActivityExcerpt[]
   location?: ArkmeRecordLocationObservation
+  /** Label-only location hint returned by the calendar index; coordinates stay protected. */
+  locationSummary?: { label?: string; capturedAtMillis?: number }
   canLoadLocation?: boolean
   /** Explicit source identity, never a display name or a guessed participant. */
   sourceIdentity?: string
@@ -35,6 +46,13 @@ export interface DayActivityEntry {
   participant?: { name: string; remark?: string }
   recordCount: number
   participation: 'self' | 'participated' | 'mentioned' | 'received' | 'background'
+}
+
+export interface DayActivityExcerpt {
+  id: string
+  text: string
+  author?: { name: string; remark?: string }
+  self: boolean
 }
 
 export interface DayActivityPage {
@@ -84,7 +102,7 @@ export interface DayActivityDetailPage {
 /** A read-only adapter. No send, read-receipt, recording, or mutation methods. */
 export interface DayActivityReader {
   capabilities?: { kinds: readonly DayActivityKind[]; modes: readonly DayActivityMode[]; notice: string; autoLocationLimit?: number; background?: boolean }
-  loadDay(query: DayActivityQuery, options: { signal: AbortSignal; cursor?: string; snapshotId?: string }): Promise<DayActivityPage>
+  loadDay(query: DayActivityQuery, options: { signal: AbortSignal; cursor?: string; snapshotId?: string; onProgress?(page: DayActivityPage): void }): Promise<DayActivityPage>
   loadDetail(query: DayActivityQuery, activityId: string,
     options: { signal: AbortSignal; snapshotId: string; cursor?: string }): Promise<DayActivityDetailPage>
   loadLocation?(query: DayActivityQuery, activityId: string,
@@ -125,8 +143,7 @@ export function dayActivityDisplayName(person: { name: string; remark?: string }
 export function dayActivityTitle(entry: DayActivityEntry): string {
   if (entry.access !== 'available') return '内容已不可访问'
   if (entry.participant && entry.kind === 'private_chat') {
-    const name = dayActivityDisplayName(entry.participant)
-    return entry.participation === 'received' ? tr("收到 {v0} 的消息", { v0: name }) : tr("与 {v0} 的私聊", { v0: name })
+    return dayActivityDisplayName(entry.participant)
   }
   return entry.title.trim() || `${dayActivityLabels[entry.kind]}活动`
 }
@@ -150,16 +167,21 @@ export function dayActivityPeriod(value: number, timezone: string): string {
   return hour < 6 ? '凌晨' : hour < 12 ? '上午' : hour < 18 ? '下午' : hour < 24 ? '晚上' : '时间未知'
 }
 
-export function dayActivityOverview(items: readonly DayActivityEntry[], mode: DayActivityMode): string {
+export function dayActivityOverview(items: readonly DayActivityEntry[], mode: DayActivityMode, reactionCount = 0): string {
   const available = items.filter(item => item.access === 'available')
   const parts = dayActivityFilters.filter(filter => filter.kind !== 'all').flatMap(filter => {
     const matches = available.filter(item => dayActivityMatchesFilter(filter.kind, item.kind))
     if (!matches.length) return []
+    if (filter.kind === 'recording' && matches.some(item => item.sharedRecording)) {
+      const shared = matches.filter(item => item.sharedRecording).length
+      return [...(matches.length > shared ? [`${matches.length - shared} 个本人录音时段`] : []), `${shared} 份共享录音文字`]
+    }
     const count = filter.kind === 'note' ? matches.reduce((total, item) => total + item.recordCount, 0) : matches.length
     const label = filter.kind === 'conversation' ? `${count} ${mode === 'activities' ? '段对话' : '条对话记录'}`
       : filter.kind === 'call' ? `${count} 次通话` : filter.kind === 'recording' ? `${count} 个录音时段` : `${count} 条个人记录`
     return [label]
   })
+  if (reactionCount > 0) parts.push(`${reactionCount} 次表态操作`)
   return `已加载：${parts.join(' · ') || '暂无可显示的活动'}`
 }
 

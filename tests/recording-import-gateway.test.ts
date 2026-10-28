@@ -1,3 +1,5 @@
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
+const testBatchID = recordingImportBatchID()
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingImportContractError, type RecordingImportJob } from '../src/recording-import-contract.js'
 import { AudioRecordingImportGateway } from '../src/services/recording-import-gateway.js'
@@ -8,7 +10,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1', userId: 42, revision: 4, phase: 'uploading',
     fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
     durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    belongUserId: 42, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
+    belongUserId: 42, recordingKind: 3, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
     ...overrides,
   }
@@ -621,6 +623,14 @@ describe('AudioRecordingImportGateway', () => {
     })
   })
 
+  it('counts quota-paused children independently from completed and active children', async () => {
+    const gateway = gatewayForOwnerProgress([{ session_id: 'session-1', child_status_ls: [
+      { status: 5 }, { status: 3, quota_status: 'recording_transcription_quota_exhausted' }, { status: 4 },
+    ] }])
+    const page = await gateway.listOwnerTasks({ viewerUserId: 42, scope: 'active', toMillis: 1_725_100_000_000, limit: 20, offset: 0 })
+    expect(page.tasks[0]?.progress).toMatchObject({ pausedCount: 1, completedCount: 1 })
+  })
+
   it('keeps owner status available while business-progress rows are temporarily absent', async () => {
     const gateway = gatewayForOwnerProgress([{
       session_id: 'session-1', timing_state: 'processing', child_status_ls: [{ status: 4 }],
@@ -714,6 +724,41 @@ describe('AudioRecordingImportGateway', () => {
     expect(page.tasks.map(task => task.progress?.displayStatus)).toEqual(['completed', 'failed', 'partial'])
   })
 
+  it.each([false, true])('stops upload on reservation renewal failure with signal=%s', async withSignal => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error('reservation expired')
+      let renewals = 0
+      const runtime = {
+        config: { environment: 'test' },
+        async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async authenticatedAudioPost(path: string) {
+          if (path.endsWith('renew-upload') && ++renewals > 1) throw failure
+          if (path.endsWith('get-sts-token')) return {
+            access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
+            expiration: '2099-01-01T00:00:00.000Z',
+          }
+          return { err_flag: 0 }
+        },
+      } as unknown as ServiceRuntime
+      const cancel = vi.fn()
+      const multipartUpload = vi.fn(() => new Promise<void>(() => {}))
+      const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
+      const upload = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), vi.fn(async () => {}), withSignal ? new AbortController().signal : undefined)
+      const rejected = expect(upload).rejects.toBe(failure)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(multipartUpload).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      await rejected
+      expect(cancel).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      expect(renewals).toBe(2)
+      expect(multipartUpload).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses the desktop Audio owner contract and keeps STS inside the Host', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {
@@ -753,6 +798,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(posts.map(item => item.path)).toEqual([
       '/api/v1/audio/get-session-by-id',
       '/api/v1/audio/new-child',
+      '/api/v1/audio/renew-upload',
       '/api/v1/audio/get-sts-token',
       '/api/v1/audio/child-upload-finish',
       '/api/v1/audio/finish-session',
@@ -768,6 +814,42 @@ describe('AudioRecordingImportGateway', () => {
     )
     expect(progress).toHaveBeenLastCalledWith(1024, { uploadId: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
+  })
+
+  it.each([0, 1, 3] as const)('keeps recording kind %s on the new-session owner request', async recordingKind => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-1' }
+        return {}
+      },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ recordingKind }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ recording_kind: recordingKind })
+  })
+
+  it('passes the durable batch identity atomically with cloud session creation', async () => {
+    const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        posts.push({ path, body })
+        if (path.endsWith('get-session-ls')) return { session_ls: [] }
+        if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
+        if (path.endsWith('new-session')) return { session_id: 'session-1' }
+        return {}
+      },
+    } as unknown as ServiceRuntime
+
+    await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ batch: { batchId: testBatchID, itemIndex: 1, itemCount: 2, timeZone: 'Asia/Shanghai' } }))).resolves.toBe('session-1')
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ import_batch: { batch_id: testBatchID, item_index: 1, item_count: 2, time_zone: 'Asia/Shanghai' } })
   })
 
   it('rejects names returned by the owner using the conservative local conflict key', async () => {
@@ -1099,5 +1181,87 @@ describe('AudioRecordingImportGateway', () => {
     controller.abort()
     await expect(uploading).rejects.toMatchObject({ code: 'recording-import-cancelled' })
     expect(cancel).toHaveBeenCalledTimes(1)
+  })
+})
+it('replays new batch creation without a filename scan after an unknown result', async () => {
+  const posts: Array<{path: string; body: Record<string, unknown>}> = []
+  const runtime = {
+    async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+    async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      posts.push({ path, body })
+      if (path.endsWith('/new-session')) return { session_id: 'session-1' }
+      throw new Error(`unexpected request ${path}`)
+    },
+  } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
+  const gateway = new AudioRecordingImportGateway(runtime)
+  await gateway.ensureSession(input); await gateway.ensureSession(input)
+  expect(posts).toHaveLength(2)
+  expect(posts[0]).toEqual(posts[1])
+  expect(posts[0]!.path).toBe('/api/v1/audio/import-batches/new-session')
+  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
+})
+
+it('never retries a batch admission as an ordinary upload when the backend route disappears', async () => {
+  const unavailable = new Error('404 batch admission route unavailable')
+  const post = vi.fn().mockRejectedValue(unavailable)
+  const runtime = { requireSession: async () => ({ userId: 42 }), authenticatedAudioPost: post } as unknown as ServiceRuntime
+  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'Asia/Shanghai' } })
+  await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toBe(unavailable)
+  expect(post).toHaveBeenCalledOnce()
+  expect(post.mock.calls[0]![0]).toBe('/api/v1/audio/import-batches/new-session')
+})
+
+describe('owner scan continuation', () => {
+  function fixture() {
+    let viewer = 42
+    const rows = Array.from({ length: 205 }, (_, i) => ownerRow(`session-${i}`, true, true))
+    const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path.endsWith('/get-session-ls')) return { session_ls: rows.slice(Number(body.offset), Number(body.offset) + Number(body.limit)) }
+      return { item_ls: [] }
+    })
+    const gateway = new AudioRecordingImportGateway({
+      async requireSession() { return { userId: viewer, accessToken: 'access', refreshToken: 'refresh' } },
+      authenticatedAudioPost: post,
+    } as unknown as ServiceRuntime)
+    const read = (offset: number) => gateway.listOwnerTasks({ viewerUserId: 42, scope: 'completed', toMillis: 1_725_100_000_000, limit: 50, offset })
+    const offsets = () => post.mock.calls.filter(([path]) => path.endsWith('/get-session-ls')).map(([, body]) => body.offset)
+    return { rows, gateway, read, offsets, setViewer: (value: number) => { viewer = value } }
+  }
+
+  it('fetches each raw page once across sequential filtered pages', async () => {
+    const f = fixture()
+    f.rows[5].source = 1
+    const ids: string[] = []
+    let offset = 0
+    while (true) {
+      const page = await f.read(offset)
+      ids.push(...page.tasks.map(task => task.session.sessionId))
+      offset += page.tasks.length
+      if (!page.hasMore) break
+    }
+    expect(ids).toHaveLength(204)
+    expect(new Set(ids).size).toBe(204)
+    expect(ids).not.toContain('session-5')
+    expect(f.offsets()).toEqual([0, 100, 200])
+  })
+
+  it('invalidates a scan after deletion so an adjusted offset cannot skip a file', async () => {
+    const f = fixture()
+    await f.read(0)
+    await f.gateway.deleteOwnerSession({ viewerUserId: 42, sessionId: 'session-0' })
+    f.rows.shift()
+    const page = await f.read(49)
+    expect(page.tasks[0].session.sessionId).toBe('session-50')
+    expect(f.offsets()).toEqual([0, 0])
+  })
+
+  it('checks account ownership even when a page is entirely cached', async () => {
+    const f = fixture()
+    await f.read(0)
+    await f.read(50)
+    f.setViewer(43)
+    await expect(f.read(100)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+    expect(f.offsets()).toEqual([0, 100])
   })
 })

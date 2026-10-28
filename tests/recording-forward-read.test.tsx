@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { RecordService } from '../src/services/record-service.js'
 import { ChatService } from '../src/services/chat-service.js'
+import { projectRecordRecordingForward } from '../src/recording-forward-presentation.js'
 import { ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 
@@ -92,7 +93,7 @@ describe('forwarded recording reads from the Record owner', () => {
   it.each(['quick_records', 'shared_recording_memory', 'chat_record'])('does not treat %s as an Audio selection snapshot', sourceType => {
     const record = recording()
     record.content_payload.forward_records.source_type = sourceType
-    expect(service().recordTimelineItemFromRaw({ record_core: record }, 42).forwardRecords).toBeUndefined()
+    expect(projectRecordRecordingForward(record.content_payload)).toBeUndefined()
   })
 
   it('requires the owner forward discriminator rather than promoting similar nested data', () => {

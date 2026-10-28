@@ -30,6 +30,7 @@ const items: Record<ArkmeDirectorySectionKind, ArkmeDirectoryItem[]> = {
     kind: 'unmarked-speaker', candidateRef: 'candidate-ref', speakerToken: 'B', displayName: '说话人 B', subtitle: '3 天 · 最新：今天 09:28',
   }],
   teams: [{ kind: 'team', teamRef: `team_v1_${'a'.repeat(32)}`, displayName: 'Arkme 产品组', publicId: 'arkme_team', role: 'member' }],
+  'manual-speakers': [{ kind: 'manual-speaker', speakerKey: 'manual-1', speakerRef: 'manual-ref', displayName: '设计伙伴' }],
   contacts: [
     { kind: 'contact', contactRef: 'alice', displayName: 'Alice', nickname: 'Alice', remark: '', letter: 'A' },
     { kind: 'contact', contactRef: 'zhang', displayName: '张三', nickname: '张三', remark: '', letter: 'Z' },
@@ -86,7 +87,8 @@ describe('ContactDirectorySurface content', () => {
       onOpenBot={() => undefined}
     />)
 
-    const headings = ['群聊', 'Bot', '未标记说话人', '团队', '联系人']
+    expect(markup).not.toContain('未标记说话人')
+    const headings = ['群聊', 'Bot', '团队', '手动说话人', '联系人']
     expect(headings.map(heading => markup.indexOf(`<strong>${heading}</strong>`)))
       .toEqual([...headings.map(heading => markup.indexOf(`<strong>${heading}</strong>`))].sort((a, b) => a - b))
     expect(markup).toContain('data-directory-section="groups"')
@@ -158,6 +160,8 @@ describe('ContactDirectorySurface content', () => {
     }
 
     const withRemark = renderContact(base)
+    const withGeneratedAvatar = renderContact({ ...base, avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '林' } })
+    expect(withGeneratedAvatar).toContain('>林<')
     const withNickname = renderContact({ ...base, remark: '' })
     const withDisplayName = renderContact({ ...base, remark: '', nickname: '' })
 
@@ -338,7 +342,7 @@ describe('ContactDirectorySurface content', () => {
     expect(markup).toContain('aria-current="true"')
   })
 
-  it('renders team rows with a large foreground person and a smaller rear person', () => {
+  it('renders the shared team avatar presentation in directory rows', () => {
     const team = items.teams[0]
     if (team === undefined) throw new Error('fixture missing')
     const markup = renderToStaticMarkup(<DirectoryItemRow
@@ -352,44 +356,32 @@ describe('ContactDirectorySurface content', () => {
     expect(markup).toContain('class="arkme-contact-directory-avatar is-team"')
     expect(markup).toContain('role="img"')
     expect(markup).toContain('aria-label="Arkme 产品组的团队头像"')
-    expect(markup).toContain('viewBox="0 0 24 24"')
-    expect(markup.match(/<circle/g)).toHaveLength(2)
-    expect(markup.match(/<path/g)).toHaveLength(2)
-    expect(markup).toContain('opacity="0.68"')
+    expect(markup).toContain('arkme-team-name-avatar')
+    expect(markup).toContain('>AR</span>')
   })
 
-  it('force-refreshes the collapsed unmarked-speaker section without discarding mounted directory state', async () => {
+  it('loads only the visible sections and completes the cache without waiting for speakers', async () => {
     const loadPage = vi.fn(async (section: ArkmeDirectorySectionKind): Promise<ArkmeDirectoryPage> => ({
-      section,
-      items: section === 'unmarked-speakers' ? items[section] : [],
-      total: section === 'unmarked-speakers' ? 1 : 0,
-      hasMore: false,
+      section, items: [], total: 0, hasMore: false,
     }))
+    const onStateChange = vi.fn()
     const props = {
       accountKey: 'account-a',
-      selection: { kind: 'none' } as const,
-      refreshRevision: 0,
-      onSelectionChange: vi.fn(),
-      onOpenGroup: vi.fn(),
-      onOpenBot: vi.fn(),
-      loadPage,
+      onSelectionChange: vi.fn(), onOpenGroup: vi.fn(), onOpenBot: vi.fn(),
+      onStateChange, loadPage,
     }
     let renderer!: ReactTestRenderer
-    await act(async () => { renderer = create(<ContactDirectorySurface {...props} />); await Promise.resolve() })
-    expect(loadPage.mock.calls.map(call => call[0])).toEqual([
-      'groups', 'bots', 'unmarked-speakers', 'teams', 'contacts',
-    ])
-
-    await act(async () => {
-      renderer.update(<ContactDirectorySurface {...props} refreshRevision={1} />)
-      await Promise.resolve()
-    })
-
-    expect(loadPage.mock.calls.map(call => call[0])).toEqual([
-      'groups', 'bots', 'unmarked-speakers', 'teams', 'contacts', 'unmarked-speakers',
-    ])
-    expect(renderer.root.findByProps({ 'data-directory-section': 'unmarked-speakers' })
-      .findByType('button').props['aria-expanded']).toBe(false)
+    await act(async () => { renderer = create(<ContactDirectorySurface {...props} />) })
+    expect(loadPage.mock.calls.map(call => call[0])).toEqual(['groups', 'bots', 'teams', 'manual-speakers', 'contacts'])
+    expect(onStateChange.mock.calls.at(-1)?.[1]).toBe(true)
+    const initialState = onStateChange.mock.calls.at(-1)![0] as ContactDirectoryState
+    expect(initialState.sections['unmarked-speakers'].status).toBe('idle')
+    expect(renderer.root.findAllByProps({ 'data-directory-section': 'unmarked-speakers' })).toHaveLength(0)
+    await act(async () => { renderer.unmount() })
+    loadPage.mockClear()
+    await act(async () => { renderer = create(<ContactDirectorySurface {...props} initialState={initialState} cacheFresh />) })
+    expect(loadPage).not.toHaveBeenCalled()
+    await act(async () => { renderer.unmount() })
   })
 
   it('keeps stale cached rows visible while replacing loaded sections in the background', async () => {
@@ -456,8 +448,8 @@ describe('ContactDirectorySurface content', () => {
     expect(loadPage.mock.calls.map(([section, options]) => [section, options])).toEqual([
       ['groups', { limit: 50 }],
       ['bots', { limit: 50 }],
-      ['unmarked-speakers', { limit: 50 }],
       ['teams', { limit: 50 }],
+      ['manual-speakers', { limit: 50 }],
       ['contacts', { limit: 50 }],
     ])
     expect(renderer.root.findByProps({ 'data-directory-section': 'groups' })
@@ -587,45 +579,7 @@ describe('ContactDirectorySurface content', () => {
     expect(count()).toEqual(['137'])
   })
 
-  it('updates the mounted unmarked-speaker title from 2 to 1 and 0 after authoritative refreshes', async () => {
-    let speakerReplace = 0
-    const loadPage = vi.fn(async (
-      section: ArkmeDirectorySectionKind,
-      options: { limit: number; cursor?: string; countOnly?: boolean },
-    ): Promise<ArkmeDirectoryPage> => {
-      if (section !== 'unmarked-speakers') return { section, items: [], total: 0, hasMore: false }
-      speakerReplace += 1
-      if (speakerReplace === 1) return {
-        section, total: 2, hasMore: false,
-        items: [
-          { kind: 'unmarked-speaker', candidateRef: 'speaker-a', displayName: '说话人 A' },
-          { kind: 'unmarked-speaker', candidateRef: 'speaker-b', displayName: '说话人 B' },
-        ],
-      }
-      if (speakerReplace === 2) return {
-        section, total: 1, hasMore: false,
-        items: [{ kind: 'unmarked-speaker', candidateRef: 'speaker-b', displayName: '说话人 B' }],
-      }
-      return { section, total: 0, hasMore: false, items: [] }
-    })
-    const props = (refreshRevision: number) => <ContactDirectorySurface
-      accountKey="account-a"
-      refreshRevision={refreshRevision}
-      onSelectionChange={() => undefined}
-      onOpenGroup={() => undefined}
-      onOpenBot={() => undefined}
-      loadPage={loadPage}
-    />
-    let renderer!: ReactTestRenderer
-    await act(async () => { renderer = create(props(0)); await Promise.resolve() })
-    const section = () => renderer.root.findByProps({ 'data-directory-section': 'unmarked-speakers' })
-    const count = () => section().findByProps({ className: 'arkme-contact-directory-count' }).children
-    expect(count()).toEqual(['2'])
-    await act(async () => { renderer.update(props(1)); await Promise.resolve() })
-    expect(count()).toEqual(['1'])
-    await act(async () => { renderer.update(props(2)); await Promise.resolve() })
-    expect(count()).toEqual(['0'])
-  })
+
 })
 
 it('pauses automatic contact pagination while hidden and resumes without replacing the loaded page', async () => {

@@ -1,3 +1,4 @@
+import { arkmeChatActivityPreview, retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { SharedReadGroup } from '../shared-read-group.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
@@ -1255,7 +1256,7 @@ export class SourceService {
 
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; background?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
@@ -1479,7 +1480,7 @@ export class SourceService {
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; isCurrent?: () => boolean },
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean; firstPaint?: boolean; background?: boolean; isCurrent?: () => boolean },
     limit: number,
     sessionKind?: number,
   ): Promise<ArkmeSourceList> {
@@ -1694,7 +1695,7 @@ export class SourceService {
       session,
       options.signal,
       {
-        lane: 'interactive-read',
+        lane: options.background === true ? 'background-read' : 'interactive-read',
         key: `directory:root:${sessionKind === undefined ? 'all' : String(sessionKind)}:${String(limit)}:${options.cursor?.trim() ?? ''}`,
         failureCooldownMs: 2_000,
         bypassCache: options.refresh === true,
@@ -1722,11 +1723,15 @@ export class SourceService {
         ? 'group_chat'
         : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
       if (uid === '' || kind === undefined) continue
+      const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
       const displayName = (kind === 'private_chat'
-        ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
+        ? stringValue(supplement.remark).trim() || privateNickname
+          || (sessionKind === 3 ? stringValue(supplement.pending_name).trim() : '')
+          || cached?.displayName || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
-      const preview = arkmeChatConversationPreview(latestRecord, session.userId)
+      const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
+      const preview = activity.latestPreview ?? arkmeChatConversationPreview(latestRecord, session.userId)
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1741,9 +1746,8 @@ export class SourceService {
             ? undefined
             : backendMentionState === true || latestPreviewMentionsViewer
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
-      const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
       const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
-      const item = retainNewerArkmeChatPolicy(cached, {
+      const item = retainNewerArkmeChatActivity(cached, retainNewerArkmeChatPolicy(cached, {
         sourceRef: await this.sealSourceRef(
           session.userId,
           kind,
@@ -1754,6 +1758,9 @@ export class SourceService {
             chatDirectoryMetadata,
           },
         ),
+        conversationRef: await this.sealSourceRef(session.userId, kind, uid, displayName, {
+          ...(botGroupTarget === undefined ? {} : { botGroupTarget }), chatDirectoryMetadata, omitDirectoryActivity: true,
+        }),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
         directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
@@ -1768,6 +1775,7 @@ export class SourceService {
         ...(kind === 'group_chat' && cached?.groupAvatar !== undefined
           ? { groupAvatar: cloneSourceItem(cached).groupAvatar }
           : {}),
+        ...activity,
         ...(preview === '' ? {} : { latestPreview: preview }),
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
@@ -1779,7 +1787,7 @@ export class SourceService {
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
           : {}),
-      })
+      }))
       const itemIndex = items.push(item) - 1
       chatSessionUidByIndex.set(itemIndex, uid)
       if (kind === 'private_chat') {
@@ -1975,8 +1983,7 @@ export class SourceService {
     for (const [index, targetUserId] of privateUserIdByIndex) {
       const item = items[index]
       if (item === undefined) continue
-      const nickname = profiles.get(targetUserId)?.nickname?.trim()
-      if (nickname) item.privateNickname = nickname
+      // Avatar profile caches must not overwrite Chat's current-name projection.
       if (profiles.get(targetUserId)?.avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
@@ -2072,6 +2079,7 @@ export class SourceService {
     options: {
       botGroupTarget?: ArkmeGroupBotBindingTarget
       chatDirectoryMetadata?: ArkmeChatDirectoryMetadata
+      omitDirectoryActivity?: boolean
     } = {},
   ): Promise<string> {
     const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
@@ -2089,8 +2097,10 @@ export class SourceService {
         ...(chatDirectoryMetadata.subjectUid === undefined ? {} : {
           sidebarSubjectUid: chatDirectoryMetadata.subjectUid,
         }),
-        conversationListActivityAtMillis: chatDirectoryMetadata.activityAtMillis,
-        conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
+        ...(options.omitDirectoryActivity ? {} : {
+          conversationListActivityAtMillis: chatDirectoryMetadata.activityAtMillis,
+          conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
+        }),
       }),
     } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
@@ -2177,6 +2187,7 @@ export class SourceService {
     session: ArkmeSessionCredentials,
     cached: ArkmeSourceItem | undefined,
     timelineItems: ArkmeTimelineItem[],
+    options: { previewSnapshot?: boolean; previewUpdatedAtMillis?: number } = {},
   ): Promise<ArkmeSourceItem> {
     const chatSession = objectValue(bundle.session)
     const counterpart = objectValue(bundle.private_counterpart)
@@ -2194,14 +2205,33 @@ export class SourceService {
     if (uid === '' || kind === undefined) throw new Error('invalid chat display snapshot')
     const privateNickname = stringValue(supplement.counterpart_name_snapshot).trim() || stringValue(counterpart.display_name_snapshot).trim()
     const displayName = (kind === 'private_chat'
-      ? stringValue(supplement.remark).trim() || privateNickname || stringValue(supplement.pending_name).trim() || stringValue(counterpart.visible_phone).trim()
+      ? stringValue(supplement.remark).trim() || privateNickname
+        || (sessionKind === 3 ? stringValue(supplement.pending_name).trim() : '')
+        || cached?.displayName || stringValue(counterpart.visible_phone).trim()
       : stringValue(chatSession.title)).trim() || cached?.displayName || '未命名会话'
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
-    const latestPreview = latestItem === undefined
+    // Lifecycle changes keep last_seq stable. Only a full detail snapshot may
+    // replace/clear the preview without a new tail item; display-snapshots omit it.
+    const snapshotSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+    const previewSnapshot = options.previewSnapshot === true && snapshotSequence >= Math.max(cached?.latestSequence ?? 0, latestItem?.sequence ?? 0)
+    let latestPreview = latestItem === undefined
       ? cached?.latestPreview
       : latestItem.forwardRecords === undefined
         ? arkmeTimelineConversationPreview(latestItem)
         : `[转发] ${latestItem.forwardRecords.title}`
+    if (previewSnapshot) {
+      const record = objectValue(objectValue(bundle.latest_preview).record)
+      if (record.status !== 'unavailable') latestPreview = record.status === 'missing'
+        ? '' : arkmeChatConversationPreview(record, session.userId)
+    }
+    const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
+    if (activity.latestPreview !== undefined) latestPreview = activity.latestPreview
+    const latestItemAt = latestItem?.sendAtMillis ?? 0
+    if (!previewSnapshot && latestItem !== undefined && latestItemAt > 0 && latestItemAt >= (activity.latestActivityAtMillis ?? 0)) {
+      activity.latestActivityAtMillis = latestItemAt
+      activity.latestActivityKind = 'record'
+      latestPreview = latestItem.forwardRecords === undefined ? arkmeTimelineConversationPreview(latestItem) : `[转发] ${latestItem.forwardRecords.title}`
+    }
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),
       latestItem?.sequence ?? 0,
@@ -2219,7 +2249,7 @@ export class SourceService {
           : backendMentionState === true || latestMentionsViewer
     const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
     const chatDirectoryMetadata = arkmeChatDirectoryMetadataFromBundle(bundle, kind === 'group_chat' ? uid : '')
-    return retainNewerArkmeChatPolicy(cached, {
+    return retainNewerArkmeChatActivity(cached, retainNewerArkmeChatPolicy(cached, {
       sourceRef: await this.sealSourceRef(
         session.userId,
         kind,
@@ -2230,6 +2260,9 @@ export class SourceService {
           chatDirectoryMetadata,
         },
       ),
+      conversationRef: await this.sealSourceRef(session.userId, kind, uid, displayName, {
+        ...(botGroupTarget === undefined ? {} : { botGroupTarget }), chatDirectoryMetadata, omitDirectoryActivity: true,
+      }),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
@@ -2241,6 +2274,8 @@ export class SourceService {
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
       ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
+      ...activity,
+      ...(options.previewUpdatedAtMillis ? { latestPreviewUpdatedAtMillis: options.previewUpdatedAtMillis } : {}),
       ...(latestPreview === undefined || latestPreview === '' ? {} : { latestPreview }),
       activeAtMillis: Math.max(
         arkmeChatSortActiveAt(bundle, chatSession),
@@ -2252,7 +2287,7 @@ export class SourceService {
       chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
       chatNotificationPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),
       ...(latestSequence > 0 ? { latestSequence } : {}),
-    })
+    }))
   }
 
   private encodeCursor(value: Record<string, unknown>): string {

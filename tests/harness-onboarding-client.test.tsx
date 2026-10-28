@@ -11,13 +11,13 @@ it('defers optional selection until readiness and cleans a pending resource on d
   vi.useFakeTimers()
   const meta = document.createElement('meta'); meta.name = 'arkme-native-selection'; meta.content = '/arkme-self/harness-native-selection-client.js?rev=abcd'
   document.head.append(meta)
-  let snapshot = { phase: 'loading', current: 'existing', byId: { existing: { blank: false } } }
+  let snapshot = { phase: 'loading', current: 'existing', byId: { existing: { id: 'existing', blank: false, retainedBy: { mainView: 1 } } } }
   let changed = () => {}; let dispose = () => {}
   const importModule = vi.fn()
   try {
     apply({
       modules: { import: importModule },
-      sessions: { list: { getSnapshot: () => snapshot, subscribe: (cb: () => void) => { changed = cb; return () => {} } } },
+      sessions: { subagentAddress: () => undefined, list: { getSnapshot: () => snapshot, subscribe: (cb: () => void) => { changed = cb; return () => {} } } },
       effect: (start: () => () => void) => { dispose = start() },
       slots: { inject: () => {} },
     } as unknown as ClientContext)
@@ -45,7 +45,7 @@ it('stays pending through native startup and signals ready only when the final n
   let order = 0
   const unsubscribe = vi.fn()
   apply({
-    sessions: { list: { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { changed = listener; return unsubscribe } } },
+    sessions: { subagentAddress: () => undefined, list: { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { changed = listener; return unsubscribe } } },
     effect: (start: () => () => void) => { dispose = start() },
     slots: { inject: (_name: string, register: () => void) => register(), register: (options: { order: number }, component: typeof Step) => { order = options.order; Step = component } },
   } as unknown as ClientContext)
@@ -66,7 +66,7 @@ it('stays pending through native startup and signals ready only when the final n
   await act(async () => { root.unmount() })
   expect(document.body.dataset.arkmeHarnessOnboarding).toBe('ready')
   // Matches SettingsRoot: leaving an active onboarding session resets its completed step set.
-  snapshot = { phase: 'ready', current: 'existing', byId: { existing: { blank: false } } }
+  snapshot = { phase: 'ready', current: 'existing', byId: { existing: { id: 'existing', blank: false, retainedBy: { mainView: 1 } } } }
   changed()
   expect(document.body.dataset.arkmeHarnessOnboarding).toBe('ready')
   snapshot = { phase: 'ready', current: undefined, byId: {} }

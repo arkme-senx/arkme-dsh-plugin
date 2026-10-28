@@ -21,6 +21,8 @@ import { SharedReadGroup } from '../shared-read-group.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { randomUUID } from 'node:crypto'
 import { recordLocationObservation } from '../record-location-observation.js'
+import { arkmeChatConversationPreview } from './source-service.js'
+import type { CallHistoryService } from './call-history-service.js'
 
 const MAX_CALENDAR_RANGE_DAYS = 62
 const MAX_DAY_RECORD_LIMIT = 50
@@ -128,7 +130,9 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
   const chat = objectValue(raw.chat_core)
   const core = objectValue(raw.record_core)
   if (stringValue(topic.topic_uid).trim() !== '') return 'topic'
-  if (stringValue(chat.chat_session_uid).trim() !== '' || [3, 4].includes(numberValue(core.origin_kind))) return 'chat'
+  if (stringValue(chat.chat_session_uid).trim() !== '') return 'chat'
+  if (numberValue(core.origin_kind) === 5) return 'team'
+  if ([3, 4].includes(numberValue(core.origin_kind))) return 'chat'
   if (booleanValue(raw.is_uncategorized) === true) return 'self'
   return 'unknown'
 }
@@ -149,7 +153,105 @@ export class CalendarService {
     private readonly media: MediaService,
     private readonly record: RecordService,
     private readonly source: SourceService,
+    private readonly callHistory?: CallHistoryService,
+    private readonly sharedRecording?: (raw: unknown, session: ArkmeSessionCredentials) => Promise<import('../types.js').ArkmeSharedRecordingPreview | undefined>,
   ) {}
+
+  /**
+   * Read one of the documented multi-source "My day" projections.  Keeping
+   * this transport in the calendar domain service avoids expanding the
+   * compatibility facade for every new calendar source.
+   */
+  async activity(options: {
+    source: 'record' | 'chat' | 'call' | 'audio' | 'arko' | 'bot'
+    mode: 'buckets' | 'details' | 'coverage' | 'transcripts'
+    body: Record<string, unknown>
+    signal?: AbortSignal
+  }): Promise<unknown> {
+    options.signal?.throwIfAborted()
+    const request = (path: string) => ({
+      path,
+      body: options.body,
+      signal: options.signal,
+    })
+    switch (options.source) {
+      case 'record': {
+        if (options.mode === 'details') {
+          const page = await this.dayRecords({ bucketDate: stringValue(options.body.bucket_date),
+            timezone: stringValue(options.body.timezone), limit: numberValue(options.body.limit) || 50,
+            ...(options.body.cursor_send_at !== undefined ? { cursor: { sendAtMillis: numberValue(options.body.cursor_send_at), recordUid: stringValue(options.body.cursor_record_uid) } } : {}),
+            ...(options.signal ? { signal: options.signal } : {}) })
+          return { items: page.items.map(record_projection => ({ record_projection, occurred_at: record_projection.sendAtMillis })),
+            has_more: page.hasMore, ...(page.nextCursor ? { next_cursor: { cursor_send_at: page.nextCursor.sendAtMillis, cursor_record_uid: page.nextCursor.recordUid } } : {}) }
+        }
+        const route = options.mode === 'buckets' ? '/api/v1/calendar/buckets/query' : '/api/v1/calendar/records/query'
+        const { path, body, signal } = request(route)
+        return await this.runtime.authenticatedCalendarPost(path, body, undefined, signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      case 'chat': {
+        const route = options.mode === 'buckets' ? '/api/v1/chats/activities/buckets/query' : '/api/v1/chats/activities/query'
+        const { path, body, signal } = request(route)
+        const session = await this.runtime.requireSession()
+        const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(path, body, session, signal, { lane: 'interactive-read', bypassCache: true })
+        return options.mode === 'details' ? await this.projectChatActivity(data, session, signal) : data
+      }
+      case 'call': {
+        if (options.mode === 'details' && this.callHistory) {
+          const page = await this.callHistory.listCallHistory({ limit: numberValue(options.body.limit) || 50, includeRecentContacts: false,
+            startAtMillis: numberValue(options.body.start_at), endAtMillis: numberValue(options.body.end_at),
+            ...(stringValue(options.body.cursor) ? { cursor: stringValue(options.body.cursor) } : {}) }, options.signal)
+          return { items: page.items.map(call_projection => ({ call_projection, occurred_at: call_projection.startedAtMillis })), has_more: page.hasMore,
+            ...(page.nextCursor ? { next_cursor: page.nextCursor } : {}) }
+        }
+        const route = options.mode === 'buckets' ? '/api/v1/call/history-buckets/query' : '/api/v1/call/history-aggregate'
+        const { path, body, signal } = request(route)
+        return await this.runtime.authenticatedDataPost(path, body, undefined, signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      case 'audio': {
+        const route = options.mode === 'buckets'
+          ? '/api/v1/audio/get-calender-summary'
+          : options.mode === 'coverage' ? '/api/v1/audio/coverage/query' : '/api/v1/audio/transcripts/query'
+        const { path, body, signal } = request(route)
+        return await this.runtime.authenticatedAudioPost(path, body, undefined, signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      case 'arko': {
+        const route = options.mode === 'buckets' ? '/api/v1/arko/activities/buckets/query' : '/api/v1/arko/activities/query'
+        const { path, body, signal } = request(route)
+        return await this.runtime.authenticatedIntelligentPost(path, body, undefined, signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      case 'bot': {
+        const route = options.mode === 'buckets' ? '/api/v1/bots/activities/buckets/query' : '/api/v1/bots/activities/query'
+        const { path, body, signal } = request(route)
+        const session = await this.runtime.requireSession()
+        const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(path, body, session, signal, { lane: 'interactive-read', bypassCache: true })
+        return options.mode === 'details' ? await this.projectChatActivity(data, session, signal) : data
+      }
+    }
+  }
+
+  private async projectChatActivity(data: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const rows = listValue(data.items).map(objectValue)
+    const uid = (row: Record<string, unknown>) => stringValue(objectValue(row.source_ref).chat_session_uid)
+    const sources = await this.source.chatSourcesBySessionUids([...new Set(rows.map(uid).filter(Boolean))], signal)
+    // A first-paint directory cache may intentionally omit avatars. Hydrate only
+    // this page's resolved sources, reusing the existing bounded profile reader.
+    const missingAvatars = [...sources].filter(([, item]) => !item.avatarRef && !item.avatarRefs?.length && !item.groupAvatar)
+    if (missingAvatars.length) {
+      try {
+        const hydrated = await this.source.hydrateDirectoryPage(missingAvatars.map(([, item]) => item), signal ?? new AbortController().signal)
+        for (const [index, [key]] of missingAvatars.entries()) if (hydrated[index]) sources.set(key, hydrated[index]!)
+      } catch {
+        // Decoration is optional. A failed avatar read must not hide real activity.
+        signal?.throwIfAborted()
+      }
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已变化，请重新打开日历', false)
+    return { ...data, items: rows.map(row => ({ ...row,
+      ...(sources.has(uid(row)) ? { source_item: sources.get(uid(row)) } : {}),
+      preview: arkmeChatConversationPreview(objectValue(row.record), session.userId),
+    })) }
+  }
 
   private issueLocationRef(recordUid: string, session: ArkmeSessionCredentials): string {
     const now = Date.now()
@@ -202,7 +304,7 @@ export class CalendarService {
 
   /** Same service-owned daily index used by Flutter private/group chat calendars. */
   async chatStatistics(options: {
-    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal
+    sourceRef: string; timezone: string; timezoneOffsetMillis: number; signal?: AbortSignal; background?: boolean
   }): Promise<ArkmeCalendarBucketPage> {
     options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
@@ -225,7 +327,7 @@ export class CalendarService {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/session/statistics',
         { chat_session_uid: source.ownerRef, tz_offset_millis: offset }, session, signal,
-        { lane: 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true },
+        { lane: options.background === true ? 'background-read' : 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true },
       )
       if (!Array.isArray(data.daily_data)) {
         throw new ArkmePluginError('calendar-statistics-invalid', '会话日历数据不完整，请重试', true, 502)
@@ -487,6 +589,7 @@ export class CalendarService {
         bucket_scope_kind: 1,
         bucket_scope_uid: '',
         bucket_date: bucketDate,
+        include_location_summary: true,
         timezone,
         limit,
         ...(cursorSendAt > 0 && cursorRecordUid !== ''
@@ -538,22 +641,30 @@ export class CalendarService {
       bucketDate,
       timezone: stringValue(data.timezone).trim() || timezone,
       refreshedAtMillis: Date.now(),
-      items: rows.map(({ raw, item }) => {
+      items: await mapBounded(rows, async ({ raw, item }) => {
         if (item.accessState !== 'available') return item
         const content = this.record.recordTimelineItemFromRaw(raw, session.userId, {
           displayItems: media.displayItemsByRecordUid.get(item.recordUid) ?? [],
           mediaUnavailable: media.unavailableRecordUids.has(item.recordUid),
         })
+        if (content.forwardRecords !== undefined) await this.record.hydrateForwardAvatars(raw, session.userId, content)
         const topicUid = stringValue(objectValue(objectValue(raw).topic_core).topic_uid).trim()
         const source = item.topicTitle ? sources.get(`topic:${topicUid}`) : sources.get(chatUid(raw))
         const rawItem = objectValue(raw), core = objectValue(rawItem.record_core)
         const owner = recordOwnerId(core.owner_user_id ?? rawItem.owner_user_id ?? core.creator_user_id ?? rawItem.creator_user_id)
         const ownCalendar = options.sourceRef === undefined && scope.kind === 'self' && (owner === 0 || owner === session.userId)
         const location = ownCalendar ? recordLocationObservation(raw) : undefined
+        const summary = ownCalendar ? objectValue(rawItem.location_summary) : {}
+        const label = stringValue(summary.label).trim()
+        const capturedAtMillis = numberValue(summary.captured_at)
+        const sharedRecording = await this.sharedRecording?.(raw, session)
         return { ...item, ...(ownCalendar ? { locationRef: this.issueLocationRef(item.recordUid, session) } : {}),
+          ...(ownCalendar && (label || capturedAtMillis > 0) ? { locationSummary: {
+            ...(label ? { label } : {}), ...(capturedAtMillis > 0 ? { capturedAtMillis } : {}),
+          } } : {}),
           ...(location ? { locationObservation: location } : {}),
           ...(source === undefined ? {} : { source }), textFormat: content.textFormat ?? 'plain', content: {
-          ...content, title: item.title, textContent: arkmeEmojiClippedText(content.textContent, 40_000),
+          ...content, ...(sharedRecording ? { sharedRecording } : {}), title: item.title, textContent: arkmeEmojiClippedText(content.textContent, 40_000),
         } }
       }),
       hasMore: data.has_more === true,
@@ -711,6 +822,7 @@ export class CalendarService {
       preview,
       ...(stringValue(topic.title).trim() === '' ? {} : { topicTitle: stringValue(topic.title).trim() }),
       sourceKind: sourceKind(item),
+      ...(sourceKind(item) === 'team' && stringValue(core.origin_container_ref) ? { teamConversationUid: stringValue(core.origin_container_ref) } : {}),
       creationSource: isDshAgentInputRawRecord(raw) ? 3 : Math.trunc(numberValue(core.creation_source)),
       templateKind: Math.trunc(numberValue(core.template_kind)),
       displayKind: Math.trunc(numberValue(core.display_kind)),

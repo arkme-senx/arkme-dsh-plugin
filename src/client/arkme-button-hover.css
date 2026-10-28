@@ -1,15 +1,19 @@
 /* One opaque neutral hover fill prevents existing component hover backgrounds
    from being darkened by a second translucent layer. */
-body:has([data-arkme-owned="product-navigation"]) {
+body:has([data-arkme-owned="product-navigation"]),
+body:has([data-arkme-owned="conversation-window"]) {
   --arkme-control-hover-surface: #f1f2f6;
 }
 
-body[data-ds-dark-theme]:has([data-arkme-owned="product-navigation"]) {
+body[data-ds-dark-theme]:has([data-arkme-owned="product-navigation"]),
+body[data-ds-dark-theme]:has([data-arkme-owned="conversation-window"]) {
   --arkme-control-hover-surface: var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, .1));
 }
 
 @media (hover: hover) {
   body:has([data-arkme-owned="product-navigation"])
+  button:is(:has(svg, img, [aria-hidden]), [data-arkme-hover="button"]):not([style*="--dsw-alias-button-primary-fill"]):not([style*="--dsw-alias-label-primary-inverted"]):not([role="treeitem"]):not([data-arkme-feedback]):not(:disabled):not([aria-disabled="true"]):not([inert] *):not([aria-disabled="true"] *):not([role="tab"]):not([role="tablist"] *):not([aria-selected="true"]):not([aria-current]:not([data-arkme-hover="button"])):not([data-arkme-hover="none"]):not([data-arkme-hover="surface"]):not([data-arkme-conversation-row] *):not(:has([data-arkme-avatar]):not([data-arkme-hover="button"])):hover,
+  body:has([data-arkme-owned="conversation-window"])
   button:is(:has(svg, img, [aria-hidden]), [data-arkme-hover="button"]):not([style*="--dsw-alias-button-primary-fill"]):not([style*="--dsw-alias-label-primary-inverted"]):not([role="treeitem"]):not([data-arkme-feedback]):not(:disabled):not([aria-disabled="true"]):not([inert] *):not([aria-disabled="true"] *):not([role="tab"]):not([role="tablist"] *):not([aria-selected="true"]):not([aria-current]:not([data-arkme-hover="button"])):not([data-arkme-hover="none"]):not([data-arkme-hover="surface"]):not([data-arkme-conversation-row] *):not(:has([data-arkme-avatar]):not([data-arkme-hover="button"])):hover {
     background: var(--arkme-control-hover-surface, #f1f2f6) !important;
   }
@@ -36,12 +40,14 @@ body[data-ds-dark-theme]:has([data-arkme-owned="product-navigation"]) {
 
 /* Menu commands and listbox choices are interactive even without an icon. */
 @media (hover: hover) {
-  body:has([data-arkme-owned="product-navigation"]) :is([role="menuitem"], [role="option"]):not([data-arkme-feedback]):not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):not([inert] *):not([aria-disabled="true"] *):hover {
+  body:has([data-arkme-owned="product-navigation"]) :is([role="menuitem"], [role="option"]):not([data-arkme-feedback]):not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):not([inert] *):not([aria-disabled="true"] *):hover,
+  body:has([data-arkme-owned="conversation-window"]) :is([role="menuitem"], [role="option"]):not([data-arkme-feedback]):not(:disabled):not([aria-disabled="true"]):not([aria-selected="true"]):not([inert] *):not([aria-disabled="true"] *):hover {
     background: var(--arkme-control-hover-surface, #f1f2f6) !important;
   }
 }
 
 /* Selected choices and hovered choices share the same neutral fill. */
-body:has([data-arkme-owned="product-navigation"]) [role="option"][aria-selected="true"] {
+body:has([data-arkme-owned="product-navigation"]) [role="option"][aria-selected="true"],
+body:has([data-arkme-owned="conversation-window"]) [role="option"][aria-selected="true"] {
   background: var(--arkme-control-hover-surface, #f1f2f6) !important;
 }

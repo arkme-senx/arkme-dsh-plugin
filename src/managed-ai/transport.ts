@@ -10,6 +10,7 @@ import type {
   FinishReason,
   GenerateOptions,
   Message,
+  RequestMessage,
   StreamChunk,
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
@@ -85,6 +86,7 @@ export interface ManagedAiTransportOptions {
   fetchImpl: typeof fetch
   resolveBearer: () => Promise<string>
   resolveAnonymousUserId: () => AnonymousUserId
+  prepareOperation?: (request: GenerateOptions, bearer: string) => string | undefined
 }
 
 interface CachedInputAsset {
@@ -297,6 +299,9 @@ function errorCode(status: number, body: unknown): string {
   const providerCode = typeof providerError?.code === 'string' ? providerError.code.toLowerCase() : ''
   if (status === 401 || status === 403) return 'AUTH'
   if (status === 402 || providerCode.includes('balance') || providerCode.includes('quota')) return 'QUOTA'
+  if (status === 409 && ['operation_closed', 'operation_limit', 'operation_conflict'].includes(providerCode)) return 'OPERATION_ENDED'
+  if (providerCode === 'unsupported_model') return 'UNKNOWN_MODEL'
+  if (status === 409 && providerCode === 'request_in_progress') return 'REQUEST_IN_PROGRESS'
   if (status === 408 || status === 504) return 'TIMEOUT'
   if (status === 429) return 'RATE_LIMIT'
   if (status === 400 || status === 413 || status === 422) return 'INVALID_REQUEST'
@@ -325,7 +330,7 @@ function requestImageAttachments(options: GenerateOptions): ImageAttachmentRef[]
   const result: ImageAttachmentRef[] = []
   // Validate every role before credentials, attachment reads or uploads.
   for (const message of options.messages) {
-    if (message.role === 'system') {
+    if (message.role === 'system' || message.role === 'developer') {
       assertTextOnly(message.content, '系统消息')
     } else if (message.role === 'assistant') {
       assertAssistantBlocks(message.content)
@@ -412,8 +417,17 @@ function assertAssistantBlocks(blocks: readonly ContentBlock[]): void {
 }
 
 /** One traversal for validation, image accounting and tool-result serialization. */
+// Preserve the shipped 0.1.x tool-result envelope when an older shell uses
+// this plugin; 0.2.1 represents the same result as a first-class tool message.
+interface LegacyToolResult {
+  type: 'tool-result'
+  toolCallId: string
+  content: readonly (ContentBlock | LegacyToolResult)[]
+  isError?: boolean
+}
+
 function* userContentLeaves(
-  blocks: readonly ContentBlock[],
+  blocks: readonly (ContentBlock | LegacyToolResult)[],
 ): Generator<Extract<ContentBlock, { type: 'text' | 'image' }>> {
   for (const block of blocks) {
     if (block.type === 'text' || block.type === 'image') {
@@ -497,12 +511,12 @@ function serializeAssistant(message: Message): WireMessage {
 }
 
 async function serializeMessages(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   resolveImage: (attachment: ImageAttachmentRef) => Promise<string>,
   signal: AbortSignal,
 ): Promise<WireMessage[]> {
   const resolveImageLimited = limitConcurrency(MAX_CONCURRENT_INPUT_ASSET_UPLOADS, resolveImage, signal)
-  const contentParts = async (blocks: readonly ContentBlock[]): Promise<WireContentPart[]> => (
+  const contentParts = async (blocks: readonly (ContentBlock | LegacyToolResult)[]): Promise<WireContentPart[]> => (
     await Promise.all(Array.from(userContentLeaves(blocks), async (block): Promise<WireContentPart> => (
       block.type === 'text'
         ? { type: 'text', text: block.text }
@@ -516,15 +530,18 @@ async function serializeMessages(
     tools: WireMessage[]
     toolImages: WireContentPart[]
   }> => {
-    if (message.role === 'system') {
+    if (message.role === 'system' || message.role === 'developer') {
       return { regular: { role: 'system', content: flattenText(message.content) }, tools: [], toolImages: [] }
     }
     if (message.role === 'assistant') {
       return { regular: serializeAssistant(message), tools: [], toolImages: [] }
     }
-    const toolResults = message.content.filter(block => block.type === 'tool-result')
+    const content: readonly (ContentBlock | LegacyToolResult)[] = message.content
+    const toolResults = message.role === 'tool'
+      ? [message]
+      : content.filter((block): block is LegacyToolResult => block.type === 'tool-result')
     const [parts, results] = await Promise.all([
-      contentParts(message.content.filter(block => block.type !== 'tool-result')),
+      message.role === 'tool' ? [] : contentParts(content.filter((block): block is ContentBlock => block.type !== 'tool-result')),
       Promise.all(toolResults.map(async result => ({ result, parts: await contentParts(result.content) }))),
     ])
     let regular: WireMessage | undefined
@@ -820,6 +837,7 @@ export class ManagedAiTransport {
       const imageAttachments = requestImageAttachments(request)
       assertImageRequestWithinCapability(imageAttachments, capability)
       const bearer = await this.options.resolveBearer()
+      const operationUid = this.options.prepareOperation?.(request, bearer)
       const imageCapability = capability.image
       for (let dispatchAttempt = 0; ; dispatchAttempt++) {
         let resolvedImageBytes = 0
@@ -850,6 +868,7 @@ export class ManagedAiTransport {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${bearer}`,
+            ...(operationUid === undefined ? {} : { 'X-Arkme-Turn-ID': operationUid }),
             Accept: 'text/event-stream',
             'Content-Type': 'application/json',
             ...attributionHeaders(),

@@ -1,3 +1,4 @@
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeLongArticleDetail, ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
@@ -133,8 +134,8 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
           {page?.items.map(item => <div key={item.recordUid} data-arkme-article-choice={item.recordUid} style={{ ...styles.row, background: selected === item.recordUid ? theme.accentSoft : theme.base }}>
             <button type="button" style={styles.select} role="radio" aria-checked={selected === item.recordUid} aria-label={item.title || '无标题长文'} disabled={opening} onClick={() => setSelected(item.recordUid)}>
               <span aria-hidden="true" style={{ color: selected === item.recordUid ? theme.accent : theme.secondary }}>{selected === item.recordUid ? '◉' : '○'}</span>
-              <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}>{item.title || '无标题长文'}</span>
-                <span style={styles.summary}>{arkmeMarkdownPlainText(item.snippet || item.textContent)}</span>
+              <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></span>
+                <span style={styles.summary}><ArkmeRichText text={arkmeMarkdownPlainText(item.snippet || item.textContent)} presentation="preview" /></span>
                 <span style={styles.meta}>{item.sendAtMillis > 0 ? new Date(item.sendAtMillis).toLocaleDateString(arkmeIntlLocale()) : ''}</span></span>
             </button>
             <button type="button" style={styles.button} aria-label={tr("预览{v0}", { v0: item.title || tr("长文") })} disabled={opening} onClick={() => { void resolveArticle(item.recordUid, false) }}>{tr("预览")}</button>

@@ -1,5 +1,340 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+长图|Long image
+停止听写|Stop dictation
+正在识别语音|Recognizing speech
+正在开启麦克风…|Starting microphone…
+正在实时听写，文字会持续更新|Listening live. Text updates continuously.
+正在识别剩余语音…|Recognizing remaining speech…
+听写已停止|Dictation stopped
+重试写入|Retry inserting text
+复制识别结果|Copy recognized text
+关闭听写提示|Close dictation notice
+请先将光标放到可编辑的正文中|Place the cursor in editable text first.
+
+标记|Highlight
+取消标记|Remove highlight
+共享标记|Shared highlight
+标记（仅此电脑）|Highlight (this computer)
+取消标记（仅此电脑）|Remove highlight (this computer)
+标记范围|Highlight visibility
+会话成员可见|Visible to chat members
+仅此电脑可见|Only on this computer
+在我的设备间同步|Sync across my devices
+标记范围：{v0}|Highlight visibility: {v0}
+同步失败，已有内容仍可阅读|Sync failed. Existing content is still available.
+尚未开启分析|Analysis is off
+暂时无法确认分析设置|Analysis settings are temporarily unavailable
+「探索 → 个人档案」|Explore → Personal profile
+手机快记列表或详情|Mobile: note list or details
+手机聊天页面|Mobile: chat page
+左侧「安排」|Plans in the left navigation
+「探索 → 目标」|Explore → Goals
+开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
+额度使用说明|AI allowance usage
+AI 自动分析|Automatic AI analysis
+自动使用额度|Automatic allowance usage
+目标|Goals
+自动识别设置|Automatic recognition settings
+开启功能|Enable feature
+自动整理个人档案|Automatically organize personal profile
+阿森有想法（快记）|Asen’s thoughts (notes)
+阿森有想法（聊天）|Asen’s thoughts (chats)
+自动识别安排|Automatically identify plans
+阿森会阅读你开启后新增的快记，在有想法时给出回应。|Asen reads notes added after you enable this feature and responds when it has something to offer.
+阿森会根据你开启后的聊天内容给出想法，仅你自己可见。|Asen offers thoughts on chats after you enable this feature. Only you can see them.
+使用说明|Usage details
+个人档案已授权，重试启动分析|Profile authorized. Retry starting analysis
+操作未完成，已重新读取当前设置。请检查后重试。|The operation did not complete. Current settings have been reloaded. Review them and try again.
+无法读取当前设置，请重试|Could not load current settings. Please try again.
+正在读取设置…|Loading settings…
+正在开启…|Enabling…
+同意并开启|Agree and enable
+开启自动 AI|Enable automatic AI
+目标自动更新|Automatic goal updates
+聊天建议|Chat suggestions
+快记建议|Note suggestions
+个人档案|Personal profile
+根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
+持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
+自动 AI|Automatic AI
+当天录音实体|Entities from this recording day
+实体|Entities
+查看录音实体|View recording entities
+查看实体 {name}|View entity {name}
+关闭实体列表|Close entity list
+实体类型|Entity type
+录音内容已更新，请刷新实体列表|Recording content changed. Refresh the entity list.
+识别未完成，已有结果仅供参考|Recognition is incomplete. Existing results are provisional.
+当天录音尚无实体识别结果|No recognition results for this day yet.
+识别中，结果可能继续更新|Recognizing entities. Results may change.
+等待实体识别|Waiting to recognize entities
+正在准备识别|Preparing entity recognition
+正在处理实体|Processing entities
+等待转写完成|Waiting for transcription
+等待剩余转写完成|Waiting for the remaining transcription
+尚未识别实体|Entities have not been recognized yet
+部分转写异常|Some transcription is unavailable
+部分转写异常，已有实体可查看|Some transcription is unavailable. Existing entities are still accessible
+转写异常，暂无法继续识别|Transcription is unavailable. Recognition cannot continue yet
+开始识别|Start recognition
+正在提交…|Submitting…
+未能确认识别已开始，请刷新后重试|Could not confirm recognition started. Refresh before retrying
+正在识别实体|Recognizing entities
+正在核对实体|Reviewing entities
+正在保存结果|Saving results
+正在恢复识别|Recovering recognition
+当天识别结果|Recognition results for this day
+正在读取实体…|Loading entities…
+暂时无法显示实体列表|Entity list is unavailable.
+实体更新失败，请刷新重试|Could not refresh entities. Try again.
+自动更新已暂停，请手动刷新|Automatic updates paused. Refresh to continue.
+刷新实体|Refresh entities
+当前类型下没有实体|No entities in this category.
+暂无已识别实体|No recognized entities yet.
+{count} 次提及|{count} mentions
+提及位置不可用，请刷新实体列表|Mention locations are unavailable. Refresh the entity list.
+正在读取提及…|Loading mentions…
+原文位置已不可用|Original location unavailable
+暂无可用提及|No available mentions
+上一页提及|Previous mentions
+下一页提及|Next mentions
+原文已更新，请刷新录音后重试|Transcript changed. Refresh the recording and try again.
+上一页实体|Previous entities
+下一页实体|Next entities
+人物|People
+组织|Organizations
+地点|Places
+宠物|Pets
+事件|Events
+项目|Projects
+作品|Works
+品牌|Brands
+其他|Other
+团队搜索结果|Team search result
+申请已提交，等待审批|Request submitted, awaiting approval
+申请加入团队|Apply to join team
+
+模型请求失败，请稍后重试或选择其他模型。|The model request failed. Try again later or choose another model.
+模型生成超时，请重试或选择其他模型。|Generation timed out. Try again or choose another model.
+模型生成已中断，请重试。|Generation was interrupted. Try again.
+模型输出不完整，请重试或选择其他模型。|The model returned an incomplete result. Try again or choose another model.
+当天录音内容超出本次处理范围，请联系开发团队。|This day's recordings exceed the processing limit. Contact the development team.
+生成内容未通过完整性检查，请重试。|The generated content failed the completeness check. Try again.
+生成未完成，请重试或选择其他模型。|Generation did not complete. Try again or choose another model.
+正在读取模型…|Loading models…
+选择模型并重试|Choose a model and retry
+暂无可用生成模型，请稍后重试。|No generation models are available. Try again later.
+位置来源|Location sources
+位置日期|Location date
+查看所有位置|View all locations
+全部日期|All dates
+返回 {date}|Back to {date}
+当前日期显示个人记录的设备位置|This date shows device locations from your own records.
+返回位置|Back to locations
+定位到当前位置|Go to current location
+当前位置|Current location
+正在获取当前位置…|Getting current location…
+请在系统或浏览器设置中允许位置访问后重试|Allow location access in your system or browser settings, then try again.
+请开启系统定位服务后重试|Turn on system location services, then try again.
+请完成位置授权后重试|Allow location access, then try again.
+当前环境不支持定位，请在支持定位的客户端或浏览器中打开|Location is unavailable here. Open in a client or browser that supports location.
+获取当前位置超时，请重试|Getting your location timed out. Try again.
+暂时无法定位到当前位置，请重试|Could not get your current location. Try again.
+百度地图加载失败，可选择下方地点查看记录|Baidu Maps could not load. Select a location below to view its records.
+可查看的地点|Available locations
+位置来源筛选|Filter location sources
+筛选位置来源|Filter location sources
+关闭地点记录|Close location records
+该地点的记录|Records at this location
+{count} 条位置记录|{count} location records
+快记的位置|Locations in my notes
+我发送的位置|Locations I sent
+发给我的位置|Locations sent to me
+群聊中的位置|Locations in group chats
+历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
+识别安排|Detected plans
+查看当天录音识别的安排|View plans detected from this day's recordings
+当天录音识别的安排|Plans from this day's recordings
+由当天录音总结识别，与安排板块保持同步。|Detected from this day's recording summary and kept in sync with Plans.
+{count} 项|{count} plans
+共 {count} 项|{count} plans in total
+已识别 {count} 项|{count} plans detected so far
+识别安排加载失败，请刷新重试。|Couldn't load detected plans. Refresh to retry.
+当天录音与安排的关联暂不可用，已有安排仍可在安排板块查看。|Recording-to-plan links are temporarily unavailable. Existing plans are still available in Plans.
+录音安排仍在整理，当前数量可能不完整。|Recording plans are still being processed. The count may be incomplete.
+当天录音尚未识别出安排|No plans detected from this day's recordings yet
+前往安排|Go to Plans
+来自录音 · 来源暂不可定位|From a recording · source location unavailable
+查看来源录音总结|View the source recording summary
+来源：{date}录音|Source: recording on {date}
+来源总结版本暂不可用，当前显示该日可用内容。|The source summary version is unavailable. Showing available content for that day.
+默认日期：{date}|Default date: {date}
+未写日期时使用此日期，内容中的明确日期优先。|Used when no date is specified. Explicit dates in your text take priority.
+当前服务暂不支持日历默认日期，尚未提交安排；输入已保留。|Calendar default dates are not supported by the service yet. No plan was submitted; your input is saved.
+安排已保存，正在识别内容和日期…|Plan saved. Interpreting its content and date…
+统计尚未启用|Statistics not enabled
+录音转写统计尚未启用|Recording transcription statistics are not enabled yet
+来源明细|Source breakdown
+收起来源明细|Hide source breakdown
+录音转写已用比例|Recording transcription quota used
+录音总时长|Total recording duration
+录音来源用量明细|Recording usage by source
+来源|Source
+人声时长|Speech duration
+实扣额度|Quota deducted
+减免|Waived
+长录音|Long recordings
+全天候录音|All-day recordings
+开始录音|Start recording
+正在准备录音…|Preparing recording…
+正在保存录音…|Saving recording…
+正在上传录音…|Uploading recording…
+文件上传|File uploads
+还有 {v0} 段录音待结算，当前用量仅含已结算部分|{v0} recording segments await settlement. Usage includes settled segments only.
+录音按人声时长计量，录音静音时长不计量|Recordings are measured by speech duration; silence is not counted.
+个人世界|Personal world
+说话人排序|Sort speakers
+经常出现|Most frequent
+最近出现|Most recent
+正在补齐说话人列表，排序仍在更新…|Loading the remaining speakers. Order is still updating…
+列表尚未完整，当前仅对已加载的说话人排序和搜索。|The list is incomplete. Sorting and search cover loaded speakers only.
+显示更多说话人|Show more speakers
+语音通话邀请|Voice call invitation
+视频通话邀请|Video call invitation
+公开快记|Public note
+AI 对话|AI conversation
+群聊 / 主题邀请|Group / topic invitation
+声纹录入邀请|Voiceprint invitation
+自动贴图邀请|Auto-sticker invitation
+市集扩展|Marketplace extension
+点击查看分享内容|Open shared content
+分享内容暂不可用|Shared content is unavailable
+分享已失效|Share link has expired
+分享内容审核中|Shared content is under review
+请打开链接确认访问权限|Open the link to check access
+预览暂时无法加载，可点击查看|Preview unavailable. Open to view.
+正在读取分享预览…|Loading share preview…
+另外 {count} 个链接|{count} more links
+{count} 条记录|{count} records
+今天已识别|Identified today
+当天已识别|Identified on this day
+今天到期|Due today
+当天到期|Due on this day
+当天安排|Arrangements for this day
+当天暂无安排|No arrangements for this day
+未来安排|Upcoming arrangements
+刷新当天安排|Refresh arrangements for this day
+安排时间|Arrangement time
+安排内容|Arrangement details
+日期|Date
+时间|Time
+创建安排|Create arrangement
+请选择有效的安排时间|Choose a valid arrangement time
+安排内容最多500字|Arrangement details can contain up to 500 characters
+输入想做的事…|Enter what you want to do…
+正在加载当天安排…|Loading arrangements for this day…
+当天正在更新…|Updating…
+更新失败，已保留当前内容|Update failed. Current content has been kept.
+安排加载失败|Unable to load arrangements for this day
+暂无安排|No arrangements
+到期时间|Due time
+添加安排|Add arrangement
+输入安排内容|Arrangement content
+输入安排内容…|Enter arrangement content…
+待创建的安排内容|Draft arrangement content
+输入想做的事，完成后先保存，再由AI识别安排。|Describe what you want to do. Finish saves it first, then AI recognizes the arrangements.
+移除此条内容|Remove this entry
+最多输入10条，每条500字，总计2000字|Up to 10 entries, 500 characters each and 2,000 in total
+正在创建…|Creating…
+未能确认创建结果，输入已保留；重试不会重复创建。|Could not confirm creation. Your input is retained; retrying will not duplicate it.
+AI识别中…|AI recognition in progress…
+今天创建|Created today
+当天创建|Created on this day
+更新识别结果|Update recognition result
+安排已保存，未完成AI识别|Saved; AI recognition did not complete
+安排已保存，未完成AI识别，可在安排模块查看原始内容。|Saved, but AI recognition did not complete. View the original content in Plans.
+安排已保存，AI识别尚未结束，可稍后更新结果。|Saved. AI recognition is still running; you can update the result later.
+安排已保存，暂未获取识别结果，请稍后重试。|Saved. Recognition results are unavailable; try again later.
+安排已不可访问，请刷新确认。|Arrangement is unavailable. Refresh to check.
+待确认的内容|Content
+展开|Expand
+创建原文|Original source
+创建原文加载失败|Unable to load original source
+创建原文暂不可查看|Original source is currently unavailable
+暂无创建原文|No original source
+内容加载失败|Unable to load content
+暂无关联内容|No related content
+按空格开始排序，方向键移动，空格放置，Escape 取消。按 Enter 展开原文。|Press Space to pick up, arrow keys to move, Space to drop, or Escape to cancel. Press Enter to expand the source.
+已开始拖动安排|Arrangement picked up
+已更新安排插入位置|Arrangement insertion position updated
+当前位置不可放置|Cannot drop at this position
+拖动结束|Drag ended
+已取消拖动|Drag cancelled
+当前服务暂不支持手动排序|Manual sorting is unavailable for this service
+安排|Arrangements to confirm
+正在推进的事项|Work in progress
+每一步都算数|Every step counts
+已识别 · 待确认|Identified · Awaiting confirmation
+安排|Arrangements
+已识别|Identified
+跟进中|Following
+已完成|Completed
+返回日历|Back to calendar
+通知时间|Notification time
+未设置通知时间|No notification time set
+通知|Notifications
+通知类型|Notification types
+通知消息|Notification messages
+新的通知会显示在这里|New notifications will appear here
+展开全文|Show full message
+查看互动|View interaction
+安排暂时无法加载|This arrangement is temporarily unavailable
+新消息|New messages
+全部已读|Mark all as read
+暂时没有通知|No notifications yet
+切换其他类型查看通知|Switch to another type to view notifications
+安排、互动和表态会集中显示在这里|Arrangements, interactions, and reactions appear here
+安排、互动和表态通知|Arrangement, interaction, and reaction notifications
+安排提醒|Arrangement reminder
+表态|Reactions
+收到表态|Received a reaction
+收到{name}的表态|Received a reaction from {name}
+会话暂不可用|Conversation temporarily unavailable
+私聊|Direct chat
+群聊|Group chat
+新通知|New notification
+点击查看原消息|Click to view the original message
+世界互动暂时无法加载|World interactions are temporarily unavailable
+部分世界互动暂时无法加载|Some world interactions are temporarily unavailable
+查看世界互动|View world interactions
+AI 来信|AI letters
+AI 来信暂时无法加载|AI letters are temporarily unavailable
+查看 AI 来信|View AI letters
+正在加载通知…|Loading notifications…
+通知暂时无法加载|Notifications are temporarily unavailable
+未读|Unread
+安排加载失败|Unable to load arrangements
+暂无安排，可将其他区块的安排拖到这里|No arrangements. Drag one here from another column.
+安排未能完成移动，已重新读取实际状态；请确认后重试。|The move could not be completed. Review the refreshed status and try again.
+部分安排暂未同步，请重试加载后再操作。|Some arrangements could not be refreshed. Retry loading before continuing.
+录音记录|Recording history
+最近录音记录|Recent recordings
+各设备同步的录音记录，按开始时间倒序|Synced recordings from your devices, newest start time first
+录音设备|Recording device
+录音模式|Recording mode
+累计时长|Recorded duration
+服务端确认停止|Stop confirmed by server
+关闭录音记录|Close recording history
+当前账号已上传的录音，按开始时间倒序|Uploaded recordings for this account, newest start time first
+设备录音|Device recording
+文件录音|Audio file
+正在加载录音记录…|Loading recordings…
+录音记录加载失败|Could not load recordings
+暂无录音记录|No recordings yet
+绑定手机号后即可使用社交功能|Link a phone number to use social features.
+去绑定|Link phone number
 用量与额度|Usage & limits
 详情 ›|Details ›
 月度赠送 Token|Monthly included tokens
@@ -57,7 +392,7 @@ Agent · 内容由 AI 生成，仅供参考|Agent · AI-generated content; verif
 当前运行的任务预先占用的余额，任务完成后将返还剩余余额。|Credit reserved for running tasks. Unused credit is released when tasks finish.
 充值|Add credit
 余额充值|Add credit
-充值后可在 DSH 会话中通过 Arkme 调用 AI 模型|Use prepaid credit to access AI models through Arkme in DSH.
+APP 与 Arkme 3.0 共用积分，充值到账后即可使用|AI points are shared between the app and Arkme 3.0, and available once credited.
 当前余额|Current balance
 刷新|Refresh
 充值套餐|Credit packages
@@ -235,6 +570,13 @@ DSH 内测群|DSH beta group
 登录后查看数据管理|Sign in to manage your data
 ‹ 数据管理|‹ Data management
 管理、迁入和保留属于你的记录。|Manage, import, and preserve your records.
+开放平台|Open platform
+让其他 AI 使用你的即我数据|Connect other AI assistants to your Arkme data
+将记录、录音转写、对话和安排接入其他 AI 助手或自己的应用。|Use your notes, recording transcripts, conversations, and arrangements with other AI assistants or your own apps.
+前往开放平台|Open platform
+复制 Agent 接入指南|Copy Agent setup guide
+复制失败，请打开指南后复制链接。|Could not copy. Open the guide to copy its link.
+查看接入指南|View setup guide
 最近删除|Recently deleted
 导入数据|Import data
 导出数据|Export data
@@ -273,12 +615,24 @@ AI 小结|AI recap
 活动片段|Activity timeline
 原始明细|Original records
 查看范围|Scope
+部分来源已加载|Some sources loaded
+当前来源已加载|Current sources loaded
+{v0}尚未完整覆盖；有更多页面时可继续加载。|{v0} is not fully covered yet; load more pages when available.
+部分数据尚未完整同步。|Some data has not finished syncing.
 当前仅显示部分来源。|Only some sources are shown.
 概览只统计当前筛选下已加载、可查看的内容，不是全天总量。|This overview counts accessible, loaded content matching your filters, not the full day's totals.
 地点|Location
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+音频文件列表|Audio files
+当天暂无音频文件|No audio files for this day
+暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
+共 {v0} 个文件|{v0} files
+已找到 {v0} 个文件|{v0} files found so far
+文件列表未能继续加载，请重试|Could not load more files. Please retry.
+部分未完成文件暂未同步，请重试|Some unfinished files could not be synced. Please retry.
+未完成文件加载失败，请重试|Could not load unfinished files. Please retry.
 重试加载|Retry loading
 仅筛选已确认地点的活动。列表自动补读最多 8 个可见活动的地点，其他活动可展开后手动查看；没有地点标签不代表当时没有位置。|Shows confirmed locations only. Locations load for up to 8 visible activities; expand others to check manually. No label does not mean no location was recorded.
 正在加载原始记录…|Loading original records…
@@ -491,8 +845,40 @@ AI智能体|AI agent
 群聊名称|Group name
 最新|Latest
 部分历史附件暂不可用|Some earlier attachments are unavailable
+附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history
+手动编辑|Manual edit
+AI 润色|AI polish
+正文|Body
+新增|Added
+原始消息|Original message
+AI 改写|AI rewrite
+其他变更|Other change
+改动较多，按整段对比|Extensive changes; comparing whole blocks
+未改动内容已折叠|Unchanged content collapsed
+标题有修改|Title changed
+正文修改 {v0} 处|{v0} text changes
+文字格式已调整|Text format changed
+新增 {v0} 个附件|{v0} attachments added
+移除 {v0} 个附件|{v0} attachments removed
+附件名称已修改|Attachment name changed
+附件顺序已调整|Attachment order changed
+文字、标题和可比较附件未变化|No changes to text, title or comparable attachments
+版本先后顺序不明确，暂不对比|Version order is uncertain; comparison unavailable
+上一版本加载后显示差异|Differences will appear after the preceding version loads
+缺少上一版本，无法完整对比|Previous version missing; full comparison unavailable
+对比基准：{v0}|Compared with: {v0}
+差异保留 Markdown 格式标记|Differences include Markdown formatting syntax
+新增附件|Added attachment
+移除附件|Removed attachment
+未命名附件|Unnamed attachment
+附件改名|Renamed attachment
+部分历史附件信息不完整，附件变化暂无法完整对比|Historical attachment data is incomplete; full attachment comparison unavailable
+收起上下文|Collapse context
+展开上下文|Expand context
+收起全文|Collapse full version
+查看此版全文|View full version
 重新加载历史附件|Reload earlier attachments
 刷新并重新选择|Refresh and select again
 音频文字正在导入&转写中|Importing and transcribing audio
@@ -578,6 +964,7 @@ AI润色已开启|AI polish enabled
 标签加载失败，|Failed to load tags.
 Enter发送|Enter to send
 / Shift+Enter换行|/ Shift+Enter for a new line
+Enter发送 / Shift+Enter换行|Enter to send / Shift+Enter for a new line
 指定主题|Choose topic
 删除|Delete
 发给自己|Saved notes
@@ -849,6 +1236,12 @@ TA 公开分享的内容|Publicly shared content
 微信号|WeChat
 绑定|Connect
 换绑|Change
+解/换绑|Disconnect / change
+解绑手机号|Disconnect phone number
+返回更换手机号|Back to changing phone number
+确认解绑|Confirm disconnect
+当前仅绑定了手机号，请先绑定其他登录方式|Link another sign-in method before unlinking your phone number.
+账号状态未确认，请重新打开账号设置|Account status could not be confirmed. Reopen account settings.
 绑定中…|Connecting…
 通用|General
 隐私与权限|Privacy & permissions
@@ -902,6 +1295,15 @@ Bot 接入方式|Bot connection method
 下个月|Next month
 跳转月份|Go to month
 跳转年月|Go to month and year
+选择年月|Choose month and year
+年月选择|Month and year
+关闭年月选择|Close month and year picker
+转写操作|Transcript actions
+总结操作|Summary actions
+时间轴操作|Timeline actions
+录音状态|Recording status
+取消多选|Cancel selection
+正在准备转写对比|Preparing transcript comparison
 调整日历高度|Resize calendar
 拖动调整高度，方向键也可调整|Drag or use arrow keys to resize
 打开快记详情|Open note details
@@ -1033,6 +1435,25 @@ AI 润色设置|AI polish settings
 请输入正文内容|Enter content
 长文正文|Article content
 长文快速查找|Find articles
+长文库|Article library
+长文工作区|Article workspace
+所有长文|All articles
+展开长文列表|Expand article list
+收起长文列表|Collapse article list
+文章大纲|Article outline
+大纲|Outline
+展开大纲|Expand outline
+收起大纲|Collapse outline
+标题导航|Heading navigation
+关闭侧栏|Close sidebar
+关闭长文库|Close article library
+新建长文|New article
+长文分类|Article categories
+最近|Recent
+我共享的|Shared by me
+共享给我的|Shared with me
+准备中…|Preparing…
+后端接口开发中，开发完成后此功能完整可用。|The backend API is under development. This feature will be fully available once it is ready.
 复制扩展链接|Copy extension link
 扩展详情|Extension details
 扩展统计|Extension statistics
@@ -1082,6 +1503,15 @@ Arkme 市集|Arkme marketplace
 发送延展|Send reply
 延展作者头像|Reply author avatar
 快记延展列表|Note replies
+查看原始快记|View original note
+查看延展源：{v0}|View reply source: {v0}
+返回延展快记|Back to reply
+原延展暂时不可用|The previous reply is temporarily unavailable
+所在主题|Topic
+未指定主题|No topic
+延展回复|Replies
+暂无延展回复|No replies yet
+正在加载延展…|Loading replies…
 相关快记列表|Related notes list
 相关快记详情|Related note details
 录音片段详情|Recording segment details
@@ -1140,15 +1570,21 @@ Arkme 设置|Arkme settings
 账号信息|Account information
 ArkME 客户端|Arkme app
 打开 APP 更新|Open app update
+该功能仅在官网版本中可用。|This feature is only available in the website version.
 ArkME 插件|Arkme extension
 消息头像|Message avatar
 原消息附件|Original attachments
 分享快记头像|Shared note avatar
+快记分享链接|Shared note link
 快记分享链接详情|Shared note link details
 分享快记链接|Share note link
 记录此刻想法|Capture a thought
 Arkme 对话目录|Arkme conversations
 官方|Official
+官方通知|Official notice
+官方通知详情|Official notice details
+返回通知列表|Back to notifications
+通知列表|Notifications
 按日期查看发给自己|Browse saved notes by date
 更多发给自己操作|More saved-note actions
 正在加载会话内容|Loading conversation
@@ -1237,6 +1673,24 @@ Arkme 用户|Arkme user
 正在读取录音|Loading recordings
 当前窗口说话人统计|Speaker statistics for this range
 当前窗口说话人图例|Speakers in this range
+全天说话人统计|All-day speaker statistics
+全天说话人图例|All-day speakers
+关闭全天说话人统计|Close all-day speaker statistics
+时间轴记录|Timeline entry
+时间未标注|Time unavailable
+场景类型|Scene
+场景说明|Scene note
+环境说明|Environment note
+评价|Assessment
+评价分数|Assessment score
+事件标签|Event tags
+时段总结|Period summary
+参与者|Participants
+说话人备注|Speaker note
+待办|To-do
+代表性原话|Representative quotes
+对话摘要|Dialogue summaries
+其他信息|Other information
 暂停播放|Pause
 转发录音片段|Forward recording segment
 转发对象|Forwarding destination
@@ -1351,6 +1805,18 @@ ICP备案号|ICP registration
 不可修改|Cannot be changed
 修改|Edit
 录音中|Recording
+设备录音状态|Device recording status
+正在同步设备录音状态…|Syncing device recording status…
+设备录音状态暂未启用|Device recording status is not enabled yet
+同步暂时失败，正在重试|Sync failed temporarily. Retrying
+暂无设备上报录音状态|No devices are reporting recording status
+已暂停|Paused
+已中断|Interrupted
+录音异常|Recording error
+状态待确认|Status unconfirmed
+最后确认|Last confirmed
+手动录音|Manual recording
+长录音|Long recording
 录音，本机正在录音，点击查看|Recordings. This device is recording. Click to view.
 确认裁剪|Confirm crop
 处理中…|Processing…
@@ -1443,4 +1909,162 @@ Arkme 账号|Arkme account
 空间不足 10%|Less than 10% space left
 暂无可用额度|No allowance remaining
 余量较少|Running low
+已识别说话人|Recognized speakers
+已标记 {marked} · 未标记 {unmarked}|Labeled {marked} · Unlabeled {unmarked}
+统计待更新|Counts awaiting update
+统计待更新，当前显示上次整理的目录。|Counts are awaiting an update. Showing the last prepared directory.
+目录更新暂未完成，请刷新重试。|Directory update could not finish. Refresh to retry.
+正在同步最新人物与统计…|Updating people and counts…
+查看录音中已标记和未标记的说话人|See labeled and unlabeled speakers from your recordings
+搜索说话人|Search speakers
+搜索已加载的说话人|Search loaded speakers
+已标记|Labeled
+未标记|Unlabeled
+录音中标记的人|Labeled in recordings
+出现 {v0} 天 · 最近 {v1}|Present on {v0} days · Last {v1}
+近 7 天出现 {v0} 天 · 最近 {v1}|Seen on {v0} of the last 7 days · Last {v1}
+近 7 天出现 {v0} 天|Seen on {v0} of the last 7 days
+已标记说话人详情|Labeled speaker details
+查看已确认归属的原始识别身份|View verified recognized voice identities
+对应的识别说话人|Recognized voices linked to this person
+仅展示近 7 天已转写片段中可核实的关联；完整历史待接口。|Only verified links in transcribed segments from the last 7 days are shown. Full history is pending.
+正在查找关联说话人…|Finding linked recognized voices…
+近 7 天有发声，但未找到稳定的原始识别身份。|Speech was found in the last 7 days, but no stable source voice identity was available.
+近 7 天未找到关联，不代表完整历史中没有。|No link was found in the last 7 days; this does not mean none exists in full history.
+近 7 天未见已转写发声 · 全历史待接口|No transcribed speech in the last 7 days · Full history pending
+已标记项仅统计近 7 天已转写发声；全历史统计待接口。|Labeled speakers currently show transcribed speech from the last 7 days only. Full-history stats are pending.
+出现统计整理中|Preparing presence stats
+出现统计更新中|Updating presence stats
+出现统计暂不可用|Presence stats unavailable
+暂无可统计的录音片段|No countable recording segments
+已标记说话人读取失败：|Could not load labeled speakers:
+未标记说话人读取失败：|Could not load unlabeled speakers:
+说话人列表暂时无法加载|Speaker list could not be loaded
+正在加载说话人…|Loading speakers…
+正在更新说话人…|Updating speakers…
+暂无已识别说话人|No recognized speakers yet
+没有匹配的说话人|No matching speakers
+加载更多未标记说话人|Load more unlabeled speakers
+搜索仅覆盖已加载的说话人，可继续加载更多。|Search covers loaded speakers only. Load more to continue searching.
+未标记说话人正在整理，结果可能不完整。|Unlabeled speakers are being prepared. Results may be incomplete.
+未标记说话人正在更新，结果可能不完整。|Unlabeled speakers are updating. Results may be incomplete.
+未标记说话人整理失败，请稍后刷新。|Could not prepare unlabeled speakers. Refresh later.
+暂无可显示的说话人|No speakers can be shown yet
+‹ 返回列表|‹ Back to list
+说话人已标记，列表正在刷新。|Speaker labeled. Refreshing the list…
+{v0} 的 Bot 操作|Bot actions for {v0}
+打开 {v0} 的 Bot 操作|Open Bot actions for {v0}
+正在加载 Bot 操作…|Loading Bot actions…
+查看 Bot 资料|View Bot profile
+与 Bot 对话|Chat with Bot
+该 Bot 暂不可用|This Bot is currently unavailable
+@TA 的消息|Messages mentioning this Bot
+TA 的消息|Messages from this Bot
+@{v0}的消息|Messages mentioning {v0}
+{v0}的消息|Messages from {v0}
+仅当前已加载消息|Currently loaded messages only
+调整 Bot 消息侧栏宽度|Resize Bot messages panel
+关闭 Bot 消息|Close Bot messages
+当前已加载消息中暂无匹配内容|No matching messages in the currently loaded range
+Bot 已移出群聊|Bot removed from the group
+{v0} 将从当前群聊移除，历史消息保留。|{v0} will be removed from this group. Message history will remain.
+暂无简介|No description yet
+{v0} 的 Bot 资料|Bot profile for {v0}
+查看 {v0} 的 Bot 资料|View Bot profile for {v0}
+通知型 Bot 暂不支持 @ 对话|Notification Bots do not support @ conversations yet
+{v0}人 · {v1} Bot|{v0} people · {v1} Bots
+{v0}人|{v0} people
+正在读取群 Bot…|Loading group Bots…
+Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
+新识别 {v0} 个|{v0} newly identified
+识别我的声音|Identify my voice
+你的声纹正在处理中|Your voiceprint is being processed
+已录入声纹，暂未在录音中匹配到你|Voiceprint enrolled. No match found in your recordings yet.
+还没有标记你的声音|Your voice has not been labeled yet
+打开你的录音，点击说话人名称并选择自己；请先试听确认。|Open your recording, listen to confirm, then click the speaker name and select yourself.
+从录音中标记我|Label myself in a recording
+管理声纹|Manage voiceprint
+处理完成后将通知你，并自动更新对应日期的总结和时间轴。|You will be notified when processing finishes. Summaries and timelines for the affected dates will then update automatically.
+录音仍可导入；完成通知与自动整理暂不可用。|You can still import recordings. Completion notifications and automatic summaries are currently unavailable.
+录音处理完成|Recording processing complete
+录音处理未全部完成|Some recordings could not be processed
+录音总结与时间轴已更新|Recording summaries and timelines updated
+录音暂无可整理内容|No recording content available to summarize
+录音整理未全部完成|Some recording summaries or timelines could not be updated
+本次 {total} 个文件，已完成 {completed} 个。|{completed} of {total} files processed.
+涉及 {count} 个录音日期。|Covers {count} recording dates.
+已更新|Updated
+部分完成|Partially complete
+无可用内容|No content available
+未完成|Incomplete
+返回通知|Back to notifications
+对应日期的总结和时间轴正在自动整理，完成后会再次通知。|Summaries and timelines for the affected dates are being updated. You will be notified when they are ready.
+查看录音|View recordings
+查看总结|View summary
+查看时间轴|View timeline
+暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
+表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
+通知操作失败，请重试|Notification action failed. Try again.
+部分录音通知未能标记已读，请重试|Some recording notifications could not be marked as read. Try again.
+录音通知暂时不可用|Recording notifications are currently unavailable
+加载更多录音通知|Load more recording notifications
+来源时间轴版本暂不可用，当前显示该日可用内容。|The original timeline version is unavailable. Showing available content for that day.
+重试录音通知|Retry recording notifications
+等待处理|Waiting for processing
+调整实体列表宽度|Resize entity list
+加载更多提及|Load more mentions
+正在提交反馈…|Submitting feedback…
+实体相关性|Entity relevance
+当前显示全部实体，提及者汇总待补充。|Showing all entities. Speaker summaries are not available yet.
+{name}的提及者|Speakers mentioning {name}
+{name} {count} 次|{name}: {count} mentions
+含 {count} 次播放|{count} from playback
+另 {count} 位说话人|{count} more speakers
+{count} 次说话人待确认|{count} mentions with unknown speaker
+查看所有人的提及|Show everyone's mentions
+与你相关|Relevant to you
+暂未提供相关性信息，当前显示全部实体。|Relevance information is not available yet. Showing all entities.
+暂未发现与你相关的实体，可展开其他内容。|No related entities yet. Expand other content to see more.
+你提到|Mentioned by you
+与你交流时提到|Mentioned in conversation with you
+你关注的|Your interest
+其他提及|Other mentions
+背景内容|Background content
+来源待确认|Source unconfirmed
+声源待确认|Sound source unconfirmed
+现场提及|In-person mention
+待核实|Needs verification
+其他内容 · {count}|Other content · {count}
+收起其他内容 · {count}|Collapse other content · {count}
+这次提及的反馈|Feedback on this mention
+仅影响这次提及，保存后可撤销。|Applies only to this mention. You can undo after saving.
+暂不支持保存反馈。|Saving feedback is not available yet.
+与我有关|Relevant to me
+播放内容|Playback content
+识别有误|Incorrect recognition
+反馈已保存，仅影响这次提及|Feedback saved for this mention only
+已撤销这次反馈|Feedback undone
+撤销反馈|Undo feedback
+重试这次反馈|Retry this feedback
+暂未确认操作结果，请重试这次反馈。|The result is not confirmed. Retry this same feedback.
+这次操作未生效，请刷新后再操作。|This operation was not applied. Refresh and try again.
+手动说话人|Manual speakers
+手动说话人详情|Manual speaker details
+暂无手动说话人，可在录音标记时创建|No manual speakers. Create one while labeling a recording.
+说话人名单读取不完整，请重试|The speaker list is incomplete. Please try again.
+{v0}的说话人头像|Speaker avatar for {v0}
+录音出现记录|Recording appearances
+正在读取录音出现记录…|Loading recording appearances…
+录音出现记录读取失败|Failed to load recording appearances
+录音出现记录待更新|Recording appearances need updating
+录音出现记录仍在整理|Recording appearances are still being prepared
+{v0} 个关联的识别说话人|{v0} linked recognized speakers
+查看最近录音|View latest recording
+暂无可核实的关联录音，已创建的说话人仍会保留在名单中。|No verified linked recordings yet. The created speaker remains in the list.
+对应的识别说话人|Linked recognized speakers
+查看说话人 {v0} 的最近录音|View the latest recording for speaker {v0}
+查看延展|View replies
+团队消息延展列表|Team message replies
+正在加载延展…|Loading replies…
+返回延展列表|Back to replies
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

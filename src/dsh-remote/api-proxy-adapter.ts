@@ -40,6 +40,7 @@ interface ModelCatalogApiValue {
       id: string
       name: string
       description?: string
+      inputModalities?: readonly string[]
       reasoning?: {
         efforts: Array<{ id: string; name: string; description?: string }>
         defaultEffort?: string
@@ -50,6 +51,7 @@ interface ModelCatalogApiValue {
 }
 
 interface WorkspaceApiLike {
+  archiveSession?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{ archivedSessionIds: string[] }>>
   list?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<{
     items: Array<{ workspaceId: string; path: string; title: string; sessionIds: string[] }>
     archivedSessionIds?: string[]
@@ -62,6 +64,7 @@ interface DshRemoteWorkspaceInventory {
 }
 
 interface SessionsApiLike {
+  rename?(request: { rpcId: string; payload: { sessionId: string; title: string } }): Promise<RpcResponse<{ title: string; seq: number }>>
   list?(request: { rpcId: string; payload: { cursor?: string } }): Promise<RpcResponse<{ items: Array<{
     sessionId: string
     updatedAt: number
@@ -119,6 +122,7 @@ interface EventsApiLike {
 }
 
 export type DshRemoteApiProjectionEvent =
+  | { kind: 'session-metadata'; sessionId: string }
   | {
       kind: 'session-event'
       sessionId: string
@@ -350,6 +354,7 @@ export class DshApiProxyAdapter {
     private readonly options: {
       eventRetryBaseMillis?: number
       defaultModelSelection?: () => unknown
+      modelInputModalities?: (provider: string, model: string) => Promise<readonly string[] | undefined>
     } = {},
   ) {}
 
@@ -370,6 +375,8 @@ export class DshApiProxyAdapter {
       result.push('session.prompt', 'session.prompt.queue', 'session.prompt.steer')
     }
     if (typeof this.api.sessions?.cancel === 'function') result.push('session.cancel')
+    if (typeof this.api.sessions?.rename === 'function') result.push('session.rename')
+    if (typeof this.api.workspace?.archiveSession === 'function') result.push('session.archive')
     if (typeof this.api.events?.mux === 'function') result.push('session.events')
     if (typeof this.api.events?.mux === 'function' && typeof this.api.respond === 'function') {
       result.push('interaction.question.respond', 'interaction.approval.respond')
@@ -431,13 +438,30 @@ export class DshApiProxyAdapter {
     limit?: number
     cursor?: string
     workspaceInventory?: DshRemoteWorkspaceInventory
+    sessionInventory?: readonly DshRemoteSessionSummary[]
+    includeUngrouped?: boolean
   } = {}): Promise<{
     items: DshRemoteSessionSummary[]
     nextCursor?: string
   }> {
+    const snapshot = input.sessionInventory ?? await this.sessionInventory(input.workspaceInventory)
+    const all = snapshot.filter(item =>
+      (input.sessionId === undefined || item.sessionId === input.sessionId)
+      && (input.includeUngrouped || item.workspaceId !== '')
+      && (input.workspaceId === undefined || item.workspaceId === input.workspaceId))
+    const offset = readOffset(input.cursor)
+    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
+    return pageByBytes({
+      all, offset, limit: pageLimit(input.limit),
+      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
+    })
+  }
+
+  /** One request-owned metadata snapshot; callers page it without another DSH read. */
+  async sessionInventory(workspaceInventory?: DshRemoteWorkspaceInventory): Promise<DshRemoteSessionSummary[]> {
     const list = this.api.sessions?.list
     if (typeof list !== 'function') this.unsupported('session.list')
-    const workspaceInventory = input.workspaceInventory ?? await this.workspaceInventory()
+    workspaceInventory ??= await this.workspaceInventory()
     const workspaces = workspaceInventory.items
     const archived = new Set(workspaceInventory.archivedSessionIds)
     const workspaceBySession = new Map<string, string>()
@@ -445,10 +469,9 @@ export class DshApiProxyAdapter {
       for (const sessionId of workspace.sessionIds) workspaceBySession.set(sessionId, workspace.workspaceId)
     }
     const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('remote-sessions'), payload: {} }))
-    const all = value.items.flatMap<DshRemoteSessionSummary>(item => {
-      if (input.sessionId !== undefined && item.sessionId !== input.sessionId) return []
-      const workspaceId = workspaceBySession.get(item.sessionId)
-      if (workspaceId === undefined || (input.workspaceId !== undefined && workspaceId !== input.workspaceId)) return []
+    if (value.items.length > 10_000) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '会话目录超过上报上限')
+    return value.items.flatMap<DshRemoteSessionSummary>(item => {
+      const workspaceId = workspaceBySession.get(item.sessionId) ?? ''
       const titleValue = item.projections?.values.title
       return [{
         sessionId: item.sessionId,
@@ -468,12 +491,19 @@ export class DshApiProxyAdapter {
           : {}),
       }]
     }).sort((left, right) => right.updatedAt - left.updatedAt)
-    const offset = readOffset(input.cursor)
-    if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
-    return pageByBytes({
-      all, offset, limit: pageLimit(input.limit),
-      build: (items, nextCursor) => ({ items, ...(nextCursor === undefined ? {} : { nextCursor }) }),
-    })
+  }
+
+  // The public DSH list is already a complete metadata snapshot. Read it once;
+  // paging our own filtered projection would re-fetch the whole DSH directory.
+  async localHistorySummaries(): Promise<Map<string, { updatedAt: number; projectionAsOfSeq?: number; running: boolean }>> {
+    const list = this.api.sessions?.list
+    if (typeof list !== 'function') this.unsupported('session.list')
+    const value = unwrap(await list.call(this.api.sessions, { rpcId: rpcId('history-summaries'), payload: {} }))
+    if (value.items.length > 10_000) throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '会话目录超过校验上限')
+    return new Map(value.items.map(item => [item.sessionId, {
+      updatedAt: item.updatedAt, running: item.running,
+      ...(item.projections === undefined ? {} : { projectionAsOfSeq: item.projections.asOfSeq }),
+    }]))
   }
 
   async history(input: { sessionId: string; beforeSeq?: number; limit?: number }): Promise<{
@@ -547,6 +577,8 @@ export class DshApiProxyAdapter {
           providerName,
           model: boundedUtf8(model.id, 128),
           displayName: boundedUtf8(model.name, 256),
+          ...(Array.isArray(model.inputModalities)
+            ? { supportsImages: model.inputModalities.includes('image') } : {}),
           ...(model.description === undefined
             ? {}
             : { description: boundedUtf8(model.description, 512) }),
@@ -563,7 +595,14 @@ export class DshApiProxyAdapter {
     return result
   }
 
-  async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection }> {
+  private async imageSupport(selection: DshRemoteModelSelection): Promise<{ supportsImages?: boolean }> {
+    try {
+      const modalities = await this.options.modelInputModalities?.(selection.provider, selection.model)
+      return Array.isArray(modalities) ? { supportsImages: modalities.includes('image') } : {}
+    } catch { return {} }
+  }
+
+  async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection; supportsImages?: boolean }> {
     await this.requireSession(input.sessionId, false)
     const legacyModels = this.api.sessions?.models
     if (typeof legacyModels === 'function') {
@@ -573,7 +612,7 @@ export class DshApiProxyAdapter {
       }))
       const current = modelSelection(value.current, 'session.models.current')
       if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前模型')
-      return { current }
+      return { current, ...await this.imageSupport(current) }
     }
 
     const list = this.api.sessions?.list
@@ -590,7 +629,7 @@ export class DshApiProxyAdapter {
       ?? modelSelection(projection?.lastUsed, 'modelSelection.lastUsed')
       ?? modelSelection((await this.modelCatalog()).default, 'modelCatalog.default')
     if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前或默认模型')
-    return { current }
+    return { current, ...await this.imageSupport(current) }
   }
 
   async selectSessionModel(input: {
@@ -599,7 +638,7 @@ export class DshApiProxyAdapter {
     model: string
     reasoningEffort?: string
     dshRpcId: string
-  }): Promise<{ selected: DshRemoteModelSelection }> {
+  }): Promise<{ selected: DshRemoteModelSelection; supportsImages?: boolean }> {
     await this.requireSession(input.sessionId, false)
     const selectModel = this.api.sessions?.selectModel
     if (typeof selectModel !== 'function') this.unsupported('session.model.select')
@@ -617,7 +656,7 @@ export class DshApiProxyAdapter {
       || (input.reasoningEffort !== undefined && selected.reasoningEffort !== input.reasoningEffort)) {
       throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与请求不一致的模型')
     }
-    return { selected }
+    return { selected, ...await this.imageSupport(selected) }
   }
 
   async sessionModelMatches(input: {
@@ -711,6 +750,23 @@ export class DshApiProxyAdapter {
       rpcId: input.dshRpcId,
       payload: { sessionId: input.sessionId, mode: input.mode, content: [{ type: 'text', text }] },
     }))
+  }
+
+  async editCatalog(input: { operation: 'session.rename' | 'session.archive'; sessionId: string; title?: string; dshRpcId: string }): Promise<unknown> {
+    await this.requireSession(input.sessionId, false)
+    const request = { rpcId: input.dshRpcId, payload: { sessionId: input.sessionId } }
+    if (input.operation === 'session.rename') {
+      const rename = this.api.sessions?.rename
+      if (!rename) this.unsupported(input.operation)
+      return unwrap(await rename.call(this.api.sessions, { ...request, payload: { ...request.payload, title: input.title! } }))
+    }
+    if (input.operation === 'session.archive') {
+      const archive = this.api.workspace?.archiveSession
+      if (!archive) this.unsupported(input.operation)
+      await archive.call(this.api.workspace, request).then(unwrap)
+      return { archived: true }
+    }
+    this.unsupported(input.operation)
   }
 
   async cancel(input: { sessionId: string; dshRpcId: string }): Promise<{ accepted: true }> {
@@ -850,7 +906,9 @@ export class DshApiProxyAdapter {
       const payload = frame.payload
       const type = payload.type
       let interactionsChanged = false
-      if (type === 'session/event' && typeof payload.sessionId === 'string'
+      if (type === 'session/metadata' && typeof payload.sessionId === 'string' && payload.sessionId.length > 0) {
+        this.emitProjection({ kind: 'session-metadata', sessionId: payload.sessionId })
+      } else if (type === 'session/event' && typeof payload.sessionId === 'string'
         && payload.event !== null && typeof payload.event === 'object' && !Array.isArray(payload.event)) {
         const event = payload.event as Record<string, unknown>
         if (typeof event.type === 'string' && typeof event.seq === 'number' && Number.isSafeInteger(event.seq) && event.seq >= 0
@@ -910,12 +968,11 @@ export class DshApiProxyAdapter {
   private async requireSession(sessionId: string, requireWorkspaceAvailable: boolean): Promise<DshRemoteSessionSummary> {
     const workspaces = await this.workspaces()
     const workspace = workspaces.find(item => item.sessionIds.includes(sessionId))
-    if (workspace === undefined) throw new DshRemoteError('SESSION_NOT_FOUND', '会话不属于当前 Runtime 的已登记工作目录')
-    if (requireWorkspaceAvailable && !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
+    if (requireWorkspaceAvailable && workspace !== undefined && !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
     let cursor: string | undefined
     do {
       const page = await this.sessions({
-        workspaceId: workspace.workspaceId, limit: DSH_REMOTE_MAX_PAGE_ITEMS,
+        sessionId, includeUngrouped: true, limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         ...(cursor === undefined ? {} : { cursor }),
       })
       const session = page.items.find(item => item.sessionId === sessionId)

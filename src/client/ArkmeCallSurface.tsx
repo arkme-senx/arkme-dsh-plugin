@@ -1,7 +1,10 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
+import { ArkmeCallHistorySummary } from './ArkmeCallHistorySummary.js'
+import { ArkmeOverlayScrollArea } from './ArkmeOverlayScrollArea.js'
 import { CallAvatar, cleanAvatarRef, formatDuration, sampleAvatarUrl } from './call-detail-presentation.js'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
@@ -25,12 +28,12 @@ import type {
   ArkmeSourceList,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { useCallTour } from './ArkmeCallTour.js'
+import { callHistoryIdentity, refreshCallHistory } from './call-history-refresh.js'
 
 interface CallTarget {
   key: string
@@ -47,6 +50,7 @@ interface CallTarget {
 }
 
 export interface ArkmeCallSurfaceProps {
+  active?: boolean
   initialPickerOpen?: boolean
   presentation?: 'page' | 'dialog'
   onClose?: () => void
@@ -56,7 +60,6 @@ type TypePickerPlacement =
   | { kind: 'center' }
   | { kind: 'anchored'; left: number; top: number }
 
-const CALL_SURFACE_AVATAR_PRELOAD_LIMIT = 40
 const CALL_HISTORY_SETTLED_REFRESH_DELAY_MS = 2_400
 const OFFICIAL_AUTHOR_DISPLAY_NAME = '即' + '我作者'
 const OFFICIAL_AUTHOR_RECOMMENDATION_LABEL = OFFICIAL_AUTHOR_DISPLAY_NAME + ' · 推荐'
@@ -231,7 +234,8 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, color: arkmeTheme.tertiary, background: arkmeTheme.input, boxSizing: 'border-box',
   },
   searchInput: { minWidth: 0, flex: 1, border: 0, outline: 0, padding: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 13 },
-  list: { minHeight: 0, flex: 1, overflowY: 'auto', margin: 0, padding: 0, listStyle: 'none' },
+  listViewport: { minHeight: 0, flex: 1, display: 'flex', marginRight: -15 },
+  list: { margin: 0, padding: '0 15px 0 0', listStyle: 'none' },
   callRow: {
     width: '100%', minHeight: 64, display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) auto',
     alignItems: 'center', columnGap: 10, rowGap: 4, padding: '8px 8px', border: 0, borderRadius: 13,
@@ -268,10 +272,10 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 68, flex: 'none', padding: '12px 22px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between',
     borderBottom: `1px solid ${arkmeTheme.borderSoft}`, boxSizing: 'border-box',
   },
-  detailIdentity: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 },
+  detailIdentity: { minWidth: 100, flex: '1 1 0', display: 'flex', alignItems: 'center', gap: 12 },
   detailTitleBlock: { minWidth: 0, display: 'grid', gap: 3 },
   detailTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16, lineHeight: '22px', fontWeight: 650 },
-  detailSub: { margin: 0, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px' },
+  detailSub: { margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '17px' },
   detailActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 8 },
   privateChatButton: {
     height: 36, padding: '0 11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -389,7 +393,7 @@ function sourceMatchesCall(source: ArkmeSourceItem, call: Pick<ArkmeCallHistoryI
 }
 
 function callKey(item: ArkmeCallHistoryItem): string {
-  return `${item.stableId}:${item.callRef}`
+  return callHistoryIdentity(item)
 }
 
 function CallVideoIcon({ size = 16, style }: { size?: number; style?: CSSProperties }) {
@@ -431,27 +435,6 @@ function detailSubtitle(item: ArkmeCallHistoryItem): string {
   if (item.callRef === 'sample-video') return '呼入 · 视频通话 · 今天 14:26 · 22:14'
   if (item.callRef === 'sample-audio') return '呼出 · 语音通话 · 昨天 16:27 · 08:47'
   return `${mediaLabel(item.mediaType)} · ${formatDuration(item.durationSeconds)}`
-}
-
-async function preloadCallSurfaceAvatars(refs: readonly (string | undefined)[]): Promise<void> {
-  const unique = new Set<string>()
-  for (const ref of refs) {
-    const normalized = cleanAvatarRef(ref)
-    if (normalized !== undefined) unique.add(normalized)
-    if (unique.size >= CALL_SURFACE_AVATAR_PRELOAD_LIMIT) break
-  }
-  await Promise.allSettled([...unique].map(async ref => await arkmeAvatarImages.load(ref)))
-}
-
-async function preloadHistoryAvatars(page: ArkmeCallHistoryPage): Promise<void> {
-  await preloadCallSurfaceAvatars([
-    ...(page.recentContacts ?? []).map(contact => contact.avatarRef),
-    ...page.items.map(item => item.peerAvatarRef),
-  ])
-}
-
-async function preloadSourceAvatars(sources: readonly ArkmeSourceItem[]): Promise<void> {
-  await preloadCallSurfaceAvatars(sources.map(source => source.avatarRef))
 }
 
 function targetForSource(source: ArkmeSourceItem): CallTarget {
@@ -569,7 +552,7 @@ function typePickerPlacementFromAnchor(anchor: HTMLElement | undefined): TypePic
   }
 }
 
-export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'page', onClose }: ArkmeCallSurfaceProps = {}) {
+export function ArkmeCallSurface({ active = true, initialPickerOpen = false, presentation = 'page', onClose }: ArkmeCallSurfaceProps = {}) {
   useArkmeLocale()
   const surfaceRef = useRef<HTMLElement>(null)
   const browserResize = useResizableCallBrowser(surfaceRef)
@@ -578,12 +561,16 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState<ArkmeCallHistoryPage>()
+  const pageRef = useRef(page)
+  pageRef.current = page
+  const [historyRefreshRevision, setHistoryRefreshRevision] = useState(0)
   const [historyState, setHistoryState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [historyError, setHistoryError] = useState('')
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState('')
   const paginationAbortRef = useRef<AbortController>()
-  const listRef = useRef<HTMLUListElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const listAnchorRef = useRef<{ key: string; top: number }>()
   const [selectedRef, setSelectedRef] = useState('')
   const privateChatAbortRef = useRef<AbortController>()
   const [openingPrivateChat, setOpeningPrivateChat] = useState(false)
@@ -592,6 +579,8 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
     return () => { privateChatAbortRef.current?.abort(); privateChatAbortRef.current = undefined }
   }, [selectedRef, auth.auth?.environment, auth.auth?.userId])
   const [detail, setDetail] = useState<ArkmeCallDetail>()
+  const detailRef = useRef(detail)
+  detailRef.current = detail
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [detailError, setDetailError] = useState('')
   const [sources, setSources] = useState<ArkmeSourceItem[]>([])
@@ -668,6 +657,16 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
   const historyAbortRef = useRef<AbortController>()
   const historyRefreshTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const detailGenerationRef = useRef(0)
+  const detailAbortRef = useRef<AbortController>()
+  useLayoutEffect(() => {
+    const anchor = listAnchorRef.current
+    listAnchorRef.current = undefined
+    const list = listRef.current
+    if (!anchor || !list) return
+    const row = [...list.querySelectorAll<HTMLElement>('[data-arkme-call-row]')]
+      .find(element => element.dataset.arkmeCallRow === anchor.key)
+    if (row) list.scrollTop += row.getBoundingClientRect().top - anchor.top
+  }, [page])
   const refreshHistory = useCallback((options: { silent?: boolean } = {}) => {
     historyRefreshingRef.current = true
     historyAbortRef.current?.abort()
@@ -681,13 +680,22 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
     historyGenerationRef.current = generation
     if (options.silent !== true) setHistoryState('loading')
     setHistoryError('')
-    void callArkme<ArkmeCallHistoryPage>('calls.history.list', { limit: 30, includeRecentContacts: true }, controller.signal)
-      .then(async value => {
-        await preloadHistoryAvatars(value)
+    void refreshCallHistory(pageRef.current, cursor => callArkme<ArkmeCallHistoryPage>('calls.history.list', {
+      limit: 30, ...(cursor ? { cursor } : {}), includeRecentContacts: !cursor,
+    }, controller.signal), controller.signal)
+      .then(value => {
         if (controller.signal.aborted || historyGenerationRef.current !== generation) return
         historyRefreshingRef.current = false
+        const list = listRef.current
+        if (list && list.scrollTop > 0) {
+          const top = list.getBoundingClientRect().top
+          const row = [...list.querySelectorAll<HTMLElement>('[data-arkme-call-row]')]
+            .find(element => element.getBoundingClientRect().bottom > top)
+          if (row?.dataset.arkmeCallRow) listAnchorRef.current = { key: row.dataset.arkmeCallRow, top: row.getBoundingClientRect().top }
+        }
         setPage(value)
         setHistoryState('ready')
+        setHistoryRefreshRevision(value => value + 1)
       })
       .catch(error => {
         if (controller.signal.aborted || historyGenerationRef.current !== generation || options.silent === true) return
@@ -700,7 +708,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
   }, [])
 
   const loadMoreHistory = useCallback(async () => {
-    if (historyState !== 'ready' || historyRefreshingRef.current || historyAbortRef.current?.signal.aborted
+    if (!active || historyState !== 'ready' || historyRefreshingRef.current || historyAbortRef.current?.signal.aborted
       || paginationAbortRef.current || !page?.hasMore || !page.nextCursor) return
     const controller = new AbortController()
     paginationAbortRef.current = controller
@@ -714,7 +722,6 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
       if (value.hasMore && (!value.nextCursor?.trim() || value.nextCursor === page.nextCursor)) {
         throw new Error('通话记录分页游标无效，请重试')
       }
-      await preloadHistoryAvatars(value)
       if (controller.signal.aborted || historyGenerationRef.current !== generation) return
       setPage(previous => previous === undefined ? value : {
         ...previous,
@@ -733,41 +740,75 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
         setLoadingMore(false)
       }
     }
-  }, [page, historyState])
+  }, [active, page, historyState])
 
-  // Fill a short/filtered list without requiring a scroll event first.
+  useEffect(() => {
+    if (!active) return
+    refreshHistory({ silent: pageRef.current !== undefined })
+  }, [active, refreshHistory])
+
+  // Fill a short/filtered list only after activation has started its head refresh.
   useEffect(() => {
     const list = listRef.current
-    if (list && !loadingMore && !loadMoreError
+    if (active && list && !loadingMore && !loadMoreError
       && list.scrollHeight <= list.clientHeight) void loadMoreHistory()
-  }, [loadMoreHistory, loadingMore, loadMoreError, query])
+  }, [active, loadMoreHistory, loadingMore, loadMoreError, query])
 
   useEffect(() => {
-    refreshHistory()
     return () => {
       historyAbortRef.current?.abort()
       paginationAbortRef.current?.abort()
+      detailAbortRef.current?.abort()
       if (historyRefreshTimerRef.current !== undefined) clearTimeout(historyRefreshTimerRef.current)
     }
-  }, [refreshHistory])
+  }, [])
 
-  useEffect(() => outgoingCallUi.subscribeSettled(() => {
-    refreshHistory({ silent: true })
-    if (historyRefreshTimerRef.current !== undefined) clearTimeout(historyRefreshTimerRef.current)
-    historyRefreshTimerRef.current = setTimeout(() => {
+  useEffect(() => {
+    if (!active) return
+    const unsubscribe = outgoingCallUi.subscribeSettled(() => {
       refreshHistory({ silent: true })
-      historyRefreshTimerRef.current = undefined
-    }, CALL_HISTORY_SETTLED_REFRESH_DELAY_MS)
-  }), [refreshHistory])
+      if (historyRefreshTimerRef.current !== undefined) clearTimeout(historyRefreshTimerRef.current)
+      historyRefreshTimerRef.current = setTimeout(() => {
+        refreshHistory({ silent: true })
+        historyRefreshTimerRef.current = undefined
+      }, CALL_HISTORY_SETTLED_REFRESH_DELAY_MS)
+    })
+    return () => {
+      unsubscribe()
+      if (historyRefreshTimerRef.current !== undefined) clearTimeout(historyRefreshTimerRef.current)
+    }
+  }, [active, refreshHistory])
+
+  useEffect(() => {
+    if (active) return
+    // Stop catch-up/pagination work when leaving an already loaded page. The
+    // initial read may finish so a quick first return can still use its result.
+    if (pageRef.current) {
+      historyAbortRef.current?.abort()
+      paginationAbortRef.current?.abort()
+      detailAbortRef.current?.abort()
+    }
+    setPickerOpen(false)
+    setInviteOpen(false)
+    setTypeTarget(undefined)
+    setUnavailableTarget(undefined)
+    setNotice('')
+    callAbortRef.current?.abort()
+    callAbortRef.current = undefined
+    setCallingKey('')
+    privateChatAbortRef.current?.abort()
+    privateChatAbortRef.current = undefined
+    setOpeningPrivateChat(false)
+  }, [active])
 
   useEffect(() => {
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeSourceList>('sources.list', { directory: 'root', limit: 100 }, controller.signal)
-      .then(async value => {
+      .then(value => {
+        if (!active || controller.signal.aborted) return
         const privateChats = value.items.filter(item => item.kind === 'private_chat')
-        await preloadSourceAvatars(privateChats)
-        if (active) setSources(privateChats)
+        setSources(privateChats)
       })
       .catch(() => undefined)
     return () => { active = false; controller.abort() }
@@ -778,10 +819,9 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
     let active = true
     const controller = new AbortController()
     void callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, controller.signal)
-      .then(async value => {
-        const avatarRef = cleanAvatarRef(value.avatarRef)
-        if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+      .then(value => {
         if (!active || controller.signal.aborted) return
+        const avatarRef = cleanAvatarRef(value.avatarRef)
         setOfficialAuthorProfile({
           userId: value.userId,
           displayName: value.displayName.trim() || OFFICIAL_AUTHOR_DISPLAY_NAME,
@@ -807,9 +847,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
     setContactSearchError('')
     const timer = setTimeout(() => {
       void callArkme<ArkmeContactSearchResult>('contacts.search', { identifier: value }, controller.signal)
-        .then(async result => {
-          const avatarRef = cleanAvatarRef(result.avatarRef)
-          if (avatarRef !== undefined) await arkmeAvatarImages.load(avatarRef).catch(() => undefined)
+        .then(result => {
           if (!active || controller.signal.aborted) return
           setContactSearchResult(result)
           setContactSearchState('ready')
@@ -852,7 +890,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
       ...filteredSampleItems.map(item => ({ item, sample: true })),
     ]
   }, [filteredItems, filteredSampleItems])
-  const selectedItem = selectableItems.find(item => item.callRef === selectedRef)
+  const selectedItem = selectableItems.find(item => callHistoryIdentity(item) === selectedRef)
   const selectedSource = selectedItem === undefined ? undefined : sources.find(source => sourceMatchesCall(source, selectedItem))
   const contactByName = useMemo(() => {
     const values = new Map<string, ArkmeCallRecentContact>()
@@ -919,12 +957,14 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
     })
   }, [])
 
-  const selectItem = useCallback((item: ArkmeCallHistoryItem) => {
+  const selectItem = useCallback((item: ArkmeCallHistoryItem, silent = false) => {
+    const retainDetail = silent && detailRef.current !== undefined
     const generation = detailGenerationRef.current + 1
     detailGenerationRef.current = generation
-    setSelectedRef(item.callRef)
+    detailAbortRef.current?.abort()
+    setSelectedRef(callHistoryIdentity(item))
     setNotice('')
-    setDetail(undefined)
+    if (!retainDetail) setDetail(undefined)
     const sampleDetail = sampleDetailForCall(item.callRef)
     if (sampleDetail !== undefined) {
       setDetail(sampleDetail)
@@ -937,20 +977,30 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
       return
     }
     const controller = new AbortController()
-    setDetailState('loading')
+    detailAbortRef.current = controller
+    if (!retainDetail) setDetailState('loading')
     setDetailError('')
     void callArkme<ArkmeCallDetail>('calls.history.detail', { callRef: item.callRef }, controller.signal)
       .then(value => {
-        if (detailGenerationRef.current !== generation) return
+        if (controller.signal.aborted || detailGenerationRef.current !== generation) return
         setDetail(value)
         setDetailState('ready')
       })
       .catch(error => {
-        if (detailGenerationRef.current !== generation) return
+        if (controller.signal.aborted || detailGenerationRef.current !== generation || retainDetail) return
         setDetailError(readableError(error))
         setDetailState('error')
       })
   }, [])
+
+  // Refreshed callRefs are newly sealed handles, not record identities. Keep the
+  // selection/DOM keyed by stableId while refreshing only the selected detail.
+  const selectedItemRef = useRef(selectedItem)
+  selectedItemRef.current = selectedItem
+  useEffect(() => {
+    const item = selectedItemRef.current
+    if (active && item && !historyRefreshingRef.current) selectItem(item, true)
+  }, [active, historyRefreshRevision, selectItem])
 
   const openPicker = useCallback((initialQuery = '') => {
     setPickerQuery(initialQuery)
@@ -974,7 +1024,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
   const closeTourPicker = useCallback(() => {
     if (tourPickerOwned.current) { tourPickerOwned.current = false; setPickerOpen(false) }
   }, [])
-  const tour = useCallTour({ root: surfaceRef, auth: auth.auth, active: presentation === 'page' && ui.mode === 'calls',
+  const tour = useCallTour({ root: surfaceRef, auth: auth.auth, active: active && presentation === 'page' && ui.mode === 'calls',
     ready: historyState === 'ready', blocked: auth.busy || ui.webLoginDialogOpen === true,
     explicitEntry: initialPickerOpen, notificationRevision: ui.notificationActivationRevision ?? 0,
     onStep: prepareTourStep, onExit: closeTourPicker })
@@ -1114,11 +1164,8 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
   }
 
   const renderCallRow = (item: ArkmeCallHistoryItem, sample: boolean) => {
-    const selected = item.callRef === selectedRef
-    const summary = item.summaryStatus === 'pending' ? '摘要生成中…'
-      : item.summaryStatus === 'failed' ? '摘要生成失败，点击查看详情'
-      : item.summaryStatus === 'done' && item.summaryPreview?.trim() ? tr("AI 摘要：{v0}", { v0: item.summaryPreview.trim() }) : ''
-    return <li key={callKey(item)}>
+    const selected = callHistoryIdentity(item) === selectedRef
+    return <li key={callKey(item)} data-arkme-call-row={callHistoryIdentity(item)}>
       <button data-arkme-feedback="neutral"
         type="button"
         aria-pressed={selected}
@@ -1141,9 +1188,7 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
           {mediaLabel(item.mediaType)} · {formatDuration(item.durationSeconds)}
         </span>
         <time style={styles.callTime}>{sample ? item.resultLabel : shortTime(item.startedAtMillis)}</time>
-        {summary && <span style={styles.callSummary} data-arkme-call-summary="true">
-          <span style={{ ...styles.callSummaryText, ...(item.summaryStatus === 'done' ? {} : { WebkitLineClamp: 1 }) }}>{summary}</span>
-        </span>}
+        <ArkmeCallHistorySummary item={item} style={styles.callSummary} textStyle={styles.callSummaryText} />
       </button>
     </li>
   }
@@ -1202,25 +1247,29 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
         <p style={styles.sectionLabel}>{tr("最近通话")}</p>
         {historyState === 'loading' ? <div style={styles.status}>{tr("正在读取通话记录...")}</div>
           : historyState === 'error' ? <div style={styles.status}>{historyError || '通话记录暂时不可用'}</div>
-            : <ul ref={listRef} aria-label={tr("通话记录列表")} style={styles.list} onScroll={event => {
-              const list = event.currentTarget
-              if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
-                void loadMoreHistory()
-              }
-            }}>
-              {callRows.map(row => renderCallRow(row.item, row.sample))}
-              {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
-              {loadingMore && <li role="status" style={styles.status}>
-                <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
-                  <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
-                    <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
-                  </circle>
-                </svg>{tr("加载更多…")}</li>}
-              {!loadingMore && loadMoreError && <li style={styles.status}>
-                <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
-              </li>}
-              {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
-            </ul>}
+            : <div style={styles.listViewport}>
+              <ArkmeOverlayScrollArea ref={listRef} aria-label={tr("通话记录列表")} onScroll={event => {
+                const list = event.currentTarget
+                if (!loadMoreError && list.scrollHeight - list.scrollTop - list.clientHeight <= 200) {
+                  void loadMoreHistory()
+                }
+              }}>
+                <ul style={styles.list}>
+                  {callRows.map(row => renderCallRow(row.item, row.sample))}
+                  {callRows.length === 0 && <li style={styles.status}>{query.trim() === '' ? '还没有通话记录' : '没有符合条件的通话'}</li>}
+                  {loadingMore && <li role="status" style={styles.status}>
+                    <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: 6 }}>
+                      <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="35 16">
+                        <animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="0.8s" repeatCount="indefinite" />
+                      </circle>
+                    </svg>{tr("加载更多…")}</li>}
+                  {!loadingMore && loadMoreError && <li style={styles.status}>
+                    <button data-arkme-feedback="neutral" type="button" onClick={() => { void loadMoreHistory() }} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>{tr("加载失败，点击重试")}</button>
+                  </li>}
+                  {!loadingMore && !loadMoreError && page?.hasMore === false && realItems.length > 0 && <li style={styles.status}>{tr("没有更多了")}</li>}
+                </ul>
+              </ArkmeOverlayScrollArea>
+            </div>}
       </section>
     </aside>
     {browserResize.handle}
@@ -1249,9 +1298,10 @@ export function ArkmeCallSurface({ initialPickerOpen = false, presentation = 'pa
               onClick={() => { void openSelectedPrivateChat() }}><ChatCircle size={17} />{openingPrivateChat ? tr("正在打开…") : '发起私聊'}</button>
             <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} aria-label={tr("和{v0}语音通话", { v0: selectedItem.peerDisplayName })} onClick={() => { startSelectedCall('audio') }}><PhoneCall size={19} /></button>
             <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} aria-label={tr("和{v0}视频通话", { v0: selectedItem.peerDisplayName })} onClick={() => { startSelectedCall('video') }}><CallVideoIcon size={19} /></button>
+            {active && detailState === 'ready' && detail && <ArkmeCallShareControls callRef={detail.callRef} />}
           </div>}
         </header>
-        <ArkmeCallDetailContent key={selectedItem.callRef} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} tourSample={tour.current !== undefined && tour.current >= 3} />
+        <ArkmeCallDetailContent key={callHistoryIdentity(selectedItem)} active={active} selectedItem={selectedItem} detail={detail} detailState={detailState} detailError={detailError} avatarRefForName={avatarRefForName} tourSample={tour.current !== undefined && tour.current >= 3} />
       </>}
       {notice !== '' && <div role="status" style={styles.notice}>{notice}</div>}
     </main>

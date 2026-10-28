@@ -6,6 +6,7 @@ import {
   ArkmeRecordInputCaptureOwner,
   applyArkmeBackgroundSoundOwnerSnapshot,
   arkmeBackgroundSoundCaptureEnabled,
+  arkmeMicrophoneCaptureReady,
   arkmeMicrophonePermissionState,
   arkmeSourceSupportsRecordInputCapture,
   captureArkmeRecordInputContext,
@@ -344,6 +345,63 @@ describe('record input capture preference and permission', () => {
     }, {})
 
     await expect(arkmeMicrophonePermissionState(source, grantScope)).resolves.toBe('granted')
+  })
+
+  it('does not treat a browser grant as explicit device access when restoring a focused draft', async () => {
+    const grantScope = { sessionStorage: new MemoryStorage() }
+    const stopTrack = vi.fn()
+    const getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopTrack }],
+    } as unknown as MediaStream))
+    const source = {
+      mediaDevices: { getUserMedia },
+      permissions: { query: vi.fn(async () => ({ state: 'prompt' as PermissionState })) },
+    }
+    await arkmeMicrophonePermissionState(source, grantScope)
+    source.permissions.query.mockResolvedValue({ state: 'granted' })
+    await expect(arkmeMicrophonePermissionState(source, grantScope)).resolves.toBe('granted')
+
+    const recorder = new FakeRecorder()
+    const owner = createOwner({
+      recorder,
+      microphoneReady: () => arkmeMicrophoneCaptureReady(grantScope),
+      requestMicrophonePermission: () => requestArkmeBackgroundSoundPermission(source, grantScope),
+    })
+    try {
+      owner.sync({ draftKey: 'restored-draft', isActive: true, hasUserContent: true })
+      await flushLifecycle()
+      expect(recorder.startCalls).toBe(0)
+      expect(getUserMedia).not.toHaveBeenCalled()
+      expect(grantScope.sessionStorage.values.size).toBe(0)
+
+      owner.beginUserInput('restored-draft')
+      owner.beginUserInput('restored-draft')
+      await flushLifecycle()
+      expect(getUserMedia).toHaveBeenCalledExactlyOnceWith({ audio: true, video: false })
+      expect(stopTrack).toHaveBeenCalledOnce()
+      expect(recorder.startCalls).toBe(1)
+      expect(arkmeMicrophoneCaptureReady(grantScope)).toBe(true)
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('requires a fresh explicit capture after permission is revoked and restored', async () => {
+    const grantScope = { sessionStorage: new MemoryStorage() }
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [] } as unknown as MediaStream))
+    const query = vi.fn(async () => ({ state: 'prompt' as PermissionState }))
+    const source = { mediaDevices: { getUserMedia }, permissions: { query } }
+    await arkmeMicrophonePermissionState(source, grantScope)
+    await requestArkmeBackgroundSoundPermission(source, grantScope)
+    query.mockResolvedValue({ state: 'denied' })
+    await arkmeMicrophonePermissionState(source, grantScope)
+    expect(arkmeMicrophoneCaptureReady(grantScope)).toBe(false)
+
+    query.mockResolvedValue({ state: 'granted' })
+    await arkmeMicrophonePermissionState(source, grantScope)
+    expect(arkmeMicrophoneCaptureReady(grantScope)).toBe(false)
+    await expect(requestArkmeBackgroundSoundPermission(source, grantScope)).resolves.toBe('granted')
+    expect(getUserMedia).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -1111,6 +1169,29 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     await owner.dispose()
   })
 
+  it('freezes duration and detaches the submitted draft while recorder startup is pending', async () => {
+    const recorder = new FakeRecorder()
+    let now = 1_000
+    let finishStart!: () => void
+    recorder.startOverride = async () => await new Promise<void>(resolve => { finishStart = resolve })
+    const owner = createOwner({ recorder, now: () => now })
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: true })
+    await flushLifecycle()
+    now = 4_500
+    const submission = owner.finishForSubmit('stable-key')
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: false })
+    now = 5_000
+    owner.sync({ draftKey: 'stable-key', isActive: true, hasUserContent: true })
+    recorder.startOverride = undefined
+    finishStart()
+    const result = await submission
+    expect(result).toMatchObject({ startedAtMillis: 1_000, completedAtMillis: 4_500, recordDurationMillis: 3_500 })
+    expect(result.backgroundSound.segments).toHaveLength(1)
+    expect(owner.getStartedAtMillis('stable-key')).toBe(5_000)
+    await owner.dispose()
+    expect(recorder.amplitudeListeners.size).toBe(0)
+  })
+
   it('cancels an empty blurred draft and does not retain its audio', async () => {
     const recorder = new FakeRecorder()
     const owner = createOwner({ recorder })
@@ -1367,4 +1448,19 @@ describe('shared input support and coarse capture context', () => {
       networkName: '离线',
     })
   })
+})
+
+it('prewarms context without microphone permission, shares the fresh sample and refreshes after five seconds', async () => {
+ let now = 1000
+ const recorder = new FakeRecorder(), captureContext = vi.fn(async () => ({clientName:'device'}))
+ const owner = createOwner({recorder,enabled:()=>false,now:()=>now,captureContext})
+ owner.beginUserInput('draft'); await Promise.resolve()
+ expect(captureContext).toHaveBeenCalledTimes(1)
+ await owner.finishForSubmit('draft')
+ expect(captureContext).toHaveBeenCalledTimes(1)
+ expect(recorder.startCalls).toBe(0)
+ now += 5000
+ await owner.finishForSubmit('draft')
+ expect(captureContext).toHaveBeenCalledTimes(2)
+ await owner.dispose()
 })

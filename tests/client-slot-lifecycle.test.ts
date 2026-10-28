@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { Context } from '@deepseek-ai/cordis'
 import * as cordisModule from '@deepseek-ai/cordis'
 import * as slotsModule from '@deepseek-ai/dsh-client-ui-slots'
@@ -37,6 +38,7 @@ async function loadSlotRegistry(): Promise<RuntimeModule['SlotRegistry']> {
           runtime = definition.factory(id => {
             if (id === '@deepseek-ai/cordis') return cordisModule
             if (id === '@deepseek-ai/dsh-client-ui-slots') return slotsModule
+            if (['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime'].includes(id)) return createRequire(import.meta.url)(id)
             throw new Error(`unexpected runtime dependency: ${id}`)
           })
         },
@@ -44,7 +46,7 @@ async function loadSlotRegistry(): Promise<RuntimeModule['SlotRegistry']> {
     },
   })
   try {
-    await import('@deepseek-ai/dsh-client-runtime/client')
+    await import('@deepseek-ai/dsh-client-ui-renderer/client')
   } finally {
     restoreGlobalProperty('window', previousWindow)
   }
@@ -62,7 +64,7 @@ afterEach(() => {
 describe('desktop harness startup lifecycle', () => {
   it('signals readiness after local plugin services register without waiting for account auth', () => {
     const notifyHarnessReady = vi.fn()
-    vi.stubGlobal('window', { arkmeDesktop: { notifyHarnessReady } })
+    vi.stubGlobal('window', { location: { hostname: 'localhost', search: '' }, arkmeDesktop: { notifyHarnessReady } })
     const registrations: string[] = []
     let readinessSurface: (() => null) | undefined
 
@@ -88,8 +90,8 @@ describe('desktop harness startup lifecycle', () => {
     } as never)
 
     expect(notifyHarnessReady).not.toHaveBeenCalled()
-    expect(registrations).toContain('conversation')
-    expect(registrations).toContain('main.conversation')
+    expect(registrations).toContain('main')
+    expect(registrations).toContain('rightbar')
     expect(registrations).toContain('settings.section')
     expect(readinessSurface).toBeTypeOf('function')
     act(() => { create(createElement(readinessSurface!)) })
@@ -106,8 +108,8 @@ describe('Arkme directory slot lifecycle', () => {
       name: 'root',
       children: {
         sidebar: { kind: 'single', scope: 'root' },
-        conversation: { kind: 'single', scope: 'session' },
-        details: { kind: 'single', scope: 'session-maybe' },
+        main: { kind: 'keyed', scope: 'root' },
+        rightbar: { kind: 'single', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
       },
     }, () => null)
@@ -139,6 +141,7 @@ describe('Arkme directory slot lifecycle', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
+        location: { hostname: 'localhost', search: '' },
         setInterval: (...args: Parameters<typeof setInterval>) => globalThis.setInterval(...args),
         clearInterval: (timer: ReturnType<typeof setInterval>) => globalThis.clearInterval(timer),
       },

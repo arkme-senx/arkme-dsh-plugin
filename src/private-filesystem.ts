@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { chmod, chmodSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -31,7 +31,7 @@ function windowsUserSid(): string {
 function windowsAclArguments(path: string, directory: boolean): string[] {
   const inheritance = directory ? '(OI)(CI)' : ''
   return [
-    path,
+    win32.toNamespacedPath(path),
     '/inheritance:r',
     '/grant:r',
     `*${windowsUserSid()}:${inheritance}F`,

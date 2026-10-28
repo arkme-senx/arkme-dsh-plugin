@@ -1,3 +1,6 @@
+import { OfflineContextConnected } from './offline-context/OfflineContextConnected.js'
+import { WindowedTimelineRows } from './WindowedTimelineRows.js'
+import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -50,6 +53,44 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
     viewport.current = arkmeConversationViewport(element)
   }, [timeline.page])
 
+  const rows = timeline.page?.unified?.events ?? timeline.page?.items.map(item => ({
+    kind: 'message' as const, eventId: item.itemUid, occurredAtMillis: item.sendAtMillis, item,
+  })) ?? []
+  const rowIds = rows.map(event => ({ id: event.kind === 'message' ? `message:${event.item.itemUid}` : event.eventId }))
+  const renderedRows = rows.map((event, index) => {
+          if (event.kind === 'offline-context') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><OfflineContextConnected entryRef={event.entryRef} revision={event.revision} title={event.title} source={source} /></article>
+          if (event.kind === 'world-public') return <article key={event.eventId} data-arkme-conversation-row={event.eventId}><ArkmeTimelinePublicNote recordRef={event.recordRef} authorName={event.authorName} isGroup={source?.kind === 'group_chat'} /></article>
+          if (event.kind === 'member-join') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={status}>
+            {event.item.action !== 'join' && <>
+              <span style={{ color: arkmeTheme.info, fontWeight: 500 }}>{event.item.inviter.isSelf ? '你' : event.item.inviter.displayName}</span>
+              {event.item.action === 'direct_add' ? ' 添加 ' : ' 邀请 '}
+            </>}
+            {event.item.invitees.map((person, i) => <Fragment key={person.memberRef ?? i}>
+              {i > 0 && '、'}<span style={{ color: arkmeTheme.info, fontWeight: 500 }}>{person.isSelf ? '你' : person.displayName}</span>
+            </Fragment>)} 加入群聊
+          </article>
+          if (event.kind !== 'message') return <article key={event.eventId} data-arkme-conversation-row={event.eventId} style={{ ...status, whiteSpace: 'pre-wrap' }}>
+            {event.kind === 'moment' ? `${event.item.groupName} · ${event.item.senderName}：${event.item.summary}`
+              : event.kind === 'member-event' ? `${event.item.displayName}退出了群聊`
+                : event.kind === 'external' ? `${event.title}：${event.text}` : event.text}
+          </article>
+          const item = event.item
+          return <Fragment key={event.eventId}>
+          {source.kind === 'group_chat' && (index === 0 || Math.abs(item.sendAtMillis - rows[index - 1]!.occurredAtMillis) > 30 * 60 * 1000) && <div data-arkme-preview-time-marker style={status}>
+            {new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+          </div>}
+          <article data-arkme-conversation-row={`message:${item.itemUid}`}
+          style={{ display: 'flex', flexDirection: item.isMe ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 8, marginTop: 14 }}>
+          <ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={30} label={source.kind === 'group_chat' || item.isMe ? item.senderName : tr("消息头像")} />
+          <div style={{ minWidth: 0, maxWidth: 'calc(100% - 38px)' }}>
+            {(source.kind === 'group_chat' || item.isMe) && <div style={{ marginBottom: 4, color: arkmeTheme.secondary, fontSize: 11, textAlign: item.isMe ? 'right' : 'left' }}>{item.senderName}</div>}
+            <ArkmeMessageReadReceiptLine source={source} item={item}>
+              <div style={{ minWidth: 0, padding: '8px 10px', borderRadius: 10, background: item.isMe ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
+                <ArkmeMessageContent item={item} presentation="detail" />
+              </div>
+            </ArkmeMessageReadReceiptLine>
+          </div>
+        </article></Fragment>})
   if (typeof document === 'undefined') return null
   return createPortal(<div data-arkme-chat-preview-backdrop style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.3)' }}
     onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -78,23 +119,13 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
         onScroll={() => { if (body.current !== null) viewport.current = arkmeConversationViewport(body.current) }}>
         {timeline.page?.hasMore && <div style={status}><button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.loadMore() }}>{tr("加载更早消息")}</button></div>}
         {timeline.loading && timeline.page === undefined && <div role="status" style={status}>{tr("正在加载消息…")}</div>}
-        {!timeline.loading && timeline.error === '' && timeline.page?.items.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
-        {timeline.page?.items.map((item, index, items) => <Fragment key={item.itemUid}>
-          {source.kind === 'group_chat' && (index === 0 || Math.abs(item.sendAtMillis - items[index - 1]!.sendAtMillis) > 30 * 60 * 1000) && <div data-arkme-preview-time-marker style={status}>
-            {new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
-          </div>}
-          <article data-arkme-conversation-row={`message:${item.itemUid}`}
-          style={{ display: 'flex', flexDirection: item.isMe ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 8, marginTop: 14 }}>
-          <ArkmeUserAvatar {...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef })} size={30} label={source.kind === 'group_chat' || item.isMe ? item.senderName : tr("消息头像")} />
-          <div style={{ minWidth: 0, maxWidth: 'calc(100% - 38px)' }}>
-            {(source.kind === 'group_chat' || item.isMe) && <div style={{ marginBottom: 4, color: arkmeTheme.secondary, fontSize: 11, textAlign: item.isMe ? 'right' : 'left' }}>{item.senderName}</div>}
-            <ArkmeMessageReadReceiptLine source={source} item={item}>
-              <div style={{ minWidth: 0, padding: '8px 10px', borderRadius: 10, background: item.isMe ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
-                <ArkmeMessageContent item={item} presentation="detail" />
-              </div>
-            </ArkmeMessageReadReceiptLine>
-          </div>
-        </article></Fragment>)}
+        {!timeline.loading && timeline.error === '' && timeline.page !== undefined && rows.length === 0 && <div style={status}>{tr("暂无消息")}</div>}
+        {timeline.page?.unified && !timeline.page.unified.complete && <div role="status" style={status}>{tr('部分时间线内容暂未加载')}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr('重试')}</button></div>}
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          <WindowedTimelineRows scrollport={body} rowIds={rowIds} anchorId={viewport.current?.anchorId}>
+            {renderedRows.map((node, index) => <li key={rowIds[index]!.id} style={{ listStyle: 'none' }}>{node}</li>)}
+          </WindowedTimelineRows>
+        </ul>
       </div>
     </div>
   </div>, document.body)

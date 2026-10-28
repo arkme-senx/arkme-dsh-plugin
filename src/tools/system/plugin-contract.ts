@@ -6,6 +6,7 @@ import { TEXT_OUTPUT } from '../shared/output.js'
 export function consumerPluginContract(capabilities: ArkmeProviderCapabilities): string {
   return JSON.stringify({
     contractVersion: capabilities.contractVersion,
+    environment: capabilities.environment,
     providerPackage: capabilities.provider,
     sdkImport: capabilities.sdk,
     dependency: { [capabilities.provider]: '^0.1.0' },
@@ -25,7 +26,15 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       service: 'ctx.arkmeData',
     },
     features: capabilities.features,
+    ...(capabilities.features.passwordLogin === true ? {
+      passwordLogin: {
+        interaction: 'human-only', sdkMethod: 'loginByPassword',
+        entry: '登录即我 → 手机号登录 → 账号密码登录',
+        instruction: 'Ask the human to enter credentials in the login UI. Never request, accept, store, or submit passwords through model tools.',
+      },
+    } : {}),
     availableMethods: [
+      'dayReviewState', 'createDayReview', 'reconcileDayReview', 'resumeDayReview', 'dayReviewResult', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence',
       'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
     ],
     limits: capabilities.limits,
@@ -40,6 +49,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       'Outgoing calls are private-chat-only and outgoing-only; the Browser SDK exposes no credential-bearing prepare method.',
       'Call history uses opaque callRef values; do not persist them across account switches or expect raw room/media identifiers.',
       'Retrying a call summary requires an explicit current human action.',
+      'Day-review generation/resume requires explicit human authorization and uses current-account AI points. Reconcile pending submissions before creating a new ID. Never persist citation handles across account switches.',
       'Require human confirmation before installing generated executable plugin code.',
     ],
     lifecycle: [

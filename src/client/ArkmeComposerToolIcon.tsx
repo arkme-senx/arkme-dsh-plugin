@@ -24,3 +24,9 @@ export function ArkmeComposerEmojiIcon() {
     <path d="M6.75 11.5C7.5 12.85 8.68 13.5 10 13.5C11.32 13.5 12.5 12.85 13.25 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </ArkmeComposerToolIcon>
 }
+
+export function ArkmeComposerPlusIcon() {
+  return <ArkmeComposerToolIcon>
+    <path d="M10 4.25v11.5M4.25 10h11.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+  </ArkmeComposerToolIcon>
+}

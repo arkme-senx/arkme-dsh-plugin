@@ -1,3 +1,5 @@
+import { arkmeEmojiPlainText } from '../arkme-emoji-text.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -83,14 +85,17 @@ export function arkmeCanReportTimelineMessage(
   return source?.kind === 'group_chat' && !item.isMe && (item.messageRef?.trim() ?? '') !== ''
 }
 
-export function ArkmeMessageReportDialog({
+export interface MessageReportSubmission { messageRef:string;reportType:ArkmeMessageReportType;reason?:string;requestUid:string }
+export function ArkmeMessageReportDialog<TResult = ArkmeMessageReportResult>({
   item,
   onClose,
   onSubmitted,
+  submitReport,
 }: {
   item: ArkmeTimelineItem
   onClose: () => void
-  onSubmitted: (result: ArkmeMessageReportResult) => void
+  onSubmitted: (result: TResult) => void
+  submitReport?: (input:MessageReportSubmission,signal:AbortSignal)=>Promise<TResult>
 }) {
   useArkmeLocale()
   const [reportType, setReportType] = useState<ArkmeMessageReportType>()
@@ -150,14 +155,10 @@ export function ArkmeMessageReportDialog({
     submittingRef.current = true
     setSubmitting(true)
     setError('')
-    let result: ArkmeMessageReportResult | undefined
+    let result: TResult | undefined
     try {
-      result = await callArkme<ArkmeMessageReportResult>('source.message-report', {
-        messageRef,
-        reportType,
-        ...(normalizedReason === '' ? {} : { reason: normalizedReason }),
-        requestUid,
-      }, controller.signal)
+      const input={messageRef,reportType,...(normalizedReason===''?{}:{reason:normalizedReason}),requestUid}
+      result=submitReport ? await submitReport(input,controller.signal) : await callArkme<TResult>('source.message-report',input,controller.signal)
     } catch (caught) {
       if (mountedRef.current) {
         setError(controller.signal.aborted ? '举报提交超时，请重试' : reportErrorMessage(caught))
@@ -169,7 +170,7 @@ export function ArkmeMessageReportDialog({
       if (mountedRef.current) setSubmitting(false)
     }
     if (result !== undefined && mountedRef.current) onSubmittedRef.current(result)
-  }, [canSubmit, item.messageRef, normalizedReason, reportType, requestUid])
+  }, [canSubmit, item.messageRef, normalizedReason, reportType, requestUid,submitReport])
 
   const preview = item.textContent.trim() || item.title.trim() || '非文本消息'
   const dialog = <div
@@ -184,7 +185,7 @@ export function ArkmeMessageReportDialog({
         <p style={styles.subtitle}>{tr("你的反馈可以帮助我们持续优化，Arkme 会及时处理。")}</p>
       </header>
       <div style={styles.body}>
-        <p style={styles.preview} title={preview}>{preview}</p>
+        <p style={styles.preview} title={arkmeEmojiPlainText(preview)}><ArkmeRichText text={preview} presentation="preview" /></p>
         <div role="radiogroup" aria-label={tr("举报类型")} style={styles.group}>
           {REPORT_OPTIONS.map(option => {
             const selected = reportType === option.type

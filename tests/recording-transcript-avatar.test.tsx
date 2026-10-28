@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', async original => ({
-  ...await original<typeof import('../src/client/api.js')>(), callArkme: mocks.call,
+// Importing the real API here recursively initializes conversation bootstrap and
+// the avatar runtime before its mocked transport is installed.
+vi.mock('../src/client/api.js', async () => ({
+  ArkmeClientError: (await import('../src/sdk/index.js')).ArkmeClientError,
+  callArkme: mocks.call,
 }))
 import { ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingTimeline } from '../src/client/recordings/ArkmeRecordingTimeline.js'
@@ -40,7 +43,7 @@ describe('recording transcript avatar lifecycle', () => {
       />)}</>)
     })
     expect(mocks.call).toHaveBeenCalledTimes(1)
-    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' })
+    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' }, undefined, { priority: 'background' })
     expect(renderer!.root.findAllByType('img')).toHaveLength(0)
     const stopPropagation = vi.fn()
     act(() => {
@@ -50,6 +53,10 @@ describe('recording transcript avatar lifecycle', () => {
     expect(stopPropagation).toHaveBeenCalledOnce()
     expect(edit).toHaveBeenCalledOnce()
     expect(play).toHaveBeenCalledOnce()
+    const stopDoubleClick = vi.fn()
+    act(() => { renderer!.root.findAllByType('button')[0]!.props.onDoubleClick({ stopPropagation: stopDoubleClick }) })
+    expect(stopDoubleClick).toHaveBeenCalledOnce()
+    expect(play).toHaveBeenCalledOnce()
     await act(async () => { resolve({ mediaType: 'image/png', dataBase64: 'YXZhdGFy' }) })
     expect(renderer!.root.findAllByType('img')).toHaveLength(88)
     expect(mocks.call).toHaveBeenCalledTimes(1)
@@ -58,7 +65,7 @@ describe('recording transcript avatar lifecycle', () => {
   it.each([0, 1, 17])('matches the real timeline color for avatar and unlinked speakers at index %s', async colorIndex => {
     mocks.call.mockResolvedValue({ mediaType: 'image/png', dataBase64: 'YXZhdGFy' })
     for (const avatarRef of ['avatar-self', undefined]) {
-      const speaker = { ...item, speakerColorIndex: colorIndex, speakerAvatarRef: avatarRef }
+      const speaker = { ...item, isSelf: false, speakerColorIndex: colorIndex, speakerAvatarRef: avatarRef }
       await act(async () => {
         renderer = create(<>
           <ArkmeRecordingTranscriptRow item={speaker} selected={false} onEditSpeaker={() => {}} onSelect={() => {}} />
@@ -68,7 +75,7 @@ describe('recording transcript avatar lifecycle', () => {
       })
       const row = renderer!.root.findByType('li')
       const segment = renderer!.root.findByProps({ 'aria-label': 'HooXi，选择该片段' })
-      const legend = renderer!.root.findByProps({ 'aria-label': '当前窗口说话人图例' })
+      const legend = renderer!.root.findByProps({ 'aria-label': '全天说话人图例' })
       if (avatarRef !== undefined) {
         const rowName = row.findAllByType('span').find(node => node.children[0] === 'HooXi')!
         const legendName = legend.findAllByType('span').find(node => node.children[0] === 'HooXi')!

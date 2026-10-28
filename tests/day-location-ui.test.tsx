@@ -32,6 +32,17 @@ const mount = async (reader: DayActivityReader) => act(async () => { view = crea
 afterEach(() => act(() => view?.unmount()))
 
 describe('day location presentation', () => {
+  it('shows a location summary without requiring coordinates or fetching a location', async () => {
+    const { reader, loadLocation } = setup([{ ...entry('summary'), canLoadLocation: false,
+      locationSummary: { label: '办公室', capturedAtMillis: at } }])
+    await mount(reader)
+    expect(button('查看地点：办公室')).toBeDefined()
+    await click('查看地点：办公室')
+    expect(text()).toContain('办公室')
+    expect(text()).toContain('采集时间')
+    expect(loadLocation).not.toHaveBeenCalled()
+    expect(view.root.findAllByType('dl')).toHaveLength(0)
+  })
   it('can automatically enrich a bounded visible window without navigation or loading message details', async () => {
     const { reader, loadLocation } = setup([entry('a'), entry('b')])
     reader.capabilities = { kinds: ['note'], modes: ['activities'], notice: '', autoLocationLimit: 1 }
@@ -42,7 +53,7 @@ describe('day location presentation', () => {
     expect(button('查看地点：办公区附近')).toBeDefined()
     await click('地点')
     expect(view.root.findAllByProps({ 'data-activity-id': 'b' })).toHaveLength(0)
-    expect(text()).toContain('没有地点标签不代表当时没有位置')
+    expect(text()).toContain('显示带有地点信息的活动')
   })
   it('does not fan out on day load or activity selection; enriches the tag after explicit detail read', async () => {
     const { reader, loadLocation } = setup()
@@ -53,7 +64,7 @@ describe('day location presentation', () => {
     expect(button('查看地点：办公区附近')).toBeDefined()
     expect(text()).toContain('采集时间未知')
     expect(text()).toContain('电脑')
-    expect(text()).toContain('不是全天完整轨迹')
+    expect(text()).toContain('这是记录关联的位置信息')
     expect(text()).not.toContain('停留了')
   })
   it('opens a known location with one click and leaves locations on other events untouched', async () => {
@@ -78,7 +89,7 @@ describe('day location presentation', () => {
     const { reader, loadLocation } = setup([entry('a', point)])
     loadLocation.mockResolvedValue({ query, activityId: 'a', snapshotId: 's', access: 'available' })
     await mount(reader); await click('查看地点：办公区附近')
-    expect(text()).toContain('没有可确认的设备采集位置')
+    expect(text()).toContain('这条记录没有保存位置信息')
     expect(text()).not.toContain('办公区附近')
   })
   it('removes both text and coordinates when live access is revoked', async () => {
@@ -96,7 +107,7 @@ describe('day location presentation', () => {
     await mount(reader); await select('a'); await click('查看地点')
     const signal = loadLocation.mock.calls[0]![2].signal
     if (action === 'close') await click('关闭活动详情')
-    else if (action === 'refresh') await click('刷新当天活动')
+    else if (action === 'refresh') await act(async () => view.update(<ArkmeDayTimeline key="hard-refresh" query={query} reader={reader} onQueryChange={() => {}} />))
     else await act(async () => view.update(<ArkmeDayTimeline query={{ ...query, ...(action === 'date' ? { bucketDate: '2026-09-18' } : { accountScope: 'account:43' }) }} reader={reader} onQueryChange={() => {}} />))
     expect(signal.aborted).toBe(true)
     await act(async () => resolve({ query, activityId: 'a', snapshotId: 's', access: 'available', location: point }))

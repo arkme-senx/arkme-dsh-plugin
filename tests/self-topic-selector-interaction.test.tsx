@@ -4,12 +4,32 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeSourceBreadcrumb } from '../src/client/ArkmeSourceBreadcrumb.js'
 import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
-import { IconEllipsisOutline16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutlineMedium, IconNewChatOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeSourceItem } from '../src/types.js'
+import { CONVERSATION_HEADER_COLUMNS } from '../src/client/conversation-header-layout.js'
 
 let host: HTMLDivElement
 let root: Root
+
+it('allows a fixed conversation name outside the centered selector without duplicating it', async () => {
+  const select = vi.fn()
+  const topic = { kind: 'topic', sourceRef: 'one', displayName: '很长的工作主题', recordCount: 1 } as ArkmeSourceItem
+  await act(async () => root.render(<header style={{ display: 'grid', gridTemplateColumns: CONVERSATION_HEADER_COLUMNS }}>
+    <h2>发给自己</h2><div style={{ gridColumn: 2, minWidth: 0, justifySelf: 'center' }}>
+      <ArkmeSourceBreadcrumb selectedSource={undefined} sources={[topic]} showRootTitle={false}
+        onSelect={select} onSelectAggregate={vi.fn()} />
+    </div><button>日历</button>
+  </header>))
+  expect(host.querySelector('[data-arkme-self-topic-root]')).toBeNull()
+  expect(host.querySelector('h2')?.textContent).toBe('发给自己')
+  expect(host.querySelector('[data-arkme-self-topic-selector]')?.textContent).toBe('全部')
+  await clickButton('选择主题')
+  expect(host.querySelector('[data-arkme-self-topic-menu]')).not.toBeNull()
+  const topicRow = host.querySelector<HTMLElement>('[data-arkme-self-topic-tree-row-ref="one"]')!
+  await act(async () => topicRow.click())
+  expect(select).toHaveBeenCalledWith(topic)
+})
 
 async function render(userId: number) {
   await act(async () => {
@@ -61,15 +81,36 @@ it('uses an animated loading icon instead of dots, and retains complete counts d
   const counts = () => [...document.querySelectorAll('[data-arkme-topic-count]')]
   expect(counts().map(el => el.textContent)).toEqual(['', '', '3'])
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(2)
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).not.toBeNull()
   expect(document.querySelectorAll('[data-arkme-topic-count] [role="status"]')).toHaveLength(2)
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady />))
   expect(counts().map(el => el.textContent)).toEqual(['5', '5', '3'])
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(0)
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady error="offline" />))
   expect(counts().map(el => el.textContent)).toEqual(['5', '5', '3'])
   await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} countsReady={false} loading={false} error="offline" />))
   expect(counts().map(el => el.textContent)).toEqual(['—', '—', '3'])
   expect(document.querySelectorAll('[data-arkme-topic-count] animateTransform')).toHaveLength(0)
+})
+
+it('removes only the archived row while a complete menu revalidates in place', async () => {
+  const keep: ArkmeSourceItem = { sourceRef: 'keep', kind: 'topic', displayName: '保留主题', recordCount: 5 }
+  const archived: ArkmeSourceItem = { sourceRef: 'archive', kind: 'topic', displayName: '归档主题', recordCount: 3 }
+  const props = { selectedSource: undefined, countsReady: true, onSelect() {}, onSelectAggregate() {} }
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep, archived]} />))
+  await clickButton('选择主题')
+  const menu = document.querySelector('[data-arkme-self-topic-menu]')
+  const keptRow = document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep, archived]} loading />))
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')).toBe(keptRow)
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
+  await act(async () => root.render(<ArkmeSourceBreadcrumb {...props} sources={[keep]} />))
+  expect(document.querySelector('[data-arkme-self-topic-menu]')).toBe(menu)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="keep"]')).toBe(keptRow)
+  expect(document.querySelector('[data-arkme-self-topic-tree-row-ref="archive"]')).toBeNull()
+  expect(document.querySelector('[data-arkme-self-topic-loading]')).toBeNull()
 })
 
 it('closes the topic menu when the header blank area outside the trigger and menu is clicked', async () => {
@@ -99,13 +140,13 @@ it('uses the native horizontal icon and portaled action menu, retaining it acros
   await act(async () => row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
   const trigger = row.querySelector<HTMLButtonElement>('[aria-label="工作主题操作"]')!
   const glyph = document.createElement('div')
-  glyph.innerHTML = renderToStaticMarkup(<IconEllipsisOutline16 />)
+  glyph.innerHTML = renderToStaticMarkup(<IconEllipsisOutlineMedium />)
   expect(trigger.querySelector('svg')?.outerHTML).toBe(glyph.querySelector('svg')?.outerHTML)
   await clickButton('工作主题操作')
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
   expect(menu.parentElement).toBe(document.body)
-  expect([...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent)).toEqual(['新建子主题', '重命名', '解散主题'])
-  expect(menu.querySelectorAll('[role="menuitem"] svg')).toHaveLength(3)
+  expect([...menu.querySelectorAll('[role="menuitem"]')].map(el => el.textContent)).toEqual(['新建子主题', '重命名', '归档', '解散主题'])
+  expect(menu.querySelectorAll('[role="menuitem"] svg')).toHaveLength(4)
   expect(menu.style.width).toBe('')
   expect(menu.style.fontSize).toBe('')
   await act(async () => row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: menu })))
@@ -207,7 +248,7 @@ it('keeps the DSH-style topic actions in a seamless solid footer outside the scr
   const create = footer?.querySelector('button[aria-label="新主题"]')
   expect(create?.textContent).toBe('新主题')
   const glyph = document.createElement('div')
-  glyph.innerHTML = renderToStaticMarkup(<IconNewChatOutline16 size={14} />)
+  glyph.innerHTML = renderToStaticMarkup(<IconNewChatOutlineMedium size={14} />)
   expect(create?.querySelector('svg')?.outerHTML).toBe(glyph.querySelector('svg')?.outerHTML)
   expect(footer?.querySelector('button[data-arkme-self-topic-sort-trigger="true"]')).not.toBeNull()
   const fade = host.querySelector<HTMLElement>('[data-arkme-self-topic-fade]')!

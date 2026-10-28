@@ -1,3 +1,4 @@
+import { CHAT_TIMELINE_SOURCES } from '../src/unified-chat-timeline.js'
 import { openRecordDeletionRef } from '../src/record-deletion-ref.js'
 import { openRecordTopicAssignmentRef } from '../src/record-topic-assignment-ref.js'
 import { createHmac } from 'node:crypto'
@@ -12,6 +13,7 @@ import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { MediaService } from '../src/services/media-service.js'
 import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
+import { assertRecordForwardInput } from './fixtures/record-forward-input.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary, ArkmeSourceItem,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -25,6 +27,13 @@ class MemorySessionStore {
 }
 
 class MemoryStateStore {
+ readonly arkoTurns=new Map<string,import('../src/arko-turn-contract.js').ArkmeArkoStoredTurn>()
+ async arkoPendingTurns(user:number){return [...this.arkoTurns.values()].filter(value=>value.turn.userId===user).map(value=>value.turn)}
+ async arkoTurn(user:number,uid:string){return this.arkoTurns.get(`${user}:${uid}`)}
+ async prepareArkoTurn(user:number,turn:import('../src/arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>){this.arkoTurns.set(`${user}:${turn.clientTurnUid}`,{turn,...(request ? {request} : {})})}
+ async acknowledgeArkoTurn(user:number,uid:string){this.arkoTurns.delete(`${user}:${uid}`)}
+ async arkoFileRefs(user:number){return (await this.arkoPendingTurns(user)).flatMap(turn=>turn.images?.map(file=>file.fileRef) ?? [])}
+
   readonly pending = new Map<number, ArkmePendingWrite[]>()
   readonly cached = new Map<number, ArkmeSelfRecordItem[]>()
   readonly events: string[] = []
@@ -152,6 +161,19 @@ const config: ArkmeServiceConfig = {
   interwovenMomentsEnabled: true,
 }
 
+function unifiedResponse(sessionUid: string, data: { items: any[]; has_more?: boolean; next_before_seq?: number }) {
+  return { protocol_version: 2, chat_session_uid: sessionUid, complete: true,
+    sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'messages' ? 'ready' : 'not_applicable', item_count: source === 'messages' ? data.items.length : 0 })),
+    timeline_items: data.items.map((payload, index) => {
+      const relation = { ...payload.relation, rel_uid: payload.relation.rel_uid || payload.relation.record_uid }
+      return { event_id: relation.rel_uid, kind: 'message', source: 'messages', occurred_at: relation.attach_at || 1,
+        order_tie: String(index).padStart(8, '0'), content_status: payload.record.status === 1 ? 'available' : 'unavailable', payload: { ...payload, relation } }
+    }), window_token: 'test-window', older_cursor: 'test-older', newer_cursor: 'test-newer',
+    older_has_more: data.has_more === true, newer_has_more: false, has_more: data.has_more === true,
+    ...(data.has_more ? { next_cursor: 'test-older' } : {}),
+  }
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -173,6 +195,7 @@ function userInfo(userId: number, phone = '13800138000'): Record<string, unknown
     name_slug: `arkme-${userId}`,
     type: 1,
     create_at: 123,
+    phone_binding_policy: { mode: phone === '' ? 'required' : 'none' },
     phone,
     email: '',
     has_bind_apple: false,
@@ -196,6 +219,23 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('routes directory refreshes separately from authoritative timeline invalidations', () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), vi.fn())
+    const internal = service as any
+    vi.spyOn(internal.directory, 'accept').mockResolvedValue(undefined)
+    const arrival = vi.spyOn(internal.unifiedTimeline, 'refreshHint').mockResolvedValue(undefined)
+    const revoke = vi.spyOn(internal.unifiedTimeline, 'invalidate').mockResolvedValue(undefined)
+    try {
+      internal.realtime.emitChatClientEvent({type:'sessions-delta',revision:1,updates:[{sourceKey:'chat',source:{},timelineItems:[]}]})
+      expect(arrival).toHaveBeenCalledExactlyOnceWith('chat')
+      expect(revoke).not.toHaveBeenCalled()
+      internal.realtime.emitChatClientEvent({type:'timeline-changed',revision:2,sourceKey:'chat',timelineItemKey:'relation',changeKind:'deleted',relationTerminal:true})
+      expect(revoke).toHaveBeenCalledWith('chat','relation',true)
+      internal.realtime.emitChatClientEvent({type:'members-invalidated',revision:3,sourceKey:'chat'})
+      expect(revoke).toHaveBeenCalledWith('chat')
+    } finally { service.dispose() }
+  })
+
   it('reads revision snapshots through signed chat references and rejects mismatched account/source before HTTP', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -645,8 +685,47 @@ describe('ArkmeService', () => {
     expect(bodies).toContainEqual({ from_stamp: lowerBound, to_stamp: lowerBound + 24 * 60 * 60 * 1_000 })
     expect(bodies).toContainEqual({
       start_at: lowerBound,
+      end_at: new Date(1970, 0, 2).getTime(),
       tz_offset: timezoneOffset === 0 ? 0 : timezoneOffset,
     })
+  })
+
+  it('projects calendar shared text with a viewer-bound reference and rechecks recipient access on detail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let revoked = false
+    const calls: unknown[] = []
+    const payload = { render_kind: 'shared_recording_memory', source_digest: 'shared-day',
+      display_at: 1_787_310_000_000, end_at: 1_787_310_060_000, title: '共享会议', summary: '讨论计划', shared_by_user_id: 7, transcript: '共享全文' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/calendar/records/query')) return json({ code: 200, data: {
+        items: [{ record_uid: 'shared-uid', send_at: payload.display_at,
+          record_core: { owner_user_id: 7, content_access_state: 1, title: payload.title, text_content: payload.summary,
+            origin_container_ref: 'shared-chat', content_payload: { payload_kind: 1, schema_version: 1, text_state: 1, shared_recording: { ...payload, render_kind: undefined, schema_version: 1 } } } }], has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chats/records/detail')) {
+        calls.push(JSON.parse(String(init?.body)))
+        if (revoked) return json({ code: 403, message: '共享已撤回' })
+        return json({ code: 200, data: { item: { content_payload: payload } } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const page = await service.calendarRecords({ bucketDate: '2026-08-21' })
+    const shared = page.items[0]!.content!.sharedRecording!
+    expect(shared).toMatchObject({ sourceDigest: 'shared-day', sharedByUserId: 7 })
+    expect(shared.transcript).toBeUndefined()
+    expect(page.items[0]!.content!.isMe).toBe(false)
+    expect(shared.detailRef).toMatch(/^arkme-shared-recording-detail-v1\./)
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).resolves.toMatchObject({ transcript: '共享全文' })
+    expect(calls).toEqual([{ chat_session_uid: 'shared-chat', record_uid: 'shared-uid', record_owner_user_id: 7 }])
+    revoked = true
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other' }
+    await expect(service.sharedRecordingDetail(shared.detailRef!)).rejects.toThrow()
+    expect(calls).toHaveLength(2)
   })
 
   it('keeps emoji intact at all calendar projection limits without changing the raw source', async () => {
@@ -1114,6 +1193,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageTextAnchorsV1: true,
         messageReadReceipts: true,
         messageReport: true,
         userBanManagement: true,
@@ -1145,7 +1225,12 @@ describe('ArkmeService', () => {
     })
 
     expect(service.clientConfig()).toEqual({
+      hostPolicy: {
+        distribution: 'website',
+        capabilities: { clientSelfUpdate: true, runtimeSelfUpdate: true, executableExtensionInstall: true },
+      },
       captchaId: 'captcha-test-id-1234567890',
+      baiduMapBrowserAk: '',
       environment: 'test',
       testLoginEnabled: true,
       jiwoScanLoginEnabled: false,
@@ -1156,6 +1241,26 @@ describe('ArkmeService', () => {
       shareWebsite: 'https://app.arkme.ai',
       recordingWorkbenchEnabled: true,
     })
+  })
+
+  it('publishes MAS capabilities without exposing the credential namespace', () => {
+    vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
+      schemaVersion: 1,
+      distribution: 'mas',
+      capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      credentialServicePrefix: 'com.senqisi.dsh-arkme.mas',
+    }))
+    try {
+      const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), async () => {
+        throw new Error('not used')
+      })
+      expect(service.clientConfig().hostPolicy).toEqual({
+        distribution: 'mas',
+        capabilities: { clientSelfUpdate: false, runtimeSelfUpdate: false, executableExtensionInstall: false },
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
@@ -1302,7 +1407,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       userId: 10009,
     })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
     await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
 
     const prodService = new ArkmeService({ ...config, environment: 'prod' }, sessions, state, async () => {
@@ -1395,7 +1500,7 @@ describe('ArkmeService', () => {
       userId: 10012,
     })
     await expect(recreated.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
-    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount + 1)
   })
 
   it('demotes a legacy active session when the profile still requires phone binding', async () => {
@@ -2829,7 +2934,7 @@ describe('ArkmeService', () => {
           { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
-      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [
           {
             relation: { rel_uid: 'chat-relation-1', record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
@@ -2849,7 +2954,7 @@ describe('ArkmeService', () => {
           },
         ],
         has_more: true, next_before_seq: 6,
-      } })
+      }) })
       if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
         record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 8,
       } })
@@ -2959,6 +3064,7 @@ describe('ArkmeService', () => {
     const privateSourceKey = sources.items[0]!.sourceKey
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
       items: [
+        { itemUid: 'chat-record-unavailable', status: 0, textContent: '内容暂时不可用' },
         { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         { textContent: '我的回复', senderName: '我', isMe: true, sequence: 8, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         {
@@ -2970,7 +3076,7 @@ describe('ArkmeService', () => {
           avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
         },
       ],
-      nextCursor: { beforeSequence: 6 },
+      nextCursor: { unified: { mode: 'older', cursor: expect.stringMatching(/^atw1\./) } },
     })
     await expect(service.messageReadReceiptSummaries(privateRef, [
       { itemUid: 'chat-record-2', sequence: 8 },
@@ -3012,7 +3118,7 @@ describe('ArkmeService', () => {
     const clientEvents: unknown[] = []
     service.subscribeChatRealtime(event => { clientEvents.push(event) })
     await expect(service.markSourceRead(privateRef, 8)).resolves.toMatchObject({
-      effectiveReadSequence: 8, unreadCount: 0,
+      effectiveReadSequence: 8, unreadCount: 0, latestSequence: 8,
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/cursor/update'))?.body)
       .toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
@@ -3022,19 +3128,20 @@ describe('ArkmeService', () => {
       sourceKey: privateSourceKey,
       effectiveReadSequence: 8,
       unreadCount: 0,
+      latestSequence: 8,
     })
     const groupRef = sources.items[1]!.sourceRef
     await expect(service.listGroupBots(groupRef)).resolves.toMatchObject({ displayName: '项目群', items: [] })
     expect(calls.find(call => call.url.endsWith('/api/v1/bot/group/list'))?.body)
       .toEqual({ rm_subject_id: 88010 })
     const groupTimeline = await service.readSource(groupRef)
-    expect(groupTimeline.items).toHaveLength(2)
-    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toBeUndefined()
-    expect(groupTimeline.items[0]?.messageRef).toMatch(/^arkme-message-v1\./)
-    expect(groupTimeline.items[0]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./)
-    expect(groupTimeline.items[0]?.timelineItemKey).toMatch(/^arkme-chat-timeline-item-v1\./)
-    expect(groupTimeline.items[1]?.messageRef).toBeUndefined()
-    expect(groupTimeline.items[1]?.messageWithdrawalRef).toBeUndefined()
+    expect(groupTimeline.items).toHaveLength(3)
+    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toMatchObject({ status: 0, textContent: '内容暂时不可用' })
+    expect(groupTimeline.items[1]?.messageRef).toMatch(/^arkme-message-v1\./)
+    expect(groupTimeline.items[1]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./)
+    expect(groupTimeline.items[1]?.timelineItemKey).toMatch(/^arkme-chat-timeline-item-v1\./)
+    expect(groupTimeline.items[2]?.messageRef).toBeUndefined()
+    expect(groupTimeline.items[2]?.messageWithdrawalRef).toBeUndefined()
     await expect(service.messageReadReceiptSummaries(groupRef, [
       { itemUid: 'chat-record-2', sequence: 8 },
     ])).resolves.toMatchObject({
@@ -3080,7 +3187,7 @@ describe('ArkmeService', () => {
     expect(calls.filter(call => call.url.endsWith('/api/v1/chats/contacts/list'))).toMatchObject([
       { body: { limit: 50, offset: 0 } },
     ])
-    await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
+    await expect(service.reportMessage(groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.messageRef!, 2, {
       reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
     })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })
     expect(lastCall('/api/v1/chats/report')?.body).toMatchObject({
@@ -3088,15 +3195,15 @@ describe('ArkmeService', () => {
       reason: '明确举报', request_uid: '019d8590-ebb4-7232-90f2-000000000001',
     })
     expect(lastCall('/api/v1/chats/report')?.body).not.toHaveProperty('created_at')
-    await expect(service.withdrawGroupMessage(groupTimeline.items[0]!.messageWithdrawalRef!)).resolves.toMatchObject({
-      messageWithdrawalRef: groupTimeline.items[0]!.messageWithdrawalRef,
-      timelineItemKey: groupTimeline.items[0]!.timelineItemKey,
+    await expect(service.withdrawGroupMessage(groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.messageWithdrawalRef!)).resolves.toMatchObject({
+      messageWithdrawalRef: groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.messageWithdrawalRef,
+      timelineItemKey: groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.timelineItemKey,
       withdrawnAtMillis: 1_700_000_000_123,
       alreadyWithdrawn: false,
     })
     expect(lastCall('/api/v1/chats/messages/withdraw')?.body).toEqual({ chat_session_uid: 'chat-group', rel_uid: 'chat-relation-1' })
     withdrawalAlreadyWithdrawn = undefined
-    await expect(service.withdrawGroupMessage(groupTimeline.items[0]!.messageWithdrawalRef!)).rejects.toMatchObject({
+    await expect(service.withdrawGroupMessage(groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.messageWithdrawalRef!)).rejects.toMatchObject({
       code: 'message-withdraw-invalid-response',
     })
     withdrawalAlreadyWithdrawn = false
@@ -3156,7 +3263,7 @@ describe('ArkmeService', () => {
     await expect(service.setGroupJoinRestriction(groupRef, peerMemberRef, true)).rejects.toMatchObject({
       code: 'join-restriction-invalid-response',
     })
-    const messageRef = groupTimeline.items[0]!.messageRef!
+    const messageRef = groupTimeline.items.find(item => item.itemUid === 'chat-record-1')!.messageRef!
     const [messagePrefix, encodedMessage, messageSignature] = messageRef.split('.') as [string, string, string]
     const crossSessionPayload = {
       ...JSON.parse(Buffer.from(encodedMessage, 'base64url').toString('utf8')) as Record<string, unknown>,
@@ -4003,9 +4110,9 @@ describe('ArkmeService', () => {
   it('restores historical polish previews and rule notices in the group timeline', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'record-history-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 500, seq: 8 },
           record: {
@@ -4017,7 +4124,7 @@ describe('ArkmeService', () => {
           },
         }],
         has_more: false,
-      } })
+      }) })
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
         items: [{ user_id: 10001, nick_name: '我', head_img: '' }],
       } })
@@ -4040,12 +4147,7 @@ describe('ArkmeService', () => {
         itemUid: 'record-history-1', textContent: '历史润色文', recordVersion: 2,
         aiPolish: { state: 'polished', originalText: '历史原文', polishedText: '历史润色文' },
       }],
-      aiPolishSettings: {
-        groupName: '历史群', enabled: true, canManage: true, activeRuleName: '友好规则',
-      },
-      aiPolishNotices: [{
-        noticeUid: 'notice-1', message: '产品经理…开启了 AI 润色：表达友好。', createdAtMillis: 450,
-      }],
+      unified: { protocolVersion: 2, complete: true },
     })
   })
 
@@ -4122,13 +4224,13 @@ describe('ArkmeService', () => {
         display_name: '海底捞',
         version: 2,
       } })
-      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'agent-record-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 1787036400000, seq: 11 },
           record: { status: 1, payload: { text_content: '缓存名字代发', creation_source: 1 } },
         }],
         has_more: false,
-      } })
+      }) })
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
         items: [{ user_id: 10001, nick_name: '我', head_img: '' }],
       } })
@@ -4435,7 +4537,7 @@ describe('ArkmeService', () => {
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
         ],
       } })
-      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: { items: [], has_more: false } })
+      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
       throw new Error(`unexpected ${url}`)
     })
 
@@ -4522,7 +4624,15 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     let attempts = 0
     const bodies: Record<string, unknown>[] = []
-    const service = new ArkmeService(config, sessions, state, async (_input, init) => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const path = new URL(String(input)).pathname
+      // Profile reads are not create attempts and must not consume the simulated
+      // first write failure used to verify durable outbox retry behavior.
+      if (path === '/api/v1/auth/get-user-info') {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '发送者' } })
+      }
+      if (path === '/api/v1/auth/get-public-users-by-ids') return json({ code: 200, data: { items: [] } })
+      expect(path).toBe('/api/v1/records/create')
       state.events.push('remote-create')
       attempts += 1
       bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
@@ -4545,6 +4655,8 @@ describe('ArkmeService', () => {
     expect(bodies).toHaveLength(2)
     expect(bodies[0]?.record_uid).toBe(recordUid)
     expect(bodies[1]?.record_uid).toBe(recordUid)
+    expect(bodies[0]?.sender_snapshot).toEqual({ nickname: '发送者' })
+    expect(bodies[1]?.sender_snapshot).toEqual(bodies[0]?.sender_snapshot)
     expect(await service.pendingWrites()).toEqual([])
   })
 
@@ -4823,7 +4935,7 @@ describe('ArkmeService', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push({ url, body })
       if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
-        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, start_at: 200, snippet: '北京复盘', score: 0.8 }],
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, score: 0.8, match: { session_id: 'session-1', child_id: 'child-1', item_index: 0, transcript_source: 'system', transcript_version: 'version-1', start_at: 200, end_at: 400, text: '北京复盘' }, highlight_ranges: [{ start_index: 0, length: 2 }] }],
         has_more: false, query_guard: { state: 'complete' },
       } })
       return json({ code: 0, data: {
@@ -4861,12 +4973,20 @@ describe('ArkmeService', () => {
     })
     await expect(service.searchScene({ scene: 'image_video', limit: 10 })).resolves.toMatchObject({ itemCount: 2, itemSize: 2048 })
     await expect(service.searchRecordings({ query: '北京', limit: 9 })).resolves.toMatchObject({
-      items: [{ sessionId: 'session-1', snippet: '北京复盘' }],
+      items: [{
+        sessionId: 'session-1', recordUid: 'recording-record-1', snippet: '北京复盘',
+        match: {
+          sessionId: 'session-1', childId: 'child-1', itemIndex: 0,
+          transcriptSource: 'system', transcriptVersion: 'version-1',
+          startAtMillis: 200, endAtMillis: 400, text: '北京复盘',
+        },
+        highlightRanges: [{ start: 0, length: 2 }],
+      }],
     })
     expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
-      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
+      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3, 4] },
       { scene_kind: 3, limit: 10, search_scope: 'global' },
-      { keyword: '北京', limit: 9 },
+      { keyword: '北京', result_mode: 'segments', limit: 9 },
     ])
   })
 
@@ -5062,7 +5182,7 @@ describe('ArkmeService', () => {
     })
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
-    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: 'turn-1', waitMillis: 1000 }))
+    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: '11111111-1111-4111-8111-111111111111', waitMillis: 1000 }))
       .resolves.toEqual({
         sessionId: 88,
         userMsgId: 1001,
@@ -5089,7 +5209,7 @@ describe('ArkmeService', () => {
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
-      client_turn_uid: 'turn-1',
+      client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
       model_route_key: 'dashscope/qwen3.8-max',
     })
@@ -5179,7 +5299,7 @@ describe('ArkmeService', () => {
       ],
     })
     expect(bodies).toContainEqual({ route_key: 'dashscope/qwen3.8-max' })
-    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2 })
+    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2,client_capabilities:['dsh.arko.images.v1'] })
   })
 
   it('continues a waiting Arko run without switching its model', async () => {
@@ -5479,10 +5599,11 @@ describe('ArkmeService', () => {
       contact: {},
     }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
-    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+    const service = new ArkmeService({...config, teamBaseUrl: 'https://team.test'}, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, body })
+      if (url === 'https://team.test/api/v1/team/discovery/search') return json({code: 200, data: {team: null}})
       if (url === 'https://auth.test/api/v1/auth/search-contact-account') {
         expect(body).toEqual({ identifier_type: 2, identifier: 'mbr_sylj', phone_pre: '86' })
         return json({ code: 200, data: {
@@ -5804,6 +5925,7 @@ describe('ArkmeService', () => {
     let version = 1
     let title = '初始标题'
     let textContent = '初始正文'
+    let textFormat: 'plain' | 'markdown' = 'plain'
     let editDurationMillis = 0
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
@@ -5815,10 +5937,15 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
-      if (url.endsWith('/api/v1/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      if (url.endsWith('/api/v1/records/forward/capability')) return json({ code: 0, data: { protocol_version: 1, nested_display_kind: true, article_snapshot: true } })
+      if (url.endsWith('/api/v1/records/article-forward/create')) return json({ code: 0, data: { accepted: true, record_uid: body.record_uid, status: 1 } })
+      if (url.endsWith('/api/v1/records/create')) {
+        assertRecordForwardInput(body)
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
       if (url.endsWith('/api/v1/records/detail')) return json({ code: 0, data: { record_core: {
         record_uid: 'article-1', owner_user_id: 10001, creator_user_id: 10001,
-        template_kind: 1, display_kind: 1, title, text_content: textContent,
+        template_kind: 1, display_kind: 1, title, text_content: textContent, text_format: textFormat,
         record_duration_millis: 3200, edit_duration_millis: editDurationMillis,
         send_at: 100, update_at: 200, status: 1, version,
       } } })
@@ -5841,8 +5968,23 @@ describe('ArkmeService', () => {
       title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
     })
 
+    // Pending automatic edits must keep their original CAS version, even if the
+    // server changes before the next opening. Never migrate them onto a newer base.
+    await service.putLongArticleDraft({ sourceRef: source.sourceRef, itemUid: 'article-1', autoPublish: true,
+      title: '待发布', textContent: '本地修改', textFormat: 'plain', baseVersion: 1, durationMillis: 50, updatedAtMillis: 1 })
+    version = 2
+    await expect(service.getLongArticleDraft(source.sourceRef, 'article-1')).resolves.toMatchObject({ autoPublish: true, baseVersion: 1, textContent: '本地修改' })
+    await service.removeLongArticleDraft(source.sourceRef, 'article-1')
+    version = 1
+
     await expect(service.longArticleDetail(source.sourceRef, 'article-1')).resolves.toMatchObject({
       itemUid: 'article-1', editable: true, version: 1, thinkingDurationMillis: 3200,
+    })
+    const actionsBefore = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(actionsBefore.messageActionRef).toMatch(/^arkme-message-action-v1\./)
+    const { openRecordDeletionRef } = await import('../src/record-deletion-ref.js')
+    expect(openRecordDeletionRef(actionsBefore.recordDeletionRef!, await state.uniqueCode())).toMatchObject({
+      recordUid: 'article-1', recordVersion: 1, sourceKind: 'send_to_self', userId: 10001,
     })
     await expect(service.updateLongArticle(source.sourceRef, 'article-1', {
       title: '更新标题', textContent: '更新正文', version: 1, editDurationMillis: 1400,
@@ -5850,10 +5992,21 @@ describe('ArkmeService', () => {
       itemUid: 'article-1', title: '更新标题', textContent: '更新正文', version: 2,
       thinkingDurationMillis: 4600,
     })
+    const actionsAfter = (await service.longArticleDetail(source.sourceRef, 'article-1')).actionItem!
+    expect(openRecordDeletionRef(actionsAfter.recordDeletionRef!, await state.uniqueCode()).recordVersion).toBe(2)
+    expect(actionsAfter.textContent).toBe('更新正文')
     expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
       record_uid: 'article-1', template_kind: 1, version: 1,
       record_duration_millis: 3200, edit_duration_millis: 1400,
     })
+    textFormat = 'markdown'
+    textContent = '# 完整长文\n' + '**正文**'.repeat(5000)
+    const completeArticle = await service.longArticleDetail(source.sourceRef, 'article-1')
+    await service.forwardSourceMessages(source.sourceRef, [completeArticle.actionItem!.messageActionRef!], { recordUid: 'forwarded-article', relationUid: 'forwarded-relation' })
+    const forwardBody = calls.find(call => call.url.endsWith('/api/v1/records/article-forward/create'))!.body
+    expect(forwardBody).toMatchObject({ record_uid: 'forwarded-article', sources: [{ record_uid: 'article-1', record_owner_user_id: 10001 }] })
+    expect(forwardBody).not.toHaveProperty('content_payload')
+
   })
 
   it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {
@@ -5978,7 +6131,7 @@ describe('ArkmeService', () => {
     expect(requests.filter(item => item.url.endsWith('/api/v1/auth/get-public-users-by-ids')))
       .toHaveLength(publicProfileReadsBeforeOwnImage)
     for (const moment of bootstrap.moments) {
-      expect(moment.momentRef).toMatch(/^arkme-moment-v1\./)
+      expect(moment.momentRef).toMatch(/^atw1\./)
       expect(moment.momentRef).not.toContain('group-secret')
       expect(moment.momentRef).not.toContain('record-secret')
       expect(moment.momentId).not.toContain('group-secret')
@@ -6146,7 +6299,7 @@ describe('ArkmeService', () => {
         const url = String(input)
         if (url === signedUrl) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } })
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-        if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+        if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
           items: [{
             relation: { record_uid: 'record-media', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 100, seq: 3 },
             record: { status: 1, payload: {
@@ -6170,7 +6323,7 @@ describe('ArkmeService', () => {
             } },
           }],
           has_more: false,
-        } })
+        }) })
         if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
         if (url.endsWith('/api/v1/chats/records/send')) {
           sentBodies.push(body)
@@ -6496,8 +6649,8 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     const deleteBodies: unknown[] = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (['/timeline/page', '/timeline/tail', '/timeline/around'].some(path => url.endsWith(path))) {
-        return json({ code: 200, data: { items, has_more: false } })
+      if (url.endsWith('/timeline/unified/v2')) {
+        return json({ code: 200, data: unifiedResponse('chat-delete', { items, has_more: false }) })
       }
       if (url.endsWith('/api/v1/records/delete')) {
         deleteBodies.push(JSON.parse(String(init?.body)))
@@ -6509,7 +6662,7 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     })
     const sourceRef = sourceRefFor(kind, 'chat-delete', 'Delete test')
     const page = await service.readSource(sourceRef, { limit: 30 })
-    const tail = await service.readSource(sourceRef, { limit: 30, cursor: { afterSequence: 1 } })
+    const tail = await service.readSource(sourceRef, { limit: 30, cursor: { unified: { mode: 'newer', cursor: page.unified!.newerCursor! } } })
     const around = await service.readSourceAround(sourceRef, 'own', 10001, { beforeLimit: 15, afterLimit: 15 })
     const realtime = await (service as unknown as { chat: import('../src/services/chat-service.js').ChatService })
       .chat.chatTimelineItems({ items }, sessions.session, 'chat-delete', kind)

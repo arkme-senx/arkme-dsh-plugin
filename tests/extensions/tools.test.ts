@@ -114,7 +114,7 @@ describe('Arkme extension tools', () => {
     } as never, { delete: deleteExtension } as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
+      'arkme_extension_publish', 'arkme_extension_publish_status', 'arkme_extension_publish_resume', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share', 'arkme_extension_share_read', 'arkme_extension_share_resolve',

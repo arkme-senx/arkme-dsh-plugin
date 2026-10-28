@@ -136,7 +136,7 @@ function turnStatus(entry: DshRemoteHistoryEntry): DshRemoteTurnProjection['stat
   return 'completed'
 }
 
-function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[] {
+export function projectDshHistoryNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[] {
   const nodes = new Map<string, MutableNode>()
   const assistantBlocks = new Map<string, Array<Record<string, unknown>>>()
   for (const entry of entries) {
@@ -259,6 +259,7 @@ function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[]
           data: {
             status: data.error === null || data.error === undefined ? 'completed' : 'failed',
             ...(previous?.data.call !== undefined ? { call: previous.data.call } : {}),
+            ...(previous?.data.dispatches !== undefined ? { dispatches: previous.data.dispatches } : {}),
             result: data,
             ...(previous?.data.callView !== undefined ? { callView: previous.data.callView } : {}),
             ...(entry.view?.for === 'result' ? { resultView: entry.view.view } : {}),
@@ -267,6 +268,8 @@ function projectNodes(entries: DshRemoteHistoryEntry[]): DshRemoteTimelineNode[]
         })
         break
       }
+      case 'tool/ptc-dispatch-start':
+      case 'tool/ptc-dispatch':
       case 'tool/code-dispatch-start':
       case 'tool/code-dispatch': {
         const root = String(data.rootCallId ?? '')
@@ -378,7 +381,7 @@ export function projectCompletedTurns(source: Iterable<DshRemoteHistoryEntry>): 
       end_seq: endSeq,
       status: turnStatus(entry),
       presentation_version: DSH_REMOTE_PRESENTATION_VERSION,
-      nodes: projectNodes(active),
+      nodes: projectDshHistoryNodes(active),
     }
     if (Buffer.byteLength(JSON.stringify(projection)) > MAX_TURN_PROJECTION_BYTES) {
       oversizedTurnRefs.push(projection.turn_ref)

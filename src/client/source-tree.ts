@@ -167,6 +167,15 @@ export function sortArkmeSourceTree(
         const byOrder = leftOrder - rightOrder
         if (byOrder !== 0) return byOrder
       }
+      // Match the hierarchy owner's binary title order for unranked peers.
+      // Otherwise inserting before the UI's first row may not insert at the server's first position.
+      const leftName = Array.from(left.source.displayName)
+      const rightName = Array.from(right.source.displayName)
+      for (let index = 0; index < Math.min(leftName.length, rightName.length); index++) {
+        const byCodePoint = leftName[index]!.codePointAt(0)! - rightName[index]!.codePointAt(0)!
+        if (byCodePoint !== 0) return byCodePoint
+      }
+      return leftName.length - rightName.length
     }
     return sourceNameCollator.compare(left.source.displayName, right.source.displayName)
   }

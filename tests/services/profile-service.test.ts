@@ -162,3 +162,19 @@ describe('ProfileService', () => {
     })
   })
 })
+
+it('refreshes reaction names within the requested age without disabling batch caching', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(100000)
+  const request = vi.fn().mockResolvedValueOnce({ items: [{ user_id: 7, nick_name: '旧名字' }] }).mockResolvedValueOnce({ items: [{ user_id: 7, nick_name: '兔老大' }] })
+  const service = new ProfileService({ config, authenticatedAuthPost: request } as unknown as ServiceRuntime)
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  try {
+    await service.publicProfileSummariesByUserIds([7], session)
+    clock.mockReturnValue(104000)
+    expect((await service.publicProfileSummariesByUserIds([7, 7], session, undefined, 5000)).get(7)?.displayName).toBe('旧名字')
+    expect(request).toHaveBeenCalledTimes(1)
+    clock.mockReturnValue(106000)
+    expect((await service.publicProfileSummariesByUserIds([7], session, undefined, 5000)).get(7)?.displayName).toBe('兔老大')
+    expect(request).toHaveBeenCalledTimes(2)
+  } finally { clock.mockRestore() }
+})

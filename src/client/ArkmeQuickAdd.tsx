@@ -1,8 +1,12 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
+import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
+import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
+import { createPortal } from 'react-dom'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { ArkmeNewLongArticleDialog } from './ArkmeNewLongArticleDialog.js'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
@@ -12,17 +16,23 @@ import { callArkme } from './api.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { directorySearchLayout } from './directory-search-layout.js'
+import { directRecordingStore } from './recordings/direct-recording-store.js'
+import { arkmeUi } from './ui-controller.js'
 
 
-type QuickAddDialogKind = 'group' | 'call' | 'bot'
+type QuickAddDialogKind = 'group' | 'call' | 'bot' | 'article'
 
 const style: Record<string, CSSProperties> = {
   // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
   anchor: { position: 'relative', zIndex: 10, flex: 'none' },
+  // Align the directory action with its search field, retaining the host's
+  // icon and feedback tokens. Avoid a background shorthand that resets hover.
   trigger: {
-    width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
-    cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
+    width: directorySearchLayout.field.height, height: directorySearchLayout.field.height,
+    flex: 'none', padding: 0, display: 'grid', placeItems: 'center', boxSizing: 'border-box',
+    border: 0, borderRadius: directorySearchLayout.field.borderRadius, backgroundColor: 'var(--dsw-specific-selector, transparent)',
+    color: 'var(--dsw-alias-label-primary)', cursor: 'pointer', font: 'inherit', outline: 0,
   },
 
   overlay: {
@@ -70,30 +80,38 @@ function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
   }
 }
 
-export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, error,
-  anchor, open = true, onClose = () => {}, getAnchorRect,
+export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, onAddBot, onNewDshSession, onAddLongArticle, error,
+  anchor, open = true, onClose = () => {}, getAnchorRect, hoverAnchor, recordingAction,
 }: {
   onContactAdd(): void
   onCreateGroup(): void
   onStartCall?: () => void
   onAddBot(): void
   onNewDshSession?: (() => void) | undefined
+  onAddLongArticle?: (() => void) | undefined
   error?: string
   open?: boolean
   anchor?: ReactNode
   onClose?: () => void
   getAnchorRect?: () => DOMRect | null
+  /** Hover entry point: the trigger and the menu stay one hover target. */
+  hoverAnchor?: HTMLElement | undefined
+  recordingAction?: { label: string; disabled: boolean; onSelect(): void } | undefined
 }) {
   const icon = (base64: string) => <span aria-hidden style={maskIcon(base64, { width: 16, height: 16 })} />
   return <span data-arkme-notification-blocking-overlay={open ? 'true' : undefined}>
     <ArkmeActionMenu label={tr("添加")} open={open} anchor={anchor} align="end" onClose={onClose}
+      hoverCloseDelayMs={500}
       {...(getAnchorRect === undefined ? {} : { getAnchorRect })}
+      {...(hoverAnchor === undefined ? {} : { hoverAnchor })}
       actions={[
-        onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutline16 />, onSelect: onNewDshSession },
+        onNewDshSession !== undefined && { id: 'dsh', label: '新建 DSH 会话', icon: <IconNewChatOutlineMedium />, onSelect: onNewDshSession },
+        onAddLongArticle !== undefined && { id: 'article', label: '添加长文', icon: <FileText size={16} aria-hidden />, onSelect: onAddLongArticle },
         { id: 'contact', label: '添加联系人', icon: icon(arkmeUserAddIconBase64), onSelect: onContactAdd },
         { id: 'group', label: '创建群聊', icon: icon(arkmeGroupIconBase64), onSelect: onCreateGroup },
         { id: 'bot', label: '添加 Bot', icon: icon(arkmeBotIconBase64), onSelect: onAddBot },
         onStartCall !== undefined && { id: 'call', label: '发起通话', icon: <PhoneCall size={16} />, onSelect: onStartCall },
+        recordingAction !== undefined && { id: 'recording', ...recordingAction, icon: <Microphone size={16} aria-hidden /> },
         error ? { id: 'error', label: <span role="alert">{error}</span>, disabled: true, onSelect: () => {} } : false,
       ]}
     />
@@ -105,6 +123,8 @@ export function ArkmeQuickAddButton({
   onSourceCreated,
   onBotCreated,
   onNewDshSession,
+  longArticleAccountKey,
+  recordingAccountKey,
   notificationActivationRevision = 0,
   onBlockingOverlayChange,
 }: {
@@ -112,12 +132,44 @@ export function ArkmeQuickAddButton({
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
   onNewDshSession?: (() => void) | undefined
+  /** Conversation-directory shortcut; the destination is always send-to-self. */
+  longArticleAccountKey?: string | undefined
+  /** Offered by the conversation directory, using its authenticated account scope. */
+  recordingAccountKey?: string | undefined
   notificationActivationRevision?: number
   onBlockingOverlayChange?(open: boolean): void
 }) {
   useArkmeLocale()
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuMode, setMenuMode] = useState<'hover' | 'pinned'>()
+  const menuOpen = menuMode !== undefined
+  const closeMenu = () => setMenuMode(undefined)
   const [menuError, setMenuError] = useState('')
+  // Only phase changes affect this menu; microphone levels and elapsed time do not.
+  const recordingPhase = useSyncExternalStore(directRecordingStore.subscribe, () => {
+    const state = directRecordingStore.getSnapshot()
+    return recordingAccountKey && state.accountKey === recordingAccountKey ? state.phase : undefined
+  }, () => undefined)
+  const recordingScope = useRef<{ accountKey: string | undefined; active: boolean }>({ accountKey: recordingAccountKey, active: true })
+  useEffect(() => {
+    const scope = { accountKey: recordingAccountKey, active: true }
+    recordingScope.current = scope
+    return () => { scope.active = false }
+  }, [recordingAccountKey])
+  const startRecording = async () => {
+    const scope = recordingScope.current
+    const state = directRecordingStore.getSnapshot()
+    if (!scope.accountKey || state.accountKey !== scope.accountKey) return
+    if (state.phase === 'recording') { closeMenu(); arkmeUi.showRecordings(); return }
+    if (state.phase !== 'idle') return
+    closeMenu(); setMenuError('')
+    let error = ''
+    try { await directRecordingStore.start(); error = directRecordingStore.getSnapshot().error }
+    catch (reason) { error = reason instanceof Error ? reason.message : tr('录音操作失败，请重试') }
+    // A permission failure must remain visible even though the floating capture controls close.
+    if (error && scope.active && directRecordingStore.getSnapshot().accountKey === scope.accountKey) {
+      setMenuError(error); setMenuMode('pinned')
+    }
+  }
   const [dialogKind, setDialogKind] = useState<QuickAddDialogKind>()
   const [dialogBusy, setDialogBusy] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
@@ -143,7 +195,7 @@ export function ArkmeQuickAddButton({
     if (notificationRevisionRef.current === notificationActivationRevision) return
     notificationRevisionRef.current = notificationActivationRevision
     pendingNotificationDismissRef.current = true
-    setMenuOpen(false)
+    closeMenu()
     if (!dialogBusy) {
       pendingNotificationDismissRef.current = false
       setDialogKind(undefined)
@@ -157,25 +209,39 @@ export function ArkmeQuickAddButton({
 
 
   const chooseDialog = (kind: QuickAddDialogKind) => {
-    setMenuOpen(false)
+    closeMenu()
     setDialogBusy(false)
     setDialogKind(kind)
   }
 
+  const openMenu = () => { setMenuError(''); setMenuMode(current => current ?? 'hover') }
+
   const menu = <ArkmeQuickAddMenu
-      open={menuOpen} onClose={() => setMenuOpen(false)}
+      open={menuOpen} onClose={closeMenu}
+      hoverAnchor={menuMode === 'hover' ? triggerRef.current ?? undefined : undefined}
       anchor={<button data-arkme-feedback="neutral"
-        ref={triggerRef} type="button" aria-label={onNewDshSession ? '新建 DSH 会话、添加联系人、群聊、发起通话或添加 Bot' : '添加联系人、群聊、发起通话或添加 Bot'} title={tr("添加")}
+        ref={triggerRef} type="button" aria-label={`${onNewDshSession ? '新建 DSH 会话、' : ''}${longArticleAccountKey ? '添加长文、' : ''}添加联系人、群聊、发起通话或添加 Bot${recordingAccountKey ? '、开始录音' : ''}`} title={tr("添加")}
         aria-haspopup="menu" aria-expanded={menuOpen} style={style.trigger}
-        onClick={() => { setMenuError(''); setMenuOpen(open => !open) }}
-      >＋</button>}
+        // A click pins an already-hovered menu as well as opening a closed one.
+        // Removing hoverAnchor also cancels any pending hover-close timer.
+        // Re-entering the trigger must never demote a pinned menu to hover mode.
+        onPointerEnter={event => { if (event?.pointerType !== 'touch') openMenu() }}
+        onClick={() => { setMenuError(''); setMenuMode('pinned') }}
+      ><IconPlusOutlineMedium size={20} aria-hidden /></button>}
       error={menuError}
+      recordingAction={recordingAccountKey === undefined ? undefined : {
+        label: recordingPhase === 'recording' ? '查看录音' : recordingPhase === 'starting' ? '正在准备录音…'
+          : recordingPhase === 'saving' ? '正在保存录音…' : recordingPhase === 'uploading' ? '正在上传录音…' : '开始录音',
+        disabled: recordingPhase !== 'idle' && recordingPhase !== 'recording',
+        onSelect: () => { void startRecording() },
+      }}
       onNewDshSession={onNewDshSession === undefined ? undefined : () => {
-        try { onNewDshSession(); setMenuError(''); setMenuOpen(false) }
+        try { onNewDshSession(); setMenuError(''); closeMenu() }
         catch (error) { setMenuError(error instanceof Error ? error.message : '暂时无法新建 DSH 会话，请稍后再试') }
       }}
+      onAddLongArticle={longArticleAccountKey === undefined ? undefined : () => { chooseDialog('article') }}
       onContactAdd={() => {
-        setMenuOpen(false)
+        closeMenu()
         onContactAdd()
       }}
       onCreateGroup={() => { chooseDialog('group') }}
@@ -184,6 +250,12 @@ export function ArkmeQuickAddButton({
     />
   return <div ref={anchorRef} style={style.anchor}>
     {menu}
+    {dialogKind === 'article' && longArticleAccountKey && (() => {
+      const dialog = <ArkmeNewLongArticleDialog accountKey={longArticleAccountKey} onClose={() => {
+        restoreCallFocus.current = true; setDialogKind(undefined)
+      }} />
+      return typeof document !== 'undefined' && document.body ? createPortal(dialog, document.body) : dialog
+    })()}
     {dialogKind === 'call' && <ArkmeCallSurface presentation="dialog" initialPickerOpen onClose={() => {
       pendingNotificationDismissRef.current = false
       restoreCallFocus.current = true

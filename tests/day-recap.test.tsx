@@ -4,6 +4,8 @@ import { ArkmeDayRecap, DayRecordingReview, latestDayRecordingReview } from '../
 import { buildDayRecapInput, type DayRecapGenerator } from '../src/client/day-recap-input.js'
 import { dayActivityOverview, dayActivityPeriod, type DayActivityEntry, type DayActivityQuery } from '../src/client/calendar-activity-model.js'
 import { DAY_RECAP_MAX_CHARS, dayRecapText, parseDayRecapInput, parseDayRecapPoints, type DayRecapResult } from '../src/day-recap.js'
+import { callArkme } from '../src/client/api.js'
+vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 import type { ArkmeRecordingVersion } from '../src/types.js'
 
 const query: DayActivityQuery = { accountScope: 'prod:1', bucketDate: '2026-09-19', timezone: 'Asia/Shanghai', kind: 'all', mode: 'activities', includeBackground: false }
@@ -29,7 +31,7 @@ describe('bounded daily recap material', () => {
     const { input, sources } = buildDayRecapInput(query, [entry('hidden', { access: 'restricted', preview: '秘密' }),
       entry('note:private-id', { sourceIdentity: 'opaque-private-handle', location: { source: 'device', latitude: 30.1234, longitude: 114.4567 } })])
     expect(input.items).toHaveLength(1)
-    expect(input.items[0]?.title).toBe('与 备注名 的私聊')
+    expect(input.items[0]?.title).toBe('备注名')
     expect(JSON.stringify(input)).not.toMatch(/秘密|opaque-private-handle|latitude|30.1234|note:private-id/)
     expect(sources.get('a1')?.activityId).toBe('note:private-id')
   })
@@ -75,6 +77,21 @@ describe('manual recap UI', () => {
   const mount = async (generate: DayRecapGenerator, onSource = vi.fn()) => {
     await act(async () => { view = create(<ArkmeDayRecap query={query} entries={[entry()]} generate={generate} onSource={onSource} />) })
   }
+  it('rechecks shared evidence after review and blocks AI generation if the sender has withdrawn it', async () => {
+    const generate = vi.fn<DayRecapGenerator>().mockResolvedValue(result)
+    vi.mocked(callArkme).mockResolvedValueOnce({ sourceDigest: 'digest', transcript: '双方讨论的完整文字' })
+      .mockRejectedValueOnce(new Error('共享已撤回'))
+    const shared = entry('shared', { kind: 'recording', sharedRecording: { detailRef: 'signed-ref', sourceDigest: 'digest', sourceLabel: '小林共享' } })
+    await act(async () => { view = create(<ArkmeDayRecap query={query} entries={[shared]} generate={generate} onSource={vi.fn()} />) })
+    await act(async () => button('生成 AI 小结').props.onClick())
+    expect(content()).toContain('双方讨论的完整文字')
+    expect(content()).toContain('小林共享')
+    expect(generate).not.toHaveBeenCalled()
+    await act(async () => button('确认生成').props.onClick())
+    expect(content()).toContain('共享已撤回')
+    expect(generate).not.toHaveBeenCalled()
+    expect(vi.mocked(callArkme).mock.calls).toHaveLength(2)
+  })
   it('does not generate on render or first click; shows consent and actual excerpts', async () => {
     const generate = vi.fn<DayRecapGenerator>().mockResolvedValue(result)
     await mount(generate)

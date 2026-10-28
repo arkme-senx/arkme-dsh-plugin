@@ -1,3 +1,5 @@
+import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
+import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -8,7 +10,7 @@ import type {
   ArkmeAiVideoListItem, ArkmeAiVideoListResult, ArkmeFileAssetDisplayItem,
   ArkmeImageSearchItem, ArkmeImageSearchResult,
   ArkmeRecordSearchResult, ArkmeRecordingSearchResult, ArkmeSearchHistoryResult, ArkmeSearchRecordItem,
-  ArkmeTimelineCursor, ArkmeTimelinePage,
+  ArkmeTimelineCursor, ArkmeTimelinePage, ArkmeTimelineItem,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { conversationSearchReadPort } from './conversation-search-port.js'
@@ -17,6 +19,9 @@ import { searchSourceRows } from './search-source-rows.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
+import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
+import { ArkmeDetailShell } from './ArkmeDetailShell.js'
+import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { ArkmeVoiceContent } from './ArkmeVoiceContent.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeHashTagRanges, arkmeHashTagSearchKey, arkmeHashTagSearchQuery } from '../hashtag.js'
@@ -94,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 import { ArkmeFileQuickView } from './ArkmeFileQuickView.js'
-import { ArkmeLongArticleQuickView } from './ArkmeLongArticleQuickView.js'
+import { ArkmeLongArticleLibraryDialog } from './ArkmeLongArticleLibraryDialog.js'
 import { ArkmeLinkQuickView } from './ArkmeLinkQuickView.js'
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
@@ -157,10 +162,10 @@ function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
       {dateLabel === '' ? null : <time>{dateLabel}</time>}
     </span>
   }
-  return <span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
+  return <span style={styles.meta}>{item.sourceKind === 4 ? <><TeamRecordSource conversationUid={item.sourceUid} /> · </> : item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
 }
 function normalizedSearchText(value: string): string { return value.replace(/\s+/g, ' ').trim() }
-function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.nickname || '快记' }
+function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.selfRole?.name || item.nickname || '快记' }
 function recordSummary(item: ArkmeSearchRecordItem): string {
   const value = item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')
   return normalizedSearchText(value) === normalizedSearchText(recordTitle(item)) ? '' : value
@@ -174,15 +179,9 @@ export function RecordRow({ item, onClick, onTagClick }: {
   const summary = recordSummary(item)
   const title = recordTitle(item)
   return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={onClick}>
-    <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? title : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
-    {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? summary : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
+    <p style={styles.title}>{arkmeHashTagRanges(title).length === 0 ? <ArkmeRichText text={title} presentation="preview" /> : <ArkmeRichText text={title} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>
+    {summary !== '' && <p style={styles.text}>{arkmeHashTagRanges(summary).length === 0 ? <ArkmeRichText text={summary} presentation="preview" /> : <ArkmeRichText text={summary} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} />}</p>}
     <RecordMeta item={item} />
-  </button>
-}
-function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
-  return <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
-    <p style={{ ...styles.text, marginTop: 0, color: colors.text }}>{item.snippet || tr("暂无转写内容")}</p>
-    <span style={styles.meta}>{dateTimeLabel(item.startAtMillis || item.dateStamp)}</span>
   </button>
 }
 function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
@@ -195,7 +194,7 @@ function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
   const initialUrl = item.voice?.mediaRef === undefined ? displayUrl(asset) : mediaUrl(item.voice.mediaRef)
   const durationMillis = item.voice?.durationMillis ?? item.recordDurationMillis
   const transcript = item.snippet || item.textContent || '暂无转写内容'
-  const sender = item.nickname || recordTitle(item)
+  const sender = item.selfRole?.name || item.nickname || recordTitle(item)
   const resolveFromConversation = useCallback(async (signal: AbortSignal): Promise<string> => {
     if (item.targetSource === undefined) return ''
     if (item.sourceKind === 3) {
@@ -245,7 +244,7 @@ function AudioQuickRow({ item, asset, onOpen, onTagClick }: {
         downloadName={item.voice?.fileName}
         collapsible={transcript.length > 300 || transcript.split('\n').length > 5}
       ><ArkmeRichText text={transcript} highlightMentions {...(onTagClick === undefined ? {} : { onTagClick })} /></ArkmeVoiceContent>
-      {isDshAgentInputRecord(item) ? <RecordMeta item={item} /> : <span style={styles.audioMeta}>{sender}{item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>}
+      {isDshAgentInputRecord(item) ? <RecordMeta item={item} /> : <span style={styles.audioMeta}>{sender}{item.sourceKind === 4 ? <> · <TeamRecordSource conversationUid={item.sourceUid} /></> : item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>}
     </div>
   </article>
 }
@@ -255,7 +254,10 @@ function Status({ loading, error, empty }: { loading: boolean; error?: string; e
   return empty === true ? <div style={styles.status}>{tr("暂无相关内容")}</div> : null
 }
 
-export function ArkmeSearchSurface({
+export function ArkmeSearchSurface(props: ArkmeSearchSurfaceProps) {
+  return <TeamRecordSourceScope><ArkmeSearchSurfaceBody {...props} /></TeamRecordSourceScope>
+}
+function ArkmeSearchSurfaceBody({
   variant = 'page', initialQuery, initialQueryRevision, searchDshMessages, onOpenDshSession, onOpenRecord, onClose,
 }: ArkmeSearchSurfaceProps = {}) {
   useArkmeLocale()
@@ -271,6 +273,8 @@ export function ArkmeSearchSurface({
   const [selectedDshSessionId, setSelectedDshSessionId] = useState('')
   const [sourceRecords, setSourceRecords] = useState<ArkmeSearchRecordItem[]>([])
   const [quick, setQuick] = useState<QuickKey>()
+  const [longArticlesOpen, setLongArticlesOpen] = useState(false)
+  const articleOpener = useRef<HTMLElement | null>(null)
   const [images, setImages] = useState<ArkmeImageSearchItem[]>()
   const [imageCursor, setImageCursor] = useState('')
   const [imageHasMore, setImageHasMore] = useState(false)
@@ -295,8 +299,22 @@ export function ArkmeSearchSurface({
   const [recordingError, setRecordingError] = useState('')
   const [dshError, setDshError] = useState('')
   const requestId = useRef(0)
+  const personalDetailRequest = useRef<AbortController>()
+  const [personalDetail, setPersonalDetail] = useState<{ source: ArkmeSearchRecordItem; value?: ArkmeTimelineItem; error?: string }>()
+  const [personalDetailOriginal, setPersonalDetailOriginal] = useState(false)
+  const closePersonalDetail = useCallback(() => {
+    personalDetailRequest.current?.abort()
+    setPersonalDetail(undefined)
+  }, [])
+  useEffect(() => {
+    closePersonalDetail()
+    return () => { personalDetailRequest.current?.abort() }
+  }, [query, quick, closePersonalDetail])
   const quickRef = useRef<QuickKey>()
   const searchAbort = useRef<AbortController>()
+  const recordingPageAbort = useRef<AbortController>()
+  const recordingResultQuery = useRef('')
+  const [recordingPageLoading, setRecordingPageLoading] = useState(false)
   const sourceSearchAbort = useRef<AbortController>()
   const sourceSearchRevision = useRef(0)
   const quickRequestAbort = useRef<AbortController>()
@@ -327,6 +345,7 @@ export function ArkmeSearchSurface({
     if (keyword === '') { resetResults(); return }
     setRequestedQuery(keyword)
     const id = ++requestId.current
+    recordingPageAbort.current?.abort(); recordingPageAbort.current=undefined; setRecordingPageLoading(false)
     searchAbort.current?.abort()
     sourceSearchAbort.current?.abort()
     sourceSearchAbort.current = undefined
@@ -366,7 +385,7 @@ export function ArkmeSearchSurface({
     const recordingRequest = includeCompanionDomains
       ? callArkme<ArkmeRecordingSearchResult>(
           'search.recordings', { query: keyword, limit: 50 }, controller.signal,
-        ).then(nextRecordings => { if (active()) setRecordings(nextRecordings) })
+        ).then(nextRecordings => { if (active()) {recordingResultQuery.current=keyword;setRecordings(nextRecordings)} })
           .catch(caught => { if (active()) setRecordingError(errorMessage(caught)) })
           .finally(() => { finish('recordings') })
       : Promise.resolve()
@@ -382,6 +401,33 @@ export function ArkmeSearchSurface({
     void callArkme('search.history.create', { query: keyword }).catch(() => undefined)
     setHistory(current => [keyword, ...current.filter(value => value !== keyword)].slice(0, 10))
   }, [resetResults, searchDshMessages])
+
+  const loadRecordingPage = useCallback(async () => {
+    if (recordingPageAbort.current || query.trim() !== requestedQuery || searchLoading.recordings) return
+    const cursor = recordingResultQuery.current === requestedQuery && recordings?.hasMore ? recordings.nextCursor : undefined
+    if (recordings !== undefined && !cursor && recordingError === '') return
+    const controller = new AbortController()
+    recordingPageAbort.current = controller
+    const revision = requestId.current
+    setRecordingPageLoading(true); setRecordingError('')
+    try {
+      const page = await callArkme<ArkmeRecordingSearchResult>('search.recordings', {query:requestedQuery,limit:50,...(cursor ? {cursor} : {})}, controller.signal)
+      if (controller.signal.aborted || requestId.current !== revision) return
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) throw new Error('录音搜索分页未前进，请重试')
+      recordingResultQuery.current=requestedQuery
+      setRecordings(current => {
+        if (!cursor) return page
+        const merged = new Map((current?.items ?? []).map(item => [`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`,item]))
+        for (const item of page.items) merged.set(`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`,item)
+        return {...page,items:[...merged.values()]}
+      })
+    } catch (caught) { if (!controller.signal.aborted && requestId.current === revision) setRecordingError(errorMessage(caught)) }
+    finally { if (recordingPageAbort.current === controller) {recordingPageAbort.current=undefined;setRecordingPageLoading(false)} }
+  }, [query,requestedQuery,recordings,recordingError,searchLoading.recordings])
+  useEffect(() => {
+    recordingPageAbort.current?.abort(); recordingPageAbort.current=undefined; setRecordingPageLoading(false)
+    return () => {recordingPageAbort.current?.abort();recordingPageAbort.current=undefined}
+  }, [query,quick])
 
   const chooseSource = useCallback(async (sourceUid: string, sourceKind: number) => {
     const keyword = query.trim()
@@ -462,6 +508,10 @@ export function ArkmeSearchSurface({
   }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    if (value === 'long_article') {
+      if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) articleOpener.current = document.activeElement
+      setLongArticlesOpen(true); return
+    }
     searchAbort.current?.abort()
     searchAbort.current = undefined
     quickRequestAbort.current?.abort()
@@ -470,7 +520,7 @@ export function ArkmeSearchSurface({
     const id = ++requestId.current
     quickRef.current = value
     setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSelectedDshSessionId(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setSearchLoading({ records: false, recordings: false, dsh: false })
-    if (value === 'file' || value === 'long_article' || value === 'link' || hasCachedPage) { setLoading(false); return }
+    if (value === 'file' || value === 'link' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20_000)
@@ -535,6 +585,20 @@ export function ArkmeSearchSurface({
 
   const openRecord = useCallback(async (item: ArkmeSearchRecordItem) => {
     const revision = requestId.current
+    if (item.routeTargetKind === 'record_detail') {
+      personalDetailRequest.current?.abort()
+      const controller = new AbortController()
+      personalDetailRequest.current = controller
+      setPersonalDetail({ source: item })
+      setPersonalDetailOriginal(false)
+      try {
+        const value = await callArkme<ArkmeTimelineItem>('record.app.detail', { recordUid: item.recordUid }, controller.signal)
+        if (!controller.signal.aborted && revision === requestId.current) setPersonalDetail({ source: item, value })
+      } catch (error) {
+        if (!controller.signal.aborted && revision === requestId.current) setPersonalDetail({ source: item, error: errorMessage(error) })
+      }
+      return
+    }
     try {
       if (isDshAgentInputRecord(item)) {
         if (item.dshOrigin !== undefined) {
@@ -667,7 +731,7 @@ export function ArkmeSearchSurface({
               {selectedDshRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { void openRecord(item) }} onTagClick={selectTag} />)}
               {records?.hasMore && <span style={styles.meta}>{tr("当前仅显示本页匹配记录。")}</span>}
             </> : <>
-              <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}>{selectedDsh.snippet}</button>
+              <button data-arkme-feedback="neutral" type="button" style={styles.row} onClick={() => openDshSession(selectedDsh.sessionId)}><ArkmeRichText text={selectedDsh.snippet} presentation="preview" /></button>
             </>}
           </div> : selectedSourceUid === '' ? <div style={styles.sourcePrompt}>{tr("选择一个主题查看关联快记")}</div>
             : sourceLoading ? <Status loading />
@@ -677,9 +741,10 @@ export function ArkmeSearchSurface({
         </div>
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label={tr("录音转写搜索结果")}>
         <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
-        {recordingError !== '' && <div style={styles.error}>{tr("录音·转写暂不可用：")}{recordingError}</div>}
-        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
-          : !searchLoading.recordings && <Status loading={false} empty />}
+        {recordingError !== '' && <div style={styles.error} role="alert">{tr("录音·转写暂不可用：")}{recordingError}<button type="button" aria-label="重试录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{tr("重试")}</button></div>}
+        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item} />)}</div>
+          : !searchLoading.recordings && recordingError === '' && !recordings?.hasMore && <Status loading={false} empty />}
+        {recordings?.hasMore && recordingError === '' && <button type="button" aria-label="加载更多录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{recordingPageLoading ? tr("正在加载…") : tr("加载更多")}</button>}
       </div>}
       </div>
       <div style={styles.searchProgress} role="status" aria-live="polite">
@@ -688,7 +753,7 @@ export function ArkmeSearchSurface({
     </div>
   </>
 
-  return <div style={variant === 'dialog' ? styles.dialogShell : styles.shell}>
+  return <div style={{ ...(variant === 'dialog' ? styles.dialogShell : styles.shell), position: 'relative' }} {...(longArticlesOpen ? { inert: '', 'aria-hidden': true } : {})}>
     {variant === 'page' && <header style={styles.hero}>
       <h1 style={styles.heroTitle}>{tr("一句话，找到所有内容")}</h1>
     </header>}
@@ -726,9 +791,20 @@ export function ArkmeSearchSurface({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'long_article' ? <ArkmeLongArticleQuickView {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label={tr("快速查找内容")} tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'link' ? <>{recordError !== '' && <Status loading={false} error={recordError} />}<ArkmeLinkQuickView onOpenRecord={openRecord} {...(variant === 'dialog' ? { scrollRoot: quickScroll } : {})} /></> : quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{searchLoading.records ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} onTagClick={selectTag} />)}</div>}</> : quickBody}</main>
     </div>}
-    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>{tr("关闭")}</button></div></div>}
+    {longArticlesOpen && <ArkmeLongArticleLibraryDialog returnFocusRef={articleOpener} onClose={() => setLongArticlesOpen(false)} />}
+    {personalDetail !== undefined && (personalDetail.value !== undefined
+      ? <ArkmeTimelineDetailDrawer item={personalDetail.value} canExtend={false}
+        sourceBadge={personalDetail.source.sourceKind === 4
+          ? <TeamRecordSource conversationUid={personalDetail.source.sourceUid} navigable onOpened={() => { closePersonalDetail(); onClose?.() }} />
+          : <ArkmeTopicTagBadge label={personalDetail.source.sourceTitle || tr('快记')} />}
+        showOriginal={personalDetailOriginal} onToggleOriginal={() => setPersonalDetailOriginal(value => !value)} onClose={closePersonalDetail} />
+      : <ArkmeDetailShell title={tr('快记详情')} label={tr('快记详情')} onClose={closePersonalDetail}>
+        <Status loading={personalDetail.error === undefined} {...(personalDetail.error === undefined ? {} : { error: personalDetail.error })} />
+        {personalDetail.error !== undefined && <button type="button" style={styles.retryLoadMore} onClick={() => { void openRecord(personalDetail.source) }}>{tr('重试')}</button>}
+      </ArkmeDetailShell>)}
+    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}><ArkmeRichText text={preview.subtitle} presentation="preview" /></span>}<button data-arkme-feedback="neutral" type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>{tr("关闭")}</button></div></div>}
   </div>
 }
 
@@ -737,7 +813,7 @@ export function ArkmeGlobalSearchDialog({
 }: Required<Pick<ArkmeSearchSurfaceProps, 'onClose'>> & Omit<ArkmeSearchSurfaceProps, 'variant' | 'onClose'>) {
   useArkmeLocale()
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented && document.querySelector('[data-arkme-note-detail],[data-arkme-long-article-library]') === null) onClose() }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [onClose])

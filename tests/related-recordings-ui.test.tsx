@@ -247,7 +247,7 @@ describe('related recordings UI', () => {
     const incoming = renderToStaticMarkup(<RelatedRecordingDetail item={recording('incoming-1', true)} onClose={() => undefined} />)
     expect(incoming).not.toContain('对方共享 · 只读')
     expect(incoming).not.toContain('共享给对方')
-    expect(owner).toContain('--dsw-specific-menu')
+    expect(owner).toContain('--dsw-alias-bg-layer-3')
     expect(ARKME_RELATED_RECORDING_TRANSCRIPT_BG).toContain('--dsw-alias-bg-module-platform')
     expect(ARKME_RELATED_RECORDING_TRANSCRIPT_BG).not.toContain('--dsw-alias-bg-subtle')
   })

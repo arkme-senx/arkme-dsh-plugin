@@ -23,6 +23,17 @@ function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
 }
 
 describe('Arkme composer draft store', () => {
+  it('restores an Arko image draft at the actual Arko text limit', () => {
+    let saved: string | null = null
+    const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value } }
+    const store = new ArkmeComposerDraftStore(storage)
+    const key = arkmeArkoComposerDraftKey(10001)!
+    store.setText(key, '字'.repeat(60 * 1024))
+    store.appendAttachments(key, [{ localFile: { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'test.png', mimeType: 'image/png', size: 128, fileKind: 1 } }])
+    const restored = new ArkmeComposerDraftStore(storage).get(key)
+    expect(restored.text).toHaveLength(60 * 1024)
+    expect(restored.attachments).toHaveLength(1)
+  })
   beforeEach(() => { vi.restoreAllMocks() })
 
   it('preserves source-range identities when re-editing escaped Markdown mentions', () => {
@@ -329,5 +340,50 @@ describe('Arkme composer draft store', () => {
 
     expect(store.deleteMentionAtSelection(key, 5, 5, 'backward')).toBe(1)
     expect(store.get(key)).toMatchObject({ text: '前后', mentions: [] })
+  })
+})
+
+it('persists durable drafts synchronously without rewriting them for unrelated text edits', () => {
+ const storage = { getItem: () => null, setItem: vi.fn() }
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = arkmeSourceComposerDraftKey(1001, {kind:'private_chat',sourceRef:'first'})!
+ store.appendAttachments(key, [{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ const changed = vi.fn(); store.subscribe(changed)
+ for (let i = 1; i <= 20; i++) store.setText('other', 'x'.repeat(i))
+ expect(storage.setItem).toHaveBeenCalledTimes(1)
+ expect(changed).toHaveBeenLastCalledWith('other')
+ store.take(key)
+ expect(storage.setItem).toHaveBeenLastCalledWith('arkme-local-file-drafts-v1', '[]')
+})
+
+
+it.each(['save', 'delete'] as const)('retries failed durable %s on the next plain edit without repeated successful writes', action => {
+ let saved: string | null = null, unavailable = action === 'save'
+ const storage = {getItem:()=>saved,setItem:vi.fn((_key:string,value:string)=>{
+  if(unavailable)throw new Error('storage temporarily unavailable')
+  saved=value
+ })}
+ const store = new ArkmeComposerDraftStore(storage)
+ const key = 'arkme-composer:42:source:private_chat:durable'
+ store.appendAttachments(key,[{localFile:{fileRef:'arkme-file-v1.11111111-1111-4111-8111-111111111111',fileName:'one.txt',mimeType:'text/plain',size:1}}])
+ if(action==='delete'){unavailable=true;store.take(key)}
+ expect(()=>store.setText('other','still editable')).not.toThrow()
+ unavailable=false
+ store.setText('other','next draft')
+ expect(new ArkmeComposerDraftStore(storage).get(key).attachments).toHaveLength(action==='save'?1:0)
+ const writes=storage.setItem.mock.calls.length
+ store.setText('other','another plain edit')
+ expect(storage.setItem).toHaveBeenCalledTimes(writes)
+})
+
+
+describe('serialized composer projection', () => {
+  it('round trips known emoji tokens and keeps unknown tokens as editable text', async () => {
+    const {arkmeComposerDraftFromText,serializeArkmeComposerDraft}=await import('../src/client/composer-draft-store.js')
+    const wire='a[jm_emoji:smiling_face][jm_emoji:smiling_face]z[jm_emoji:unknown]'
+    const snapshot=arkmeComposerDraftFromText(wire)
+    expect(snapshot.emojis).toEqual([{emojiId:'smiling_face',startIndex:1},{emojiId:'smiling_face',startIndex:2}])
+    expect(serializeArkmeComposerDraft(snapshot).text).toBe(wire)
   })
 })

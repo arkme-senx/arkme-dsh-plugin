@@ -129,6 +129,7 @@ describe('recording UI-only host operations', () => {
 
     await dispatchArkmeHostOperation(service, 'recordings.import.preflight', { fileNames: ['new.m4a', 'old.m4a'] })
     await dispatchArkmeHostOperation(service, 'recordings.import.list', {})
+    await dispatchArkmeHostOperation(service, 'recordings.import.list', { toMillis: 20, limit: 50, offset: 50 })
     await dispatchArkmeHostOperation(service, 'recordings.import.status', { importRef: 'opaque' })
     await dispatchArkmeHostOperation(service, 'recordings.import.retry', { importRef: 'opaque', expectedRevision: 3 })
     await dispatchArkmeHostOperation(service, 'recordings.import.cancel', { importRef: 'opaque', expectedRevision: 4 })
@@ -142,6 +143,8 @@ describe('recording UI-only host operations', () => {
     await dispatchArkmeHostOperation(service, 'recordings.import.session.delete', { sessionRef: 'session-opaque' })
 
     expect(recordingImportPreflight).toHaveBeenCalledWith(['new.m4a', 'old.m4a'], undefined)
+    expect(recordingImportList).toHaveBeenNthCalledWith(1, undefined, undefined)
+    expect(recordingImportList).toHaveBeenNthCalledWith(2, undefined, { toMillis: 20, limit: 50, offset: 50 })
     expect(recordingImportStatus).toHaveBeenCalledWith('opaque')
     expect(retryRecordingImport).toHaveBeenCalledWith('opaque', 3)
     expect(cancelRecordingImport).toHaveBeenCalledWith('opaque', 4)
@@ -178,6 +181,37 @@ describe('recording UI-only host operations', () => {
     }, undefined)
   })
 
+  it('validates correction selectors and never forwards caller-supplied owner ids', async () => {
+    const applyRecordingSpeakerCorrection = vi.fn(async () => ({ affectedCount: 1 }))
+    const service = { applyRecordingSpeakerCorrection } as unknown as ArkmeService
+    await expect(dispatchArkmeHostOperation(service, 'recordings.speaker.correction.apply', {
+      itemRef: 'sealed', itemRefs: ['sealed', 42], detach: true,
+    })).rejects.toMatchObject({ code: 'invalid-params' })
+    expect(applyRecordingSpeakerCorrection).not.toHaveBeenCalled()
+    await dispatchArkmeHostOperation(service, 'recordings.speaker.correction.apply', {
+      itemRef: 'sealed', itemRefs: ['sealed'], detach: true, rejectCurrent: true,
+      expectedVersion: 'version', idempotencyKey: 'request-id', soundSource: 'playback',
+      user_id: 99, rejected_speaker_id: 'forged', child_id: 'forged',
+    })
+    expect(applyRecordingSpeakerCorrection).toHaveBeenCalledWith({
+      itemRef: 'sealed', itemRefs: ['sealed'], detach: true, rejectCurrent: true,
+      expectedVersion: 'version', idempotencyKey: 'request-id', soundSource: 'playback',
+    }, undefined)
+  })
+
+  it('dispatches removal using only the sealed item, count and supported scope', async () => {
+    const unassignRecordingSpeaker = vi.fn(async () => ({ affectedCount: 1 }))
+    const service = { unassignRecordingSpeaker } as unknown as ArkmeService
+    await dispatchArkmeHostOperation(service, 'recordings.speaker.unassign-item', {
+      itemRef: 'item-opaque', scope: 'item', expectedCount: 1, expected_spk_id: 'untrusted', child_id: 'untrusted',
+    })
+    expect(unassignRecordingSpeaker).toHaveBeenCalledWith({ itemRef: 'item-opaque', scope: 'item', expectedCount: 1 }, undefined)
+    await expect(dispatchArkmeHostOperation(service, 'recordings.speaker.unassign-item', {
+      itemRef: 'item-opaque', scope: 'all', expectedCount: 1,
+    })).rejects.toMatchObject({ code: 'recording-speaker-scope-invalid' })
+    expect(unassignRecordingSpeaker).toHaveBeenCalledOnce()
+  })
+
   it('rejects an unknown speaker mutation scope instead of silently treating it as one item', async () => {
     const assignRecordingSpeaker = vi.fn()
     const service = { assignRecordingSpeaker } as unknown as ArkmeService
@@ -186,5 +220,15 @@ describe('recording UI-only host operations', () => {
       itemRef: 'item-opaque', speakerRef: 'speaker-opaque', scope: 'session',
     })).rejects.toMatchObject({ code: 'recording-speaker-scope-invalid' })
     expect(assignRecordingSpeaker).not.toHaveBeenCalled()
+  })
+})
+
+describe('unified speaker directory host operations', () => {
+  it.each(['Summary', 'List', 'Seen', 'Open', 'Avatars'] as const)('dispatches %s with the request signal and opaque parameters', async name => {
+    const method = vi.fn(async () => ({ ok: true }))
+    const controller = new AbortController(), params = { snapshotVersion: 'opaque', throughCursor: 'opaque-seen', detailRef: 'sealed' }
+    const service = { [`speakerDirectory${name}`]: method } as unknown as ArkmeService
+    await dispatchArkmeHostOperation(service, `speaker-directory.${name.toLowerCase()}` as never, params, undefined, undefined, undefined, undefined, controller.signal)
+    expect(method).toHaveBeenCalledWith(params, controller.signal)
   })
 })

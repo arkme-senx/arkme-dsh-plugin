@@ -22,6 +22,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     sha256: 'a'.repeat(64),
     startAtMillis: 1_725_000_000_000,
     belongUserId: 42,
+    recordingKind: 3,
     sourceHandle: '/private/job-1.upload',
     uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100,

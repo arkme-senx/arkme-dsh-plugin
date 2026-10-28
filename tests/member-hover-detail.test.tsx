@@ -5,6 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { GroupMemberRow, GroupMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
 import { MessageAvatar } from '../src/client/ArkmeSidebar.js'
 import { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from '../src/client/ArkmeNoteDetails.js'
+import { ArkmeMemberActionMenu } from '../src/client/ArkmeChatMemberActions.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { inMenuHoverRegion } from '../src/client/menu-hover-region.js'
 import type { ArkmeConversationMemberItem, ArkmeTimelineItem } from '../src/types.js'
@@ -99,4 +100,28 @@ it('retries keyboard focus after the native portal finishes its hidden measureme
   expect(document.querySelector('[role="menu"]')?.contains(document.activeElement)).toBe(true)
   await act(async () => root.render(null))
   trigger.remove()
+})
+
+it('private peer avatar opens hover actions without changing its existing click behavior', async () => {
+  const hover=vi.fn(), open=vi.fn(), context=vi.fn()
+  await act(async()=>root.render(<MessageAvatar member={member} profileEnabled={false} hoverEnabled onHover={hover} onOpen={open} onContextMenu={context}/>))
+  const avatar=host.querySelector('button')!
+  await act(async()=>pointer(avatar,'pointerover','touch')); expect(hover).not.toHaveBeenCalled()
+  await act(async()=>pointer(avatar,'pointerover')); expect(hover).toHaveBeenCalledWith(member,avatar)
+  await act(async()=>avatar.click()); expect(open).not.toHaveBeenCalled()
+  await act(async()=>avatar.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))); expect(context).toHaveBeenCalledOnce()
+})
+it.each(['group_chat','private_chat'] as const)('provides world and appropriate private-chat shortcut for %s in the same avatar menu', async sourceKind => {
+  const world=vi.fn(), chat=vi.fn(), records=vi.fn(), mention=vi.fn(), close=vi.fn()
+  await act(async()=>root.render(<ArkmeMemberActionMenu member={member} sourceKind={sourceKind} position={{left:20,top:40}} onWorld={world} onPrivateChat={chat} onMention={mention} onRecords={records} onClose={close}/>))
+  const items=Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+  const worldButton=items.find(button=>button.textContent==='TA的世界')!
+  expect(worldButton).toBeDefined(); expect(items.some(button=>button.textContent?.includes('看TA的快记'))).toBe(true)
+  expect(items.some(button=>button.textContent==='私聊')).toBe(sourceKind==='group_chat')
+  await act(async()=>worldButton.click()); expect(world).toHaveBeenCalledOnce(); expect(chat).not.toHaveBeenCalled(); expect(records).not.toHaveBeenCalled()
+})
+it('does not add peer-only world/private shortcuts to the current user avatar', async () => {
+  await act(async()=>root.render(<ArkmeMemberActionMenu member={{...member,isSelf:true}} sourceKind="group_chat" position={{left:20,top:40}} onWorld={()=>{}} onPrivateChat={()=>{}} onMention={()=>{}} onRecords={()=>{}} onClose={()=>{}}/>))
+  expect(document.querySelector('[role="menu"]')?.textContent).not.toContain('TA的世界')
+  expect(document.querySelector('[role="menu"]')?.textContent).not.toContain('私聊')
 })

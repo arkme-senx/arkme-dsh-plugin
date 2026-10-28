@@ -4,13 +4,14 @@ import { ARKME_WIDE_CONVERSATION_MIN } from '../harness-conversation-layout-cont
 import { loadHarnessConversationLayout, type HarnessConversationLayout, type NativeRailItem } from './harness-conversation-layout.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
+import { cancelConversationFollow, isConversationFollowing } from './conversation-bottom-follow.js'
 
 export const WIDE_CONVERSATION_WIDTH_KEY = 'arkme:conversation-content-width:v1'
 const ANCHOR = '[data-arkme-width-anchor]'
 const css = `
 [data-arkme-wide-conversation="true"] [data-arkme-width-viewport] {
   box-sizing:border-box;
-  padding-inline:max(22px, calc((100% - var(--dsh-chat-content-width)) / 2)) !important;
+  padding-inline:max(22px, calc((100% - var(--dsh-chat-content-width, 920px)) / 2)) !important;
 }
 [data-arkme-wide-conversation="true"] [data-arkme-width-composer] {
   box-sizing:border-box;
@@ -89,7 +90,7 @@ export function readConversationRail(viewport: HTMLElement, turns: boolean): Rai
 
 export function conversationRailActive(viewport: HTMLElement, anchors: readonly RailAnchor[]): number | null {
   if (anchors.length === 0) return null
-  if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 2) return anchors.at(-1)!.turn
+  if (isConversationFollowing(viewport) || viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 2) return anchors.at(-1)!.turn
   const line = viewport.getBoundingClientRect().top + Math.min(80, viewport.clientHeight * .2)
   let active = anchors[0]!.turn
   for (const anchor of anchors) {
@@ -218,6 +219,7 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
     const viewport = viewportRef.current
     const anchor = anchorsRef.current.find(candidate => candidate.anchor.key === item.anchor.key)
     if (!viewport || !anchor?.element.isConnected) return
+    cancelConversationFollow(viewport)
     const top = viewport.scrollTop + anchor.element.getBoundingClientRect().top - viewport.getBoundingClientRect().top - 22
     // Instant positioning cannot drift into another row while older history prepends.
     viewport.scrollTo({ top: Math.max(0, top), behavior: 'instant' })

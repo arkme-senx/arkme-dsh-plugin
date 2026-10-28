@@ -68,6 +68,9 @@ export const arkmeEmojiTokenPattern = /\[(?:jm_emoji|im_emoji):([a-z0-9_]+)\]/gu
 
 const arkmeEmojiSeedById = new Map(arkmeDefaultEmojiSeeds.map(emoji => [emoji.id, emoji]))
 
+/** Asset-free lookup for copy/quote projections, including embedded Harness. */
+export function arkmeEmojiUnicode(id: string): string { return arkmeEmojiSeedById.get(id)?.unicode ?? '' }
+
 export type ArkmeEmojiTextRun =
   | { kind: 'text'; text: string }
   | { kind: 'emoji'; text: string; emoji: ArkmeEmojiSeed }

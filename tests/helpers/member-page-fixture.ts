@@ -32,3 +32,11 @@ export function memberPageFixture(call: (operation: string, params?: Record<stri
     return await call(operation, ...args)
   }
 }
+
+/** These fixtures have no persisted local pages. A cache read must never consume a remote deferred page. */
+export function emptyTimelineCacheFixture(call: (operation: string, ...args: any[]) => any) {
+  return (operation: string, ...args: any[]) => {
+    if (operation === 'source.timeline' && args[0]?.cursor?.unified?.cacheOnly) return Promise.reject(new Error('No fixture cache'))
+    return call(operation, ...args)
+  }
+}

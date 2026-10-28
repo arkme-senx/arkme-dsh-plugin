@@ -11,7 +11,34 @@ import {
   DSH_REMOTE_MAX_PAGE_RESULT_BYTES,
 } from '../src/dsh-remote/types.js'
 
+it('preserves declared image support and leaves unknown model capabilities unknown', async () => {
+  const { api } = await fakeApi()
+  api.sessions!.modelCatalog = async request => ok({ groups: [{ id: 'provider', name: 'Provider', models: [
+    { id: 'vision', name: 'Vision', inputModalities: ['text', 'image'] },
+    { id: 'text', name: 'Text', inputModalities: ['text'] },
+    { id: 'unknown', name: 'Unknown' },
+  ] }], failures: [] }, request.rpcId)
+  expect((await new DshApiProxyAdapter(api).models()).items).toEqual([
+    { provider: 'provider', providerName: 'Provider', model: 'vision', displayName: 'Vision', supportsImages: true },
+    { provider: 'provider', providerName: 'Provider', model: 'text', displayName: 'Text', supportsImages: false },
+    { provider: 'provider', providerName: 'Provider', model: 'unknown', displayName: 'Unknown' },
+  ])
+})
+
 function ok<T>(value: T, rpcId = 'rpc') { return { rpcId, result: { ok: true as const, value } } }
+
+it('reads current model image support through public LLM metadata when the native catalogue omits it', async () => {
+  const { api } = await fakeApi()
+  api.sessions!.models = async request => ok({ current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] }, request.rpcId)
+  const read = vi.fn(async () => ['text', 'image'])
+  const adapter = new DshApiProxyAdapter(api, { modelInputModalities: read })
+  expect(await adapter.sessionModel({ sessionId: 'session-1' })).toMatchObject({ supportsImages: true })
+  expect(read).toHaveBeenCalledExactlyOnceWith('p', 'm')
+  read.mockResolvedValueOnce(['text'])
+  expect(await adapter.sessionModel({ sessionId: 'session-1' })).toMatchObject({ supportsImages: false })
+  read.mockRejectedValueOnce(new Error('metadata unavailable'))
+  expect(await adapter.sessionModel({ sessionId: 'session-1' })).not.toHaveProperty('supportsImages')
+})
 
 function expectFitsFrames(operation: 'model.list' | 'session.list' | 'session.history' | 'snapshot.get', result: unknown): void {
   const response = {
@@ -99,6 +126,16 @@ describe('public DSH ApiProxy remote adapter', () => {
       workspaces: [{ workspaceId: 'workspace-1', available: true }],
       sessions: [{ sessionId: 'session-1', workspaceId: 'workspace-1', title: 'Remote Session', goal: null }],
     })
+  })
+
+  it('syncs and reads ungrouped owned sessions without inventing a workspace', async () => {
+    const { api } = await fakeApi()
+    api.workspace!.list = async request => ok({ items: [], archivedSessionIds: [] }, request.rpcId)
+    const adapter = new DshApiProxyAdapter(api)
+    expect((await adapter.sessions()).items).toEqual([])
+    expect((await adapter.sessions({ includeUngrouped: true })).items).toMatchObject([{ sessionId: 'session-1', workspaceId: '' }])
+    await expect(adapter.history({ sessionId: 'session-1' })).resolves.toHaveProperty('entries')
+    await expect(adapter.history({ sessionId: 'not-owned-by-this-runtime' })).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' })
   })
 
   it('preallocates a stable SessionId and never accepts cwd from the controller', async () => {

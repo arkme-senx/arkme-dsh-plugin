@@ -12,6 +12,8 @@ import type {
 } from '../types.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
+import type { RelatedRecordingShareStatus } from './use-related-recording-sharing.js'
 
 const colors = {
   panel: arkmeTheme.menu,
@@ -356,6 +358,8 @@ export interface RelatedRecordingsPanelProps {
   onLoadMore(): void
   onMonthChange(month: string): void
   onSelect(item: ArkmeRelatedRecordingItem): void
+  shareStatuses?: Record<string, RelatedRecordingShareStatus>
+  onShare?: (item: ArkmeRelatedRecordingItem) => Promise<boolean>
 }
 
 export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
@@ -434,7 +438,9 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
           {expanded && <div style={styles.list}>{group.items.map(item => {
             const participantText = participantCardText(item)
             const showSourceAvatar = item.isSharedByOther
-            return <button key={item.recordingRef} type="button" style={styles.card} onClick={() => { props.onSelect(item) }}>
+            const status = props.shareStatuses?.[item.recordingRef]
+            return <div key={item.recordingRef} style={{ ...styles.card, padding: 0, cursor: 'default' }}>
+              <button type="button" style={{ ...styles.card, border: 0, background: 'transparent' }} onClick={() => { props.onSelect(item) }}>
               <span style={styles.cardTop}><span style={styles.cardTitle}>{item.title || '未命名录音'}</span><span style={styles.time}>{recordingTimeSlotText(item)}</span></span>
               <p style={styles.summary}>{item.summary || '暂无总结'}</p>
               {(participantText !== '' || showSourceAvatar) && <div style={styles.cardBottom}>
@@ -445,7 +451,20 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
                   label={tr("{v0}头像", { v0: props.contactName })}
                 /></span>}
               </div>}
-            </button>
+              </button>
+              {!item.isSharedByOther && props.onShare && <div style={{ padding: '0 12px 12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                {status?.error && <span role="alert" style={{ ...styles.actionLabel, color: arkmeTheme.danger }}>{status.error}</span>}
+                {status?.message && <span role="status" style={styles.actionLabel}>{status.message}</span>}
+                <button type="button" data-arkme-feedback="neutral" style={{ ...styles.secondaryButton, width: 'auto', minWidth: 64, height: 30, padding: '0 12px', fontSize: 12,
+                  opacity: !item.shareActionRef || !item.shareStateKnown || item.isShared || status?.busy ? .55 : 1 }}
+                  title={!item.shareStateKnown ? tr('共享状态暂不可用，请重新加载') : !item.shareActionRef ? tr('录音内容尚未就绪') : undefined}
+                  aria-label={tr(item.isShared ? '已共享' : '共享给对方')}
+                  disabled={!item.shareActionRef || !item.shareStateKnown || item.isShared || !!status?.busy}
+                  onClick={() => { void props.onShare?.(item) }}>
+                  {tr(status?.busy === 'share' ? '共享中…' : status?.busy === 'withdraw' ? '撤回中…' : item.isShared ? '已共享' : '共享')}
+                </button>
+              </div>}
+            </div>
           })}</div>}
         </section>
       })}
@@ -462,6 +481,9 @@ export interface RelatedRecordingDetailProps {
   loadDetail?: (item: ArkmeRelatedRecordingItem, signal?: AbortSignal) => Promise<ArkmeRelatedRecordingItem>
   showReadOnlyLabel?: boolean
   onClose(): void
+  shareStatus?: RelatedRecordingShareStatus
+  onShare?: (item: ArkmeRelatedRecordingItem) => Promise<boolean>
+  onWithdraw?: (item: ArkmeRelatedRecordingItem) => Promise<boolean>
 }
 
 export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
@@ -470,11 +492,24 @@ export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
   const [showTranscript, setShowTranscript] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false)
+  useEffect(() => {
+    setDetailItem(current => {
+      if (current.recordingRef !== props.item.recordingRef) return props.item
+      const { shareActionRef: _ref, isShared: _shared, shareStateKnown: _known, ...content } = current
+      return { ...content,
+        ...(props.item.shareActionRef === undefined ? {} : { shareActionRef: props.item.shareActionRef }),
+        ...(props.item.isShared === undefined ? {} : { isShared: props.item.isShared }),
+        ...(props.item.shareStateKnown === undefined ? {} : { shareStateKnown: props.item.shareStateKnown }),
+      }
+    })
+  }, [props.item])
   useEffect(() => {
     setDetailItem(props.item)
     setShowTranscript(false)
     setDetailError('')
     setDetailLoading(false)
+    setConfirmWithdraw(false)
   }, [props.item.recordingRef])
   const loadDetail = useCallback((item: ArkmeRelatedRecordingItem) => {
     const detailRef = item.sharedRecordingDetailRef?.trim() ?? ''
@@ -525,14 +560,31 @@ export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
                 {showTranscript ? '收起原文' : '查看原文'}
               </button>
             }
+            {!detailItem.isSharedByOther && props.onShare && <button type="button" data-arkme-feedback="neutral"
+              style={{ ...styles.secondaryButton, opacity: !detailItem.shareActionRef || !detailItem.shareStateKnown || props.shareStatus?.busy ? .55 : 1 }}
+              disabled={!detailItem.shareActionRef || !detailItem.shareStateKnown || !!props.shareStatus?.busy || (detailItem.isShared && !props.onWithdraw)}
+              title={!detailItem.shareStateKnown ? tr('共享状态暂不可用，请重新加载') : !detailItem.shareActionRef ? tr('录音内容尚未就绪') : undefined}
+              onClick={() => { if (detailItem.isShared) setConfirmWithdraw(true); else void props.onShare?.(detailItem) }}>
+              {tr(props.shareStatus?.busy === 'share' ? '共享中…' : props.shareStatus?.busy === 'withdraw' ? '撤回中…' : detailItem.isShared ? '撤回共享' : '共享给对方')}
+            </button>}
+            {props.shareStatus?.message && <span role="status" style={styles.actionLabel}>{props.shareStatus.message}</span>}
+            {props.shareStatus?.error && <span role="alert" style={{ ...styles.actionLabel, color: arkmeTheme.danger }}>{props.shareStatus.error}</span>}
             {detailLoading && <span style={styles.actionLabel}>{tr("正在加载原文…")}</span>}
             {detailError !== '' && <button type="button" style={styles.secondaryButton} onClick={retryDetail}>{tr("重新加载原文")}</button>}
             {detailError !== '' && <span style={styles.actionLabel}>{detailError}</span>}
           </div>
+          {!detailItem.isSharedByOther && props.onShare && <p style={styles.detailMeta}>{tr('共享文字可供对方的 Agent 和日历使用，不包含原始音频。')}</p>}
           {showTranscript && hasTranscript && <div style={styles.transcript}>{transcript}</div>}
         </div>
       </section>
     </div>
+    {confirmWithdraw && <ArkmeConfirmDialog titleId="arkme-related-recording-withdraw-title" title={tr('撤回共享')}
+      description={tr('撤回后，这条共同记忆将不再出现在双方的私聊中。自己的原始录音会保留。')}
+      confirmLabel={tr('确认撤回')} busyLabel={tr('撤回中…')} confirmTone="danger"
+      busy={!!props.shareStatus?.busy} {...(props.shareStatus?.error ? { error: props.shareStatus.error } : {})}
+      onClose={() => setConfirmWithdraw(false)} onConfirm={() => {
+        void props.onWithdraw?.(detailItem).then(done => { if (done) setConfirmWithdraw(false) })
+      }} />}
   </>
   return typeof document === 'undefined' ? detail : createPortal(detail, document.body)
 }

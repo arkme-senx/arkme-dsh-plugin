@@ -1,8 +1,10 @@
+import { currentHarnessSession } from './harness-session-state.js'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { tr } from './locale.js'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
+import { useArkmeBrand } from './product-brand.js'
 
 export interface ArkmeFooterActionInjected {
   toggle(openedFromSession: SessionId | undefined, authenticated: boolean): void
@@ -71,11 +73,12 @@ const unreadBadgeStyle: React.CSSProperties = {
 }
 
 export function ArkmeMark({ size = 18 }: { size?: number }) {
+  const brand = useArkmeBrand()
   return (
     <img
       aria-hidden
       alt=""
-      src={ARKME_ICON_DATA_URL}
+      src={brand.icon}
       width={size}
       height={size}
       style={{
@@ -94,12 +97,13 @@ export function ArkmeFooterAction({
   authenticated = false, authPending = false,
   unreadCount = 0,
 }: ArkmeFooterActionProps) {
-  const currentSession = useSessions(state => state.current)
+  const brand = useArkmeBrand()
+  const currentSession = useSessions(currentHarnessSession)
   const normalizedUnread = Math.max(0, Math.trunc(unreadCount))
   const unreadLabel = normalizedUnread > 99 ? '99+' : String(normalizedUnread)
   const statusLabel = bindingRequired ? '待绑定' : loggedOut ? '未登录' : ''
   const accessibleLabel = [
-    'Arkme',
+    brand.name,
     ...(statusLabel === '' ? [] : [statusLabel]),
     ...(statusLabel !== '' || normalizedUnread === 0 ? [] : [tr("{v0} 条未读", { v0: unreadLabel })]),
   ].join(' · ')
@@ -117,7 +121,7 @@ export function ArkmeFooterAction({
       <span style={{ position: 'relative', flex: 'none' }}>
         <ArkmeMark />
       </span>
-      {wide && <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left' }}>Arkme</span>}
+      {wide && <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left' }}>{brand.name}</span>}
       {wide && statusLabel !== '' && <span style={loggedOutBadgeStyle}>{statusLabel}</span>}
       {statusLabel === '' && normalizedUnread > 0 && <span style={{
         ...unreadBadgeStyle,

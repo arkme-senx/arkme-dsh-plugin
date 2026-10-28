@@ -1,3 +1,4 @@
+import { IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,12 +15,23 @@ describe('Arkme quick-add UI', () => {
     />)
     expect(markup).toContain('aria-label="添加联系人、群聊、发起通话或添加 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
-    expect(markup).toContain('>＋</button>')
     expect(markup).toContain('width:40px;height:40px')
-    expect(markup).toContain('border:1px solid')
     expect(markup).toContain('border-radius:11px')
+    // Same DSH icon set as the composer's bottom-left add button, not a text glyph.
+    expect(markup).toContain(renderToStaticMarkup(<IconPlusOutlineMedium size={20} aria-hidden />))
+    expect(markup).not.toContain('>＋</button>')
     expect(markup).not.toContain('role="treeitem"')
     expect(markup).not.toContain('>添加联系人<')
+  })
+
+  it('matches the directory search geometry and reuses the host add icon', () => {
+    expect(quickAddSource).toContain("IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'")
+    expect(quickAddSource).toContain('<IconPlusOutlineMedium size={20} aria-hidden />')
+    expect(quickAddSource).toContain("backgroundColor: 'var(--dsw-specific-selector, transparent)'")
+    expect(quickAddSource).toContain('height: directorySearchLayout.field.height')
+    expect(quickAddSource).toContain('borderRadius: directorySearchLayout.field.borderRadius')
+    // No new asset: the icon must come from the host primitive package.
+    expect(quickAddSource).not.toMatch(/plus-icon|add\.svg|＋/)
   })
 
   it('delegates placement and theme styling to the shared native menu', () => {

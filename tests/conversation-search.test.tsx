@@ -364,7 +364,8 @@ describe('conversation search parity', () => {
 
   it('loads the original record for detail before locating its target', async () => {
     await mount(); await type('复盘'); await tick(300)
-    const hit = root.root.findAllByType('button').find(node => node.props.children?.some?.((child: { props?: { children?: string } }) => child?.props?.children === 'one'))
+    const text = (node: any): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join('') : node?.children ? text(node.children) : ''
+    const hit = root.root.findAllByType('button').find(node => node.findAllByType('p').some(child => text(child) === 'one'))
     expect(hit).toBeDefined()
     await act(async () => hit!.props.onClick())
     expect(mocks.callArkme).toHaveBeenLastCalledWith('source.timeline-around', { sourceRef: 'signed-group', itemUid: 'one', recordOwnerUserId: 42, beforeLimit: 1, afterLimit: 1 }, expect.any(AbortSignal))

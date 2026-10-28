@@ -6,6 +6,7 @@ import {
 } from '../src/tools/index.js'
 import { createArkmeImageToolDefinition } from '../src/tools/business/media/read-image.js'
 import type { ArkmeCoreToolPorts } from '../src/tools/index.js'
+import { ArkmePluginError } from '../src/services/service.js'
 import type { ArkmeSelfRecordItem } from '../src/types.js'
 
 function item(recordUid: string, textContent: string): ArkmeSelfRecordItem {
@@ -788,7 +789,7 @@ describe('Arkme conversation tools', () => {
     expect(connectPrepare).not.toContain('kind')
   })
 
-  it('returns an authorized Arkme profile image as a durable model image block', async () => {
+  it.each([false, true])('returns a durable image and forwards cache-only mode: %s', async cacheOnly => {
     const readImage = vi.fn(async () => ({
       mediaType: 'image/png' as const,
       bytes: 12,
@@ -824,7 +825,7 @@ describe('Arkme conversation tools', () => {
     }
     const tool = createArkmeImageToolDefinition(context as never, { readImage })
     const value = await tool.execute(
-      { image_ref: '10001_1700000000_1_0.png' },
+      { image_ref: '10001_1700000000_1_0.png', ...(cacheOnly ? {cache_only:true} : {}) },
       {
         callId: 'image-call',
         rootCallId: 'image-call',
@@ -841,8 +842,16 @@ describe('Arkme conversation tools', () => {
     )
     const content = tool.output.render({ image_ref: '10001_1700000000_1_0.png' }, value)
 
-    expect(readImage).toHaveBeenCalledWith('10001_1700000000_1_0.png', expect.objectContaining({ maxBytes: 1024 }))
+    expect(readImage).toHaveBeenCalledWith('10001_1700000000_1_0.png', expect.objectContaining({ maxBytes: 1024, ...(cacheOnly ? {cacheOnly:true} : {}) }))
     expect(saveImage).toHaveBeenCalledOnce()
+    if (cacheOnly) {
+      readImage.mockRejectedValueOnce(new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404))
+      await expect(tool.execute({ image_ref: 'file_asset://missing-avatar', cache_only: true }, {
+        signal: new AbortController().signal,
+        agent: { options: { provider: 'deepseek', model: 'vision-model' }, session: { requestHeader: () => undefined } },
+      } as never)).rejects.toThrow('[image-cache-miss]')
+      expect(saveImage).toHaveBeenCalledOnce()
+    }
     expect(content).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'text' }),
       expect.objectContaining({ type: 'image', attachment: expect.objectContaining({ attachmentId: 'attachment-1' }) }),
