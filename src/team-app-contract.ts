@@ -45,7 +45,8 @@ export interface TeamConversation {
   blocked: boolean; revision: number; updatedAt: number
   preview?: { text: string; status: string; hasMedia: boolean; templateKind?: number }
 }
-export interface TeamContent { text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
+export interface TeamMention { personRef: string; displayName: string; startIndex: number; length: number }
+export interface TeamContent { mentions?: TeamMention[]; text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
 export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
  forwardRecords?: import('./types.js').ArkmeForwardRecordsPreview

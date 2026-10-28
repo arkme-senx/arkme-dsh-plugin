@@ -63,3 +63,15 @@ it('extension SDK rejects an older provider before executing any read',async()=>
  await expect(new ArkmeSdk({fetchImpl}).readTeamExtensions('conversation','message')).rejects.toThrow('不支持')
  expect(fetchImpl).toHaveBeenCalledOnce()
 })
+it('requires mention capability and passes safe identity spans and filters unchanged',async()=>{
+ const read=vi.fn(async()=>({messages:[],hasMore:false})),send=vi.fn(async(c)=>({...c,state:'queued'}))
+ let supported=true
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageInteractions:1,...(supported?{teamPersonMentions:1}:{})}}),readTeamMessages:read,sendTeamMessage:send}
+ const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}) as typeof fetch
+ const sdk=new ArkmeSdk({fetchImpl}),options={personRef:'opaque-person',personMode:'mentioned' as const,limit:20}
+ await sdk.readTeamMessages('opaque-conversation',options);expect(read).toHaveBeenCalledWith('opaque-conversation',options,undefined)
+ const command={conversationRef:'opaque-conversation',clientUid:'original',expectedReplySeq:0,fileRefs:[],content:{text_content:'@人',template_kind:1,mentions:[{personRef:'opaque-person',displayName:'人',startIndex:0,length:2}]}}
+ await sdk.sendTeamMessage(command);expect(send).toHaveBeenCalledWith(command,undefined)
+ supported=false
+ await expect(new ArkmeSdk({fetchImpl}).readTeamMessages('opaque-conversation',options)).rejects.toThrow('不支持')
+})

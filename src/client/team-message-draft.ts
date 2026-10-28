@@ -1,9 +1,10 @@
+import { rebaseTeamMentions } from './team-mentions.js'
 import type { ArkmeComposerAttachment } from './composer-draft-store.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset } from '../types.js'
-import type { TeamContent, TeamMessage, TeamReplyTarget } from '../team-app-contract.js'
+import type { TeamContent, TeamMessage, TeamReplyTarget, TeamMention } from '../team-app-contract.js'
 
-export type TeamDraft = { attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
+export type TeamDraft = { mentions?: TeamMention[]; attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
 
 export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string, draft: TeamDraft): void {
   const { attachments: _transient, ...persisted } = draft
@@ -20,7 +21,7 @@ export function loadTeamDraft(storage: Pick<Storage, 'getItem'>, key: string): T
 
 /** Start on actual content input, retain across blur/remount, reset only once a draft is empty. */
 export function updateTeamDraftText(draft: TeamDraft, text: string, now = Date.now()): TeamDraft {
-  return { ...draft, text, startedAtMillis: text || draft.assets.length || draft.localFiles?.length || draft.attachments?.length
+  return { ...draft, text, mentions:rebaseTeamMentions(draft.text,text,draft.mentions), startedAtMillis: text || draft.assets.length || draft.localFiles?.length || draft.attachments?.length
     ? validTeamDraftStart(draft.startedAtMillis) ?? now : undefined }
 }
 export function validTeamDraftStart(value: unknown): number | undefined {

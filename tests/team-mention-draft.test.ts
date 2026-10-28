@@ -1,0 +1,20 @@
+import {expect,it} from 'vitest'
+import {teamComposerDraft,teamMentions} from '../src/client/team-mentions.js'
+import {insertArkmeComposerMentionToken,serializeArkmeComposerDraft,reconcileArkmeComposerMentions} from '../src/client/composer-draft-store.js'
+import {loadTeamDraft,persistTeamDraft,updateTeamDraftText} from '../src/client/team-message-draft.js'
+it('retains exact identities through emoji encoding, persistence and edits; typing a name never creates a mention',()=>{
+ const base=teamComposerDraft('[微笑] hi ')
+ const inserted=insertArkmeComposerMentionToken(base,{mentionRef:'sealed-person'},'同名',base.text.length)!
+ const encoded=serializeArkmeComposerDraft({...base,...inserted})
+ const mentions=teamMentions(encoded.mentions)
+ expect(encoded.text.slice(mentions[0]!.startIndex,mentions[0]!.startIndex+mentions[0]!.length)).toBe('@同名')
+ const decoded=teamComposerDraft(encoded.text,mentions)
+ expect(serializeArkmeComposerDraft(decoded)).toEqual(encoded)
+ const values=new Map<string,string>();const storage={setItem:(k:string,v:string)=>values.set(k,v),getItem:(k:string)=>values.get(k)??null}
+ persistTeamDraft(storage,'account:conversation',{text:encoded.text,mentions,assets:[]})
+ const restored=loadTeamDraft(storage,'account:conversation')
+ expect(restored.mentions).toEqual(mentions)
+ expect(updateTeamDraftText(restored,'前缀'+encoded.text).mentions?.[0]?.startIndex).toBe(mentions[0]!.startIndex+2)
+ expect(updateTeamDraftText(restored,encoded.text.replace('@同名','@新名')).mentions).toEqual([])
+ expect(reconcileArkmeComposerMentions('','@同名',[])).toEqual([])
+})
