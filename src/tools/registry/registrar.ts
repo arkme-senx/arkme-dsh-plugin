@@ -23,6 +23,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_conversation_words_generate',
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
+  'arkme_recording_speaker_evidence_build',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_notification_policy_set',
   'arkme_reactions_write',
@@ -104,6 +105,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_device_unlock_request') return '是否发起当前电脑的解锁验证？仍需手机确认或电脑密码验证。'
   if (name === 'arkme_day_review_generate') return `是否${args.action === 'reconcile' ? '核对原提交' : args.action === 'resume' ? '继续原任务' : '生成'} ${cleanArgument(args.date, 10)} 的完整日回顾？模型用量使用当前账号的 AI 积分，已完成的付费步骤会保留。`
   if (name === 'arkme_message_sync_retry') return '是否重新检查当前账号的消息同步？这不会发送消息或改变阅读位置。'
+  if (name === 'arkme_recording_speaker_evidence_build') return '是否为刚才明确选中的录音片段计算声学证据？这会读取音频并执行计算，不会改动人物归属。'
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
   if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
