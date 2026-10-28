@@ -24,7 +24,7 @@ it('a failure on one side preserves known rows and allows the other side to refr
   })
   await refreshTeamDirectory('a')
   expect(readTeamDirectory('a').items.map(c => c.updatedAt)).toEqual([3, 1])
-  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations')).toBe(true)
+  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations' || op.startsWith('team.app.entries.'))).toBe(true)
 })
 it('account switch discards late responses from the old account', async () => {
   let resolve!: (value: unknown) => void
@@ -124,7 +124,7 @@ it('receipt invalidation reads only cursor metadata and retains previews, identi
 it('receipt hints cannot reread hidden-folder message bodies or restore removed entries', async () => {
   const {teamDirectoryPreferences,teamFolderEntryKey,teamEntryHidden}=await import('../src/client/team-directory-preferences.js')
   const c=item('team',30),target={kind:'folder' as const,group:groupTeamConversations([c])[0]!}
-  const preferences={[teamFolderEntryKey(channel.jotmoId)]:{pinned:false,removal:{at:20,sequences:{}}}}
+  const preferences={[teamFolderEntryKey(channel.jotmoId)]:{pinned:false,dismissed:true}}
   const read=vi.spyOn(teamDirectoryPreferences,'read').mockReturnValue(preferences)
   try {
     mock.mockImplementation(async (op,p)=>{
@@ -133,7 +133,8 @@ it('receipt hints cannot reread hidden-folder message bodies or restore removed 
       return {items:p.side==='team'?[c]:[],hasMore:false}
     })
     stops.push(startTeamDirectory('hidden-folder'))
-    await vi.waitFor(()=>expect(mock.mock.calls.some(([op])=>op==='team.app.timeline')).toBe(true))
+    await vi.waitFor(()=>expect(readTeamDirectory('hidden-folder').hasLoaded).toBe(true))
+    expect(mock.mock.calls.some(([op])=>op==='team.app.timeline')).toBe(false)
     mock.mockClear()
     await refreshTeamDirectory('hidden-folder',false,true)
     expect(mock.mock.calls.map(([op])=>op)).toEqual(['team.app.read-states'])

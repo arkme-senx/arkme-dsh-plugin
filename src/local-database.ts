@@ -1220,6 +1220,17 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return result
   }
 
+  async teamEntryPreferenceState(accountKey: string, value?: unknown): Promise<unknown> {
+    const key = 'team-cloud-state:v1'
+    if (value !== undefined) {
+      const payload = JSON.stringify(value)
+      if (Buffer.byteLength(payload, 'utf8') > 4 * 1024 * 1024) throw new Error('团队入口同步缓存过大，请重新核对')
+      this.transaction(() => { this.database.prepare('INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)').run(accountKey, key, payload) })
+    }
+    const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as {payload: string} | undefined
+    return row ? JSON.parse(row.payload) : {}
+  }
+
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {
     const row = this.database.prepare('SELECT payload FROM conversation_viewports WHERE account_key=? AND surface=?')
       .get(accountKey, surface) as { payload: string } | undefined

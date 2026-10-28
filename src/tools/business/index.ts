@@ -1,3 +1,4 @@
+import { teamEntryTools } from './contacts/team-entries.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
@@ -79,6 +80,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamExternalChatTools,
   ...teamMessageTools,
   ...teamNotificationTools,
+  ...teamEntryTools,
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,

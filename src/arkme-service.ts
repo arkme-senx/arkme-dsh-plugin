@@ -449,6 +449,15 @@ export class ArkmeService {
     if (!['list','mine','share','unshare','page'].includes(operation)) throw new Error('Unsupported external chat operation')
     return await this.teamApp.execute(`team.app.external.${operation}`, params, signal)
   }
+  async listTeamEntryPreferences(cursor?: string, signal?: AbortSignal): Promise<import('./team-entry-preference-contract.js').TeamEntryPreferencePage> {
+    return await this.teamApp.execute('team.app.entries.list', { ...(cursor ? { cursor } : {}) }, signal) as import('./team-entry-preference-contract.js').TeamEntryPreferencePage
+  }
+  async queryTeamEntryPreferences(entries: import('./team-entry-preference-contract.js').TeamEntryReference[], signal?: AbortSignal): Promise<import('./team-entry-preference-contract.js').TeamEntryPreferencePage> {
+    return await this.teamApp.execute('team.app.entries.query', { entries }, signal) as import('./team-entry-preference-contract.js').TeamEntryPreferencePage
+  }
+  async changeTeamEntryPreferences(command: import('./team-entry-preference-contract.js').TeamEntryPreferenceCommand, signal?: AbortSignal): Promise<import('./team-entry-preference-contract.js').TeamEntryPreferencePage> {
+    return await this.teamApp.execute('team.app.entries.change', { ...command }, signal) as import('./team-entry-preference-contract.js').TeamEntryPreferencePage
+  }
   async listTeamNotificationConversations(side:'team'|'external', cursor?:string, signal?:AbortSignal):Promise<TeamNotificationPage> {
     if (side!=='team' && side!=='external') throw new TypeError('Choose team or external')
     const page = await this.teamApp.execute('team.app.conversations',{side,...(cursor?{cursor}:{})},signal) as import('./team-app-contract.js').TeamPage<import('./team-app-contract.js').TeamConversation>
@@ -1240,6 +1249,7 @@ arkoImagesV1:true,
         teamMessageInteractions: 1,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
+        teamEntryPreferencesV1: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,

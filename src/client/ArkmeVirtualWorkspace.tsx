@@ -1,3 +1,4 @@
+import { teamDirectoryPreferences, useTeamDirectoryPreferenceError } from './team-directory-preferences.js'
 import { localDirectoryPreferences, useDirectoryPreferenceError } from './local-directory-preferences.js'
 import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
 import { ArkmeDraftPreviewText, useSelfConversationDraftPreview, useConversationDraftPresentation } from './ArkmeConversationDraftPreview.js'
@@ -1060,6 +1061,7 @@ export function ArkmeNavigation({
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
+  const cloudPreferenceError = useTeamDirectoryPreferenceError(currentAccountKey ?? '')
   const localPreferenceError = useDirectoryPreferenceError(currentAccountKey ?? '')
   const teamPreferences = useTeamDirectoryPreferences(currentAccountKey ?? '')
   const officialMembership = useSyncExternalStore(subscribeOfficialTeamMembership, () => readOfficialTeamMembership(currentAccountKey ?? ''), () => readOfficialTeamMembership(currentAccountKey ?? ''))
@@ -2399,6 +2401,7 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {cloudPreferenceError && (teamDirectory.items.length > 0 || Object.keys(teamPreferences).length > 0) && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{cloudPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) { teamDirectoryPreferences.acknowledgeNotice(currentAccountKey); void teamDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) } }}>{tr('刷新核对')}</button></div>}
     {localPreferenceError && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{localPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) void localDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) }}>{tr('刷新核对')}</button></div>}
     {builtinActions.overlays}
     {active && chatPreview !== undefined && previewSource !== undefined && <ArkmeChatPreviewDialog

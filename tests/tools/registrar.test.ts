@@ -82,6 +82,21 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires a later human grant before changing personal Team entries', async () => {
+    const ctx = await setup(), changeTeamEntryPreferences = vi.fn(async () => ({ schemaVersion: 1, items: [], hasMore: false }))
+    await mountArkmeTools(ctx, 'business', { ...ports, changeTeamEntryPreferences } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('team-entry'), session: { events } } as unknown as Agent
+    const args = { kind: 'folder', ref: 'opaque', action: 'pin', expected_version: 0, operation_id: '11111111-1111-4111-8111-111111111111' }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_team_entry_preference_change', arguments: args, agent, signal: new AbortController().signal })
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+    expect(changeTeamEntryPreferences).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认置顶我的团队入口' }] } })
+    expect((await run('human')).isError).toBe(false)
+    expect(changeTeamEntryPreferences).toHaveBeenCalledExactlyOnceWith({ operationId: args.operation_id, changes: [{ target: { kind: 'folder', ref: 'opaque' }, action: 'pin', expectedVersion: 0 }] }, expect.any(AbortSignal))
+  })
+
   it('executes common-group reads with paging and cancellation, and keeps sync separate from paging', async () => {
     const ctx = await setup()
     const result = {items:[],totalCached:0,hasMore:false,syncHasMore:false,syncedAtMillis:1,revision:1}
@@ -262,6 +277,9 @@ describe('registerArkmeTools', () => {
       'arkme_team_notification_conversations',
       'arkme_team_notification_policy',
       'arkme_team_notification_policy_set',
+      'arkme_team_entry_preferences',
+      'arkme_team_entry_preference',
+      'arkme_team_entry_preference_change',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_device_lock_status',

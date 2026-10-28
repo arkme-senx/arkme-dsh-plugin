@@ -77,10 +77,31 @@ export function startTeamDirectory(key: string): () => void {
     if (controller.signal.aborted || account !== key) return
     const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
     snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
-    if (!readStateOnly) void teamDirectoryPreferences.reconcile(key, items, async c => {
-      const page = await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: c.ref, expectedAccountKey: key, limit: 1 }, controller.signal)
-      return Math.max(0, ...page.messages.map(message => message.createdAt))
-    }, controller.signal).catch(() => { /* Keep hidden entries hidden until new-message evidence can be verified. */ })
+    if (!readStateOnly) {
+      const base = snapshot
+      // Optional preference IO runs after publishing ordinary directory rows.
+      void (async () => {
+        await teamDirectoryPreferences.hydrate(key, true)
+        await teamDirectoryPreferences.reconcile(key, items, controller.signal)
+        const extra: TeamConversation[] = []
+        const targets = teamDirectoryPreferences.missingPins(key, items)
+        for (let i = 0; i < targets.length; i += 10) {
+          const batch = await Promise.all(targets.slice(i, i + 10).map(async target => {
+            try {
+              if (target.kind === 'folder') return (await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef: target.ref, side: 'team', limit: 1, expectedAccountKey: key }, controller.signal)).items
+              return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key }, controller.signal)).conversation]
+            } catch { return [] }
+          }))
+          extra.push(...batch.flat())
+        }
+        if (controller.signal.aborted || account !== key || snapshot !== base || !extra.length) return
+        for (const side of ['team', 'external'] as const) {
+          const page = pages.get(side)
+          if (page) pages.set(side, { ...page, items: [...new Map([...page.items, ...extra.filter(c => c.side === side)].map(c => [c.key, c])).values()] })
+        }
+        snapshot = { ...base, items: [...new Map([...items, ...extra].map(c => [c.key, c])).values()] }; emit()
+      })().catch(() => { /* Optional sync errors are exposed by the preference owner. */ })
+    }
     if (again) { const full = fullAgain; again = false; fullAgain = false; await refresh(false, !full) }
   }
   request = refresh

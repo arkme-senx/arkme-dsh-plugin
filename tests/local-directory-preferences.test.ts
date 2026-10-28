@@ -68,17 +68,12 @@ it('migrates readable old preferences without credentials or message payloads',(
  expect(normalizeLocalDirectoryPreferences({'arbitrary':pin,'builtin:self':{...pin,token:'secret'}})).toEqual({'builtin:self':pin})
 })
 
-it('routes every production entry owner to Host storage, including removal clearing a team pin',async()=>{
+it('retains local storage for unrelated built-in and notification entries',async()=>{
  let saved:Record<string,unknown>={}
  vi.mocked(callArkme).mockImplementation(async(op,input)=>{if(op==='directory.preferences.set') saved={...saved,...input.entries as object};return saved as never})
  await builtinDirectoryPreferences.pin('prod:77','harness',true)
  await notificationDirectoryPreferences.pin('prod:77',true)
- const target={kind:'folder',group:{key:'arkme',conversations:[]}} as never
- await teamDirectoryPreferences.pin('prod:77',target,true)
  expect(JSON.parse(builtinDirectoryPreferences.snapshot('prod:77')).harness).toBeGreaterThan(0)
  expect(notificationDirectoryPreferences.read('prod:77')).toBe(true)
- expect(teamDirectoryPreferences.read('prod:77')['["folder","arkme"]']?.pinned).toBe(true)
- await teamDirectoryPreferences.remove('prod:77',target)
- expect(saved['team:["folder","arkme"]']).toMatchObject({pinned:false,removal:{sequences:{}}})
- expect(vi.mocked(callArkme).mock.calls.filter(([op])=>op==='directory.preferences.set')).toHaveLength(4)
+ expect(vi.mocked(callArkme).mock.calls.filter(([op])=>op==='directory.preferences.set')).toHaveLength(2)
 })

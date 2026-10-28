@@ -189,9 +189,10 @@ export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: s
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
   if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at'].includes(key))) return undefined
-  if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.message.published'].includes(String(v.kind))) return undefined
+  if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.entry-preference.changed','team.message.published'].includes(String(v.kind))) return undefined
   const eventUid=nonEmptyString(v.event_uid),eventAtMillis=positiveInteger(v.event_at)
   if(!eventUid||!eventAtMillis||!positiveInteger(v.revision))return undefined
+  if(v.kind==='team.entry-preference.changed' && (!positiveInteger(v.team_id) || v.conversation_uid !== undefined || v.message_uid !== undefined)) return undefined
   if(v.kind==='team.message.published'){
     const conversationUid=nonEmptyString(v.conversation_uid),messageUid=nonEmptyString(v.message_uid),seq=positiveInteger(v.seq),expiresAt=positiveInteger(v.expires_at)
     if(!conversationUid||!messageUid||!seq||v.published_at!==eventAtMillis||!expiresAt||expiresAt-eventAtMillis!==3600000)return undefined

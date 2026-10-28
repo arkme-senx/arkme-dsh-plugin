@@ -1,3 +1,5 @@
+import type { TeamEntryReference, TeamEntryPreferencePage, TeamEntryPreferenceCommand } from '../team-entry-preference-contract.js'
+export type * from '../team-entry-preference-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
 export type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -846,6 +848,18 @@ export class ArkmeSdk {
   async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);if(command.content.mentions?.length)await this.requireTeamMentions(signal);return await this.call('team.messages.send',{command},signal)}
   async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
   async updateTeamSend(conversationRef:string,taskRef:string,action:'retry'|'cancel',signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);return await this.call('team.messages.task-update',{conversationRef,taskRef,action},signal)}
+  private async requireTeamEntries(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.teamEntryPreferencesV1 !== true) throw new Error('当前 Provider 不支持团队入口同步')
+  }
+  async listTeamEntryPreferences(cursor?: string, signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
+    await this.requireTeamEntries(signal); return await this.call('team.entries.list', { ...(cursor ? { cursor } : {}) }, signal)
+  }
+  async queryTeamEntryPreferences(entries: TeamEntryReference[], signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
+    await this.requireTeamEntries(signal); return await this.call('team.entries.query', { entries }, signal)
+  }
+  async changeTeamEntryPreferences(command: TeamEntryPreferenceCommand, signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
+    await this.requireTeamEntries(signal); return await this.call('team.entries.change', { command }, signal)
+  }
   private async requireTeamNotifications(signal?:AbortSignal):Promise<void> {
     if ((await this.capabilities(signal)).features.teamNotificationPoliciesV1!==true) throw new Error('当前 Provider 不支持团队消息通知设置')
   }

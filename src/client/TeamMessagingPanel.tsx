@@ -52,7 +52,7 @@ import { useTeamVisitorActions } from './TeamVisitorActions.js'
 import { TeamVisitorRecords } from './TeamVisitorRecords.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
-import { teamDirectoryPreferences, teamConversationEntryKey, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
 import { arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
@@ -205,22 +205,16 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') {
-        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
-        controller.signal.throwIfAborted()
-        if (intent.conversation.side === 'team') await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
-        controller.signal.throwIfAborted()
         setSelected(intent.conversation); return
       }
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') { if (intent.channel) await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
+      if (intent.kind === 'team') return
       const publicRef = intent.kind === 'official'
         ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
       const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
       if (value.conversation) {
-        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation))
-        controller.signal.throwIfAborted()
         setSelected(value.conversation)
       }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})

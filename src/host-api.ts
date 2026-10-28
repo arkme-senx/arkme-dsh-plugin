@@ -1250,6 +1250,9 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
     case 'team.messages.task-update':return await service.updateTeamSend(stringParam(params,'conversationRef'),stringParam(params,'taskRef'),params.action as 'retry'|'cancel',requestSignal)
+    case 'team.entries.list': return await service.listTeamEntryPreferences(stringParam(params, 'cursor'), requestSignal)
+    case 'team.entries.query': return await service.queryTeamEntryPreferences(params.entries as import('./team-entry-preference-contract.js').TeamEntryReference[], requestSignal)
+    case 'team.entries.change': return await service.changeTeamEntryPreferences(params.command as import('./team-entry-preference-contract.js').TeamEntryPreferenceCommand, requestSignal)
     case 'team.notifications.list':return await service.listTeamNotificationConversations(stringParam(params,'side') as 'team'|'external',stringParam(params,'cursor'),requestSignal)
     case 'team.notifications.get':return await service.getTeamNotificationPolicy(stringParam(params,'conversationRef'),requestSignal)
     case 'team.notifications.set': {

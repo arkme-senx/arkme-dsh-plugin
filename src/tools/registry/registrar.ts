@@ -25,6 +25,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_speaker_correct',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_notification_policy_set',
+  'arkme_team_entry_preference_change',
   'arkme_reactions_write',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
@@ -107,6 +108,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_recording_speaker_correct') return args.action === 'undo' ? '是否撤销刚才指定的说话人纠错？后续人工修改会受到保护。' : '是否保存刚才逐段确认的说话人纠错与声音来源？范围仅限明确选中的片段。'
   if (name === 'arkme_team_join') return `是否确认加入团队“${cleanArgument(args.jotmo_id, 64)}”？需要审批时将提交入队申请。`
   if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
+  if (name === 'arkme_team_entry_preference_change') return '是否确认修改刚才指定团队入口的本人置顶或移除设置？此设置会在你的设备同步，不删除消息、不退出团队，也不修改已读或免打扰。'
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'

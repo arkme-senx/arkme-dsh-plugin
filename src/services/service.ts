@@ -32,6 +32,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
