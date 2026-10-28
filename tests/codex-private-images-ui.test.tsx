@@ -33,3 +33,18 @@ it('keeps unavailable images honest without reading another location',async()=>{
  await act(async()=>root.render(<CodexPrivateImages teamRef="team" task={task} event={{...event,privateImages:[{...event.privateImages![0]!,state:'unavailable'}]}}/>))
  expect(host.textContent).toContain('原图片不可用');expect(mocks.call).not.toHaveBeenCalled()
 })
+it('releases thumbnails outside the viewport and ignores late reads before reloading on return',async()=>{
+ let update!:(entries:{isIntersecting:boolean}[])=>void
+ vi.stubGlobal('IntersectionObserver',class{constructor(callback:typeof update){update=callback}observe(){}disconnect(){}})
+ let resolve!:(value:{dataUrl:string})=>void
+ mocks.call.mockReturnValueOnce(new Promise(r=>{resolve=r}));
+ await act(async()=>root.render(<CodexPrivateImages teamRef="team" task={task} event={event}/>))
+ expect(mocks.call).not.toHaveBeenCalled();await act(async()=>update([{isIntersecting:true}]))
+ expect(mocks.call).toHaveBeenCalledTimes(1);const signal=mocks.call.mock.calls[0]![2] as AbortSignal
+ await act(async()=>update([{isIntersecting:false}]))
+ expect(signal.aborted).toBe(true);await act(async()=>resolve({dataUrl:'data:image/png;base64,eA=='}));expect(host.querySelector('img')).toBeNull()
+ await act(async()=>update([{isIntersecting:true}]))
+ expect(mocks.call).toHaveBeenCalledTimes(2);expect(host.querySelector('img')).not.toBeNull()
+ await act(async()=>update([{isIntersecting:false}]))
+ expect(host.querySelector('img')).toBeNull()
+})

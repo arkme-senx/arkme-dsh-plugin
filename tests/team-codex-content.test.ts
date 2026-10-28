@@ -52,3 +52,25 @@ it('restores queue DTO scalar defaults before the existing business decoder',asy
  const value=await readCodexContent({items:[],content_objects:[],has_more:false,owner_view:true,queue_object:queue},'source','task',new AbortController().signal,3016)
  expect(value.queue_snapshot).toMatchObject({source_at:null,items:[{created_at:0,attachment_count:0,paused:false,truncated:false,text:'private'}]})
 })
+
+it('reuses only verified immutable message bodies within a bounded owner-scoped cache',async()=>{
+ const cache=new Map(),data=gzipSync(JSON.stringify(body())),fetch=vi.fn(async()=>new Response(data));vi.stubGlobal('fetch',fetch)
+ for(let i=0;i<2;i++)await readCodexContent(page(data),'source','task',new AbortController().signal,3016,cache)
+ expect(fetch).toHaveBeenCalledTimes(1)
+ await readCodexContent(page(data),'source','task',new AbortController().signal,3020,cache)
+ expect(fetch).toHaveBeenCalledTimes(2)
+ const changed=page(data);changed.items[0]!.version++
+ await expect(readCodexContent(changed,'source','task',new AbortController().signal,3016,cache)).rejects.toThrow('CONTENT_INDEX_MISMATCH')
+ expect(fetch).toHaveBeenCalledTimes(2)
+ cache.clear();await readCodexContent(page(data),'source','task',new AbortController().signal,3016,cache);expect(fetch).toHaveBeenCalledTimes(3)
+})
+
+it('bounds decoded cache entries and bytes while traversing distinct history objects',async()=>{
+ const cache=new Map()
+ for(let n=0;n<70;n++){
+  const row={...event,event_id:'event-'+n,text:'x'.repeat(140*1024)},data=gzipSync(JSON.stringify({schema:'codex.content.v1',events:[row]})),wire=page(data);wire.items=[{...row,cursor:'cursor',content_ref:'block'}]
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(data)))
+  await readCodexContent(wire,'source','task',new AbortController().signal,3016,cache)
+  expect(cache.size).toBeLessThanOrEqual(64);expect([...cache.values()].reduce((sum,v)=>sum+v.bytes,0)).toBeLessThanOrEqual(8*1024*1024)
+ }
+})

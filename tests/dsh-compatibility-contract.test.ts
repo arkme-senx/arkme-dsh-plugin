@@ -5,6 +5,7 @@ import { inject } from '../src/index.js'
 
 const TARGET_DSH_VERSIONS = [
   '0.2.1-rc.2',
+  '0.2.2-alpha.2',
 ] as const
 
 describe('DSH compatibility contract', () => {
@@ -32,7 +33,7 @@ describe('DSH compatibility contract', () => {
     expect(manifest.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-client-runtime')
   })
 
-  it('accepts only the migrated Harness release for every DSH peer', () => {
+  it('accepts the actually verified Harness releases for every DSH peer', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       peerDependencies: Record<string, string>
     }

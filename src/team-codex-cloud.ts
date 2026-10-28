@@ -27,6 +27,7 @@ const invalid = (): never => { throw new ArkmePluginError('team-codex-response',
 const eligible = (tasks: readonly TeamCodexTask[]) => tasks.filter(t => t.status === 'active' && !t.excluded && !t.projectExcluded && !t.cloudBlocked)
 
 export class TeamCodexCloud {
+  private readonly contentCache:import('./team-codex-content.js').CodexContentCache=new Map()
   readonly journal: TeamCodexCloudJournal
   private readonly images:TeamCodexImageCloud
   private readonly queues: TeamCodexQueueCloud
@@ -84,6 +85,7 @@ export class TeamCodexCloud {
     }
   }
   fence(): void {
+    this.contentCache.clear()
     this.controller.abort()
     this.controller = new AbortController()
     this.destinations.clear()
@@ -394,7 +396,7 @@ export class TeamCodexCloud {
     const signal = this.controller.signal
     const personal=localTeam==='self'
     const team = personal?null:await this.destination(owner, localTeam, signal)
-    const data = obj(await readCodexContent(await this.post(owner, '/api/v1/team-codex/content/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal),sourceId,taskId,signal,owner))
+    const data = obj(await readCodexContent(await this.post(owner, '/api/v1/team-codex/content/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal),sourceId,taskId,signal,owner,this.contentCache))
     await this.guard(owner,signal)
     if (!Array.isArray(data.items) || data.items.length > 50 || typeof data.has_more !== 'boolean' || (data.has_more && !str(data.next_cursor))) return invalid()
     const items = data.items.map(value => {

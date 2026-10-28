@@ -40,18 +40,19 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   const sourceRef=JSON.stringify(['codex',userId,JSON.stringify([teamRef,task.cloud?.sourceId??task.installationId??'local',task.id])])
   const controller=useMemo(()=>new AbortController(),[sourceRef,account])
   useEffect(()=>()=>controller.abort(),[controller])
-  const [selection,setSelection]=useState<Map<string,string>>()
+  const [selection,setSelection]=useState<Map<string,TeamCodexEvent>>()
   const [menu,setMenu]=useState<{id:string;x:number;y:number}>()
   const [query,setQuery]=useState<string>()
   const [notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
-  const working=useRef(false),latest=useRef(events);latest.current=events
+  const working=useRef(false),latest=useRef(events);latest.current=mergeSelectedCodexEvents(selection,events)
   const marks=useMessageUnderlines(`${account}:${sourceRef}`,userId?sourceRef:undefined,userId,marksTransport)
   useSelectedMessageSearch(sourceRef,setQuery)
   const getRows=useCallback(()=>Array.from(document.querySelectorAll<HTMLElement>('[data-codex-body]')).filter(row=>row.closest('[data-codex-source]')?.getAttribute('data-codex-source')===sourceRef),[sourceRef])
   useEffect(()=>{
     setSelection(previous=>{
       if(!previous)return previous
-      const next=new Map([...previous].filter(([key,text])=>events.some(event=>codexEventKey(event)===key&&event.text===text&&codexSelectable(event))))
+      if(!events.length)return undefined
+      const current=new Map(events.map(event=>[codexEventKey(event),event]));const next=new Map([...previous].filter(([key,snapshot])=>{const event=current.get(key);return !event||event.text===snapshot.text&&codexSelectable(event)}))
       return next.size===previous.size?previous:next
     })
     if(menu&&!events.some(event=>codexEventKey(event)===menu.id&&codexSelectable(event)))setMenu(undefined)
@@ -64,7 +65,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   const toggle=(event:TeamCodexEvent)=>{
     if(working.current)return
     const key=codexEventKey(event)
-    setSelection(previous=>{const next=new Map(previous);if(next.has(key))next.delete(key);else if(next.size<100)next.set(key,event.text);return next})
+    setSelection(previous=>{const next=new Map(previous);if(next.has(key))next.delete(key);else if(next.size<100)next.set(key,event);return next})
   }
   const act=async(work:()=>Promise<void>)=>{
     if(working.current||controller.signal.aborted)return
@@ -72,7 +73,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     try{await work()}catch(e){if(!controller.signal.aborted)setNotice(e instanceof Error?e.message:'操作失败，请重试')}
     finally{working.current=false;if(!controller.signal.aborted)setBusy(false)}
   }
-  const snapshot=()=>codexSelectionSnapshot(teamRef,task,latest.current,new Set(selection?.keys()))
+  const snapshot=()=>{if(!events.length)throw Error('所选消息已不可访问');return codexSelectionSnapshot(teamRef,task,latest.current,new Set(selection?.keys()))}
   const selectedCount=selection?.size??0
   const row=menu?events.find(event=>codexEventKey(event)===menu.id):undefined
   const forward=()=>act(async()=>{
@@ -103,7 +104,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     host:typeof document !== 'undefined' && typeof document.addEventListener === 'function'?<>
       {menu&&row&&<ArkmeActionMenu point={menu} label="Codex 消息操作" autoFocus onClose={()=>setMenu(undefined)} actions={[
         {id:'copy',label:'复制',icon:<ArkmeSelectActionIcon kind="copy"/>,onSelect:()=>{setMenu(undefined);void act(()=>copyText(row.text))}},
-        {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row.text);return next})}},
+        {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row);return next})}},
         ...(row.kind === 'UserPromptSubmit' && userId && (!task.cloud ? task.member.userRef === String(userId) : task.cloud.ownerRef === String(userId)) ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => {
           try { openWorldPublish({ accountKey: account, origin: { kind: 'local', sourceRef, itemUid: codexEventKey(row), sourceLabel: `Codex · ${task.title}`, textContent: codexSelectionSnapshot(teamRef, task, [row], new Set([codexEventKey(row)])).messages[0]!.text, sendAtMillis: row.at, hasAttachments: !!row.privateImages?.length } }, controller.signal); setMenu(undefined) }
           catch (error) { setNotice(error instanceof Error ? error.message : '暂时无法打开') }
@@ -115,4 +116,9 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     </>:null,
     feedback:notice?<div role="status" style={{flex:'none',fontSize:12,padding:'7px 14px',background:arkmeTheme.menu,color:arkmeTheme.secondary,display:'flex',gap:8,alignItems:'center'}}><span style={{flex:1}}>{notice}</span><button type="button" aria-label="关闭提示" onClick={()=>setNotice('')} style={{border:0,background:'transparent',color:'inherit',cursor:'pointer'}}>×</button></div>:null,
   }
+}
+
+// Selection is already limited to 100 rows; evicting a reader page must not deselect its snapshot.
+function mergeSelectedCodexEvents(selected:Map<string,TeamCodexEvent>|undefined,events:TeamCodexEvent[]){
+ const rows=new Map(selected);for(const event of events)rows.set(codexEventKey(event),event);return [...rows.values()]
 }

@@ -419,3 +419,28 @@ it('retries a lost Team add without dereferencing a redacted stale anchor',async
  expect(vi.mocked(callArkme).mock.calls[2]?.[1]).toMatchObject({change:{operationId:'original'}})
  session.dispose()
 })
+
+it('keeps mark snapshots bounded to the visible reading window across thousands of pages', async () => {
+ const transport={capabilities:async()=>({supported:true,maxLength:2000}),list:async(_source:string,refs:string[])=>refs.map(actionRef=>({actionRef,snapshot:initial})),change:async()=>initial}
+ const session=new MessageUnderlineSession('self',42,vi.fn(),'local',transport);await session.prepare()
+ for(let page=0;page<2000;page++){
+  const rows=Array.from({length:20},(_,i)=>({...target,item:{...target.item,itemUid:`${page}:${i}`,messageActionRef:`ref:${page}:${i}`}}))
+  session.retain(rows);await session.read(rows);expect(session.snapshots.size).toBe(20)
+ }
+ session.retain([]);expect(session.snapshots.size).toBe(0);session.dispose()
+})
+it('does not repopulate evicted marks from a late page read and settles pending writes without retaining their old page', async()=>{
+ const response=deferred<{actionRef:string;snapshot:MessageUnderlineSnapshot}[]>(),write=deferred<MessageUnderlineSnapshot>()
+ const transport={capabilities:async()=>({supported:true,maxLength:2000}),list:vi.fn().mockReturnValueOnce(response.promise).mockResolvedValue([]),change:async()=>write.promise}
+ const session=new MessageUnderlineSession('self',42,vi.fn(),'local',transport);await session.prepare()
+ const reading=session.read([target]);const writing=session.change(target,{kind:'add',anchor,operationId:'pending'})
+ session.retain([]);const next=session.read([]);expect(session.snapshots.size).toBe(1)
+ response.resolve([{actionRef:'ref',snapshot:initial}]);await reading;await next
+ write.resolve({...initial,revision:2});await writing;expect(session.snapshots.size).toBe(0);expect(session.pending.size).toBe(0)
+ session.dispose()
+})
+it('drops retry closures for evicted failed marks without discarding visible retries',async()=>{
+ const session=new MessageUnderlineSession('self',42,vi.fn(),'local');session.capability={supported:true,maxLength:2000}
+ vi.mocked(callArkme).mockRejectedValueOnce(new Error('network'));await session.change(target,{kind:'add',anchor,operationId:'failure'})
+ expect(session.retry).toBeDefined();session.retain([]);expect(session.retry).toBeUndefined();expect(session.snapshots.size).toBe(0);session.dispose()
+})

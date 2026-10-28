@@ -25,13 +25,26 @@ export class MessageUnderlineSession {
   private failures = new Map<string, { notice: string; retry: () => Promise<void> }>()
   private loading = false
   private queuedTargets: MessageSelectionTarget[] | undefined
+  private retained: Set<string> | undefined
   capability: MessageUnderlineCapabilities | undefined
   notice = ''
   retry: (() => Promise<void>) | undefined
   constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud', private transport?: MessageMarkTransport) {}
   invalidate() { this.accessEpoch++; this.snapshots.clear(); this.failures.clear(); this.notice = ''; this.retry = undefined; this.publish() }
   subscribe(invalidate: () => void) { return this.transport?.subscribe?.(invalidate) }
-  dispose() { this.queuedTargets = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
+  retain(targets: MessageSelectionTarget[]) {
+    this.retained = new Set(targets.filter(target => target.sourceRef === this.sourceRef).map(underlineTargetKey))
+    this.trim()
+  }
+  dispose() { this.queuedTargets = undefined; this.retained = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear(); this.epochs.clear(); this.retry = undefined }
+  private trim() {
+    if (!this.retained) return
+    const discardedRetry = [...this.failures].some(([key, failure]) => !this.retained!.has(key) && !this.pending.has(key) && this.retry === failure.retry)
+    for (const map of [this.snapshots, this.epochs, this.failures]) {
+      for (const key of map.keys()) if (!this.retained.has(key) && !this.pending.has(key)) map.delete(key)
+    }
+    if (discardedRetry) { const failure = this.failures.values().next().value; this.retry = failure?.retry; this.notice = failure?.notice ?? ''; this.publish() }
+  }
   private publish() {
     const failure = this.failures.values().next().value
     if (failure) { this.notice = failure.notice; this.retry = failure.retry }
@@ -81,6 +94,7 @@ export class MessageUnderlineSession {
           const target = unique.get(row.actionRef)
           if (!target) continue
           const key = underlineTargetKey(target)
+          if (this.retained && !this.retained.has(key) && !this.pending.has(key)) continue
           if (row.snapshot.accessible && (accessEpoch !== this.accessEpoch || (epochs.get(key) ?? 0) !== (this.epochs.get(key) ?? 0))) continue
           const next = acceptUnderlineSnapshot(this.snapshots.get(key), row.snapshot, this.pending.has(key))
           if (next) this.snapshots.set(key, next)
@@ -163,7 +177,7 @@ export class MessageUnderlineSession {
       }
       this.failures.set(key, { notice: this.notice, retry: this.retry })
     } finally {
-      this.pending.delete(key); this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1); this.publish()
+      this.pending.delete(key); this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1); this.trim(); this.publish()
     }
   }
 }

@@ -1,3 +1,4 @@
+import {fitCodexReadingWindow} from './codex-reading-window.js'
 import {codexAccessRevoked} from '../../../team-codex-access.js'
 import { arkmeAuthStore } from '../../auth-store.js'
 import { CodexSelectableBody, useCodexMessageInteractions } from './CodexMessageInteractions.js'
@@ -25,6 +26,7 @@ export interface CodexReadingState {
   loaded: boolean
   scrollTop: number
   atBottom: boolean
+  newer?:boolean
 }
 export const newCodexReadingState = (): CodexReadingState => ({ items: [], loaded: false, scrollTop: 0, atBottom: true })
 export const codexReadingKey = (teamRef: string, task: TeamCodexTask): string => JSON.stringify([teamRef, task.cloud?.sourceId ?? 'local', task.cloud?.taskId ?? task.id])
@@ -110,62 +112,76 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
   const live = useRef(true)
   const loading = useRef(false)
   const controllers = useRef(new Set<AbortController>())
-  const pendingScroll = useRef<'restore' | 'bottom' | { top: number; height: number }>('restore')
+  const pendingScroll = useRef<'restore' | 'bottom' | { top: number; height: number;key?:string;offset?:number }>('restore')
   const rememberScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
     reading.scrollTop = el.scrollTop
-    reading.atBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 56
+    reading.atBottom = !reading.newer && el.scrollHeight - el.clientHeight - el.scrollTop < 56
     setAwayFromBottom(!reading.atBottom)
     if (reading.atBottom) setNewContent(false)
   }, [reading])
-  const load = useCallback(async (older?: number | string) => {
+  const load = useCallback(async (older?: number | string,mode:'refresh'|'newer'|'latest'='refresh') => {
     if (loading.current) return
     loading.current = true
     const controller = new AbortController()
     controllers.current.add(controller)
     setBusy(true)
     try {
-      let page = await callArkme<TeamCodexEventPage>('team.codex.events', { teamRef, id: task.id,
-        ...(task.cloud?.remote ? { sourceId: task.cloud.sourceId } : {}),
-        ...(typeof older==='string'?{cursor:older}:typeof older==='number'?{before:older}:{}),
-      }, controller.signal)
+      const params={teamRef,id:task.id,...(task.cloud?.remote?{sourceId:task.cloud.sourceId}:{})}
+      const request=(bounds:Record<string,unknown>)=>callArkme<TeamCodexEventPage>('team.codex.events',{...params,...bounds},controller.signal)
+      const previous=reading.items
+      const first=previous[0]?.cursor,last=previous.at(-1)?.cursor
+      const forward=mode==='newer'
+      let page=await request(forward&&last?{after:last}:typeof older==='string'?{cursor:older}:typeof older==='number'?{before:older}:{})
       if(page.queueCloud){setDetailQueue(page.queue);setDetailQueueCloud(page.queueCloud)}
-      if((task.cloud?.remote||reading.items.some(event=>event.cursor?.startsWith('lc1_')||event.cursor?.startsWith('nl1_'))) && older===undefined && reading.items.length){
-        const ordered=[...reading.items].sort(compareCodexEvents),first=ordered[0]?.cursor,last=ordered.at(-1)?.cursor
-        const readRange=async (bounds:Record<string,string>)=>{
-          let continuation='',round=0;const seen=new Set<string>(),values:TeamCodexEvent[]=[]
-          do {
-            const next=await callArkme<TeamCodexEventPage>('team.codex.events',{teamRef,id:task.id,...(task.cloud?.remote?{sourceId:task.cloud.sourceId}:{}),...bounds,cursor:continuation},controller.signal)
-            controller.signal.throwIfAborted();values.push(...next.items)
-            continuation=next.nextCursor??''
-            if(continuation&&seen.has(continuation))throw Error('工作动态分页异常，请重试')
-            seen.add(continuation)
-            if(++round>=100&&continuation)throw Error('工作动态较多，正在继续同步')
-          }while(continuation)
-          return values
-        }
-        if(first&&last)page={...page,items:[...await readRange({from:first,through:last}),...await readRange({after:last})]}
+      let nextItems=page.items,newer=reading.newer??false
+      if(mode==='latest'){newer=false}
+      else if(mode==='refresh'&&older===undefined&&first&&last){
+        // Revalidate only the bounded reading window. Never chase the entire tail/history.
+        let continuation:string|undefined,round=0;const values:TeamCodexEvent[]=[],seen=new Set<string>()
+        do{
+          const next=await request({from:first,through:last,...(continuation?{cursor:continuation}:{})})
+          controller.signal.throwIfAborted();values.push(...next.items);continuation=next.nextCursor
+          if(continuation&&seen.has(continuation))throw Error('工作动态分页异常，请重试')
+          if(continuation)seen.add(continuation)
+        }while(continuation&&++round<4)
+        nextItems=values
+        if(!newer){const next=await request({after:last});nextItems.push(...next.items);newer=!!next.nextCursor}
+        if(continuation)newer=true
+        if(reading.atBottom&&newer){nextItems=page.items;newer=false;mode='latest'}
+        else if(page.items.at(-1)?.cursor!==last&&reading.loaded&&!reading.atBottom)setNewContent(true)
       }
-      if (!live.current || controller.signal.aborted) return
-      const merged = mergeCodexEvents(reading.items, page.items)
-      const changed = JSON.stringify(merged) !== JSON.stringify(reading.items)
-      if (older !== undefined && scroller.current) pendingScroll.current = { top: scroller.current.scrollTop, height: scroller.current.scrollHeight }
-      else pendingScroll.current = reading.atBottom ? 'bottom' : 'restore'
-      const messageChanged=merged.some(item=>!reading.items.some(old=>(old.eventId??old.sequence)===(item.eventId??item.sequence)&&old.text===item.text&&old.kind===item.kind&&JSON.stringify(old.localProgress)===JSON.stringify(item.localProgress)))
-      if (messageChanged && reading.loaded && older === undefined && !reading.atBottom) setNewContent(true)
-      if (!reading.loaded || older !== undefined) {
-        reading.before = page.nextBefore; reading.cursor = page.nextCursor
-        setBefore(page.nextBefore); setCursor(page.nextCursor)
+      if(!live.current||controller.signal.aborted)return
+      const merged=mode==='latest'?nextItems:mergeCodexEvents(previous,nextItems)
+      const edge=older!==undefined||!reading.atBottom&&!forward&&mode!=='latest'?'older':'newer'
+      const fitted=fitCodexReadingWindow(merged,edge)
+      if(forward)newer=!!page.nextCursor
+      if(fitted.dropped&&edge==='older')newer=true
+      const el=scroller.current
+      if(el&&(older!==undefined||forward||!reading.atBottom&&mode!=='latest')){
+        const rect=el.getBoundingClientRect(),anchor=Array.from(el.querySelectorAll<HTMLElement>('[data-codex-row]')).find(node=>{const r=node.getBoundingClientRect();return r.height>0&&r.bottom>rect.top})
+        pendingScroll.current={top:el.scrollTop,height:el.scrollHeight,...(anchor?{key:anchor.dataset.codexRow!,offset:anchor.getBoundingClientRect().top-rect.top}:{})}
+      }else pendingScroll.current=mode==='latest'||reading.atBottom?'bottom':'restore'
+      const previousById=new Map(previous.map(item=>[item.eventId??item.sequence,item]))
+      const messageChanged=fitted.items.some(item=>{const old=previousById.get(item.eventId??item.sequence);return !old||old.text!==item.text||old.kind!==item.kind||JSON.stringify(old.localProgress)!==JSON.stringify(item.localProgress)})
+      if(messageChanged&&reading.loaded&&older===undefined&&!reading.atBottom&&mode!=='newer')setNewContent(true)
+      if(!reading.loaded||older!==undefined||mode==='latest'){
+        reading.before=page.nextBefore;reading.cursor=page.nextCursor
       }
-      reading.items = merged; reading.loaded = true
-      if (changed) setItems(merged)
+      if(fitted.dropped&&edge==='newer'){
+        reading.cursor=fitted.items[0]?.cursor
+        if(!reading.cursor)reading.before=fitted.items[0]?.sequence
+      }
+      if(mode==='latest'){reading.atBottom=true;setNewContent(false);setAwayFromBottom(false)}
+      reading.newer=newer;reading.items=fitted.items;reading.loaded=true
+      setBefore(reading.before);setCursor(reading.cursor);setItems(fitted.items)
       setError('')
     } catch (failure) {
       if (!live.current || controller.signal.aborted) return
       setError(failure instanceof Error ? failure.message : tr('工作动态加载失败，请重试'))
       // Explicit denial clears content; a transient network/service error retains the reading window.
-      if (task.cloud?.remote && codexAccessRevoked(failure)) {setDetailQueue(undefined);setDetailQueueCloud('private'); reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; setItems([]); setBefore(undefined); setCursor(undefined) }
+      if (task.cloud?.remote && codexAccessRevoked(failure)) {setDetailQueue(undefined);setDetailQueueCloud('private'); reading.items = []; reading.loaded = false; reading.before = undefined; reading.cursor = undefined; reading.newer=false; setItems([]); setBefore(undefined); setCursor(undefined) }
     } finally {
       controllers.current.delete(controller); loading.current = false
       if (live.current && !controller.signal.aborted) setBusy(false)
@@ -189,8 +205,10 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
     const el = scroller.current
     if (!el) return
     const pending = pendingScroll.current
-    el.scrollTop = typeof pending === 'object' ? pending.top + el.scrollHeight - pending.height
-      : pending === 'bottom' || (pending === 'restore' && reading.atBottom) ? el.scrollHeight : reading.scrollTop
+    if(typeof pending==='object'){
+      const anchor=pending.key?Array.from(el.querySelectorAll<HTMLElement>('[data-codex-row]')).find(node=>node.dataset.codexRow===pending.key):undefined
+      el.scrollTop=anchor&&pending.offset!==undefined?el.scrollTop+anchor.getBoundingClientRect().top-el.getBoundingClientRect().top-pending.offset:pending.top+el.scrollHeight-pending.height
+    }else el.scrollTop=pending==='bottom'||pending==='restore'&&reading.atBottom?el.scrollHeight:reading.scrollTop
     pendingScroll.current = 'restore'
     rememberScroll()
   }, [items, reading, rememberScroll])
@@ -213,12 +231,12 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
   return <div className="arkme-codex-transcript-wrap" data-codex-source={interactions.sourceRef}>
     <style>{arkmeMarkdownStyles}</style>
     <div className="arkme-codex-reader-viewport">
-    <div ref={scroller} className="arkme-codex-transcript" aria-label={tr('任务对话记录')} tabIndex={0} onScroll={rememberScroll}>
+    <div ref={scroller} className="arkme-codex-transcript" aria-label={tr('任务对话记录')} tabIndex={0} onScroll={()=>{rememberScroll();const el=scroller.current;if(reading.newer&&el&&el.scrollHeight-el.clientHeight-el.scrollTop<180)void load(undefined,'newer')}}>
       <div className="arkme-codex-reading-column">
         {(before !== undefined || cursor !== undefined) && <button type="button" className="arkme-codex-older" disabled={busy} onClick={() => { void load(cursor ?? before) }}>{tr('加载更早记录')}</button>}
         {error && <p role="alert">{error} <button type="button" onClick={() => { void load() }}>{tr('重试')}</button></p>}
         {!items.length && !current && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
-        {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence}>
+        {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence} data-codex-row={String(event.eventId??event.sequence)}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
           {event.kind!=='UserPromptSubmit' && event.timing && <CodexTurnDuration timing={event.timing} task={task}/>}
           <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
@@ -241,7 +259,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {task.state === 'working' && !workingTiming && <p className="arkme-codex-run-status" role="status"><span className="arkme-codex-state-dot" data-working={!task.cloud?.remote&&!codexCollectorUnavailable(task)}/>{tr(codexCollectorUnavailable(task) || task.cloud?.remote ? '尚未收到本轮结束状态，请查看同步状态。' : '等待同步本轮回答…')}</p>}
       </div>
     </div>
-    {awayFromBottom && <button type="button" className="arkme-codex-jump" onClick={() => { const el = scroller.current; if (el) { el.scrollTop = el.scrollHeight; rememberScroll() } }}>{tr(newContent ? '有新内容 ↓' : '回到最新 ↓')}</button>}
+    {awayFromBottom && <button type="button" className="arkme-codex-jump" onClick={() => { if(reading.newer){void load(undefined,'latest');return}const el=scroller.current;if(el){el.scrollTop=el.scrollHeight;rememberScroll()} }}>{tr(newContent ? '有新内容 ↓' : '回到最新 ↓')}</button>}
     </div>
     {interactions.host}
     {interactions.feedback}

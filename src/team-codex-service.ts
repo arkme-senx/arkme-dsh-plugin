@@ -480,12 +480,8 @@ export class TeamCodexService {
     const machine=this.machine.events(userId,teamRef,id,before)
     if(machine) return this.imageReferences(userId,teamRef,id,undefined,await annotate(machine,this.machine.timingSource(userId,teamRef,id)))
     const binding=this.binding(userId,teamRef,id)
-    const rows = this.db.prepare('SELECT * FROM events WHERE connection_id=? AND sequence<? ORDER BY sequence DESC LIMIT 51').all(id,before ?? Number.MAX_SAFE_INTEGER) as unknown as EventRow[]
-    const visible = rows.slice(0,50)
-    return this.imageReferences(userId,teamRef,id,undefined,await annotate({
-      items: visible.reverse().map(row => ({ sequence:row.sequence,turnId:row.turn_id,kind:row.kind,text:row.text,at:row.at,truncated:row.truncated===1 })),
-      ...(rows.length > 50 ? { nextBefore: visible[0]!.sequence } : {}),
-    }, binding.status==='active' && binding.session_id ? {sessionId:binding.session_id,live:true} : undefined))
+    const page=readLocalCodexEvents(this.db,{owner:userId,task:id,sessionId:binding.session_id||id,homeKey:'',native:false},cursor,window,before)
+    return this.imageReferences(userId,teamRef,id,undefined,await annotate(page,binding.status==='active'&&binding.session_id?{sessionId:binding.session_id,live:true}:undefined))
   }
 
   async prepareExport(teamRef:string,id:string,sourceId:string|undefined,raw:unknown){

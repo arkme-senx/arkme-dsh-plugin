@@ -11,12 +11,13 @@ function Picture({ image, params, full=false }: { image:Image; params:Record<str
   const container=useRef<HTMLSpanElement>(null),key=JSON.stringify(params)
   useEffect(()=>{
     if(full||typeof IntersectionObserver==='undefined'){setVisible(true);return}
-    const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){setVisible(true);observer.disconnect()}},{rootMargin:'200px'})
+    const observer=new IntersectionObserver(entries=>{setVisible(entries.some(e=>e.isIntersecting))},{rootMargin:'200px'})
     if(container.current)observer.observe(container.current)
     return ()=>observer.disconnect()
   },[full])
   useEffect(()=>{
-    if(!visible||image.state!=='ready')return
+    if(!visible){setUrl('');return}
+    if(image.state!=='ready')return
     const controller=new AbortController();setError(false);setUrl('')
     void callArkme<{dataUrl:string}>('team.codex.image',{...JSON.parse(key),ref:image.ref,full},controller.signal).then(result=>{
       if(controller.signal.aborted)return
