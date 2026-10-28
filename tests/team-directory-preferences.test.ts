@@ -45,6 +45,14 @@ it('accepts whole monotonic snapshots without inferring restoration from local m
   await store.reconcile('a', [conversation], new AbortController().signal)
   expect(teamEntryHidden(store.read('a'), folder)).toBe(false)
 })
+it('authority denial is distinct from dismissal and a team-side denial does not revoke visitor-side presentation', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { accessible: false }))
+  await f.store.reconcile('a', [conversation], new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+  expect(f.store.canPresent('a', conversation)).toBe(false)
+  expect(f.store.canPresent('a', { ...conversation, side: 'external', entryKey: 'visitor-key' })).toBe(true)
+})
 it('serializes rapid actions and restores parent + child in one command', async () => {
   const { store, transport } = fixture()
   await Promise.all([store.pin('a', direct, true), store.pin('a', direct, false)])
@@ -82,8 +90,18 @@ it('keeps a legacy migration explanation until acknowledged, across normal refre
 it('empty navigation never restores, while an explicit restore supports a zero watermark', async () => {
   const f = fixture()
   f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
-  await f.store.restoreReference('a', { kind: 'folder', ref: 'team-ref' })
+  const empty = { ...conversation, lastSeq: 0 }
+  await f.store.restoreTarget('a', { kind: 'folder', group: groupTeamConversations([empty])[0]! }, true)
   expect(f.transport.mock.calls.some(([op]) => op.endsWith('.change'))).toBe(false)
   await f.store.restoreTarget('a', folder)
   expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+})
+it('explicit historical navigation restores a zero-counter folder and its child atomically', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { dismissed: true, version: 2, activitySeq: conversation.lastSeq }))
+  await f.store.restoreTarget('a', direct, true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).at(-1)?.[1].changes).toHaveLength(2)
+  expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(false)
 })

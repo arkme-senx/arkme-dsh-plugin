@@ -4,8 +4,9 @@ import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
 import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
+import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
 let stops: Array<() => void> = []
-afterEach(() => { stops.forEach(stop => stop()); stops = []; mock.mockReset() })
+afterEach(() => { stops.forEach(stop => stop()); stops = []; mock.mockReset(); vi.restoreAllMocks() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
 const item = (side: 'team' | 'external', time = 1): TeamConversation => ({ ref: `${side}-ref`, key: `${side}-key`, channel, side, lastSeq: 1, latestTeamReplySeq: 0, myReadSeq: 0, unread: 1, needsReply: true, blocked: false, revision: 1, updatedAt: time })
 it('merges Team rows only in presentation and preserves pinned rows and ordinary identities', () => {
@@ -141,4 +142,68 @@ it('receipt hints cannot reread hidden-folder message bodies or restore removed 
     expect(teamEntryHidden(preferences,target)).toBe(true)
     expect(readTeamDirectory('hidden-folder').items[0]?.unread).toBe(0)
   } finally { read.mockRestore() }
+})
+
+it('a cloud pin cannot activate an empty conversation', async () => {
+  const empty = { ...item('external'), lastSeq: 0 }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: empty.ref }])
+  mock.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: empty } : { items: [], hasMore: false })
+  stops.push(startTeamDirectory('empty-pinned'))
+  await vi.waitFor(() => expect(mock.mock.calls.some(([op]) => op === 'team.app.timeline')).toBe(true))
+  expect(readTeamDirectory('empty-pinned').items).toEqual([])
+})
+
+it('a denied preference authority verdict retires ordinary previews without hiding the other side', async () => {
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([])
+  vi.spyOn(teamDirectoryPreferences, 'canPresent').mockImplementation((_, c) => c.side === 'external')
+  mock.mockImplementation(async (_, p) => ({ items: [item(p.side)], hasMore: false }))
+  stops.push(startTeamDirectory('preference-access-lost'))
+  await vi.waitFor(() => expect(readTeamDirectory('preference-access-lost').items.map(c => c.side)).toEqual(['external']))
+})
+
+it('a receipt during cold pin discovery preserves both the pin and the newer read state', async () => {
+  const ordinary = item('team'), pinned = { ...item('external'), key: 'old-pin', entryKey: 'old-pin-key', ref: 'old-pin-ref' }
+  let release!: (value: unknown) => void
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: pinned.ref }])
+  vi.spyOn(teamDirectoryPreferences, 'read').mockReturnValue({ [pinned.entryKey]: { pinned: true, dismissed: false } })
+  mock.mockImplementation(async (op, p) => {
+    if (op === 'team.app.timeline') return new Promise(resolve => { release = resolve })
+    if (op === 'team.app.read-states') return [{ key: ordinary.key, accessible: true, lastSeq: 1, myReadSeq: 1, unread: 0 }]
+    return { items: p.side === 'team' ? [ordinary] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('receipt-and-pin'))
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  await refreshTeamDirectory('receipt-and-pin', false, true)
+  release({ conversation: pinned })
+  await vi.waitFor(() => expect(readTeamDirectory('receipt-and-pin').items).toHaveLength(2))
+  expect(readTeamDirectory('receipt-and-pin').items.find(c => c.key === ordinary.key)?.unread).toBe(0)
+})
+
+it('off-page pins do not grow the pagination window and share receipt/revocation authority', async () => {
+  const ordinary = item('team'), pinned = { ...item('external'), key: 'cold-pin', entryKey: 'cold-pin-key', ref: 'cold-pin-ref' }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: pinned.ref }])
+  vi.spyOn(teamDirectoryPreferences, 'read').mockReturnValue({ [pinned.entryKey]: { pinned: true, dismissed: false } })
+  let revoked = false
+  mock.mockImplementation(async (op, p) => {
+    if (op === 'team.app.timeline') return { conversation: pinned }
+    if (op === 'team.app.read-states') return p.conversationRefs.map((ref: string) => ({key:ref === pinned.ref ? pinned.key : ordinary.key,accessible:ref !== pinned.ref || !revoked,lastSeq:1,myReadSeq:1,unread:0}))
+    return { items: p.side === 'team' ? [ordinary] : [], hasMore: p.side === 'team', nextCursor: 'ordinary-page-2' }
+  })
+  stops.push(startTeamDirectory('pin-pagination'))
+  await vi.waitFor(() => expect(readTeamDirectory('pin-pagination').items).toHaveLength(2))
+  for (let i = 0; i < 3; i++) await refreshTeamDirectory('pin-pagination')
+  expect(mock.mock.calls.filter(([op, p]) => op === 'team.app.conversations' && p.cursor)).toEqual([])
+  await refreshTeamDirectory('pin-pagination', false, true)
+  expect(readTeamDirectory('pin-pagination').items.find(c => c.key === pinned.key)?.unread).toBe(0)
+  revoked = true
+  await refreshTeamDirectory('pin-pagination', false, true)
+  expect(readTeamDirectory('pin-pagination').items.map(c => c.key)).toEqual([ordinary.key])
 })

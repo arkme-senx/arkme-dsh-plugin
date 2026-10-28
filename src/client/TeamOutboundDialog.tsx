@@ -8,7 +8,7 @@ import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { invalidateTeamMessages, openTeamMessages } from './team-messaging-events.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { subscribeTeamOutbound, type TeamOutboundIntent, type TeamOutboundPerson } from './team-outbound.js'
 import { tr, useArkmeLocale } from './locale.js'
 

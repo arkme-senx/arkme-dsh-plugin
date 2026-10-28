@@ -22,6 +22,10 @@ export function discardTeamDirectory(key: string, conversation: TeamConversation
 export function startTeamDirectory(key: string): () => void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {}
   const controller = new AbortController(), pages = new Map<TeamSide, TeamPage<TeamConversation>>()
+  // Sparse pin discoveries never inflate the ordinary pagination window.
+  const pins = new Map<string, TeamConversation>()
+  const itemsNow = () => [...new Map([...pins.values(), ...[...pages.values()].flatMap(p => p.items)].map(c => [c.key, c])).values()]
+    .sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
   let running = false, again = false, fullAgain = false, revision = 0
   account = key; snapshot = empty; emit()
   const refresh = async (more = false, readStateOnly = false) => {
@@ -30,28 +34,31 @@ export function startTeamDirectory(key: string): () => void {
     running = true
     const token = revision
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
-    let failure: string | undefined
+    let failure: string | undefined, accessLost = false
     await Promise.all((['team', 'external'] as const).map(async side => {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
       try {
         if (readStateOnly) {
-          if (!previous?.items.length) return
+          const targets = [...new Map([...pins.values()].filter(c => c.side === side).concat(previous?.items ?? []).map(c => [c.key, c])).values()]
+          if (!targets.length) return
           const states = new Map<string, TeamConversationReadState>()
-          for (let i = 0; i < previous.items.length; i += 100) {
+          for (let i = 0; i < targets.length; i += 100) {
             const rows = await callArkme<TeamConversationReadState[]>('team.app.read-states', {
-              conversationRefs: previous.items.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key,
+              conversationRefs: targets.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key,
             }, controller.signal)
             for (const state of rows) states.set(state.key, state)
           }
           if (!controller.signal.aborted && account === key && token === revision) {
-            pages.set(side, {...previous, items: previous.items.flatMap(c => {
+            const updated = new Map(targets.flatMap(c => {
               const state = states.get(c.key)
               if (!state) throw new Error('阅读状态返回不完整')
-              if (!state.accessible) return []
-              if (state.lastSeq < c.lastSeq || state.myReadSeq < c.myReadSeq) return [c]
-              return [{...c, myReadSeq: state.myReadSeq, unread: state.unread, notificationPolicy:mergeTeamNotificationPolicy(c.notificationPolicy,state.notificationPolicy)}]
-            })})
+              if (!state.accessible) { accessLost = true; return [] }
+              const next = state.lastSeq < c.lastSeq || state.myReadSeq < c.myReadSeq ? c : {...c, myReadSeq: state.myReadSeq, unread: state.unread, notificationPolicy:mergeTeamNotificationPolicy(c.notificationPolicy,state.notificationPolicy)}
+              return [[c.key, next] as const]
+            }))
+            if (previous) pages.set(side, {...previous, items: previous.items.flatMap(c => updated.has(c.key) ? [updated.get(c.key)!] : [])})
+            for (const [id, c] of pins) if (c.side === side) { if (updated.has(id)) pins.set(id, updated.get(id)!); else pins.delete(id) }
           }
           return
         }
@@ -70,19 +77,30 @@ export function startTeamDirectory(key: string): () => void {
         if (!controller.signal.aborted && account === key && token === revision) pages.set(side, { ...page, items: [...items.values()] })
       } catch (e) {
         failure = e instanceof Error ? e.message : '团队对话暂时无法刷新'
-        if (token === revision && /team-(not_accessible|account-changed)|login-/.test(String((e as { body?: { code?: string } })?.body?.code))) pages.delete(side)
+        if (token === revision && /team-(not_accessible|account-changed)|login-/.test(String((e as { body?: { code?: string } })?.body?.code))) {
+          pages.delete(side); for (const [id, c] of pins) if (c.side === side) pins.delete(id)
+          accessLost = true
+        }
       }
     }))
     running = false
     if (controller.signal.aborted || account !== key) return
-    const items = [...pages.values()].flatMap(p => p.items).sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
+    if (accessLost) ++revision
+    const items = itemsNow()
     snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
-    if (!readStateOnly) {
-      const base = snapshot
+    if (!readStateOnly && token === revision) {
       // Optional preference IO runs after publishing ordinary directory rows.
       void (async () => {
         await teamDirectoryPreferences.hydrate(key, true)
         await teamDirectoryPreferences.reconcile(key, items, controller.signal)
+        if (controller.signal.aborted || account !== key || token !== revision) return
+        // A preference query also carries an authority verdict. A denial must
+        // retire old previews, rather than appear as an ordinary default row.
+        const allowed = (c: TeamConversation) => teamDirectoryPreferences.canPresent(key, c)
+        const before = itemsNow().length
+        for (const [side, page] of pages) pages.set(side, { ...page, items: page.items.filter(allowed) })
+        for (const [id, c] of pins) if (!allowed(c)) pins.delete(id)
+        if (itemsNow().length !== before) { snapshot = { ...snapshot, items: itemsNow() }; emit() }
         const extra: TeamConversation[] = []
         const targets = teamDirectoryPreferences.missingPins(key, items)
         for (let i = 0; i < targets.length; i += 10) {
@@ -92,14 +110,15 @@ export function startTeamDirectory(key: string): () => void {
               return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key }, controller.signal)).conversation]
             } catch { return [] }
           }))
-          extra.push(...batch.flat())
+          // A preference is presentation only; successful publication activates a conversation.
+          extra.push(...batch.flat().filter(c => c.lastSeq > 0))
         }
-        if (controller.signal.aborted || account !== key || snapshot !== base || !extra.length) return
-        for (const side of ['team', 'external'] as const) {
-          const page = pages.get(side)
-          if (page) pages.set(side, { ...page, items: [...new Map([...page.items, ...extra.filter(c => c.side === side)].map(c => [c.key, c])).values()] })
-        }
-        snapshot = { ...base, items: [...new Map([...items, ...extra].map(c => [c.key, c])).values()] }; emit()
+        if (controller.signal.aborted || account !== key || token !== revision) return
+        for (const c of extra) if (!pins.has(c.key) && allowed(c)) pins.set(c.key, c)
+        const preferences = teamDirectoryPreferences.read(key)
+        for (const [id, c] of pins) if (!teamEntryPinned(preferences, { kind: 'conversation', conversation: c }) &&
+          !(c.side === 'team' && teamEntryPinned(preferences, { kind: 'folder', group: groupTeamConversations([c])[0]! }))) pins.delete(id)
+        snapshot = { ...snapshot, items: itemsNow() }; emit()
       })().catch(() => { /* Optional sync errors are exposed by the preference owner. */ })
     }
     if (again) { const full = fullAgain; again = false; fullAgain = false; await refresh(false, !full) }
@@ -107,6 +126,7 @@ export function startTeamDirectory(key: string): () => void {
   request = refresh
   discard = conversation => {
     ++revision
+    for (const [id, c] of pins) if (c.side === conversation.side && c.channel.jotmoId === conversation.channel.jotmoId) pins.delete(id)
     const page = pages.get(conversation.side)
     if (page) pages.set(conversation.side, { ...page, items: page.items.filter(c => c.channel.jotmoId !== conversation.channel.jotmoId) })
     snapshot = { ...snapshot, items: snapshot.items.filter(c => c.side !== conversation.side || c.channel.jotmoId !== conversation.channel.jotmoId) }; emit()
