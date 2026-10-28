@@ -9,7 +9,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
     itemUid: message.key, senderName: message.sender.nickname, isMe: message.own,
     sendAtMillis: message.createdAt, title: message.content?.title ?? '',
     textFormat: message.content?.content_payload?.text_format === 'markdown' ? 'markdown' : 'plain',
-    textContent: message.content?.text_content ?? '', status: message.state === 'published' ? 1 : 2,
+    mentions:(message.content?.mentions ?? []).map(m=>({kind:'member',startIndex:m.startIndex,length:m.length,displayName:m.displayName})), textContent: message.content?.text_content ?? '', status: message.state === 'published' ? 1 : 2,
     version: message.version, recordVersion: message.version, templateKind: message.content?.template_kind ?? 1,
     ...(message.forwardRecords?{forwardRecords:message.forwardRecords}:{}),
     contentBlocks: (message.forwardRecords?[]:message.media).map((media, sortOrder): ArkmeContentBlock => ({

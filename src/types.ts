@@ -1522,6 +1522,7 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamMessageInteractions?: 1
+    teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
     teamProfiles?: true
     teamExternalChats?: true

@@ -1175,3 +1175,36 @@ it('extension Host scopes both refs and seals parent media without signed URLs',
  f.changeAccount()
  await expect(f.service.execute('team.app.extensions',{conversationRef:ref,messageRef:timeline.messages[0]!.ref})).rejects.toThrow()
 })
+
+it('keeps Team mention identities inside Host and retains valid spans on edit', async () => {
+  const metadata = {schema_version:1,source_checksum:'original',human_mentions:[{user_id:88,display_name_snapshot:'小林',start_index:0,length:3}]}
+  const row = {...message, record:{...message.record,text_content:'@小林 hello',content_payload:{payload_kind:1,schema_version:1,text_state:1,mention_metadata:metadata}}}
+  const f = fixture(path => path.endsWith('/batch-get') ? {messages:[row]} : {channel,conversation:{...conversation,side:'team'},messages:[row]})
+  const conversationRef = (await open(f)).conversation!.ref
+  const page = await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+  expect(JSON.stringify(page)).not.toContain('human_mentions')
+  expect(JSON.stringify(page)).not.toContain('user_id')
+  await f.service.execute('team.app.edit',{messageRef:page.messages[0]!.ref,version:3,content:{text_content:'😀 @小林 hello!',template_kind:1}})
+  const write = f.requests.find(r=>r.path.endsWith('/messages/update'))!
+  expect((write.body.content as any).content_payload.mention_metadata.human_mentions).toEqual([{user_id:88,display_name_snapshot:'小林',start_index:3,length:3}])
+  await expect(f.service.execute('team.app.edit',{messageRef:page.messages[0]!.ref,version:2,content:{text_content:'edited',template_kind:1}})).rejects.toThrow()
+})
+
+it('projects only sealed mentions, filters a bounded page by person, and encodes a send without raw IDs', async () => {
+ const metadata = {human_mentions:[{user_id:91,display_name_snapshot:'同名',start_index:0,length:3}]}
+ const f = fixture((_path,body) => ({channel,conversation:{...conversation,side:'team'},messages:[{...message,actor_user_id:91,record:{...message.record,text_content:'@同名 hello',content_payload:{mention_metadata:metadata}}}],has_more:true,before_seq:5,message_uid:'sent'}))
+ const ref=(await open(f)).conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef:ref}) as TeamTimeline
+ const mentions=page.messages[0]!.content!.mentions!
+ expect(mentions).toEqual([{personRef:expect.any(String),displayName:'同名',startIndex:0,length:3}])
+ expect(JSON.stringify(page)).not.toContain('user_id')
+ const before=f.requests.length
+ const filtered=await f.service.execute('team.app.timeline',{conversationRef:ref,personRef:mentions[0]!.personRef,personMode:'mentioned',limit:20}) as TeamTimeline
+ expect(filtered.messages).toHaveLength(1);expect(filtered.hasMore).toBe(true)
+ expect(f.requests.length-before).toBe(1)
+ await f.service.execute('team.app.send',{conversationRef:ref,clientUid:'test',content:{text_content:'@同名 hello',template_kind:1,mentions}})
+ const body=f.requests.at(-1)!.body.content as Record<string,unknown>
+ expect(body.mentions).toBeUndefined()
+ expect((body.content_payload as any).mention_metadata.human_mentions[0].user_id).toBe(91)
+ await expect(f.service.execute('team.app.send',{conversationRef:ref,content:{text_content:'changed',template_kind:1,mentions}})).rejects.toThrow()
+})

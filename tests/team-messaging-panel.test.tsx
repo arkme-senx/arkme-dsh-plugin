@@ -80,6 +80,34 @@ describe('Team send UI recovery', () => {
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
 
+  it.each(['editing','next-draft'] as const)('inserts a structured mention into the %s without changing an accepted command',async mode=>{
+    const visitor={nickname:'访客',personRef:'sealed-visitor',personKey:'visitor'}
+    const current={...conversation,side:'team' as const,visitor}
+    const message:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'team',sender:{nickname:'自己',isMe:true},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原消息'}}
+    const external:TeamMessage={...message,key:'visitor',ref:'visitor-ref',seq:2,side:'external',sender:visitor,own:false,canEdit:false}
+    let release!: (value:unknown)=>void
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return {conversation:current,messages:[message,external],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue')return new Promise(resolve=>{release=resolve})
+      throw new Error('unavailable')
+    })
+    await act(async()=>{renderer=create(<TeamConversationPane conversation={current} accountKey="test:11" onChanged={()=>{}} />);await tick()})
+    if(mode==='editing')await act(async()=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key==='own')!.props.onEdit())
+    else await send()
+    const avatar=renderer!.root.findAllByProps({'aria-label':'访客 的用户卡片'}).find(node=>node.type==='button')!
+    await act(async()=>avatar.props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:0,clientY:0}))
+    const mention=renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node=>node.props.actions).find(action=>action.id==='mention')!
+    await act(async()=>{mention.onSelect();await tick()})
+    const input=renderer!.root.findByType(ArkmeRichComposerInput)
+    expect(input.props.value).toContain('@访客')
+    expect(input.props.mentions).toEqual([expect.objectContaining({mentionRef:'sealed-visitor'})])
+    if(mode==='next-draft'){
+      expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content).toEqual({text_content:'问题',template_kind:1})
+      await act(async()=>{release(accepted());await tick()})
+      expect(JSON.parse(localStorage.getItem(storageKey)!).mentions).toEqual([expect.objectContaining({personRef:'sealed-visitor'})])
+    }
+  })
+
   it.each(['paused', 'blocked'] as const)('preserves the extension draft if the conversation becomes %s during phone preflight', async reason => {
     const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'原文',senderName:'同事'}
     localStorage.setItem(storageKey, JSON.stringify({text:'待发送',assets:[],reply}))
@@ -790,7 +818,7 @@ describe('Team send UI recovery', () => {
     await act(async()=>detail.props.onLocate())
     expect(row().props.located).toBe(true)
     await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:10,clientY:10}))
-    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect())
+    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions.find((a:{id:string})=>a.id==='owner-records').onSelect())
     expect(renderer!.root.findByType(TeamVisitorRecords).props.person).toMatchObject({personKey:'person-key',nickname:'宏顺'})
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
