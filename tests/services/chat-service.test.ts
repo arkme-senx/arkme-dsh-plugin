@@ -3658,14 +3658,36 @@ it('preserves long article identity and remaps all forwarded image nodes to snap
   expect(JSON.stringify(item)).not.toContain('secret-')
 })
 
-it('confirms article delivery only for the exact chat relation and record owner', async () => {
-  let relationUid='other-relation'
-  const runtime={requireSession:async()=>({userId:42}),authenticatedChatPost:async()=>({chat_session_uid:'chat',anchor:{relation:{rel_uid:relationUid,record_uid:'article',record_owner_user_id:42,seq:9},record:{status:1}}})}
-  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'private_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+it('confirms long article with the sender-only exact receipt after group read access is lost', async () => {
+  let accepted = false
+  const runtime = {
+    requireSession: async () => ({userId:42}),
+    stateStore: {uniqueCode:async()=> 'receipt-test-key'},
+    authenticatedChatPost: vi.fn(async (path:string, body:unknown) => {
+      expect(path).toBe('/api/v1/chats/records/receipt/get')
+      expect(body).toEqual({chat_session_uid:'chat',record_uid:'article',rel_uid:'expected-relation'})
+      return {accepted,seq:9,audit_status:1}
+    }),
+  }
+  const chat = new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
   const input={title:'article',textContent:'text',recordUid:'article',relationUid:'expected-relation'}
   await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'long-article-outcome-unknown'})
-  relationUid='expected-relation'
+  accepted=true
   await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,localState:'synced'})
+})
+
+it('checks the frozen team identity when confirming a long article receipt', async () => {
+ const {GroupRepresentationCodec}=await import('../../src/services/group-representation.js')
+ const raw={team_id:'9223372036854775807',membership_kind:'member',membership_revision:3,group_join_at:9,name:'团队',jotmo_id:'team'}
+ let acceptedRepresentation={...raw}
+ const runtime={requireSession:async()=>({userId:42}),stateStore:{uniqueCode:async()=> 'team-article-receipt'},authenticatedChatPost:async()=>({accepted:true,seq:9,representation:acceptedRepresentation})}
+ const codec=new GroupRepresentationCodec(runtime as never),snapshot=(await codec.snapshot(raw,42))!
+ const {name:_name,jotmoId:_jotmo,...representation}=snapshot
+ const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const input={title:'article',textContent:'text',recordUid:'article',relationUid:'relation',representation}
+ await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9})
+ acceptedRepresentation={...raw,membership_revision:4}
+ await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'team-identity-receipt-conflict'})
 })
 
 

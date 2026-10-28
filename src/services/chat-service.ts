@@ -5425,17 +5425,14 @@ export class ChatService {
     if (session.userId !== userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
     const source = await this.source.openSourceRef(sourceRef, userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return { sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }
-    const page = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chat/timeline/around', {
-      chat_session_uid: source.ownerRef, record_uid: input.recordUid, record_owner_user_id: userId, before_limit: 1, after_limit: 1,
-    }, session, signal, { lane: 'interactive-read', bypassCache: true })
-    if (stringValue(page.chat_session_uid) !== source.ownerRef) throw new ArkmePluginError('long-article-outcome-unknown', '长文发送结果待确认，草稿已保留', false, 409)
-    const item = [...(Array.isArray(page.items) ? page.items : []), page.anchor].map(objectValue).find(value => {
-      const relation = objectValue(value.relation)
-      return relation.rel_uid === input.relationUid && relation.record_uid === input.recordUid && Number(relation.record_owner_user_id) === userId
-    })
-    if (!item) throw new ArkmePluginError('long-article-outcome-unknown', '长文已保存，聊天发送结果待确认，草稿已保留', false, 409)
-    return { sourceRef, itemUid: input.recordUid, status: Number(objectValue(item.record).status ?? 0), sequence: Number(objectValue(item.relation).seq ?? 0), localState: 'synced' }
+    const confirmed = await this.confirmSourceSend({
+      sourceRef, recordUid: input.recordUid, relationUid: input.relationUid, fileRefs: [],
+      content: {textContent: input.textContent, ...(input.representation === undefined ? {} : {representation: input.representation})},
+    }, signal)
+    if (!confirmed) throw new ArkmePluginError('long-article-outcome-unknown', '长文已保存，聊天发送结果待确认，草稿已保留', false, 409)
+    return confirmed
   }
+
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal, actionRef?: string): Promise<ArkmeLongArticleDetail> {
     if (!actionRef) return await this.withLongArticleActions(await this.record.longArticleDetail(sourceRef, itemUid, signal))
     const session = await this.runtime.requireSession()
