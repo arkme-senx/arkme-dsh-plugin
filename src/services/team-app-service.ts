@@ -1,3 +1,4 @@
+import { GroupRepresentationCodec } from './group-representation.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
@@ -612,22 +613,17 @@ export class TeamAppService {
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.public-card': {
         const jotmoId = str(p.jotmoId).trim()
-        if (!jotmoId || jotmoId.length > 128) throw invalid()
-        const mine = list((await post('list-mine', {}, true)).teams).find(team => str(team.jotmo_id) === jotmoId)
-        if (mine) {
-          // Current channel lookup is a member-only API. Do not use it for strangers.
-          const channel = await this.channel(await post('message-channel/get', { team_id: recordOwnerId(mine.team_id) }, true), actor)
-          if (channel.jotmoId !== jotmoId) throw invalid()
-          return { name: channel.name, jotmoId, avatar: channel.avatar,
-            contact: !channel.enabled ? { state: 'disabled' }
-              : channel.publicRef ? { state: 'available', publicRef: channel.publicRef } : { state: 'backend_pending' },
-          } satisfies TeamPublicCard
-        }
-        const profile = await this.searchContactTeam(jotmoId, session, signal)
-        if (!profile || profile.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
-        // Public discovery currently has no channel locator or description. Do
-        // not guess a link or expose member APIs to external viewers.
-        return { name: profile.name, jotmoId, avatar: profile.avatar, contact: { state: 'backend_pending' } } satisfies TeamPublicCard
+        if (!jotmoId || jotmoId.length > 64) throw invalid()
+        const raw = await post('public-card/get', {jotmo_id:jotmoId}, true)
+        const contact=obj(raw.contact), navigation=obj(raw.navigation)
+        if(contact.state==='unavailable')return {name:'',jotmoId,contact:{state:'unavailable'},navigation:{kind:'none'}} satisfies TeamPublicCard
+        if(raw.jotmo_id!==jotmoId||!str(raw.name)||!['available','disabled'].includes(str(contact.state))||!['contact','inbox','none'].includes(str(navigation.kind))||contact.state==='available'&&!str(contact.public_ref))throw invalid()
+        const teamRef=await this.ref('team',{team_id:str(raw.team_id)},actor)
+        const avatar=await this.avatar({...raw,avatar:{...obj(raw.avatar),mode:'default'}},actor)
+        if(obj(raw.avatar).mode==='custom')Object.assign(avatar,{mode:'custom',key:`team_avatar_asset://${avatar.key}`,imageRef:await this.ref('profile-image',{jotmo_id:jotmoId,public_card:true,key:obj(raw.avatar).key},actor)})
+        return {name:str(raw.name),jotmoId,avatar,description:str(raw.description),
+          contact:contact.state==='available'?{state:'available',publicRef:str(contact.public_ref)}:{state:'disabled'},
+          navigation:{kind:navigation.kind as 'contact'|'inbox'|'none',...(navigation.kind==='inbox'?{teamRef}:{})}} satisfies TeamPublicCard
       }
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
@@ -639,7 +635,22 @@ export class TeamAppService {
         // Compare provider-owned IDs here, never names or rotating encrypted refs.
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
       }
-      case 'team.app.group.context': case 'team.app.group.join': case 'team.app.group.directory': {
+      case 'team.app.group.context': {
+        if(!this.contacts?.openSourceRef||!str(p.sourceRef))throw invalid()
+        const source=await this.contacts.openSourceRef(str(p.sourceRef),actor)
+        if(source.kind!=='group_chat')throw invalid()
+        const raw=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/group-identity/context',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true})
+        if(raw.state!=='ready'||raw.membership_policy!=='independent'||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        const codec=new GroupRepresentationCodec(this.runtime)
+        const teams=await Promise.all(list(raw.teams).map(async candidate=>{
+          const snapshot=await codec.snapshot({...candidate,group_join_at:raw.group_join_at},actor)
+          const team=await this.team(candidate,actor)
+          if(!snapshot)throw invalid()
+          return {...team,representation:{teamRef:snapshot.teamRef,membershipKind:snapshot.membershipKind,membershipRevision:snapshot.membershipRevision,groupJoinAt:snapshot.groupJoinAt}}
+        }))
+        return {state:'ready',membershipPolicy:'independent',groupJoinAt:num(raw.group_join_at),teams} satisfies TeamGroupContext
+      }
+      case 'team.app.group.join': case 'team.app.group.directory': {
         // Real team membership is sufficient to offer an identity candidate.
         // Neither the candidate nor its pending write grants teammates group access.
         if (operation !== 'team.app.group.directory') {
@@ -648,14 +659,11 @@ export class TeamAppService {
           if (source.kind !== 'group_chat') throw invalid()
         }
         if (operation === 'team.app.group.join' && !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
-        const id = operation === 'team.app.group.context' ? undefined : await teamID()
+        const id = await teamID()
         const mine = list((await post('list-mine', {}, true)).teams)
         if (id !== undefined && !mine.some(team => String(team.team_id) === String(id))) {
           throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         }
-        if (operation === 'team.app.group.context') return {
-          state: 'backend_pending', membershipPolicy: 'unknown', teams: await Promise.all(mine.map(team => this.team(team, actor))),
-        } satisfies TeamGroupContext
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
       case 'team.app.member-candidates': case 'team.app.members.add': {
@@ -1080,9 +1088,9 @@ export class TeamAppService {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
       const ref=await this.open('profile-image',p.imageRef,session.userId)
       const result=obj(await this.runtime.authenticatedTeamPost(
-        ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
+        ref.public_card ? '/api/v1/team/public-card/get' : ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
         ref.jotmo_id ? {jotmo_id:ref.jotmo_id} : ref.public_ref?{public_ref:ref.public_ref}:{team_id:ref.team_id},session,signal,true))
-      const avatar=obj((ref.public_ref?result:obj(result.team)).avatar)
+      const avatar=obj((ref.public_card||ref.public_ref?result:obj(result.team)).avatar)
       if(avatar.mode!=='custom'||str(avatar.key)!==str(ref.key))throw invalid()
       const cacheKey=`team_avatar_asset://${await this.key(`avatar:${str(ref.key)}`,session.userId)}`
       const cached=await this.runtime.stateStore.readAvatarCache?.(session.userId,cacheKey).catch(()=>undefined)

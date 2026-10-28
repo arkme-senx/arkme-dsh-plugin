@@ -51,7 +51,7 @@ it('host operations pass ownership, stable time and conditional cleanup constrai
   await dispatchArkmeHostOperation(service as never, 'source.forward-messages', { sourceRef: 'self', actionRefs: ['signed'], targetSourceRef: 'chat', expectedUserId: 42, sendAtMillis: 123 })
   expect(service.forwardSourceMessages).toHaveBeenCalledWith('self', ['signed'], { targetSourceRef: 'chat', expectedUserId: 42, sendAtMillis: 123 })
   await dispatchArkmeHostOperation(service as never, 'source.long-article.draft.delete', { sourceRef: 'chat', expectedRecordUid: 'sent-id' })
-  expect(service.removeLongArticleDraft).toHaveBeenCalledWith('chat', undefined, 'sent-id')
+  expect(service.removeLongArticleDraft).toHaveBeenCalledWith('chat', undefined, 'sent-id', undefined)
 })
 it('cleanup of a sent draft atomically preserves a newer draft', async () => {
   const store = new ArkmeStateStore(await mkdtemp(join(tmpdir(), 'arkme-article-cas-')))

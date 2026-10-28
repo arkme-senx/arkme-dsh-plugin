@@ -26,6 +26,7 @@ describe('Arkme tool catalog', () => {
   it('keeps the current business tool surface and stable order', () => {
     expect(arkmeToolCatalog.toolNamesFor('business')).toEqual([
       'arkme_plugin_contract',
+      'arkme_group_identities', 'arkme_team_public_card',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
