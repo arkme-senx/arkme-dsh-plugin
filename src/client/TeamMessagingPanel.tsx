@@ -691,6 +691,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const withVisitorIdentity = rawVisitor && visitorIdentity && !rawVisitor.personKey ? { ...visitorIdentity, ...rawVisitor } : rawVisitor
   const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
   const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
+  const personRecordsRevision = useMemo(() => JSON.stringify([timeline?.conversation.revision ?? conversation.revision,
+    (timeline?.messages ?? []).map(message => [message.key,message.version,message.contentStatus,message.state])]), [timeline,conversation.revision])
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
     onOpen: () => { setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
     resolveIdentity: personName,
@@ -992,7 +994,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         renderVisitorAvatar={identity => visitorActions.avatar(<TeamAvatar identity={identity} size={20} />)} />
     </ArkmeReadReceiptPanel>}
     {visitorActions.layer}
-    {visitorRecords && current.side === 'team' && <TeamVisitorRecords key={`${accountKey}:${conversation.key}:${recordPerson?.personKey ?? "external"}:${recordMode}`} mode={recordMode} person={recordPerson ? personName(recordPerson) : undefined} conversation={current}
+    {visitorRecords && current.side === 'team' && <TeamVisitorRecords key={`${accountKey}:${conversation.key}:${recordPerson?.personKey ?? "external"}:${recordMode}:${personRecordsRevision}`} mode={recordMode} person={recordPerson ? personName(recordPerson) : undefined} conversation={current}
       accountKey={accountKey} onClose={() => setVisitorRecords(false)} onLocate={locateVisitorRecord} />}
 
 
