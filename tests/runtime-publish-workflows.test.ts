@@ -45,10 +45,10 @@ describe('Arkme runtime publish workflow boundaries', () => {
     for (const step of job.steps) {
       if (!step.run) continue
       const env = { ...definition.env, ...job.env, ...step.env }
-      if (/pnpm (install|test|run)/.test(step.run)) {
+      if (/pnpm (?:--config\.verifyDepsBeforeRun=warn )?(install|test|run)/.test(step.run)) {
         expect(env.ARKME_SKIP_PREPARE_BUILD).toBe('true')
       }
-      commands.push(...step.run.split('\n').map((line: string) => line.trim()))
+      commands.push(...step.run.split('\n').map((line: string) => line.trim().replace(/^pnpm --config\.verifyDepsBeforeRun=warn /,'pnpm ')))
     }
     expect(commands.filter(line => line === 'pnpm run build')).toHaveLength(1)
     expect(commands.filter(line => line.startsWith('pnpm install'))).toEqual(['pnpm install --frozen-lockfile'])
@@ -172,8 +172,9 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(preRelease).toContain('node scripts/prepare-runtime-version.mjs --run-number "$GITHUB_RUN_NUMBER"')
     expect(parse(preRelease).jobs['build-runtime'].needs).toBe('tests')
     expect(preRelease).toContain('pnpm run typecheck')
-    expect(preRelease).toContain('pnpm run build')
-    expect(preRelease).toContain('pnpm run pack:runtime')
+    expect(buildJob).toContain('pnpm install --frozen-lockfile')
+    expect(buildJob).toContain('pnpm --config.verifyDepsBeforeRun=warn run build')
+    expect(buildJob).toContain('pnpm --config.verifyDepsBeforeRun=warn run pack:runtime')
     expect(preRelease).toContain('node scripts/publish-runtime-artifact.mjs')
     expect(preRelease).toContain('ARKME_RELEASE_SOURCE_SHA: ${{ github.sha }}')
     expect(preRelease).toContain('ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}')
@@ -186,7 +187,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(preRelease).not.toContain('/arkme-plugin/build')
     expect(parse(preRelease).jobs.tests.with.ref).toBe('${{ github.sha }}')
     expect(preRelease.indexOf('node scripts/prepare-runtime-version.mjs')).toBeLessThan(
-      preRelease.indexOf('pnpm run build'),
+      preRelease.indexOf('pnpm --config.verifyDepsBeforeRun=warn run build'),
     )
   })
 

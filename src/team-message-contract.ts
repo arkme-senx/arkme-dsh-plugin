@@ -5,7 +5,7 @@ import type { TeamSendInput, TeamSendTask } from './team-send-contract.js'
 
 export type { TeamConversation, TeamMessage, TeamPage, TeamReplyTarget, TeamReplyPreview, TeamSide, TeamTimeline } from './team-app-contract.js'
 export type { TeamSendInput, TeamSendTask } from './team-send-contract.js'
-export type TeamMessageReadOptions = { beforeSeq?: number; limit?: number; messageRef?: string }
+export type TeamMessageReadOptions = { beforeSeq?: number; limit?: number; messageRef?: string; personRef?: string; personMode?: 'owner' | 'mentioned' }
 export type TeamReportReason = 'spam'|'harassment'|'illegal'|'privacy'|'other'
 export interface TeamReportResult {reportUid:string}
 export type TeamMarkAudience = 'team'|'conversation'
