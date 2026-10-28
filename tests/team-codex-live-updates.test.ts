@@ -25,7 +25,7 @@ function fixture(){
  const callback=vi.fn();let valid=true
  const scan=async(events=[prompt])=>{store.schedule(11,source,events,()=>valid,callback);await store.idle()}
  const projected=()=>store.project(11,source,[prompt])[0]!
- return {root,home,path,db,source,store,callback,scan,projected,revoke:()=>{valid=false;store.fence()}}
+ return {root,home,path,db,index,source,store,callback,scan,projected,revoke:()=>{valid=false;store.fence()}}
 }
 describe('event-driven public Codex progress',()=>{
  it('separates public progress from completion, excludes tools/reasoning/subagents, and redacts private media',async()=>{
@@ -102,4 +102,17 @@ describe('event-driven public Codex progress',()=>{
   const cursor=f.db.prepare('SELECT offset FROM codex_live_cursors').get()!
   await f.scan();expect(f.db.prepare('SELECT offset FROM codex_live_cursors').get()).toEqual(cursor)
  })
+})
+
+it('keeps previously collected facts if a future source version removes the recognized local index',async()=>{
+ const f=fixture();appendFileSync(f.path,progress('已采集的旧正文'));await f.scan()
+ expect(f.projected().localProgress?.[0]?.text).toBe('已采集的旧正文')
+ f.index.close();dbs.splice(dbs.indexOf(f.index),1);rmSync(join(f.home,'state_5.sqlite'));await f.scan()
+ expect(f.projected().localProgress?.[0]?.text).toBe('已采集的旧正文')
+ expect(f.callback).not.toHaveBeenCalled()
+})
+
+it('does not reinterpret unknown upstream records/channels as replies and resumes on recognized records',async()=>{
+ const f=fixture();appendFileSync(f.path,line('future_native_record',{type:'message',text:'不公开的未来字段'})+progress('未来私有频道',at+1000,'future_private')+progress('仍可识别的公开回复',at+2000))
+ await f.scan();expect(f.projected().localProgress?.map(p=>p.text)).toEqual(['仍可识别的公开回复'])
 })
