@@ -32,12 +32,14 @@ export function useRecordingSpeakerOptions(item: ArkmeRecordingWorkbenchItem) {
     if (candidate === undefined) return undefined
     return await assignRecordingSpeaker(key, binding, { scope, speakerRef: candidate.speakerRef })
   }
+  const groupItemCount = itemContext.snapshot.value?.groupItemCount ?? item.sameSpeakerItemCount
   return {
+    groupItemCount,
     accountScope: account,
     savePerson: async (scope: 'item' | 'speaker', speakerRef: string) => key === undefined || account === undefined ? undefined : await assignRecordingSpeaker(key, binding, { scope, speakerRef }),
     contextKey: key, options, ready, error, save,
-    unassign: async (scope: 'item' | 'speaker') => key === undefined || !item.assignedSpeakerOptionKey
-      ? undefined : await unassignRecordingSpeaker(key, binding, scope, scope === 'item' ? 1 : item.sameSpeakerItemCount),
+    unassign: async (scope: 'item' | 'speaker') => key === undefined || !item.assignedSpeakerOptionKey || (scope === 'speaker' && groupItemCount === undefined)
+      ? undefined : await unassignRecordingSpeaker(key, binding, scope, scope === 'item' ? 1 : groupItemCount!),
     pending: itemContext.snapshot.mutating,
     loading: directory.snapshot.value === undefined && directory.snapshot.error === undefined,
     refresh: directory.refresh,

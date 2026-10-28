@@ -1,3 +1,4 @@
+import type { ArkmeRecordingTranscriptPageOptions } from './types.js'
 import { RealtimeDictationService } from './services/realtime-dictation-service.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { DictationService } from './services/dictation-service.js'
@@ -1204,6 +1205,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
+        ...(this.config.recordingWorkbenchEnabled !== false && this.config.recordingImportDirectory
+          ? { recordingFileImport: true as const } : {}),
+        recordingTranscriptPages: true,
         authStatus: true,
         passwordLogin: true,
         realtimeDictationV1: true,
@@ -1247,6 +1251,9 @@ arkoImagesV1:true,
         recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        recordingStrategiesV1: true,
+        recordingStrategyRecordingsV1: true,
+        recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
@@ -1480,11 +1487,13 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal) }
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
+  recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
   async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) { return await this.recording.copyRecordingLink(itemRefs, signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
+  async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
@@ -2882,8 +2891,9 @@ arkoImagesV1:true,
     mediaRef: string,
     range?: string,
     signal?: AbortSignal,
+    method: 'GET' | 'HEAD' = 'GET',
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-    return await this.chat.fetchMedia(mediaRef, range, signal)
+    return await this.chat.fetchMedia(mediaRef, range, signal, method)
   }
 
   async sendDirectText(

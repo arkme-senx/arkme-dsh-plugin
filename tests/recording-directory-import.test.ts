@@ -20,7 +20,7 @@ function fixture(files = [file()]) {
   const snapshot: RecordingDirectorySnapshot = { local: [], existingFileNames: [], owner: [] }
   const pub = { importRef: 'ref', revision: 1, phase: 'prepared', fileName: file().fileName }
   const ports = {
-    recordingImportUserId: vi.fn(async () => userId),
+    recordingStrategies: async () => ({ userId: 42, strategy: 'system-sd-asr/v1' }), recordingImportUserId: vi.fn(async () => userId),
     recordingDirectorySnapshot: vi.fn(async () => snapshot),
     acceptRecordingImport: vi.fn(async () => pub),
     retryRecordingImport: vi.fn(async () => pub),
