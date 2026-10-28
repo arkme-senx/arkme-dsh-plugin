@@ -1,4 +1,5 @@
 import { socialAccessStore } from '../src/client/social-access-store.js'
+import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
 import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: () => <div data-team-public-card-test /> }))
@@ -12,6 +13,7 @@ import { ArkmeDetailShell } from '../src/client/ArkmeDetailShell.js'
 import { createRoot } from 'react-dom/client'
 // @vitest-environment jsdom
 import { ArkmeRichText } from '../src/client/ArkmeRichText.js'
+import { ArkmeMuteIcon } from '../src/client/ArkmeMuteIcon.js'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
 import { arkmeEmojiById } from '../src/client/arkme-emoji.js'
 import { ArkmeComposerSendButton } from '../src/client/ArkmeComposerSendButton.js'
@@ -41,9 +43,9 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
-const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn(), extensions: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ upload: mocks.upload, fileCapabilities:async()=>({version:1,maxAttachments:9,maxFileBytes:1024,maxImageBytes:1024}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ readTeamExtensions: mocks.extensions, upload: mocks.upload, fileCapabilities:async()=>({version:1,maxAttachments:9,maxFileBytes:1024,maxImageBytes:1024}),stageFile:mocks.stage,localFileUrl:(ref:string)=>`/local/${ref}` }) }))
 import { TeamMessagingPanel, TeamConversationPane, TeamConversationRow } from '../src/client/TeamMessagingPanel.js'
 import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
@@ -77,6 +79,37 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it.each(['paused', 'blocked'] as const)('preserves the extension draft if the conversation becomes %s during phone preflight', async reason => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'原文',senderName:'同事'}
+    localStorage.setItem(storageKey, JSON.stringify({text:'待发送',assets:[],reply}))
+    let current = conversation, release!: () => void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline'
+      ? {conversation:current,messages:[],hasMore:false,beforeSeq:0}
+      : op === 'team.app.send.enqueue' ? accepted() : [])
+    await mount()
+    vi.spyOn(socialActionGuard, 'requirePhoneForSocialAction').mockImplementation(() => new Promise(resolve => {release = resolve}))
+    await send()
+    current = {...conversation, blocked:reason === 'blocked', channel:{...conversation.channel,enabled:reason !== 'paused'}}
+    await act(async () => { invalidateTeamMessages('test:11'); await tick() })
+    await act(async () => { release(); await tick() })
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.send.enqueue')).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(storageKey)!)).toEqual({text:'待发送',assets:[],reply})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('待发送')
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+  })
+
+  it('binds the focused nested extension when sending from its detail composer', async () => {
+    const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
+    const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}
+    mocks.extensions.mockImplementation(async (_conversation,ref) => ({message:ref==='child-ref'?child:source,items:ref==='child-ref'?[]:[child],totalCount:ref==='child-ref'?0:1,hasMore:false,nextSeq:2,throughSeq:2}))
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[source],hasMore:false,beforeSeq:0} : op === 'team.app.send.enqueue' ? accepted() : [])
+    await mount()
+    await act(async () => { renderer!.root.findByType(TeamConversationMessage).props.onDetail(); await tick() })
+    await act(async () => { renderer!.root.findByProps({'data-team-extension-item':'child'}).props.onClick(); await tick() })
+    await send()
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')?.[1].reply).toMatchObject({messageRef:'child-ref',messageKey:'child',version:1})
+  })
 
   it('opens the shared team introduction from the external conversation badge without changing its draft', async () => {
     await mount()
@@ -117,6 +150,108 @@ describe('Team send UI recovery', () => {
     expect(JSON.parse(localStorage.getItem(storageKey)!).reply).toBeUndefined()
     expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
   })
+  it('joins the Team extension target to the same input card shape as private chat', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({text:'下一条',assets:[],reply:{messageRef:'parent',messageKey:'parent',version:1,text:'原文',senderName:'同事'}}))
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />); await tick() })
+      const target = host.querySelector('[data-arkme-composer-extension-target]')!
+      const card = host.querySelector<HTMLElement>('[data-arkme-primary-composer]')!
+      expect(target.nextElementSibling).toBe(card)
+      expect(card.style.borderRadius).toBe('0 0 15px 15px')
+      expect(card.style.borderTopWidth).toBe('0px')
+      expect(card.style.borderColor).not.toBe('transparent')
+      await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="取消延展"]')!.click(); await tick() })
+      expect(host.querySelector('[data-arkme-composer-extension-target]')).toBeNull()
+      expect(card.style.borderRadius).toBe('15px')
+      expect(card.style.borderTopWidth).toBe('1px')
+      expect(host.querySelector('[contenteditable]')?.textContent).toBe('下一条')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it.each([['team',false],['external',false],['team',true],['external',true]] as const)('%s consumes the extension immediately and keeps it through a minimal sent ACK and delayed refresh (quote=%s)', async (side, quoted) => {
+    const current = {...conversation,side}
+    const quote = {version:1 as const,projection:'arkme-text-v1' as const,sourceDigest:'a'.repeat(64),recordVersion:3,start:0,end:4,text:'延展原文',prefix:'',suffix:''}
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'延展原文',senderName:'同事',media:[],...(quoted ? {quote} : {})}
+    localStorage.setItem(storageKey,JSON.stringify({text:'本条延展',assets:[],reply}))
+    let release!: (value: unknown) => void
+    let tasks: ReturnType<typeof accepted>[] = []
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation:current,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.tasks') return tasks
+      if (op === 'team.app.send.enqueue') return new Promise(resolve => { release = resolve })
+      return []
+    })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={current} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await send()
+    const stored = () => JSON.parse(localStorage.getItem(storageKey)!)
+    expect(stored().reply).toBeUndefined()
+    expect(stored().attempt.reply).toEqual(reply)
+    expect(stored().text).toBe('')
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+    const outgoing = () => renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(outgoing().reply).toMatchObject({key:'parent',version:3,text:'延展原文'})
+    await act(async () => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('下一条普通消息'))
+    await act(async () => {
+      tasks = [accepted({state:'sent',message:{key:'sent',ref:'sent-ref',seq:2,revision:1,side,sender:{nickname:''},own:false,state:'published',createdAt:0,version:0,contentStatus:'',media:[],canEdit:false,canDelete:false}})]
+      release(tasks[0]); await tick()
+    })
+    expect(outgoing().state).toBe('published')
+    expect(outgoing().own).toBe(true)
+    expect(outgoing().createdAt).toBeGreaterThan(0)
+    expect(outgoing().reply).toMatchObject({key:'parent',version:3,text:'延展原文'})
+    expect(outgoing().reply?.quote).toEqual(quoted ? quote : undefined)
+    expect(stored().text).toBe('下一条普通消息')
+    expect(stored().reply).toBeUndefined()
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    expect(outgoing().reply?.text).toBe('延展原文')
+  })
+
+  it('replaces a locally retained parent with the authoritative unavailable preview', async () => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'撤权前的原文',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'回复正文',assets:[],reply}))
+    const messages: TeamMessage[] = []
+    let tasks: ReturnType<typeof accepted>[] = []
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation,messages,hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.tasks') return tasks
+      if (op === 'team.app.send.enqueue') {
+        tasks = [accepted({state:'sent',message:{key:'sent',ref:'sent-ref',seq:2,revision:1,side:'external',sender:{nickname:''},own:false,state:'published',createdAt:0,version:0,contentStatus:'',media:[]}})]
+        return tasks[0]
+      }
+      return []
+    })
+    await mount(); await send()
+    const row = () => renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(row().reply?.text).toBe('撤权前的原文')
+    messages.push({...row(),version:1,contentStatus:'available',reply:{ref:'parent-ref',key:'parent',seq:1,version:3,state:'unavailable',text:'',sender:{nickname:''}}})
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    expect(row().reply).toMatchObject({state:'unavailable',text:''})
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('撤权前的原文')
+  })
+
+  it('restores the consumed extension and text on explicit rejection without dropping the next draft', async () => {
+    const reply = {messageRef:'parent-ref',messageKey:'parent',version:3,text:'原文',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'待发送',assets:[],reply}))
+    let reject!: (reason: unknown) => void
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return {conversation,messages:[],hasMore:false,beforeSeq:0}
+      if (op === 'team.app.send.enqueue') return new Promise((_resolve,fail) => { reject = fail })
+      return []
+    })
+    await mount(); await send()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(0)
+    await act(async () => renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('继续输入'))
+    await act(async () => { reject({body:{code:'team-channel_paused'}}); await tick() })
+    const saved = JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.reply).toEqual(reply)
+    expect(saved.text).toBe('待发送\n\n继续输入')
+    expect(saved.attempt).toBeUndefined()
+    expect(renderer!.root.findAllByProps({'data-arkme-composer-extension-target':'true'})).toHaveLength(1)
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+  })
+
   it('locates a bounded historical window and keeps background recovery in that window', async () => {
     const old: TeamMessage = {ref:'old-ref',key:'old',seq:10,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
     const head = {...old,key:'new',seq:100}, later = {...old,key:'later',seq:60}
@@ -222,6 +357,22 @@ describe('Team send UI recovery', () => {
         expect(badges[0]!.props.width).toBe('13')
       }
     }
+  })
+
+  it.each(['team', 'external'] as const)('%s places the shared mute icon at the preview end, outside the avatar', async side => {
+    const row = (muted: boolean) => <TeamConversationRow conversation={{ ...conversation, side,
+      notificationPolicy: { muted, policyVersion: 1, notifyAfterSeq: 0 },
+      preview: { status: 'available', text: '预览内容', hasMedia: false }, unread: 3,
+    }} onClick={() => {}} />
+    await act(async () => { renderer = create(row(true)) })
+    const icon = renderer!.root.findByType(ArkmeMuteIcon)
+    expect(icon.props.size).toBe(15)
+    expect(icon.parent!.props.style).toMatchObject({ color: conversationDirectoryStyles.preview.color, flex: 'none', display: 'inline-flex' })
+    expect(icon.parent!.parent!.props.style).toBe(conversationDirectoryStyles.chatBottom)
+    expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.sourceAvatarWrap }).findAllByType(ArkmeMuteIcon)).toHaveLength(0)
+    expect(renderer!.root.findByProps({ style: conversationDirectoryStyles.mentionUnread }).children).toEqual(['3'])
+    await act(async () => renderer!.update(row(false)))
+    expect(renderer!.root.findAllByType(ArkmeMuteIcon)).toHaveLength(0)
   })
 
   it('refreshes the conversation title membership from the authorized timeline', async () => {

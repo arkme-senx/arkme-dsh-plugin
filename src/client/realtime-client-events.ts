@@ -382,6 +382,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'chat-policy-invalidated') {
+          invalidateMessageQuoteSources()
           arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()

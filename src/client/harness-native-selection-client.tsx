@@ -125,7 +125,7 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
     let account = surface.getAttribute('data-arkme-account-scope')
     let accountId = surface.getAttribute('data-arkme-account-id')
     const sync = () => {
-      const next = surface.getAttribute('data-arkme-visible') === 'true'
+      const next = surface.getAttribute('data-arkme-visible') === 'true' && !surface.hasAttribute('data-arkme-history-session')
       const nextAccount = surface.getAttribute('data-arkme-account-scope')
       const nextAccountId = surface.getAttribute('data-arkme-account-id')
       if (!next || nextAccount !== account || nextAccountId !== accountId) { setMenu(null); dispatch({ type: 'exit' }) }
@@ -134,7 +134,7 @@ function NativeSelectionSession({ sessionId, useChat, inputActions, doc }: { ses
       setVisible(next)
     }
     const observer = new MutationObserver(sync)
-    observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-account-scope', 'data-arkme-account-id'] })
+    observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-history-session', 'data-arkme-account-scope', 'data-arkme-account-id'] })
     const exit = () => { setMenu(null); dispatch({ type: 'exit' }) }
     doc.defaultView!.addEventListener('pagehide', exit)
     sync()

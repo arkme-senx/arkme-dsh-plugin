@@ -1249,6 +1249,7 @@ export interface ArkmeDshInputOrigin {
 }
 
 export interface ArkmeSearchRecordItem {
+  messageActionRef?: string
   selfRole?: ArkmeSelfRoleSnapshot
   /** DSH input identity resolved from local public session events; never persisted by record sync. */
   dshOrigin?: ArkmeDshInputOrigin
@@ -1307,6 +1308,7 @@ export interface ArkmeSearchSourceAggregate extends ArkmeSearchSourceMatch {
 }
 
 export interface ArkmeRecordSearchResult {
+  appliedArticleScope?: ArkmeLongArticleBrowseScope
   items: ArkmeSearchRecordItem[]
   sourceAggregates: ArkmeSearchSourceAggregate[]
   hasMore: boolean
@@ -1517,6 +1519,7 @@ arkoImagesV1?:true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
+    teamMessageExtensions?: 1
     teamMessageInteractions?: 1
     teamNotificationPoliciesV1?: true
     teamProfiles?: true
@@ -1526,6 +1529,8 @@ arkoImagesV1?:true
     dshAccountSessions?: true
     remoteRecordSearch?: true
     contactDirectoryReads?: true
+    personRecordsV1?: true
+    articleLibraryV1?: true
     relationPages?: true
     recordingPersonReferences?: true
     recordingEntities?: true
@@ -4155,6 +4160,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'source.person-records.page'
+  | 'articles.list'
   | 'native-chat.annotations'
   | 'arko.models'
   | 'arko.ask'
@@ -4243,7 +4250,7 @@ export type ArkmePluginOperation =
   | 'team.external'
   | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
   | 'team.messages.marks-read' | 'team.messages.marks-change'
-  | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
+  | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'

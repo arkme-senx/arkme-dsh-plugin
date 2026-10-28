@@ -4,7 +4,8 @@ import {createArkmeSdk} from '../sdk/index.js'
 import {ArkmeReactionPreview,ArkmeReactionSelections} from './ArkmeReactionPreview.js'
 import type {ReactionPreviewTarget} from './reaction-preview-store.js'
 import type {ReactionActor} from '../reaction-contract.js'
-import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
+import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
+import { TeamMessageMediaScope } from './TeamMessageContent.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { conversationMessageMenu } from './conversation-message-actions.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from './message-selection-presentation.js'
@@ -66,6 +67,10 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     onClickCapture={event => { if (selecting) { event.preventDefault(); event.stopPropagation(); if (!busy) onToggle?.() } }}
     data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? messageSelectionStyles.rowSelectAvatarMode : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
     {selecting && <ArkmeMessageSelectionControl anchor="avatar" checked={selected} disabled={busy || !teamMessageSelectable(message)} onToggle={() => onToggle?.()} />}
+    <div data-arkme-extension-message-cluster={available && message.reply ? 'true' : undefined} style={{minWidth:0,maxWidth:'100%',display:'flex',flexDirection:'column',alignItems:message.own?'flex-end':'flex-start'}}>
+      {available && message.reply && <TeamMessageMediaScope message={{...message,key:message.reply.key,media:message.reply.media ?? []}}>
+        <ArkmeExtensionParentPreview parent={teamReplyPresentation(message)!} isMe={message.own} onSelect={selecting ? undefined : onOpenReply} />
+      </TeamMessageMediaScope>}
     <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}) }}>
       <div style={layout.messageAvatar}>{avatar}</div>
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
@@ -89,7 +94,6 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
-          {available && message.reply && <ArkmeQuotePreview parent={teamReplyPresentation(message)!} wholeMessageText={message.reply.text} onOpen={onOpenReply} />}
           {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
           {reactionTarget&&!selecting&&<ArkmeReactionSelections scope={accountKey!} target={reactionTarget}
             actorName={reactionSelfName || (message.own ? message.sender.nickname : '') || '我'} actorAvatarRef={reactionSelfAvatarRef}
@@ -118,5 +122,6 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
       submitReport={(input,signal)=>createArkmeSdk().reportTeamMessage(conversationRef,message.ref,message.version,({1:'spam',2:'illegal',3:'harassment',4:'other'} as const)[input.reportType],input.reason??'',signal)}
       onClose={()=>setReporting(false)} onSubmitted={()=>{setReporting(false);setReported(true)}} />}
     {reported && <Toast text={tr('举报已提交')} anchor={bubble.current} icon={<IconCheckOutlineMedium />} onDone={()=>setReported(false)} />}
+    </div>
   </article>
 }

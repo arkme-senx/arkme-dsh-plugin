@@ -1,4 +1,5 @@
 import { longArticleWindowBridge } from './long-article-window.js'
+import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArticleAutoPublisher } from './article-auto-publisher.js'
 import { ArkmeLongArticleActions } from './ArkmeLongArticleActions.js'
 import { ArkmeDictationButton, textareaDictationTarget } from './ArkmeDictationButton.js'
@@ -64,7 +65,7 @@ export interface ArkmeLongArticleDialogProps {
   overlayZIndex?: number
   initialDirectoryPage?: import('../types.js').ArkmeRecordSearchResult | undefined
   onClose: () => void
-  onDeleted?: (itemUid: string) => void
+  onDeleted?: (itemUid: string, ownerUserId?: ArkmeTimelineItem['recordOwnerUserId']) => void
   onCreated?: (item: ArkmeTimelineItem) => void | Promise<void>
   onUpdated?: (detail: ArkmeLongArticleDetail) => void | Promise<void>
   /** A new native/conversation draft must still be explicitly sent to its recipients. */
@@ -141,6 +142,8 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const plainBodyRef = useRef<HTMLTextAreaElement>(null)
   const [dictationBusy, setDictationBusy] = useState(false)
   const [detail, setDetail] = useState<ArkmeLongArticleDetail>()
+  const [readDenied, setReadDenied] = useState(false)
+  const closeReadRef = useRef(onClose); closeReadRef.current = onClose
   const publishedDetail = useRef(detail); publishedDetail.current = detail
   const detailRequest = useRef<AbortController>()
   useEffect(() => () => detailRequest.current?.abort(), [])
@@ -264,6 +267,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       const auth = arkmeAuthStore.getSnapshot().auth
       if (controller.signal.aborted || (authAtOpen.current?.status === 'authenticated'
         && (auth?.status !== 'authenticated' || auth.userId !== authAtOpen.current.userId || auth.environment !== authAtOpen.current.environment))) return
+      setReadDenied(false)
       setDetail(value)
       setDraftFormat(value.textFormat ?? 'plain')
       setTitle(value.title)
@@ -271,11 +275,24 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       originalRef.current = { title: value.title, textContent: value.textContent }
       setDurationBaseMillis(value.editDurationMillis)
     } catch (caught) {
-      if (!controller.signal.aborted) setError(errorMessage(caught))
+      if (!controller.signal.aborted) {
+        if (messageActionRef.current && (caught as { body?: { retryable?: boolean } } | null)?.body?.retryable === false) {
+          setReadDenied(true); setDetail(undefined); skipUnmountSaveRef.current = true; closeReadRef.current()
+        }
+        setError(errorMessage(caught))
+      }
     } finally {
       if (!controller.signal.aborted) setLoading(false)
     }
   }, [itemUid, sourceRef])
+  useEffect(() => {
+    if (editing || !itemUid || !item?.messageActionRef) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stop = subscribeMessageQuoteInvalidations(() => {
+      if (timer === undefined) timer = setTimeout(() => { timer = undefined; void loadDetail() }, 100)
+    })
+    return () => { stop(); if (timer !== undefined) clearTimeout(timer) }
+  }, [editing, itemUid, item?.messageActionRef, loadDetail])
 
   useEffect(() => arkmeAuthStore.subscribe(() => {
     const auth = arkmeAuthStore.getSnapshot().auth
@@ -344,14 +361,14 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
           if (latestPublication.current.dirty) await saveDraft()
           // Incomplete new articles remain recoverable drafts rather than invalid empty records.
           if (latestPublication.current.dirty && (!creating || (titleRef.current.trim() && textRef.current.trim()))) await publisher.current!.flush()
-          skipUnmountSaveRef.current = true; onClose()
+          skipUnmountSaveRef.current = true; closeReadRef.current()
         } catch (caught) { setError(errorMessage(caught)); setPublicationFailed(true); workspace?.onLeaveFailed(); windowMode?.cancelClose() }
         finally { closingDraftRef.current = false; setClosingDraft(false) }
       })()
       return
     }
     if (editing && dirty) { setClosePrompt(true); return }
-    skipUnmountSaveRef.current = true; onClose()
+    skipUnmountSaveRef.current = true; closeReadRef.current()
   }, [dirty, editing, onClose, saveDraft, windowMode, accountChanged, creating, manualCompose, actionBusy, workspace?.onLeaveFailed])
 
   useEffect(() => workspace?.registerClose(requestClose), [workspace?.registerClose, requestClose])
@@ -371,7 +388,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       if (keep && accountChanged) throw new Error('账号已切换，无法保存；请保留窗口或复制内容后再关闭')
       if (keep) await saveDraft()
       else if (!accountChanged) await deleteDraft()
-      skipUnmountSaveRef.current = true; onClose()
+      skipUnmountSaveRef.current = true; closeReadRef.current()
     } catch (caught) { setError(errorMessage(caught)); windowMode?.cancelClose() }
     finally { closingDraftRef.current = false; setClosingDraft(false) }
   }
@@ -453,7 +470,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
         onPrepared({ sourceRef, ...submissionIds, title: normalizedTitle, textContent: normalizedText,
           textFormat: format, durationMillis: duration, updatedAtMillis: Date.now(),
           ...(value ? { document: value.document, images: value.images } : {}) })
-        skipUnmountSaveRef.current = true; onClose(); return
+        skipUnmountSaveRef.current = true; closeReadRef.current(); return
       }
       let updated: ArkmeLongArticleDetail
       if (firstPublish) {
@@ -507,7 +524,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       setPublicationFailed(false)
       if (windowMode && longArticleWindowBridge()?.version === 3) void longArticleWindowBridge()?.changed?.()
       if (!manualCompose) void Promise.resolve().then(() => onUpdated?.(updated)).catch(() => showImageNotice({ kind: 'error', message: '长文已发布，列表更新失败，请重新打开核对' }))
-      if (manualCompose) { skipUnmountSaveRef.current = true; onClose() }
+      if (manualCompose) { skipUnmountSaveRef.current = true; closeReadRef.current() }
     } catch (caught) {
       if (caught instanceof ArkmeClientError) setFailedReferences((caught.body.imageFailures ?? []).flatMap(failure => failure.fileRef ? [`arkme-local:${failure.fileRef}`] : failure.fileAssetUid ? [`arkme-asset:${failure.fileAssetUid}`] : []))
       throw caught
@@ -544,10 +561,11 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
     }
   }, [manualCompose])
 
-  const titleValue = editing ? title : detail?.title ?? item?.title ?? ''
-  const textValue = editing ? textContent : detail?.textContent ?? item?.textContent ?? ''
+  const hideRead = !editing && (readDenied || accountChanged)
+  const titleValue = hideRead ? '' : editing ? title : detail?.title ?? item?.title ?? ''
+  const textValue = hideRead ? '' : editing ? textContent : detail?.textContent ?? item?.textContent ?? ''
   const readFormat = detail === undefined ? item?.textFormat : detail.textFormat
-  const readBlocks = detail === undefined ? item?.contentBlocks : detail.contentBlocks
+  const readBlocks = hideRead ? undefined : detail === undefined ? item?.contentBlocks : detail.contentBlocks
   const wordCount = (article || readFormat === 'markdown') ? arkmeMarkdownPlainText(textValue).replace(/\[图片\]/g, '').length : textValue.length
   const sendAt = detail?.sendAtMillis ?? item?.sendAtMillis ?? 0
   const articleStats = <span style={styles.meta}>▤ {String(wordCount)}{tr("字")}</span>
@@ -558,7 +576,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   </span>
   const moreActions = !manualCompose && <ArkmeLongArticleActions sourceRef={sourceRef} detail={detail} dismissRef={dismissActions} onBusyChange={setActionBusy}
     beforeAction={async () => { await publisher.current!.flush(); return publishedDetail.current }}
-    onDeleted={uid => { if (windowMode) void longArticleWindowBridge()?.changed?.(); skipUnmountSaveRef.current = true; publisher.current!.stop(); onDeleted?.(uid); onClose() }} />
+    onDeleted={uid => { if (windowMode) void longArticleWindowBridge()?.changed?.(); skipUnmountSaveRef.current = true; publisher.current!.stop(); const owner = detail?.actionItem?.recordOwnerUserId ?? item?.recordOwnerUserId; if (owner === undefined) onDeleted?.(uid); else onDeleted?.(uid, owner); onClose() }} />
   const publishAction = <button data-arkme-feedback="neutral" type="button" style={{ ...styles.action, ...(windowMode ? { background: theme.primaryAction, color: theme.onPrimaryAction, padding: '8px 18px', fontSize: 14 } : {}), opacity: submitting ? .55 : 1 }} disabled={dictationBusy || loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !article) || submitting || closingDraft || closePrompt || accountChanged || preparingImages || Boolean(article?.pendingImages) || Boolean(article?.failedImages)} onClick={() => { void publish().catch(caught => { setError(errorMessage(caught)) }) }}>{windowMode ? (creating ? (submitting ? tr('发送中…') : tr('发送')) : (submitting ? tr('正在保存…') : tr('确认修改'))) : creating && onPrepared ? (submitting ? '正在添加…' : '添加到待发送') : (submitting ? '发布中…' : tr("发布"))}</button>
 
   return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}), ...(workspace ? { position: 'relative', inset: 'auto', display: 'flex', height: '100%', minHeight: 0, width: '100%', padding: 0, zIndex: 'auto', background: 'transparent' } : {}) }} role={workspace ? 'region' : 'dialog'} aria-modal={windowMode || workspace ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>

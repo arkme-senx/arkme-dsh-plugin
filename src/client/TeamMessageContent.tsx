@@ -38,11 +38,16 @@ export function TeamMessageContent({ message, conversationRef, presentation }: {
 
 export function teamReplyPresentation(message: TeamMessage) {
   const reply=message.reply
-  return reply ? {itemUid:reply.key,senderName:reply.sender.nickname,title:'',textContent:reply.text,
+  return reply ? {itemUid:reply.key,senderName:reply.sender.nickname,title:reply.title ?? '',textContent:reply.text,
+    contentBlocks: (reply.media ?? []).map((media,sortOrder) => ({kind:media.mimeType.startsWith('image/')?'image' as const:media.mimeType.startsWith('video/')?'video' as const:media.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:media.ref,fileName:media.name,mimeType:media.mimeType,size:media.size,sortOrder})),
     sequence:reply.seq,quoteState:reply.state,...(reply.quote ? {quote:reply.quote} : {})} : undefined
 }
 
 export function TeamMessageMediaScope({message,children}:{message:TeamMessage;children:ReactNode}) {
  const urls=new Map(message.media.map(media=>[media.ref,media.url]))
  return <ArkmeMediaAccessContext.Provider value={{url:block=>urls.get(block.mediaRef)??''}}>{children}</ArkmeMediaAccessContext.Provider>
+}
+
+export function teamPendingReply(reply: import('../team-app-contract.js').TeamReplyTarget | undefined) {
+ return reply ? {ref:reply.messageRef,key:reply.messageKey,seq:0,version:reply.version,state:'available' as const,text:reply.text,title:reply.title ?? '',media:reply.media ?? [],sender:{nickname:reply.senderName},...(reply.quote?{quote:reply.quote}:{})} : undefined
 }

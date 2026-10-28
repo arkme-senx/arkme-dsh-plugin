@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
@@ -13,38 +13,11 @@ import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
+import { useBuiltinPreviewPage, type Page } from './builtin-preview-page.js'
 import type { BuiltinConversation } from './builtin-directory-preferences.js'
 
 const button = { border: 0, padding: '6px 8px', borderRadius: 6, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 13 }
 const status = { padding: 16, color: arkmeTheme.secondary, fontSize: 13 }
-type Page<T> = { items: T[]; cursor?: string; warning?: string }
-
-/** Read-only pagination, isolated per mounted account and source. Failed pages retain visible content. */
-export function useBuiltinPreviewPage<T>(read: (cursor: string | undefined, signal: AbortSignal) => Promise<Page<T>>, key: (item: T) => string) {
-  const [page, setPage] = useState<Page<T>>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
-  const request = useRef<AbortController>(), failedCursor = useRef<string>(), keyRef = useRef(key)
-  keyRef.current = key
-  const load = useCallback(async (cursor?: string) => {
-    if (request.current) return
-    const controller = new AbortController(); request.current = controller; failedCursor.current = cursor
-    setLoading(true); setError('')
-    const timer = setTimeout(() => { controller.abort(); setError(tr('内容加载超时，请重试')); setLoading(false); request.current = undefined }, 20000)
-    controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
-    try {
-      const next = await read(cursor, controller.signal)
-      if (controller.signal.aborted) return
-      if (next.cursor !== undefined && next.cursor === cursor) throw new Error(tr('历史分页异常，请重试'))
-      setPage(old => ({ ...next, items: [...new Map([...(cursor ? old?.items ?? [] : []), ...next.items].map(item => [keyRef.current(item), item])).values()] }))
-    } catch (caught) {
-      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : tr('加载失败，请重试'))
-    } finally {
-      clearTimeout(timer)
-      if (request.current === controller) { request.current = undefined; setLoading(false) }
-    }
-  }, [read])
-  useEffect(() => { void load(); return () => { request.current?.abort(); request.current = undefined } }, [load])
-  return { page, loading, error, more: () => load(page?.cursor), retry: () => load(failedCursor.current) }
-}
 
 function PreviewPage<T>({ state, children, history = true }: { state: ReturnType<typeof useBuiltinPreviewPage<T>>; children: ReactNode; history?: boolean }) {
   const body = useRef<HTMLDivElement>(null), geometry = useRef<{ top: number; height: number }>()
@@ -102,18 +75,28 @@ function ArkoPreview({ name }: { name: string }) {
     </Bubble>)}</PreviewPage>
 }
 
-function HarnessHistory({ session }: { session: DshAccountSession }) {
+/** Message bodies live in projected data; presentation text describes activity nodes. */
+function harnessHistoryText(node: DshRemoteTimelineNode): string {
+  const data = node.data ?? {}
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = node.kind === 'assistant' ? data.blocks ?? message?.content : data.content
+  const text = Array.isArray(blocks) ? blocks.flatMap(block =>
+    block && (block.type === 'text' || block.type === 'reasoning') && typeof block.text === 'string' ? [block.text] : []).join('\n\n') : ''
+  return text || node.presentation.details || node.presentation.summary || node.presentation.title || tr('暂无文本内容')
+}
+
+function HarnessHistory({ session, cloudOnly = false }: { session: DshAccountSession; cloudOnly?: boolean }) {
   const read = useCallback(async (cursor: string | undefined, signal: AbortSignal): Promise<Page<DshRemoteTimelineNode>> => {
     const page = await callArkme<DshAccountSessionHistory>('remote.session.read', { runtimeRef: session.runtimeRef, sessionRef: session.sessionRef,
-      source: session.presence === 'online' && session.capabilities.includes('session.history') ? 'host' : 'cloud',
+      source: !cloudOnly && session.presence === 'online' && session.capabilities.includes('session.history') ? 'host' : 'cloud',
       ...(cursor ? { cursor: JSON.parse(cursor) as DshSessionHistoryCursor } : {}) }, signal)
     return { items: page.nodes, ...(page.nextCursor ? { cursor: JSON.stringify(page.nextCursor) } : {}), ...(page.warning ? { warning: page.warning } : {}) }
-  }, [session.runtimeRef, session.sessionRef, session.presence, session.capabilities])
+  }, [session.runtimeRef, session.sessionRef, session.presence, session.capabilities, cloudOnly])
   const state = useBuiltinPreviewPage(read, item => item.node_ref)
-  return <PreviewPage state={state}>{[...state.page?.items ?? []].sort((a,b) => a.anchor_seq-b.anchor_seq || a.ordinal-b.ordinal).map(item =>
+  return <PreviewPage state={state}><div style={{ maxWidth: 800, margin: '0 auto' }}>{[...state.page?.items ?? []].sort((a,b) => a.anchor_seq-b.anchor_seq || a.ordinal-b.ordinal).map(item =>
     <Bubble key={item.node_ref} own={item.kind === 'user'} name={item.kind === 'user' ? tr('我') : item.kind === 'assistant' ? 'DeepSeek Harness' : item.presentation.title || tr('任务活动')} at={item.time}>
-      <ArkmeMarkdownBody text={item.presentation.details || item.presentation.summary || item.presentation.title || tr('暂无文本内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.6 }} />
-    </Bubble>)}</PreviewPage>
+      <ArkmeMarkdownBody text={harnessHistoryText(item)} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.6 }} />
+    </Bubble>)}</div></PreviewPage>
 }
 
 function HarnessSessions({ onSelect }: { onSelect(session: DshAccountSession): void }) {

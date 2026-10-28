@@ -9,8 +9,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { callArkme } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
-import { openNativeAccountSession } from './harness-native-navigation.js'
-import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
+import { HARNESS_HISTORY_PREVIEW, openNativeAccountSession } from './harness-native-navigation.js'
+import { HARNESS_LOCAL_SESSION_OPEN, HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
 import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
 type SessionsState = HarnessSessionList
@@ -66,7 +66,13 @@ export function projectAccountSessions(local: SessionsState, rows: readonly DshA
     ids.push(id)
   }
   const current = selected ? (selected.local ? selected.sessionRef : accountSessionKey(selected)) : local.current
-  return { ...local, byId, ids: [...new Set(ids)], current: (current ? directory?.preferredSession?.(current) || directory?.canonicalLocal?.(current) || current : current) as SessionId }
+  const currentId = (current ? directory?.preferredSession?.(current) || directory?.canonicalLocal?.(current) || current : current) as SessionId
+  // Native rows derive selection from mainView ownership, not the compatibility current field.
+  if (selected) for (const row of Object.values(byId)) {
+    const mainView = row.id === currentId ? 1 : 0
+    if ((row.retainedBy?.mainView ?? 0) !== mainView) byId[row.id] = { ...row, retainedBy: { ...row.retainedBy, mainView } }
+  }
+  return { ...local, byId, ids: [...new Set(ids)], current: currentId }
 }
 
 export function projectAccountWorkspaces(local: WorkspacesState, rows: readonly DshAccountSession[]): WorkspacesState {
@@ -212,6 +218,21 @@ function useSurfaceAccount(surface: Element): string {
 }
 
 /** All native sources share one account-scoped catalog. */
+export function useAccountHistorySession(surface: Element, visibleOnly = false): DshAccountSession | undefined {
+  const catalog = useMemo(() => accountSessionCatalog(surface), [surface])
+  const snapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+  const historyId = useSyncExternalStore(listener => {
+    const observer = new MutationObserver(listener)
+    observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-history-session', 'data-arkme-visible'] })
+    return () => observer.disconnect()
+  }, () => visibleOnly && surface.getAttribute('data-arkme-visible') === 'false' ? null : surface.getAttribute('data-arkme-history-session'))
+  const retained = useRef<DshAccountSession>()
+  const selected = snapshot.rows.find(row => !row.local && accountSessionKey(row) === historyId)
+  if (!historyId || retained.current && accountSessionKey(retained.current) !== historyId) retained.current = undefined
+  if (selected) retained.current = selected
+  return retained.current
+}
+
 export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
   const account = useSurfaceAccount(surface)
   return <AccountBrowser key={account} Native={Native} surface={surface} {...props} />
@@ -219,7 +240,6 @@ export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProp
 
 function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
   const sourceRuntime: string | null = null
-  const creating = useRef(false)
   const [operationError, setOperationError] = useState('')
   const catalogState = props.useSessions(state => state)
   const local = useMemo(() => ({ ...catalogState, current: currentHarnessSession(catalogState) }), [catalogState])
@@ -234,7 +254,8 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
     return () => catalog.dispose()
   }, [catalog])
   useEffect(() => { void catalog.refresh() }, [local.current, catalog])
-  const sessionState = useMemo(() => projectAccountSessions(local, rows), [local, rows])
+  const selectedHistory = useAccountHistorySession(surface)
+  const sessionState = useMemo(() => projectAccountSessions(local, rows, selectedHistory), [local, rows, selectedHistory])
   const workspaceState = useMemo(() => projectAccountWorkspaces(workspaces, rows), [workspaces, rows, local])
   const view = props.useStore(state => state)
   const viewState = useMemo(() => projectAccountSessionOrder(view, sessionState), [view, sessionState])
@@ -284,31 +305,39 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   const command = async (id: string, operation: string, body = {}) => {
     const target = remote(id)
     if (!target) throw new Error('会话不存在')
+    if (!target.local) { readOnly(); return }
     const value = await callArkme('remote.session.command', { runtimeRef: target.runtimeRef, sessionRef: target.sessionRef, operation, body, requestRef: crypto.randomUUID() }, catalog.signal)
     await catalog.refresh()
     return value
   }
+  const readOnly = () => setOperationError('其他电脑的会话仅支持只读查看，请在对话所属电脑上执行。')
   const open = (id: string) => {
-    const target = remote(id)
-    if (local.byId[id as SessionId]) props.open(id)
+    const directory = (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__
+    const preferred = directory?.preferredSession?.(id)
+    const nativeId = preferred && !preferred.startsWith('arkme:') ? preferred : id
+    const target = remote(nativeId)
+    if (nativeId.startsWith('arkme:')) {
+      if (target) {
+        const doc = surface.ownerDocument
+        doc.dispatchEvent(new doc.defaultView!.CustomEvent(HARNESS_HISTORY_PREVIEW, { detail: {
+          session: target, accountId: surface.getAttribute('data-arkme-account-id') ?? '', accountScope: surface.getAttribute('data-arkme-account-scope') ?? '',
+        } }))
+      }
+      else setOperationError('会话目录尚未就绪，请稍后重试。')
+      return
+    }
+    document.dispatchEvent(new Event(HARNESS_LOCAL_SESSION_OPEN))
+    if (local.byId[nativeId as SessionId]) props.open(nativeId)
     else if (target) void navigate(target)
   }
   return <>
     <Native {...props} useSessions={useSessions} useWorkspaces={useWorkspaces} useStore={useStore} open={open}
-      renameSession={(id, title) => remote(id) ? command(id, 'session.rename', { title }).then(() => undefined) : props.renameSession(id, title)}
-      archiveSession={async id => { if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
-      forkSession={id => { if (!remote(id)) props.forkSession(id); else setOperationError('此操作需要在对话所属电脑上执行。') }}
+      renameSession={async (id, title) => { if (id.startsWith('arkme:')) { readOnly(); return }; if (remote(id)) await command(id, 'session.rename', { title }); else await props.renameSession(id, title) }}
+      archiveSession={async id => { if (id.startsWith('arkme:')) { readOnly(); return }; if (remote(id)) await command(id, 'session.archive'); else await props.archiveSession(id) }}
+      forkSession={id => { if (!id.startsWith('arkme:') && !remote(id)) props.forkSession(id); else readOnly() }}
       startSession={id => {
-        if (!id?.startsWith('arkme:')) { props.startSession(id); return }
-        const source = rows.find(row => `arkme:${row.runtimeRef}:${row.workspaceRef}` === id)
-        if (!source || creating.current) return
-        const blank = rows.find(row => row.runtimeRef === source.runtimeRef && row.workspaceRef === source.workspaceRef && row.blank && !row.archived)
-        if (blank) { void navigate(blank); return }
-        creating.current = true
-        void callArkme<{ sessionId: string }>('remote.session.command', { runtimeRef: source.runtimeRef, operation: 'session.create', requestRef: crypto.randomUUID(), body: { workspace_ref: source.workspaceRef } }, catalog.signal)
-          .then(value => { if (!catalog.signal.aborted) return navigate({ ...source, sessionRef: value.sessionId }) })
-          .catch(error => { if (!catalog.signal.aborted) setOperationError(error instanceof Error ? error.message : '新建会话失败') })
-          .finally(() => { creating.current = false })
+        if (!id?.startsWith('arkme:')) { document.dispatchEvent(new Event(HARNESS_LOCAL_SESSION_OPEN)); props.startSession(id) }
+        else readOnly()
       }} />
     {operationError && <Modal open closeLabel="关闭" onClose={() => setOperationError('')} title="无法执行操作"><p>{operationError}</p><Button onClick={() => setOperationError('')}>知道了</Button></Modal>}
   </>

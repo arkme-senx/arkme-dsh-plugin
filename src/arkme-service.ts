@@ -503,6 +503,9 @@ export class ArkmeService {
     if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
     return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
   }
+  async readTeamExtensions(conversationRef:string,messageRef:string,options:import('./team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage> {
+    return await this.executeTeamApp('team.app.extensions',{conversationRef,messageRef,...options},signal) as import('./team-app-contract.js').TeamExtensionPage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -690,6 +693,7 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
       (raw, session) => this.chat.calendarSharedRecordingPreview(raw, session))
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
+    this.search.articleActionRef = (raw, sourceRef, signal) => this.chat.articleSearchActionRef(raw, sourceRef, signal)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
@@ -1228,6 +1232,7 @@ arkoImagesV1:true,
         entityArchive: true,
         teamProfiles: true,
         teamExternalChats: true,
+        teamMessageExtensions: 1,
         teamMessageInteractions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,
@@ -1235,6 +1240,8 @@ arkoImagesV1:true,
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        personRecordsV1: true,
+        articleLibraryV1: true,
         relationPages: true,
         recordingEntities: true,
         recordingPersonReferences: true,
@@ -1977,6 +1984,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}) {
+    return this.chat.personRecordsPage(sourceRef, memberRef, options)
+  }
   async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
     return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
   }

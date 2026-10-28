@@ -1,3 +1,5 @@
+import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
+import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
 import {forwardTargetStyles} from './forward-target-styles.js'
 import {ArkmeForwardTargetDialog} from './ArkmeForwardTargetDialog.js'
@@ -630,18 +632,6 @@ const styles: Record<string, CSSProperties> = {
   bubble: arkmeConversationMessageLayout.bubble,
   bubbleMe: arkmeConversationMessageLayout.bubbleMe,
   bubbleOther: arkmeConversationMessageLayout.bubbleOther,
-  extensionParentPreview: {
-    maxWidth: 'min(600px, 100%)', minWidth: 30, display: 'flex', alignItems: 'center', gap: 8,
-    padding: 8, boxSizing: 'border-box', overflow: 'hidden', borderRadius: '12px 12px 0 0',
-    background: `linear-gradient(180deg, ${arkmeTheme.subtle} 0%, transparent 68.06%)`,
-    color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px',
-  },
-  extensionParentPreviewMe: { marginRight: ARKME_MESSAGE_AVATAR_SIZE + 10 },
-  extensionParentPreviewOther: { marginLeft: ARKME_MESSAGE_AVATAR_SIZE + 10 },
-  extensionParentText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  extensionParentMedia: { display: 'flex', flex: 'none', gap: 4 },
-  extensionParentImage: { width: 32, height: 32, display: 'block', objectFit: 'cover', borderRadius: 5, background: arkmeTheme.subtle },
-  extensionParentFile: { maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary },
   forwardBubble: { width: 354, maxWidth: '100%', minWidth: 0, padding: '13px 15px' },
   sharedRecordingBubble: {
     width: '100%', maxWidth: '100%', minWidth: 0, padding: '18px 21px',
@@ -1536,54 +1526,6 @@ export function ArkmeTimelineMessageHeader({
   </span>
 }
 
-function ArkmeExtensionParentPreview({ parent, isMe, onSelect }: {
-  parent: ArkmeTimelineExtensionParent
-  isMe: boolean
-  onSelect?: () => void
-}) {
-  if (parent.quote || parent.quoteState === 'unavailable') return <div style={{ ...styles.extensionParentPreview, ...(isMe ? styles.extensionParentPreviewMe : styles.extensionParentPreviewOther), background: 'transparent' }}><ArkmeQuotePreview parent={parent} onOpen={onSelect} /></div>
-  const text = parent.textContent.trim() || parent.title.trim()
-  const blocks = [...(parent.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
-  const visuals = blocks.filter(block => block.kind === 'image' || block.kind === 'video').slice(0, 3)
-  const firstFile = blocks.find(block => block.kind !== 'image' && block.kind !== 'video')
-  return <div
-    data-arkme-extension-parent-preview={parent.itemUid}
-    style={{
-      ...styles.extensionParentPreview,
-      ...(isMe ? styles.extensionParentPreviewMe : styles.extensionParentPreviewOther),
-      ...(onSelect === undefined ? {} : { cursor: 'pointer' }),
-    }}
-    title={arkmeEmojiPlainText(text) || firstFile?.fileName}
-    role={onSelect === undefined ? undefined : 'button'}
-    tabIndex={onSelect === undefined ? undefined : 0}
-    onClick={onSelect}
-    onKeyDown={onSelect === undefined ? undefined : event => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() }
-    }}
-  >
-    {text !== '' && <span style={styles.extensionParentText}><ArkmeRichText text={text} presentation="preview" /></span>}
-    {visuals.length > 0 && <span style={styles.extensionParentMedia} aria-label={tr("原消息附件")}>
-      {visuals.map(block => block.kind === 'image'
-        ? <span key={block.mediaRef} style={{ position: 'relative', display: 'flex', alignSelf: 'center', flex: 'none' }}>
-          <img
-            src={block.localFileRef === undefined
-              ? `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}`
-              : createArkmeSdk().localFileUrl(block.localFileRef)}
-            alt={block.fileName}
-            draggable={false}
-            style={styles.extensionParentImage}
-          />
-          {block.dynamicPhoto !== undefined && <span aria-label={tr("实况照片")} style={{ position: 'absolute', display: 'flex', left: 2, bottom: 2, pointerEvents: 'none' }}>
-            <ArkmeLivePhotoBadge variant="extension" />
-          </span>}
-        </span>
-        : <span key={block.mediaRef} style={styles.extensionParentFile}>{block.fileName || tr("视频")}</span>)}
-    </span>}
-    {text === '' && visuals.length === 0 && firstFile !== undefined
-      ? <span style={styles.extensionParentFile}>{firstFile.fileName || '附件'}</span>
-      : null}
-  </div>
-}
 
 function normalizedEpochMillis(value: number): number {
   return value > 0 && value < 100_000_000_000 ? value * 1000 : value
@@ -9043,13 +8985,7 @@ export function ArkmeSurface({
                 if (activeRecordReeditComposer === undefined) { arkmeComposerDraftStore.setExtensionTarget(composerDraftKey, undefined); textareaRef.current?.focus() }
                 else void closeRecordReedit()
               }}>
-                {(activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote) && (activeComposerTargetItem.contentBlocks?.length ?? 0) > 0 && <div style={styles.composerExtensionTargetFiles}>
-                  {activeComposerTargetItem.contentBlocks?.slice(0, 3).map((block, index) => <span key={`${block.mediaRef}:${String(index)}`} style={styles.composerExtensionTargetFile} title={block.fileName || '附件'}>
-                    {block.kind === 'image'
-                      ? <><img style={styles.composerExtensionTargetImage} src={createArkmeSdk().mediaUrl(block.mediaRef)} alt={block.fileName || '图片附件'} /><span hidden>{block.fileName || '附件'}</span></>
-                      : block.fileName || '附件'}
-                  </span>)}
-                </div>}
+                {(activeRecordReeditComposer !== undefined || !composerExtensionTarget?.quote) && <ArkmeComposerTargetAttachments blocks={activeComposerTargetItem.contentBlocks ?? []} />}
             </ArkmeComposerTargetPreview>}
             {activeRecordReeditComposer === undefined && composerExtensionTarget?.quote && !quoteReplySupport.ready && <div role="status" data-arkme-quote-support style={{ padding: '6px 10px', fontSize: 12, color: arkmeTheme.secondary }}>
               {quoteReplySupport.message} <button type="button" onClick={quoteReplySupport.retry} style={{ font: 'inherit', color: arkmeTheme.text, border: 0, background: 'transparent', cursor: 'pointer' }}>重新检查</button>
