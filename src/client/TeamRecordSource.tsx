@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
@@ -53,7 +54,7 @@ export function TeamRecordSource({ conversationUid, navigable = false, onOpened 
       const timeline = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: source.conversationRef }, signal)
       if (signal.aborted) return
       onOpened?.()
-      openTeamMessages({ kind: 'conversation', conversation: timeline.conversation })
+      openTeamEntryMessages({ kind: 'conversation', conversation: timeline.conversation })
     } catch {
       if (!signal.aborted) setError(tr('暂时无法打开团队对话，请稍后重试'))
     } finally { if (!signal.aborted) setBusy(false) }

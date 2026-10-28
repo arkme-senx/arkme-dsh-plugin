@@ -29,12 +29,11 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 
-it.each([false, true])('does not reopen the previous visitor after navigation while local saving finishes (account switch: %s)', async switchAccount => {
+it.each([false, true])('opens immediately and never restores from mounting/navigation effects (account switch: %s)', async switchAccount => {
   const channel = { teamRef: 'save-race', name: '测试团队', jotmoId: 'save_race', publicRef: 'a'.repeat(32), link: '', enabled: true, revision: 1, canManage: true }
   const first: TeamConversation = { key: 'old-visitor', ref: 'old-visitor', side: 'external', channel, lastSeq: 0, latestTeamReplySeq: 0, myReadSeq: 0, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: 1 }
   const second = { ...first, key: 'current-visitor', ref: 'current-visitor' }
-  let finish!: () => void
-  const restore = vi.spyOn(teamDirectoryPreferences, 'restore').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve })).mockResolvedValue(undefined)
+  const restore = vi.spyOn(teamDirectoryPreferences, 'restoreTarget').mockRejectedValue(new Error('offline'))
   mocks.call.mockImplementation(async (op: string, input: { conversationRef?: string }) => {
     if (op === 'team.app.timeline') return { conversation: input.conversationRef === first.ref ? first : second, messages: [], hasMore: false, beforeSeq: 0 }
     return {}
@@ -43,8 +42,8 @@ it.each([false, true])('does not reopen the previous visitor after navigation wh
     await act(async () => { root.render(<TeamMessagingPanel accountKey="prod:save-race" intent={{ kind: 'conversation', conversation: first }} />); await tick() })
     await act(async () => { root.render(<TeamMessagingPanel accountKey={switchAccount ? 'prod:another-account' : 'prod:save-race'} intent={{ kind: 'conversation', conversation: second }} />); await tick() })
     expect(mocks.call.mock.calls.some(([op, input]) => op === 'team.app.timeline' && input.conversationRef === second.ref)).toBe(true)
-    await act(async () => { finish(); await tick() })
-    expect(mocks.call.mock.calls.some(([op, input]) => op === 'team.app.timeline' && input.conversationRef === first.ref)).toBe(false)
+    expect(restore).not.toHaveBeenCalled()
+    expect(host.querySelector('.team-conversation-pane')).not.toBeNull()
   } finally { restore.mockRestore() }
 })
 

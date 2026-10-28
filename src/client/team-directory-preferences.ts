@@ -1,106 +1,147 @@
-import { useSyncExternalStore } from 'react'
-import { localDirectoryPreferences, useLocalDirectoryPreferenceHydration } from './local-directory-preferences.js'
-import type { TeamConversation } from '../team-app-contract.js'
+import { useEffect, useSyncExternalStore } from 'react'
+import { localDirectoryPreferences } from './local-directory-preferences.js'
+import { callArkme } from './api.js'
+import type { TeamAppOperation, TeamChannel, TeamConversation } from '../team-app-contract.js'
+import type { TeamEntryAction, TeamEntryReference, TeamEntryPreferencePage, TeamEntryPreferenceSnapshot } from '../team-entry-preference-contract.js'
 import type { TeamConversationGroup } from './team-conversation-directory.js'
 
 export type TeamEntryTarget = { kind: 'folder'; group: TeamConversationGroup } | { kind: 'conversation'; conversation: TeamConversation }
-type Removal = { at: number; sequences: Record<string, number> }
-type Preference = { pinned: boolean; removal?: Removal }
+type Preference = { pinned: boolean; dismissed: boolean }
 export type TeamDirectoryPreferences = Readonly<Record<string, Preference>>
 const empty: TeamDirectoryPreferences = Object.freeze({})
-const prefix = 'arkme.team.directory.preferences.v1:'
-export const teamConversationEntryKey = (c: TeamConversation) => JSON.stringify(['conversation', c.side, c.channel.jotmoId, c.key])
-export const teamFolderEntryKey = (channelId: string) => JSON.stringify(['folder', channelId])
-export const teamEntryKey = (target: TeamEntryTarget) => target.kind === 'folder' ? teamFolderEntryKey(target.group.key) : teamConversationEntryKey(target.conversation)
+export const teamConversationEntryKey = (c: TeamConversation) => c.entryKey ?? JSON.stringify(['conversation', c.side, c.channel.jotmoId, c.key])
+export const teamFolderEntryKey = (channel: TeamChannel | string) => typeof channel === 'string' ? JSON.stringify(['folder', channel]) : channel.entryKey ?? JSON.stringify(['folder', channel.jotmoId])
+export const teamEntryKey = (target: TeamEntryTarget) => target.kind === 'folder' ? teamFolderEntryKey(target.group.channel) : teamConversationEntryKey(target.conversation)
 export const teamEntryConversations = (target: TeamEntryTarget) => target.kind === 'folder' ? target.group.conversations : [target.conversation]
-export function teamEntryHidden(preferences: TeamDirectoryPreferences, target: TeamEntryTarget): boolean {
-  const removal = preferences[teamEntryKey(target)]?.removal
-  if (!removal) return false
-  // Metadata, read receipts and pagination are not new messages.
-  return !teamEntryConversations(target).some(c => {
-    const sequence = removal.sequences[teamConversationEntryKey(c)]
-    return sequence !== undefined && c.lastSeq > sequence
-  })
-}
+export const teamEntryHidden = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.dismissed === true
 export const teamEntryPinned = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.pinned === true
+type Transport = (operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal) => Promise<TeamEntryPreferencePage>
+type State = { saved: Map<string, TeamEntryPreferenceSnapshot>; aliases: Map<string, string>; optimistic: Map<string, { token: number; value: Preference }>; view: TeamDirectoryPreferences; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; error: string; notice: string }
 
-/** Only stable entry identifiers and message watermarks are persisted, never message bodies or signed refs. */
+/** Server snapshots decide visibility. Browser memory only projects pending explicit user commands. */
 export class TeamDirectoryPreferenceStore {
-  private cache = new Map<string, TeamDirectoryPreferences>()
+  private states = new Map<string, State>()
   private listeners = new Set<() => void>()
-  constructor(private storage: () => Pick<Storage, 'getItem' | 'setItem'> | undefined, private durable = false) {
-    if (durable) localDirectoryPreferences.subscribe(this.invalidate)
-  }
+  private token = 0
+  constructor(private transport: Transport, private operationId = () => crypto.randomUUID()) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
-  invalidate = () => { this.cache.clear(); for (const listener of this.listeners) listener() }
-  read = (account: string): TeamDirectoryPreferences => {
-    if (!account) return empty
-    const cached = this.cache.get(account)
-    if (cached) return cached
-    const result: Record<string, Preference> = Object.create(null)
-    try {
-      const raw = this.durable ? Object.fromEntries(Object.entries(localDirectoryPreferences.read(account)).filter(([key]) => key.startsWith('team:')).map(([key, value]) => [key.slice(5), value])) : JSON.parse(this.storage()?.getItem(prefix + account) ?? '{}')
-      if (raw && typeof raw === 'object' && !Array.isArray(raw)) for (const [key, value] of Object.entries(raw)) {
-        const item = value as Preference
-        if (!item || typeof item.pinned !== 'boolean') continue
-        const removal = item.removal
-        const sequences = Object.fromEntries(Object.entries(removal?.sequences ?? {}).filter((entry): entry is [string, number] => Number.isSafeInteger(entry[1]) && entry[1] >= 0))
-        result[key] = { pinned: item.pinned, ...(removal && Number.isFinite(removal.at) && removal.at > 0 ? { removal: { at: removal.at, sequences } } : {}) }
-      }
-    } catch { /* Missing/corrupt optional local presentation preferences do not block the directory. */ }
-    this.cache.set(account, result); return result
+  private state(account: string) {
+    let state = this.states.get(account)
+    if (!state) { state = { saved: new Map(), aliases: new Map(), optimistic: new Map(), view: empty, queue: Promise.resolve(), loaded: false, error: '', notice: '' }; this.states.set(account, state) }
+    return state
   }
-  private write(account: string, value: TeamDirectoryPreferences) {
-    if (!account) throw new Error('请先登录')
-    if (this.durable) {
-      const previous = this.read(account)
-      return Promise.all(Object.entries(value).filter(([key, item]) => JSON.stringify(previous[key]) !== JSON.stringify(item)).map(([key, item]) => localDirectoryPreferences.set(account, `team:${key}`, { ...item, pinnedAt: item.pinned ? Date.now() : 0 }))).then(() => {})
+  read = (account: string): TeamDirectoryPreferences => account ? this.state(account).view : empty
+  error = (account: string) => account ? (this.state(account).error || this.state(account).notice) : ''
+  acknowledgeNotice(account: string) { const state = this.state(account); state.notice = ''; this.publish(state) }
+  private publish(state: State) {
+    const view: Record<string, Preference> = {}
+    for (const [key, item] of state.saved) view[key] = { pinned: item.accessible && item.pinned, dismissed: item.accessible && item.dismissed }
+    for (const [alias, key] of state.aliases) if (view[key]) view[alias] = view[key]!
+    for (const [key, item] of state.optimistic) view[key] = item.value
+    state.view = view; for (const listener of this.listeners) listener()
+  }
+  private accept(state: State, page: TeamEntryPreferencePage, aliases: string[] = []) {
+    if (page.schemaVersion !== 1) throw new Error('服务端尚不支持团队入口同步')
+    page.items.forEach((item, index) => {
+      const old = state.saved.get(item.key)
+      // Compare complete snapshots; never combine a newer preference with an older activity watermark.
+      if (!item.accessible || !old || item.version >= old.version && item.activitySeq >= old.activitySeq) state.saved.set(item.key, item)
+      if (aliases[index]) { state.aliases.set(aliases[index]!, item.key) }
+    })
+    state.error = page.syncError ?? ''; if (page.migrationNotice) state.notice = page.migrationNotice; this.publish(state)
+  }
+  hydrate(account: string, force = false): Promise<void> {
+    if (!account) return Promise.resolve()
+    const state = this.state(account)
+    if (state.loading) return state.loading
+    if (state.loaded && !force) return Promise.resolve()
+    const run = state.queue.catch(() => {}).then(async () => {
+      if (!state.loaded) this.accept(state, await this.transport('team.app.entries.cached', { expectedAccountKey: account }))
+      let cursor: string | undefined
+      const seen = new Set<string>()
+      do {
+        const page = await this.transport('team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
+        this.accept(state, page)
+        if (page.hasMore && (!page.nextCursor || seen.has(page.nextCursor))) throw new Error('入口偏好分页异常')
+        cursor = page.hasMore ? page.nextCursor : undefined
+        if (cursor) seen.add(cursor)
+      } while (cursor)
+      state.loaded = true
+    })
+    state.loading = run.catch(error => { state.error = '入口设置同步未确认，可重试；仍可正常打开和发送消息。'; this.publish(state); throw error }).finally(() => { state.loading = undefined })
+    state.queue = state.loading; return state.loading
+  }
+  private remember(target: TeamEntryTarget) {
+    const key = teamEntryKey(target), ref: TeamEntryReference = target.kind === 'folder' ? { kind: 'folder', ref: target.group.channel.teamRef } : { kind: 'conversation', ref: target.conversation.ref }
+    return { key, ref }
+  }
+  pin(account: string, target: TeamEntryTarget, pinned: boolean) { return this.change(account, [target], pinned ? 'pin' : 'unpin') }
+  remove(account: string, target: TeamEntryTarget) { return this.change(account, [target], 'dismiss') }
+  restoreReference(account: string, ref: TeamEntryReference): Promise<void> {
+    return this.command(account, [{ key: ref.ref, ref }], 'restore', true)
+  }
+  restoreTarget(account: string, target: TeamEntryTarget, publishedOnly = false): Promise<void> {
+    const state = this.state(account), entries = [this.remember(target)]
+    if (target.kind === 'conversation' && target.conversation.side === 'team') {
+      const channel = target.conversation.channel, key = teamFolderEntryKey(channel), ref: TeamEntryReference = { kind: 'folder', ref: channel.teamRef }
+      entries.push({ key, ref })
     }
-    const storage = this.storage()
-    if (!storage) throw new Error('本机设置暂时无法保存，请重试')
-    try { storage.setItem(prefix + account, JSON.stringify(value)) }
-    catch { throw new Error('本机设置保存失败，请重试') }
-    this.cache.set(account, value); for (const listener of this.listeners) listener()
+    return this.command(account, entries, 'restore', publishedOnly)
   }
-  pin(account: string, target: TeamEntryTarget, pinned: boolean) {
-    return this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned } })
+  private change(account: string, targets: TeamEntryTarget[], action: TeamEntryAction) {
+    return this.command(account, targets.map(t => this.remember(t)), action)
   }
-  remove(account: string, target: TeamEntryTarget, at = Date.now()) {
-    const sequences = Object.fromEntries(teamEntryConversations(target).map(c => [teamConversationEntryKey(c), c.lastSeq]))
-    return this.write(account, { ...this.read(account), [teamEntryKey(target)]: { pinned: false, removal: { at, sequences } } })
+  private command(account: string, entries: { key: string; ref: TeamEntryReference }[], action: TeamEntryAction, publishedOnly = false): Promise<void> {
+    if (!account) return Promise.reject(new Error('请先登录'))
+    const state = this.state(account), token = ++this.token
+    for (const { key } of entries) {
+      const old = state.view[key] ?? { pinned: false, dismissed: false }
+      state.optimistic.set(key, { token, value: action === 'pin' ? { pinned: true, dismissed: false } : action === 'unpin' ? { ...old, pinned: false } : action === 'dismiss' ? { pinned: false, dismissed: true } : { ...old, dismissed: false } })
+    }
+    this.publish(state)
+    const run = state.queue.catch(() => {}).then(async () => {
+      const params = { entries: entries.map(e => e.ref), expectedAccountKey: account }
+      try {
+        // Recheck before a new explicit command. The Host replays any persisted response-loss command first.
+        this.accept(state, await this.transport('team.app.entries.query', params), entries.map(e => e.key))
+        const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed && (!publishedOnly || (state.saved.get(state.aliases.get(e.key) ?? e.key)?.activitySeq ?? 0) > 0)) : entries
+        if (!chosen.length) return
+        const changes = chosen.map(e => ({ target: e.ref, action, expectedVersion: state.saved.get(state.aliases.get(e.key) ?? e.key)?.version ?? 0 }))
+        this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }))
+      } catch (error) {
+        try { this.accept(state, await this.transport('team.app.entries.query', params), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
+        state.error = '入口设置同步未确认，请重试'
+        throw error
+      } finally {
+        for (const { key } of entries) if (state.optimistic.get(key)?.token === token) state.optimistic.delete(key)
+        this.publish(state)
+      }
+    })
+    state.queue = run; return run
   }
-  restore(account: string, key: string): void | Promise<void> {
-    if (this.durable) return localDirectoryPreferences.hydrate(account).then(() => this.restoreLoaded(account, key))
-    return this.restoreLoaded(account, key)
-  }
-  private restoreLoaded(account: string, key: string) {
-    const previous = this.read(account)
-    if (!previous[key]?.removal) return
-    return this.write(account, { ...previous, [key]: { pinned: previous[key]!.pinned } })
-  }
-  /** Unknown visitors may merely be older directory pages. Verify their latest actual message before restoring a folder. */
-  async reconcile(account: string, conversations: TeamConversation[], latestMessageAt: (c: TeamConversation) => Promise<number>, signal: AbortSignal) {
+  async reconcile(account: string, conversations: TeamConversation[], signal: AbortSignal): Promise<void> {
+    const state = this.state(account), entries = new Map<string, TeamEntryReference>()
     for (const c of conversations) {
-      signal.throwIfAborted()
-      const conversationKey = teamConversationEntryKey(c)
-      for (const key of [conversationKey, ...(c.side === 'team' ? [teamFolderEntryKey(c.channel.jotmoId)] : [])]) {
-        const removal = this.read(account)[key]?.removal
-        if (!removal) continue
-        const before = removal.sequences[conversationKey]
-        if (before !== undefined) { if (c.lastSeq > before) await this.restore(account, key); continue }
-        if (!c.lastSeq) continue
-        const actualTime = c.updatedAt > removal.at ? await latestMessageAt(c) : 0
-        signal.throwIfAborted()
-        if (this.read(account)[key]?.removal !== removal) continue
-        if (actualTime > removal.at) await this.restore(account, key)
-        else await this.write(account, { ...this.read(account), [key]: { pinned: false, removal: { ...removal, sequences: { ...removal.sequences, [conversationKey]: c.lastSeq } } } })
-      }
+      entries.set(teamConversationEntryKey(c), { kind: 'conversation', ref: c.ref })
+      if (c.side === 'team') entries.set(teamFolderEntryKey(c.channel), { kind: 'folder', ref: c.channel.teamRef })
     }
+    const rows = [...entries]
+    for (let i = 0; i < rows.length; i += 100) {
+      const batch = rows.slice(i, i + 100)
+      const page = await this.transport('team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
+      signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
+    }
+  }
+  missingPins(account: string, conversations: TeamConversation[]): TeamEntryReference[] {
+    const present = new Set(conversations.flatMap(c => [teamConversationEntryKey(c), ...(c.side === 'team' ? [teamFolderEntryKey(c.channel)] : [])]))
+    return [...this.state(account).saved.values()].filter(s => s.accessible && s.pinned && !s.dismissed && !present.has(s.key)).map(s => s.target)
   }
 }
-export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore(() => undefined, true)
-if (typeof window !== 'undefined') window.addEventListener('storage', event => { if (!event.key || event.key.startsWith(prefix)) teamDirectoryPreferences.invalidate() })
+export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, params, signal))
 export function useTeamDirectoryPreferences(account: string) {
-  useLocalDirectoryPreferenceHydration(account)
+  useEffect(() => { if (account) void localDirectoryPreferences.hydrate(account).catch(() => {}).then(() => teamDirectoryPreferences.hydrate(account)).catch(() => {}) }, [account])
   return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.read(account), () => empty)
+}
+export function useTeamDirectoryPreferenceError(account: string) {
+  return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.error(account), () => '')
 }

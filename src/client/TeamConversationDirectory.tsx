@@ -18,7 +18,7 @@ import { teamText as tr } from './team-messaging-i18n.js'
 import { useArkmeLocale } from './locale.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
-import { teamDirectoryPreferences, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
 
 export function TeamConversationGroupRow({ group, accountKey, selected = false, onClick }: {
   group: TeamConversationGroup; accountKey?: string; selected?: boolean; onClick(): void
@@ -65,8 +65,6 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     const controller = new AbortController(), teamRef = folder.teamRef
     void callArkme<TeamChannel>('team.app.channel', { teamRef, expectedAccountKey: accountKey }, controller.signal)
       .then(async value => {
-        controller.signal.throwIfAborted()
-        await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId))
         controller.signal.throwIfAborted()
         arkmeUi.resolveTeamDirectory(teamRef, value)
       })

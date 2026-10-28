@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from '../../team-entry-navigation.js'
 import {TeamExternalChats} from '../../TeamExternalChats.js'
 import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
@@ -389,7 +390,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     }} />}
     {messageChannelOpen && <TeamMessageChannelDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name}
       onClose={() => setMessageChannelOpen(false)} onChanged={() => { void load(undefined, true) }}
-      onViewConversations={() => { setMessageChannelOpen(false); openTeamMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
+      onViewConversations={() => { setMessageChannelOpen(false); openTeamEntryMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}

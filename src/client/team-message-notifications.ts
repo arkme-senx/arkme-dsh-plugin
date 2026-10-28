@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import type { ArkmeChatClientEvent } from '../types.js'
 import type { TeamConversation } from '../team-app-contract.js'
 import { callArkme } from './api.js'
@@ -56,7 +57,7 @@ export class TeamMessageNotificationPresenter {
 export function createTeamMessageNotificationPresenter(current: () => boolean): TeamMessageNotificationPresenter {
   return new TeamMessageNotificationPresenter({ current,
     resolve: (notificationRef, signal) => callArkme<TeamConversation>('team.app.notification.open', { notificationRef }, signal),
-    open: conversation => openTeamMessages({ kind: 'conversation', conversation }),
+    open: conversation => openTeamEntryMessages({ kind: 'conversation', conversation }),
     show: showBrowserNotification,
   })
 }
