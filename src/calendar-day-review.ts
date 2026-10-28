@@ -48,9 +48,9 @@ export function reviewKinds(v: unknown): DayReviewSource[] {
 const optionalText = (v: unknown, max: number): string => v === '' ? '' : reviewText(v, max)
 function parseDetails(value: unknown): DayReviewDetails {
   const d = reviewObject(value)
-  const list = (v: unknown) => array(v, 32).map(x => reviewText(x, 2000))
+  const list = (v: unknown, max = 100) => array(v, max).map(x => reviewText(x, 2000))
   return { scene: optionalText(d.scene, 200), mood: optionalText(d.mood, 1000), roles: list(d.roles), events: list(d.events),
-    todos: list(d.todos), quotes: list(d.quotes), otherInfo: array(d.other_info, 20).map(x => {
+    todos: list(d.todos), quotes: list(d.quotes, 32), otherInfo: array(d.other_info, 20).map(x => {
       const item = reviewObject(x); return { label: reviewText(item.label, 100), value: reviewText(item.value, 2000) }
     }) }
 }

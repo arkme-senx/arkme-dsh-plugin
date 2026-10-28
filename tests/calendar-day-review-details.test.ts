@@ -41,3 +41,14 @@ it('disposal aborts subscription reads without generating or retaining a timer',
   expect(calls).toEqual(['provider.capabilities', 'calendar.day-review.state']); expect(vi.getTimerCount()).toBe(0)
  } finally { vi.useRealTimers() }
 })
+
+it('preserves large detail lists up to the source capacity while keeping quotations bounded', () => {
+ for (const field of ['roles', 'events', 'todos'] as const) {
+  const input = raw(); input.summary[0]!.details = { ...details, [field]: Array.from({ length: 100 }, (_, i) => `事项 ${i}`) }
+  expect(parseDayReviewResult(input, q).summary[0]!.details![field]).toHaveLength(100)
+  input.summary[0]!.details[field].push('超限')
+  expect(() => parseDayReviewResult(input, q)).toThrow()
+ }
+ const input = raw(); input.summary[0]!.details = { ...details, quotes: Array(33).fill('原话') }
+ expect(() => parseDayReviewResult(input, q)).toThrow()
+})
