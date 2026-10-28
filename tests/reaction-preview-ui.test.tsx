@@ -270,6 +270,16 @@ describe('reaction review UI', () => {
     expect(reactionToolbarPosition(false, box, parent, edges)).toMatchObject({ left: 300, top: 174 })
     expect(reactionToolbarPosition(true, { ...box, left: 10 }, { ...parent, left: 10 }, edges)).toMatchObject({ left: 0, top: 200 })
   })
+  it('keeps incoming reaction entries above receipts and below the bubble at a tight right edge', () => {
+    const box = { left: 200, right: 500, bottom: 300 }, parent = { left: 200, top: 100 }
+    // Team incoming messages also have receipts, unlike ordinary group messages.
+    for (const receipt of [{ left: 506, right: 518, top: 288 }, { left: 506, right: 512, top: 294 }]) {
+      expect(reactionToolbarPosition(false, box, parent, { left: 8, right: 900 }, receipt))
+        .toMatchObject({ left: 306, top: receipt.top - parent.top - 32, paddingBottom: 6 })
+      expect(reactionToolbarPosition(false, box, parent, { left: 8, right: 530 }, receipt))
+        .toMatchObject({ left: 274, top: 200, paddingTop: 4 })
+    }
+  })
   it('offers the entire existing emoji catalog and preserves distinct asset identities', async () => {
     reactionPreview.setScope('test:1')
     let ui: ReturnType<typeof create>

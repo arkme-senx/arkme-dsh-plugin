@@ -110,7 +110,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
           catch (error) { setNotice(error instanceof Error ? error.message : '暂时无法打开') }
         } }] : []),
       ]}/>}
-      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local" selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
+      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage={marks.storage} selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
       {marks.layer}
       {query!==undefined&&<MessageTextFind doc={document} getRows={getRows} query={query} setQuery={setQuery} onClose={()=>setQuery(undefined)}/>}
     </>:null,

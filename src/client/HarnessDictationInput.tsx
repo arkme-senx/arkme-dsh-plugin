@@ -25,9 +25,9 @@ function ConnectedInput({ sessionId, inputActions, useInput }: { sessionId: stri
   }, [])
   useEffect(() => {
     const surface = window.frameElement?.closest<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"]')
-    const update = () => setActive(!document.hidden && (!surface || surface.dataset.arkmeVisible === 'true'))
+    const update = () => setActive(!document.hidden && (!surface || surface.dataset.arkmeVisible === 'true' && !surface.hasAttribute('data-arkme-history-session')))
     const observer = surface ? new MutationObserver(update) : undefined
-    if (surface) observer?.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
+    if (surface) observer?.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-history-session'] })
     document.addEventListener('visibilitychange', update); update()
     return () => { observer?.disconnect(); document.removeEventListener('visibilitychange', update) }
   }, [])

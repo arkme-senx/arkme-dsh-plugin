@@ -1,3 +1,4 @@
+import { recordingOwnerResponse, recordingId, childId, recordingRevision } from '../fixtures/recording-owner.js'
 import { describe, expect, it, vi } from 'vitest'
 import { SpeakerDirectoryService } from '../../src/services/speaker-directory-service.js'
 import { UnmarkedSpeakerService } from '../../src/services/unmarked-speaker-service.js'
@@ -58,9 +59,9 @@ describe('speaker similarity read adapter', () => {
     const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
     const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'sealed-playback') }
     const service = new SpeakerDirectoryService(f.runtime, f.recording, f.unmarked, media)
-    f.post.mockResolvedValue({ supported: true, schema_version: 1, detail_ref: candidate.detail_ref, items: [{ sample_key: 's1', time_label: '10月14日', transcript: '片段', remote_url: 'https://untrusted.invalid', locator: { session_id: 'session', child_id: 'child', start_at: 1000, end_at: 5000, num: 7 } }] } as never)
+    f.post.mockImplementation(async (path, body) => (recordingOwnerResponse(path, body, [{startAt:1000000, items:[{text:'片段', start:1000,end:5000,edit:{s:1000,e:5000,revision:recordingRevision,source_number:7,assignment_number:7}}]}]) ?? { supported: true, schema_version: 1, detail_ref: candidate.detail_ref, items: [{ sample_key: 's1', time_label: '10月14日', transcript: '片段', remote_url: 'https://untrusted.invalid', locator: { session_id: recordingId, child_id: childId, start_at: 1000, end_at: 5000, num: 7 } }] }) as never)
     const result = await service.voiceSamples({ detailRef: ref })
-    expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({ viewerUserId: 7, sessionId: 'session', childId: 'child', asrItemStartAt: 1000, asrItemEndAt: 5000, speakerNumber: 7 }, undefined)
+    expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({ viewerUserId: 7, locator: {child_id:childId,source:'primary',ordinal:0} }, undefined)
     expect(result).toMatchObject({ items: [{ durationMillis: 4000, mediaRef: 'sealed-playback' }] })
     expect(JSON.stringify(result)).not.toContain('untrusted.invalid')
   })

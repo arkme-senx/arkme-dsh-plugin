@@ -44,7 +44,7 @@ function fixture(cloud?:TeamCodexCloudPort){
       hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
   }
   const tasks=async()=>(await service.state(teamRef)).tasks
-  const task=async()=>(await tasks())[0]!
+  const task=async()=>{const row=(await tasks())[0]!;const detail=await service.events(teamRef,row.id);return {...row,...(detail.queue?{queue:detail.queue}:{})}}
   return {service,options,root,directory,codex,project,run,enroll,record,register,claim,tasks,task,
     setUser:(value:number|undefined)=>{user=value;service.fence()},advance:(value:number)=>{offset+=value}}
 }
@@ -147,6 +147,20 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     expect(await f.task()).toMatchObject({id:task.id,title:task.title,eventCount:1})
     expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe('请修复页面')
   })
+  it('keeps oversized fallback classification evidence pending until the native source confirms it',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    try{
+      db.prepare('DELETE FROM codex_session_visibility').run()
+      db.prepare('DELETE FROM codex_events').run()
+      const put=db.prepare('INSERT INTO codex_events(task_id,turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,0)')
+      for(let i=0;i<150;i++)put.run(task.id,'fallback-'+i,'UserPromptSubmit','This is an app-generated request for a suggested next user message. The user did not write this message.',i+1)
+      rmSync(join(f.codex,'session_index.jsonl'))
+      expect(await f.tasks()).toEqual([])
+      expect(db.prepare('SELECT visibility FROM codex_session_visibility').get()).toEqual({visibility:'pending'})
+      f.register();expect((await f.tasks())[0]?.id).toBe(task.id)
+    }finally{db.close()}
+  })
   it('quarantines pre-upgrade background rows without deleting their raw events',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
@@ -213,14 +227,16 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
       await f.service.change(teamRef,'cloud','enable-cloud',undefined,'测试来源')
     } else {
       expect(f.record().status).toBe(0)
-      // Ingest without running a cloud pump until collection has been paused.
+      // The accepted Hook may start a metadata upload before the pause; its fence must stop all later body work.
       await f.service.tick()
       await f.service.change(teamRef,invite.id,'pause')
     }
+    const pausedAt=post.mock.calls.length
     f.advance(6000);await f.service.tick()
     await vi.waitFor(()=>expect(confirms()).toHaveLength(1))
     expect(confirms()[0]![2]).toMatchObject({source_name:'测试来源',team_ref:'101',expected_owner_ref:'11'})
-    expect(post.mock.calls.some(c=>c[1].endsWith('/sync'))).toBe(false)
+    expect(post.mock.calls.slice(pausedAt).some(c=>c[1].endsWith('/sync'))).toBe(false)
+    expect(post.mock.calls.some(c=>c[1].includes('/content/'))).toBe(false)
   })
   it('reveals the entry only after a real trusted event and keeps it when paused or disconnected',async()=>{
     const f=fixture()
@@ -342,8 +358,8 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     writeFileSync(path,'{');const failed=await f.task()
     expect(failed.queue?.availability).toBe('unavailable');expect(failed.queue?.items).toEqual(edited.queue?.items)
     f.service.close();const reopened=new TeamCodexService(f.options);services.push(reopened)
-    expect((await reopened.state(teamRef)).tasks[0]?.queue?.items).toEqual(edited.queue?.items)
-    write([]);const cleared=(await reopened.state(teamRef)).tasks[0]!
+    expect((await reopened.events(teamRef,edited.id)).queue?.items).toEqual(edited.queue?.items)
+    write([]);const clearedState=(await reopened.state(teamRef)).tasks[0]!;const cleared={...clearedState,queue:(await reopened.events(teamRef,clearedState.id)).queue}
     expect(cleared.queue).toMatchObject({availability:'ready',items:[]});expect(cleared.queue!.version).toBeGreaterThan(edited.queue!.version)
   })
   it('does not mix queues across accounts or collect excluded/paused tasks',async()=>{
@@ -513,4 +529,24 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.record('UserPromptSubmit',{turn_id:'later_turn',prompt:'继续已有任务',cwd:null})
     expect(await f.task()).toMatchObject({title:'Codex',eventCount:2})
   })
+})
+
+it('pausing an installation fences a metadata upload already in flight before any object grant or body upload',async()=>{
+ let finish!:(value:unknown)=>void
+ const post=vi.fn(async(_owner:number,path:string,body:Record<string,unknown>)=>{
+  if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+  if(path.endsWith('/confirm'))return {owner_ref:'11',source_id:body.source_id}
+  if(path.endsWith('/sync'))return new Promise(resolve=>{finish=resolve})
+  return {items:[],page:1,has_more:false}
+ })
+ const f=fixture({post,selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort)
+ const invitation=await f.enroll();await f.service.change(teamRef,'cloud','enable-cloud');f.record();await f.service.tick()
+ await vi.waitFor(()=>expect(finish).toBeTypeOf('function'))
+ await f.service.change(teamRef,invitation.id,'pause')
+ const sent=post.mock.calls.find(c=>c[1].endsWith('/sync'))![2] as any
+ finish({owner_ref:'11',task_results:sent.tasks.map((t:any)=>({task_id:t.task_id,version:t.version,status:'saved'}))})
+ await vi.waitFor(()=>expect((f.service as any).cloudPumping).toBe(false))
+ expect(post.mock.calls.some(c=>c[1].includes('/content/'))).toBe(false)
+ const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+ try{expect(db.prepare('SELECT count(*) n FROM codex_cloud_events WHERE ack=version').get()!.n).toBe(0)}finally{db.close()}
 })

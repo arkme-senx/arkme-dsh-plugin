@@ -253,7 +253,6 @@ const styles: Record<string, CSSProperties> = {
     flex: '1 0 auto', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     fontSize: 13, lineHeight: '18px', fontWeight: 600,
   },
-  muteIcon: { flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
   mentionPreviewPrefix: { color: colors.mention, fontWeight: 600 },
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,

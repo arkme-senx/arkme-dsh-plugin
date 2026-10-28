@@ -99,7 +99,7 @@ describe('Team Codex activity UI',()=>{
       tasks:params.page===1?[recent]:params.page===2?[]:[{...recent,title:'旧页中的过期标题',updatedAt:1},older],
     }:{items:[]})
     const props={teamRef,conversation:true,selfMember:'11',target:{accountKey:'prod:11',team:{teamRef,name:'Team',jotmoId:'team'},member:'11'}}
-    await act(async()=>{renderer=create(<TeamCodexActivity {...props}/>,{createNodeMock:element=>element.props.className==='arkme-codex-task-sidebar'?{scrollHeight:100,clientHeight:500,scrollTop:0}:null});await tick()})
+    await act(async()=>{renderer=create(<TeamCodexActivity {...props}/>,{createNodeMock:element=>element.props.className==='arkme-codex-task-sidebar'?{scrollHeight:100,clientHeight:500,scrollTop:0,getBoundingClientRect:()=>({top:0}),querySelectorAll:()=>[]}:null});await tick()})
     const transcript=renderer!.root.findByProps({className:'arkme-codex-transcript'})
     await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
     const picker=renderer!.root.findByProps({className:'arkme-codex-task-picker'})
@@ -416,4 +416,67 @@ describe('Team Codex activity UI',()=>{
       expect(mocks.callArkme).toHaveBeenCalledWith('team.codex.events',{teamRef,id:'remote-task',sourceId:'remote-source',cursor:'server-only-cursor'},expect.any(AbortSignal))
     } finally { vi.useRealTimers() }
   })
+})
+
+it('bounds a million-task picker, retains its reader, refreshes one window and retries newer at the same cursor',async()=>{
+  vi.useFakeTimers()
+  let renderer:ReactTestRenderer|undefined,failNewer=false
+  const list={scrollHeight:5000,clientHeight:400,scrollTop:0,getBoundingClientRect:()=>({top:0}),querySelectorAll:()=>[]}
+  const requests:Record<string,unknown>[]=[]
+  mocks.callArkme.mockImplementation(async(op,params)=>{
+    if(op!=='team.codex.state')return {items:[]}
+    requests.push(params)
+    if(params.after&&failNewer){failNewer=false;throw new Error('newer failed')}
+    const start=params.cursor?Number(params.cursor):params.from?Number(params.from):params.after?Math.max(0,Number(params.after)-50):0
+    const tasks=Array.from({length:50},(_,i)=>({...base.tasks[0]!,id:`task-${start+i}`,title:`task ${start+i}`,updatedAt:1700000000000-start-i,cloud:{taskId:`task-${start+i}`,sourceId:'source',sourceName:'source',ownerRef:'11',remote:true}}))
+    return {...base,localOnly:false,tasks,cloud:{status:'ready',pending:0,blocked:0,page:params.page,hasMore:true,hasNewer:start>0,firstCursor:String(start),previousCursor:start?String(start):undefined,nextCursor:String(start+50)}}
+  })
+  try{
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personal selfMember="11"/>,{createNodeMock:el=>el.props.className==='arkme-codex-task-sidebar'?list:null});await tick()})
+    const transcript=renderer.root.findByProps({className:'arkme-codex-transcript'})
+    await act(async()=>{renderer!.root.findByProps({'aria-label':'切换 Codex 任务',type:'button'}).props.onClick();await tick()})
+    for(let i=0;i<24;i++){
+      list.scrollTop=4600
+      await act(async()=>{renderer!.root.findByProps({className:'arkme-codex-task-sidebar'}).props.onScroll({currentTarget:list});await tick()})
+      expect(renderer.root.findAllByProps({className:'arkme-team-codex-task-toggle'}).length).toBeLessThanOrEqual(200)
+      expect(renderer.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+      expect(text(renderer.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('task 0')
+    }
+    const lastStart=Number(requests.at(-1)?.cursor);expect(lastStart).toBeGreaterThanOrEqual(1200)
+    const firstStart=String(lastStart-150)
+    const before=requests.length
+    await act(async()=>{await vi.advanceTimersByTimeAsync(5000);await tick()})
+    expect(requests.slice(before).length).toBe(4)
+    expect(requests[before]?.from).toBe(firstStart)
+    failNewer=true;list.scrollTop=0
+    await act(async()=>{renderer!.root.findByProps({className:'arkme-codex-task-sidebar'}).props.onWheel({deltaY:-10,currentTarget:list});await tick()})
+    const retry=renderer.root.findAllByType('button').find(b=>text(b)==='重试')!
+    await act(async()=>{retry.props.onClick();await tick()})
+    expect(requests.slice(-2).map(r=>r.after)).toEqual([firstStart,firstStart])
+    expect(renderer.root.findAllByProps({className:'arkme-team-codex-task-toggle'})).toHaveLength(200)
+    expect(renderer.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
+  }finally{await act(async()=>renderer?.unmount());vi.useRealTimers()}
+})
+
+
+it('refreshes the selected summary outside the bounded task window and never rolls back its independent versions',async()=>{
+ vi.useFakeTimers()
+ const original={...base.tasks[0]!,id:'selected',title:'old title',metadataVersion:1,summaryVersion:1,state:'working' as const,cloud:{taskId:'selected',sourceId:'source',sourceName:'source',ownerRef:'11',remote:true}}
+ let inWindow=true,metadataVersion=1,summaryVersion=1
+ mocks.callArkme.mockImplementation(async(op,params)=>op==='team.codex.state'?{...base,localOnly:false,tasks:inWindow?[original]:[{...original,id:'other',title:'other'}],cloud:{status:'ready',pending:0,blocked:0,page:params.page,hasMore:false}}:{items:[],taskSummary:{title:metadataVersion===1?'old title':'renamed title',metadataVersion,summaryVersion,state:summaryVersion===1?'working':'finished',updatedAt:2000,eventCount:3,projectKey:'p',projectName:'project',branch:'main'}})
+ let renderer:ReactTestRenderer|undefined
+ try{
+  await act(async()=>{renderer=create(<TeamCodexActivity teamRef="" conversation personal selfMember="11"/>);await tick()})
+  const reader=renderer.root.findByProps({className:'arkme-codex-transcript'})
+  inWindow=false;metadataVersion=2;summaryVersion=2
+  await act(async()=>{await vi.advanceTimersByTimeAsync(5000);await tick()})
+  expect(text(renderer.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('renamed title')
+  expect(text(renderer.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('已完成')
+  expect(renderer.root.findByProps({className:'arkme-codex-transcript'})).toBe(reader)
+  inWindow=true;metadataVersion=1;summaryVersion=3
+  await act(async()=>{await vi.advanceTimersByTimeAsync(5000);await tick()})
+  expect(text(renderer.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('renamed title')
+  expect(text(renderer.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('已完成')
+  expect(renderer.root.findByProps({className:'arkme-codex-transcript'})).toBe(reader)
+ }finally{await act(async()=>renderer?.unmount());vi.useRealTimers()}
 })

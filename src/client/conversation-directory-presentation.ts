@@ -21,6 +21,7 @@ export const conversationDirectoryStyles = {
   },
   chatTime: { flex: 'none', color: arkmeTheme.caption, fontSize: 10, lineHeight: '15px' },
   chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
+  muteIcon: { flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: arkmeTheme.secondary },
   preview: {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     color: arkmeTheme.secondary, fontSize: 11, lineHeight: '16px',

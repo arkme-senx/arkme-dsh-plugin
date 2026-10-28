@@ -12,7 +12,7 @@ const expectedPublicMethods = [
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deletedArrangements', 'deletedArrangementDetail',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
-  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
+  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
   'nativeAnnotations', 'setNativeAnnotationSource',
@@ -30,7 +30,7 @@ const expectedPublicMethods = [
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'offlineContext', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
-  'teamCodexPost', 'teamCodexBytes', 'codexWorkRecords', 'migrateLegacyCodexMarks', 'copyCodexChatLink', 'readCodexImage', 'setCodexWorkRecords', 'changeCodexLocalMark', 'codexLocalMarkCapabilities', 'codexLocalMarks', 'forwardCodexChat', 'excerptOriginal', 'sendQuotedSelfNote',
+  'teamCodexPost', 'teamCodexBytes', 'codexWorkRecords', 'copyCodexChatLink', 'readCodexImage', 'setCodexWorkRecords', 'changeCodexLocalMark', 'codexLocalMarkCapabilities', 'codexLocalMarks', 'forwardCodexChat', 'excerptOriginal', 'sendQuotedSelfNote',
   'interwovenReadReceipts', 'sourceMessageExtensionParent',
   'reactions',
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
@@ -39,7 +39,7 @@ const expectedPublicMethods = [
   'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
-  'listTeamConversations','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
   'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -67,11 +67,11 @@ const expectedPublicMethods = [
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTranscript', 'recordingProjection',
-  'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording', 'copyRecordingLink',
+  'recordingStrategies', 'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording', 'copyRecordingLink',
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
-  'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences', 'recordingEntityFeedback', 'undoRecordingEntityFeedback',
-  'recordingDay', 'recordingDayArrangements', 'recordingPlayback',
+  'recordingEntityFeedback', 'undoRecordingEntityFeedback', 'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences',
+  'recordingDay', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
@@ -153,18 +153,19 @@ const expectedServiceFiles = [
   'background-sound-preference-service.ts',
   'background-sound-membership-service.ts',
   'membership-service.ts',
-  'native-annotations-service.ts', 'native-local-marks.ts', 'codex-legacy-marks.ts',
+  'native-annotations-service.ts', 'native-local-marks.ts',
   'file-transfers.ts',
   'record-reedit-attachments.ts',
   'record-reedit-mentions.ts',
   'mention-metadata-codec.ts',
   'record-reedit-submissions.ts',
+
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
   'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'member-event-service.ts', 'official-notification-service.ts', 'offline-context-service.ts',
   'desktop-attention-bridge.ts',
-  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'recording-entity-personalization.ts', 'recording-entity-service.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
+  'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-entity-personalization.ts', 'recording-service.ts', 'recording-strategy-service.ts', 'recording-entity-service.ts', 'recording-read-owner.ts', 'recording-file-upload.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',
   'recording-presence-writer.ts',
   'recording-tool-workflow.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
@@ -284,7 +285,13 @@ describe('Arkme service architecture', () => {
     const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
     const waveProbe = readFileSync(join(root, 'src/recording-wave-probe.ts'), 'utf8')
     const clientSelection = readFileSync(join(root, 'src/client/recordings/recording-import-selection.ts'), 'utf8')
-    expect(gateway).toContain('pc_upload/')
+    expect(gateway).not.toContain('pc_upload/')
+    expect(gateway).not.toContain('ali-oss')
+    expect(gateway).toContain('this.uploadFile(')
+    const upload = readFileSync(join(root, 'src/services/recording-file-upload.ts'), 'utf8')
+    expect(upload).toContain('/api/v1/audio/uploads/')
+    expect(upload).not.toContain('pc_upload/')
+    expect(upload).not.toContain('ali-oss')
     expect(gateway).toContain('arkme_')
     expect(gateway).toContain('/api/v1/audio/check-exist-same-orig')
     expect(source).toMatch(/from ['"]node:fs/)

@@ -11,13 +11,13 @@ const targetId = 'item-1200'
 const stamp = new Date(2026, 9, 14).getTime()
 const day = (marked: boolean, pending = false): ArkmeRecordingDay => ({
   dateStamp: stamp, totalDurationMillis: 1442000, coverage: { state: 'ready', intervals: [] },
-  transcript: { state: 'ready', message: '', processingCount: 0, totalDurationMillis: 1442000,
+  transcript: { dateStamp: stamp, transcriptSource: 'system', viewRef: marked ? 'marked-view' : 'restored-view', nextCursor: '', state: 'ready', message: '', processingCount: 0, totalDurationMillis: 1442000,
     items: Array.from({ length: 1442 }, (_, i): ArkmeRecordingWorkbenchItem => ({
       itemId: `item-${i}`, itemRef: `${marked ? 'old' : 'new'}-ref-${i}`, transcriptSource: 'system', sessionKey: 'session',
       startAtMillis: stamp + i * 1000, endAtMillis: stamp + (i + 1) * 1000,
       speakerKey: i === 1200 && marked ? 'person' : 'system', speakerNumber: 9396, speakerColorIndex: 1,
       speakerLabel: i === 1200 && marked ? '周鹏' : '说话人 9396', sameSpeakerItemCount: 1,
-      isSelf: false, isBackground: false, text: `片段 ${i}`,
+      isSelf: false, isBackground: false, text: `片段 ${i}`, textStartOffset: 0, textEndOffset: Array.from(`片段 ${i}`).length, textTotalLength: Array.from(`片段 ${i}`).length,
       ...(i === 1200 && marked ? { assignedSpeakerOptionKey: 'person' } : {}),
     })),
   },

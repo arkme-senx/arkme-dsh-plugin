@@ -48,3 +48,12 @@ it('releases thumbnails outside the viewport and ignores late reads before reloa
  await act(async()=>update([{isIntersecting:false}]))
  expect(host.querySelector('img')).toBeNull()
 })
+
+it('keeps manifest failures separate from text and closes a now-unavailable private preview',async()=>{
+ await act(async()=>root.render(<CodexPrivateImages teamRef="team" task={task} event={event}/>))
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="查看图片 1"]')!.click())
+ expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+ const count=mocks.call.mock.calls.length
+ await act(async()=>root.render(<CodexPrivateImages teamRef="team" task={task} event={{...event,privateImagesUnavailable:true}}/>))
+ expect(host.textContent).toContain('图片暂不可读');expect(document.querySelector('[role="dialog"]')).toBeNull();expect(mocks.call).toHaveBeenCalledTimes(count)
+})

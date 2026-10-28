@@ -29,15 +29,15 @@ const item = (itemRef: string, startAtMillis: number): ArkmeRecordingWorkbenchIt
   speakerLabel: '说话人 1',
   speakerColorIndex: 1,
   speakerKey: 'session:1',
-  sameSpeakerItemCount: 1,
+  canBindSpeaker: true,
   text: itemRef,
   startAtMillis,
   endAtMillis: startAtMillis + 10_000,
   isBackground: false,
 })
 
-function Harness({ expose }: { expose(value: RecordingPlaybackController): void }) {
-  const playback = useRecordingPlayback('/arkme-self/api/media')
+function Harness({ expose, following }: { expose(value: RecordingPlaybackController): void; following?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]> }) {
+  const playback = useRecordingPlayback('/arkme-self/api/media', following)
   useEffect(() => { expose(playback) }, [expose, playback])
   return <div>{playback.activeItemRef || 'none'}</div>
 }
@@ -66,6 +66,44 @@ describe('recording playback controller', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await tick() })
     vi.unstubAllGlobals(); vi.restoreAllMocks()
+  })
+
+  it('continues across a page boundary once even when timeupdate and ended arrive together', async () => {
+    const first = item('item-a', 100_000), second = item('item-b', 200_000)
+    const pending = Promise.withResolvers<readonly ArkmeRecordingWorkbenchItem[]>()
+    const following = vi.fn(async () => await pending.promise)
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={following} />) })
+    await act(async () => { await playback.playAt([first], first.startAtMillis) })
+    await act(async () => { audios[0]!.currentTime = 12; audios[0]!.emit('timeupdate'); audios[0]!.emit('ended') })
+    expect(following).toHaveBeenCalledTimes(1)
+    expect(playback.isLoading).toBe(true)
+    await act(async () => { pending.resolve([first, second]); await tick() })
+    expect(playback.activeItemRef).toBe(second.itemRef)
+    expect(audios).toHaveLength(2)
+  })
+
+  it('pauses a pending queue continuation and does not play its late next item', async () => {
+    const first = item('item-a', 100_000), pending = Promise.withResolvers<readonly ArkmeRecordingWorkbenchItem[]>()
+    const following = vi.fn(async () => await pending.promise)
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={following} />) })
+    await act(async () => { await playback.playAt([first], first.startAtMillis); audios[0]!.emit('ended') })
+    const signal = following.mock.calls[0]?.[1] as unknown as AbortSignal
+    await act(async () => { playback.pause() })
+    expect(signal.aborted).toBe(true)
+    await act(async () => { pending.resolve([first, item('late', 200_000)]); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(playback.isPlaying).toBe(false)
+    expect(playback.isLoading).toBe(false)
+  })
+
+  it('stops once on a failed page and reports it without replaying the previous clip', async () => {
+    const following = vi.fn(async () => { throw new Error('录音版本已变化') })
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={following} />) })
+    await act(async () => { await playback.playAt([item('item-a', 100_000)], 100_000); audios[0]!.emit('ended'); await tick() })
+    expect(following).toHaveBeenCalledTimes(1)
+    expect(audios).toHaveLength(1)
+    expect(playback.error).toBe('录音版本已变化')
+    expect(playback.isPlaying).toBe(false)
   })
 
   it('maps owner offsets to the workbench playhead and stops at the bounded segment end', async () => {

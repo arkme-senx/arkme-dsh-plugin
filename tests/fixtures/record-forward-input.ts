@@ -3,7 +3,7 @@
 const payloadFields = ['payload_kind', 'schema_version', 'text_state', 'forward_records']
 const forwardFields = ['render_kind', 'source_type', 'forward_id', 'title', 'source_record_uids', 'summary_lines', 'comment_text', 'created_at', 'items']
 const itemFields = [
-  'record_uid', 'owner_id', 'owner_name', 'owner_avatar_ref', 'send_at', 'template_kind', 'title',
+  'record_uid', 'owner_id', 'owner_name', 'owner_avatar_ref', 'send_at', 'template_kind', 'display_kind', 'title',
   'source_display_name', 'source_avatar_kind', 'text', 'text_format', 'file_count', 'image_count',
   'voice_count', 'file_names', 'availability', 'unavailable_reason', 'source_chat_session_uid',
   'source_rel_uid', 'source_seq', 'source_sender_user_id', 'source_sender_avatar_ref',

@@ -149,7 +149,7 @@ function cloudFixture(supported=true) {
       }
       return {...ack(batch),task_results:batch.tasks.map(task=>({task_id:task.task_id,version:task.version,status:'saved'})),event_results:[]}
     }
-    if(path.endsWith('/content/list')){const row=stored.get(String(body.task_id)),d=row?.queue_descriptor as Record<string,unknown>|undefined,q=row?.queue_snapshot as Record<string,unknown>|undefined;return {items:[],content_objects:[],has_more:false,owner_view:row?.owner_ref===String(_owner),...(d&&q?{queue_object:{descriptor:d,grant:objects.grant(String(d.sha256))},queue_observed_at:q.observed_at}:{})}}
+    if(path.endsWith('/content/list')){const row=stored.get(String(body.task_id)),d=row?.queue_descriptor as Record<string,unknown>|undefined,q=row?.queue_snapshot as Record<string,unknown>|undefined;return {task_summary:{source_id:body.source_id,task_id:body.task_id,task_title:'Codex',project_key:'p',project_name:'项目',branch:'dev',task_metadata_version:1,summary_version:0,event_count:0,latest_at:0,state:''},items:[],content_objects:[],has_more:false,owner_view:row?.owner_ref===String(_owner),...(d&&q?{queue_object:{descriptor:d,grant:objects.grant(String(d.sha256))},queue_observed_at:q.observed_at}:{})}}
     if(path.endsWith('tasks/list'))return {items:[...stored.values()].map(({queue_descriptor,queue_snapshot,...row})=>{const q=queue_snapshot as Record<string,unknown>|undefined;const items=q?.items as Record<string,unknown>[]|undefined;return {...row,...(q?{queue_snapshot:{...q,items:null},queue_count:items?.length??0,queue_waiting_count:items?.filter(i=>i.delivery==='queue'&&['queued','pending'].includes(String(i.state))).length??0}:{})}}),page:body.page,has_more:false,...(capability?cap:{})}
     throw new Error(path)
   })

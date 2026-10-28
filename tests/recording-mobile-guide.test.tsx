@@ -66,7 +66,9 @@ describe('mobile recording guide', () => {
   it('opens from the recording actions and preserves the selected calendar date on close', async () => {
     await click('9月10日')
     const trigger = button('全天候录音')
-    expect(trigger.previousElementSibling?.textContent).toBe('开始录音')
+    expect(trigger.previousElementSibling?.contains(button('开始录音'))).toBe(true)
+    expect(trigger.previousElementSibling?.querySelector('select')).toBeNull()
+    expect(document.querySelectorAll('[aria-label="统一录音处理策略"]')).toHaveLength(1)
     expect(trigger.nextElementSibling?.textContent).toBe('已识别说话人')
     expect(trigger.nextElementSibling?.nextElementSibling?.textContent).toBe('声纹管理')
     trigger.focus()

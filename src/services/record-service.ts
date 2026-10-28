@@ -1353,45 +1353,6 @@ export class RecordService {
     return await this.runtime.stateStore.queryCached(session.userId, options)
   }
 
-  private legacyExcerptCursor={scope:'',after:''}
-  private legacyExcerptBusy=false
-  private legacyExcerptRetry=new Map<string,number>()
-  /** Positive UID + exact frozen text evidence only; never infer a quotation from a prefix. */
-  async migrateLegacySelfExcerpts():Promise<void> {
-    const store=this.runtime.stateStore.selfNoteQuotes
-    if(this.legacyExcerptBusy||!store)return
-    this.legacyExcerptBusy=true
-    try{
-      const session=await this.runtime.requireSession(),scope=`${this.runtime.config.environment}:${session.userId}`
-      if(this.legacyExcerptCursor.scope!==scope)this.legacyExcerptCursor={scope,after:''}
-      let candidates=store.migrationCandidates(scope,4,this.legacyExcerptCursor.after)
-      if(!candidates.length){this.legacyExcerptCursor.after='';candidates=store.migrationCandidates(scope)}
-      for(const uid of candidates){
-        this.legacyExcerptCursor.after=uid
-        const key=`${scope}:${uid}`;if((this.legacyExcerptRetry.get(key)??0)>Date.now())continue
-        this.legacyExcerptRetry.set(key,Date.now()+60_000)
-        try{
-          const data=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:uid},session)
-          const core=objectValue(data.record_core??data)
-          if(arkmePrivacyLockedRecord(data)||numberValue(core.status)!==1||numberValue(core.owner_user_id)!==session.userId)continue
-          const text=stringValue(core.text_content),body=store.migration(scope,uid,text,numberValue(core.version))
-          if(!body)continue
-          const accepted=readRecordExcerpt(objectValue(core.content_payload).excerpt,text)
-          if(accepted&&JSON.stringify(accepted)===JSON.stringify(body.excerpt)){store.migrationResult(scope,uid,'done');continue}
-          if(numberValue(core.version)!==body.expected_version){store.migrationResult(scope,uid,'conflict');continue}
-          const current=await this.runtime.accountScopedSession()
-          if(!current||current.userId!==session.userId||current.refreshToken!==session.refreshToken)return
-          const result=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/excerpt/attach',body,session)
-          if(result.record_uid===uid&&Number.isSafeInteger(result.version)&&Number(result.version)>=body.expected_version)store.migrationResult(scope,uid,'done')
-        }catch(error){
-          if(error instanceof ArkmeUpstreamResponseError&&error.code==='arkme-code-40001'&&!error.writeOutcomeUnknown)store.migrationResult(scope,uid,'conflict')
-          // Unknown outcomes retain the exact frozen intent; definitive refusals retain the original local data.
-        }
-      }
-      while(this.legacyExcerptRetry.size>256)this.legacyExcerptRetry.delete(this.legacyExcerptRetry.keys().next().value!)
-    }finally{this.legacyExcerptBusy=false}
-  }
-
   async refreshLatest(): Promise<void> {
     await Promise.all([this.summary(), this.list(50)])
   }
@@ -1554,7 +1515,6 @@ export class RecordService {
       ...(nextCursor === undefined ? {} : { nextCursor }),
     }
     await this.runtime.stateStore.cachePage(session.userId, page, cursor)
-    void this.migrateLegacySelfExcerpts().catch(()=>undefined)
     return page
   }
 

@@ -1,3 +1,4 @@
+import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 import { dayKey, dayLabel } from './conversation-message-presentation.js'
@@ -540,6 +541,7 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
         requestRef.current = controller
         const source = props.source ?? { sourceRef: props.sourceRef, kind: 'group_chat' as const, displayName: props.sourceName ?? '', activeAtMillis: 0, unreadCount: 0 }
         sharedLoader.current = new SharedPersonRecords({ source, memberRef: props.member.memberRef }, {
+          aggregate: (cursor, knownEventRefs, validateOnly) => callArkme('source.person-records.page', { sourceRef: props.sourceRef, memberRef: props.member.memberRef, ...(cursor ? { cursor } : {}), knownEventRefs, ...(validateOnly ? { validateOnly: true } : {}) }, controller.signal),
           sources: cursor => callArkme('source.person-records.sources', { sourceRef: props.sourceRef, memberRef: props.member.memberRef, ...(cursor ? { cursor } : {}) }, controller.signal),
           records: (entry, before, limit) => callArkme('source.member-records', { sourceRef: entry.source.sourceRef, memberRef: entry.memberRef, mode: 'owner', limit, basicPresentation: true, ...(before === undefined ? {} : { beforeSequence: before }) }, controller.signal),
         }, controller.signal, snapshot => {
@@ -653,6 +655,10 @@ function MemberRecordsWindow(props: MemberRecordsPanelProps & { onlyCurrent: boo
       }
     }
   }, [queryKey, props.sourceRef])
+
+  useEffect(() => subscribeMessageQuoteInvalidations(() => {
+    if (!props.onlyCurrent) void sharedLoader.current?.revalidate().catch(() => {})
+  }), [queryKey, props.onlyCurrent])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }

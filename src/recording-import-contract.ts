@@ -1,3 +1,4 @@
+import { recordingStrategy, type RecordingStrategy } from './recording-strategy-contract.js'
 import { recordingImportDeadline, RECORDING_IMPORT_RECOVERY_MILLIS, type RecordingImportBatch } from './recording-workflow-contract.js'
 import {
   MAX_RECORDING_IMPORT_BYTES,
@@ -33,6 +34,7 @@ export function validRecordingImportTaskId(value: unknown, now = Date.now()): va
 }
 
 export interface RecordingFileImportInput {
+  strategy?: RecordingStrategy
   fileRef: string
   startAtMillis: number
   ownership: 'self' | 'other'
@@ -48,7 +50,7 @@ export interface RecordingDirectoryUploadedSession {
   belongUserId: number
   hasFinishedUpload: boolean
 }
-export type RecordingImportIdentity = Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId'>
+export type RecordingImportIdentity = Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis' | 'belongUserId' | 'strategy'>
 export interface RecordingDirectorySnapshot {
   local: Array<{ identity: RecordingImportIdentity; task: PublicRecordingImportJob }>
   existingFileNames: string[]
@@ -169,6 +171,7 @@ export interface RecordingImportJob {
   sha256: string
   startAtMillis: number
   belongUserId: number
+  strategy?: RecordingStrategy
   recordingKind: RecordingImportRecordingKind
   sourceHandle: string
   uploadedBytes: number
@@ -218,6 +221,7 @@ export function sameRecordingImportIdentity(
     && left.sha256 === right.sha256
     && left.startAtMillis === right.startAtMillis
     && left.belongUserId === right.belongUserId
+    && recordingStrategy(left.strategy) === recordingStrategy(right.strategy)
 }
 
 export class RecordingImportContractError extends Error {

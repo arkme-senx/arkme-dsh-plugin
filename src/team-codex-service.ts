@@ -1,3 +1,4 @@
+import {localCodexTaskPage,localCodexTaskBatch,isLocalCodexTaskPosition} from './team-codex-local-tasks.js'
 import { readUnderlineSnapshot, type MessageUnderlineChange, type MessageUnderlineSnapshot } from './message-annotations.js'
 import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, watch, type FSWatcher } from 'node:fs'
@@ -34,7 +35,6 @@ interface Options {
   /** Optional explicit local configuration root; defaults to this host's Codex home. */
   codexHome?: string
   cloud?: TeamCodexCloudPort
-  onCloudSynced?():Promise<void>
 }
 const ID = /^[0-9a-f-]{36}$/
 const TEAM = /^team_v1_[A-Za-z0-9_-]{32}$/
@@ -69,7 +69,7 @@ export class TeamCodexService {
   private nativeSignatures = new Map<string,{signature:string;checkedAt:number}>()
   private nativeTargetCursor = ''
   private readonly nativeTurnCursors=new Map<string,number>()
-  private readonly cloudReadCursors=new Map<string,string>()
+  private readonly cloudTaskCursors=new Map<string,string>()
   private nextNativeCheck = 0
   private readonly cloud: TeamCodexCloud | undefined
   private cloudPumping = false
@@ -100,6 +100,7 @@ export class TeamCodexService {
         title TEXT NOT NULL, session_id TEXT, status TEXT NOT NULL, generation TEXT NOT NULL,
         created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS connection_owner ON connections(user_id,team_ref);
+      CREATE INDEX IF NOT EXISTS connection_activity ON connections(updated_at DESC,id);
       CREATE TABLE IF NOT EXISTS events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, connection_id TEXT NOT NULL REFERENCES connections(id),
         turn_id TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL, truncated INTEGER NOT NULL,
@@ -134,7 +135,7 @@ export class TeamCodexService {
     this.images?.fence()
     this.liveUpdates?.fence()
     this.nativeSignatures.clear()
-    this.nativeTurnCursors.clear();this.cloudReadCursors.clear();this.nativeTargetCursor=''
+    this.nativeTurnCursors.clear();this.cloudTaskCursors.clear();this.nativeTargetCursor=''
     this.nextNativeCheck=0
     for(const watcher of this.inboxWatchers.values()) watcher.close()
     this.inboxWatchers.clear()
@@ -252,7 +253,11 @@ export class TeamCodexService {
     return row ?? fail('未找到当前账号的本地任务', 404)
   }
 
-  async state(teamRef: string, page = 1, memberRef = '', sourceId = '', projectKey = ''): Promise<TeamCodexState> {
+  async state(teamRef: string, page = 1, memberRef = '', sourceId = '', projectKey = '', position:{cursor?:string|undefined;after?:string|undefined;from?:string|undefined} = {},signal?:AbortSignal): Promise<TeamCodexState> {
+    signal?.throwIfAborted()
+    if(!Number.isSafeInteger(page)||page<1||page>10000||[memberRef,sourceId,projectKey].some(v=>typeof v!=='string')
+      ||[position.cursor,position.after,position.from].some(v=>v!==undefined&&(typeof v!=='string'||v.length>2048))
+      ||[position.cursor,position.after,position.from].filter(Boolean).length>1)fail('任务分页或筛选参数无效',400)
     if (teamRef!=='self'&&!TEAM.test(teamRef)) fail('团队标识无效')
     const userId = await this.user()
     await this.tick()
@@ -260,14 +265,18 @@ export class TeamCodexService {
     if (memberRef.startsWith('usr_v1_')) memberRef = memberRef === self?.userRef
       ? String(userId) : await this.resolveDirectoryMember(teamRef, userId, memberRef)
     if (await this.user() !== userId) fail('账号已切换，请重试', 409)
-    const local = this.localState(userId, teamRef, self)
-    if(teamRef==='self') {
-      const teams=this.db.prepare('SELECT team_ref FROM codex_installations WHERE user_id=? UNION SELECT team_ref FROM connections WHERE user_id=?').all(userId,userId)
-      for(const t of teams){const v=this.localState(userId,String(t.team_ref),null);local.tasks.push(...v.tasks.map(task=>({...task,member:self})));local.installations.push(...v.installations)}
-    }
+    signal?.throwIfAborted()
+    const localPosition=isLocalCodexTaskPosition(position)
+    if(!this.cloud&&page>1&&!localPosition)fail('继续读取本机历史需要分页位置',400)
+    const localPage=localCodexTaskPage(this.db,userId,teamRef,isLocalCodexTaskPosition(position)?position:{})
+    const local=this.localState(userId,teamRef,self,localPage.rows.map(row=>row.id))
+    local.localTaskPage=localPage.paging
+    if(teamRef==='self')local.tasks=local.tasks.map(task=>({...task,member:self}))
     // An unsupported/offline cloud must never substitute my local tasks for a colleague's tasks.
-    const scoped = memberRef && memberRef !== String(userId) ? {...local,tasks:[]} : local
-    const result = this.cloud ? await this.cloud.state(userId, teamRef, scoped, page, memberRef, sourceId, projectKey) : scoped
+    const scoped = memberRef && memberRef !== String(userId) ? {...local,tasks:[],localTaskPage:{hasMore:false,hasNewer:false}} : local
+    const remote = this.cloud ? await this.cloud.state(userId,teamRef,scoped,localPosition?1:page,memberRef,sourceId,projectKey,localPosition?{}:position,signal) : scoped
+    const result = localPosition ? {...scoped,...(remote.cloud?{cloud:remote.cloud}:{})} : remote
+    signal?.throwIfAborted()
     if (await this.user() !== userId) fail('账号已切换，请重试', 409)
     return { ...result, tasks: this.captureHealth.annotate(userId, teamRef, result.tasks) }
   }
@@ -297,11 +306,10 @@ export class TeamCodexService {
     return fail('暂时无法核对这位成员的云端身份，请刷新团队后重试',409)
   }
 
-  private localState(userId: number, teamRef: string, self: ArkmeTeamMember | null): TeamCodexState {
-    const rows = this.db.prepare('SELECT * FROM connections WHERE user_id=? AND team_ref=? ORDER BY updated_at DESC,id DESC').all(userId, teamRef) as unknown as Binding[]
-    const machine = this.machine.state(userId,teamRef)
-    const migrated = this.machine.migratedIds()
-    const tasks = [...machine.tasks,...rows.filter(row=>!migrated.has(row.id)).map(row=>this.task(row))]
+  private localState(userId: number, teamRef: string, self: ArkmeTeamMember | null,ids:readonly string[],includeQueueText=false): TeamCodexState {
+    const rows = (ids.length?this.db.prepare(`SELECT * FROM connections WHERE user_id=? AND (?='self' OR team_ref=?) AND id IN (${ids.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id`).all(userId,teamRef,teamRef,...ids):[]) as unknown as Binding[]
+    const machine = this.machine.state(userId,teamRef,ids,includeQueueText)
+    const tasks = [...machine.tasks,...rows.map(row=>this.task(row))]
     if (this.cloud) for (const task of tasks) {
       const session = task.installationId
         ? (this.db.prepare('SELECT session_id FROM codex_tasks WHERE id=?').get(task.id) as {session_id:string}|undefined)?.session_id
@@ -309,7 +317,7 @@ export class TeamCodexService {
       if (!session) continue
       const ambiguous = this.db.prepare(`SELECT 1 FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
         WHERE t.session_id=? AND (i.user_id<>? OR i.team_ref<>?)
-        UNION SELECT 1 FROM connections WHERE session_id=? AND (user_id<>? OR team_ref<>?) LIMIT 1`).get(session,userId,teamRef,session,userId,teamRef)
+        UNION SELECT 1 FROM connections WHERE session_id=? AND (user_id<>? OR team_ref<>?) LIMIT 1`).get(session,userId,this.localTaskTeam(userId,teamRef,task.id),session,userId,this.localTaskTeam(userId,teamRef,task.id))
       if (ambiguous) task.cloudBlocked=true
     }
     return { localOnly: true, self, installations:machine.installations,
@@ -423,7 +431,8 @@ export class TeamCodexService {
     return {sessionId:String(row.session_id),homeKey:String(row.home_key),native:!!row.native,active:row.status==='active'}
   }
 
-  async events(teamRef: string, id: string, before?: number, sourceId?: string, cursor?: string,window?:{after?:string;from?:string;through?:string}): Promise<TeamCodexEventPage> {
+  async events(teamRef: string, id: string, before?: number, sourceId?: string, cursor?: string,window?:{after?:string;from?:string;through?:string},signal?:AbortSignal): Promise<TeamCodexEventPage> {
+    signal?.throwIfAborted()
     const userId = await this.user()
     const generation = this.generation
     const annotate = async (page:TeamCodexEventPage, source:CodexTimingSource|undefined,capture=true) => {
@@ -434,6 +443,7 @@ export class TeamCodexService {
       if(!source) return finish(this.timings.project(scope,{sessionId:''},page.items,new Map()))
       if(!capture){const cached=this.images.project(userId,source,this.timings.project(scope,source,page.items,new Map()));return finish(cached)}
       const fresh=await this.timings.read(source,page.items)
+      signal?.throwIfAborted()
       if(this.closed || generation!==this.generation || await this.options.currentUserId()!==userId) fail('账号或同步状态已变化，请重试',409)
       // Re-check exclusion/disconnection after asynchronous source reads.
       let current=sourceId ? this.captureHealth.timingSource(userId,teamRef,id,sourceId,page.items.map(event=>event.turnId))
@@ -456,7 +466,7 @@ export class TeamCodexService {
     }
     if (sourceId) {
       if (!this.cloud) fail('当前环境未启用云端记录', 403)
-      const page=await this.cloud.events(userId, teamRef, id, sourceId, cursor,window)
+      const page=await this.cloud.events(userId, teamRef, id, sourceId, cursor,window,signal)
       return this.imageReferences(userId,teamRef,id,sourceId,page)
     }
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) fail('分页标识无效')
@@ -484,7 +494,8 @@ export class TeamCodexService {
     return this.imageReferences(userId,teamRef,id,undefined,await annotate(page,binding.status==='active'&&binding.session_id?{sessionId:binding.session_id,live:true}:undefined))
   }
 
-  async prepareExport(teamRef:string,id:string,sourceId:string|undefined,raw:unknown){
+  async prepareExport(teamRef:string,id:string,sourceId:string|undefined,raw:unknown,signal?:AbortSignal){
+    signal?.throwIfAborted()
     const owner=await this.user(),snapshot=raw as {sessionId?:unknown;messages?:unknown;taskTitle?:unknown;inputName?:unknown;versions?:Record<string,number>}
     if(!snapshot||!Array.isArray(snapshot.messages)||!snapshot.messages.length||snapshot.messages.length>100||typeof snapshot.sessionId!=='string')fail('请选择完整的 Codex 消息',400)
     const sourceRef=JSON.stringify(['codex',owner,snapshot.sessionId]),targets:({source_id:string;task_id:string;event_id:string;version:number}|undefined)[]=[]
@@ -502,7 +513,7 @@ export class TeamCodexService {
     }
     if(targets.some(Boolean)){
       if(targets.some(v=>!v)||!this.cloud)fail('部分消息尚未同步，请稍后重试',409)
-      const result=await this.cloud.accountPost<{items:{event_id:string;text_content:string;role:string;send_at:number}[]}>(owner,'/api/v1/team-codex/share/resolve',{items:targets})
+      const result=await this.cloud.accountPost<{items:{event_id:string;text_content:string;role:string;send_at:number}[]}>(owner,'/api/v1/team-codex/share/resolve',{items:targets},signal)
       if(!Array.isArray(result.items)||result.items.length!==targets.length)fail('来源校验未完成',502)
       result.items.forEach((item,index)=>{const visible=(snapshot.messages as {key:string;text:string;role:string;createdAtMillis:number}[])[index]!;if(item.event_id!==targets[index]!.event_id||item.text_content!==visible.text||item.role!==visible.role||item.send_at!==visible.createdAtMillis)fail('所选消息已变化，请重新选择',409)})
     }else{
@@ -553,28 +564,8 @@ export class TeamCodexService {
     if(!ID.test(sourceId!)||!ID.test(task!)||!mark[1]||mark[1].length>128)fail('标记来源无效',400)
     return {source_id:sourceId!,task_id:task!,event_id:mark[1]}
   }
-  async legacyMarkAliases(target:{source_id:string;task_id:string;event_id:string}):Promise<{tasks:string[];messages:string[]}>{
-    const owner=await this.user(),tasks=new Set([target.task_id]),messages=new Set([target.event_id])
-    const mappings=this.db.prepare('SELECT t.local_id FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE t.id=? AND s.id=? AND s.owner=?').all(target.task_id,target.source_id,owner)
-    for(const mapping of mappings){
-      const local=String(mapping.local_id);tasks.add(local)
-      if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='codex_legacy_migrations'").get())for(const row of this.db.prepare('SELECT connection_id FROM codex_legacy_migrations WHERE task_id=?').all(local))tasks.add(String(row.connection_id))
-    }
-    const event=this.db.prepare('SELECT payload,slot FROM codex_cloud_events WHERE task=? AND id=?').get(target.task_id,target.event_id)
-    if(event){
-      const payload=JSON.parse(String(event.payload)) as {turn_seq:number;kind:string}
-      const turn=this.db.prepare('SELECT local_turn FROM codex_cloud_turns WHERE task=? AND seq=?').get(target.task_id,payload.turn_seq)
-      if(turn){for(const task of tasks){
-        for(const table of ['codex_events','events']){
-          const column=table==='codex_events'?'task_id':'connection_id'
-          for(const row of this.db.prepare(`SELECT sequence FROM ${table} WHERE ${column}=? AND turn_id=? AND kind=?`).all(task,String(turn.local_turn),payload.kind))messages.add(`${String(turn.local_turn)}:${payload.kind}:${Number(row.sequence)}`)
-        }
-      }}
-    }
-    return {tasks:[...tasks],messages:[...messages]}
-  }
-
-  async cloudMarkCapabilities(sourceRef:string){
+  async cloudMarkCapabilities(sourceRef:string,signal?:AbortSignal){
+    signal?.throwIfAborted()
     const owner=await this.user();let source:unknown,scope:unknown
     try{source=JSON.parse(sourceRef);scope=JSON.parse((source as unknown[])[2] as string)}catch{fail('标记来源无效',400)}
     if(!Array.isArray(source)||source[0]!=='codex'||source[1]!==owner||!Array.isArray(scope)||scope.length!==3)fail('标记来源无效',400)
@@ -582,23 +573,26 @@ export class TeamCodexService {
     const local=this.db.prepare('SELECT 1 FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? UNION SELECT 1 FROM connections WHERE id=? AND user_id=?').get(task,owner,task,owner)
     if(local&&!mapped)return undefined
     if(!this.cloud)fail('云端暂不可用',503)
-    await this.cloud.accountPost(await this.user(),'/api/v1/team-codex/annotations/capabilities',{})
+    await this.cloud.accountPost(await this.user(),'/api/v1/team-codex/annotations/capabilities',{},signal)
     return {supported:true,maxLength:2000,maxBatchSize:40,storage:'cloud' as const,requiresBaseRevision:true}
   }
-  async cloudMarks(sourceRef:string,refs:string[]){
-    if(refs.length<1||refs.length>40)fail('每次最多读取40条消息的私人标记',400)
+  async cloudMarks(sourceRef:string,refs:string[],signal?:AbortSignal){
+    signal?.throwIfAborted()
+    if(!Array.isArray(refs)||refs.some(ref=>typeof ref!=='string')||refs.length<1||refs.length>40)fail('每次最多读取40条消息的私人标记',400)
     const targets=await Promise.all(refs.map(ref=>this.canonicalMessageTarget(sourceRef,ref)))
     if(targets.some(t=>!t))return undefined
     if(!this.cloud)fail('云端暂不可用',503)
-    const owner=await this.user(),result=await this.cloud.accountPost<{items:unknown[]}>(owner,'/api/v1/team-codex/annotations/list',{targets})
+    const owner=await this.user(),result=await this.cloud.accountPost<{items:unknown[]}>(owner,'/api/v1/team-codex/annotations/list',{targets},signal)
     if(!Array.isArray(result.items)||result.items.length!==refs.length)fail('标记响应未确认',502)
     return result.items.map((row,i)=>({actionRef:refs[i]!,snapshot:readUnderlineSnapshot(row,owner)}))
   }
-  async changeCloudMark(sourceRef:string,ref:string,change:MessageUnderlineChange):Promise<MessageUnderlineSnapshot|undefined>{
+  async changeCloudMark(sourceRef:string,ref:string,change:MessageUnderlineChange,signal?:AbortSignal):Promise<MessageUnderlineSnapshot|undefined>{
+    signal?.throwIfAborted()
+    if(!change||typeof change!=='object')fail('标记操作无效',400)
     const target=await this.canonicalMessageTarget(sourceRef,ref);if(!target)return undefined
     if(!this.cloud)fail('云端暂不可用',503)
     if(!Number.isSafeInteger(change.baseRevision)||Number(change.baseRevision)<0)fail('请先读取当前标记',409)
-    const owner=await this.user(),result=await this.cloud.accountPost<{status:string;snapshot:unknown}>(owner,'/api/v1/team-codex/annotations/change',{...target,base_revision:change.baseRevision,operation_id:change.operationId,kind:change.kind,...(change.kind==='add'?{anchor:change.anchor}:{annotation_id:change.annotationId})})
+    const owner=await this.user(),result=await this.cloud.accountPost<{status:string;snapshot:unknown}>(owner,'/api/v1/team-codex/annotations/change',{...target,base_revision:change.baseRevision,operation_id:change.operationId,kind:change.kind,...(change.kind==='add'?{anchor:change.anchor}:{annotation_id:change.annotationId})},signal)
     const snapshot=readUnderlineSnapshot(result.snapshot,owner)
     return {...snapshot,...(result.status==='conflict'?{syncNotice:'标记已在另一设备变化，已读取当前状态；请重新选择后操作。'}:{})}
   }
@@ -614,12 +608,16 @@ export class TeamCodexService {
     return result
   }
   private imageReferences(owner:number,teamRef:string,id:string,sourceId:string|undefined,page:TeamCodexEventPage):TeamCodexEventPage{
-    return {...page,items:page.items.map(event=>({...event,...(event.privateImages?{privateImages:event.privateImages.map(image=>({...image,imageRef:'codex_image_v1_'+Buffer.from(JSON.stringify({owner,teamRef,id,sourceId,eventId:event.eventId,turnId:event.turnId,kind:event.kind,ref:image.ref})).toString('base64url')}))}:{})}))}
+    const queue=!sourceId?this.machine.readTaskQueue(owner,teamRef,id):undefined
+    const local=!sourceId?this.localState(owner,teamRef,null,[id]).tasks[0]:undefined
+    const task=local?this.captureHealth.annotate(owner,teamRef,[local])[0]:undefined
+    const taskSummary=task?{title:task.title,state:task.state,updatedAt:task.updatedAt,eventCount:task.eventCount,projectKey:task.projectKey??'',projectName:task.projectName??'',branch:task.branch??'',status:task.status,excluded:task.excluded===true,projectExcluded:task.projectExcluded===true,...(task.captureHealth?{captureHealth:task.captureHealth}:{})}:page.taskSummary
+    return {...page,...(taskSummary?{taskSummary}:{}),...(queue?{queue,queueCloud:'ready' as const}:{}),items:page.items.map(event=>({...event,...(event.privateImages?{privateImages:event.privateImages.map(image=>({...image,imageRef:'codex_image_v1_'+Buffer.from(JSON.stringify({owner,teamRef,id,sourceId,eventId:event.eventId,turnId:event.turnId,kind:event.kind,ref:image.ref})).toString('base64url')}))}:{})}))}
   }
 
   /** Private media is a separate owner-checked read, never an arbitrary path/URL fetch. */
-  async image(teamRef:string,id:string,turnId:string,kind:string,ref:string,full=false,sourceId?:string,eventId?:string):Promise<{dataUrl:string}> {
-    const value=await this.imageBytes(teamRef,id,turnId,kind,ref,full,sourceId,eventId)
+  async image(teamRef:string,id:string,turnId:string,kind:string,ref:string,full=false,sourceId?:string,eventId?:string,signal?:AbortSignal):Promise<{dataUrl:string}> {
+    const value=await this.imageBytes(teamRef,id,turnId,kind,ref,full,sourceId,eventId,signal)
     return {dataUrl:`data:${value.mediaType};base64,${Buffer.from(value.data).toString('base64')}`}
   }
   private async imageBytes(teamRef:string,id:string,turnId:string,kind:string,ref:string,full=false,sourceId?:string,eventId?:string,signal?:AbortSignal):Promise<{data:Uint8Array;mediaType:'image/png'|'image/jpeg'|'image/webp'}> {
@@ -757,8 +755,6 @@ export class TeamCodexService {
   }
 
   private async pumpCloud(user: number, generation: number): Promise<void> {
-    const ownedIds=new Set(this.db.prepare('SELECT t.id FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE i.user_id=? UNION SELECT id FROM connections WHERE user_id=?').all(user,user).map(row=>String(row.id)))
-    for(const id of this.cloudReadCursors.keys())if(!ownedIds.has(id))this.cloudReadCursors.delete(id)
     const teams = this.db.prepare(`SELECT team_ref FROM codex_installations WHERE user_id=? AND (status='active' OR home_key IS NOT NULL)
       UNION SELECT team_ref FROM connections c WHERE user_id=? AND (status='active' OR EXISTS(SELECT 1 FROM events e WHERE e.connection_id=c.id))`).all(user, user) as { team_ref: string }[]
     for (const { team_ref: team } of teams) {
@@ -766,20 +762,22 @@ export class TeamCodexService {
       const sources = this.db.prepare(`SELECT id FROM codex_installations WHERE user_id=? AND team_ref=? AND home_key IS NOT NULL
         UNION SELECT id FROM connections c WHERE user_id=? AND team_ref=? AND EXISTS(SELECT 1 FROM events e WHERE e.connection_id=c.id)`)
         .all(user,team,user,team) as {id:string}[]
-      await this.cloud?.confirmSources(user,team,sources.map(source=>source.id))
+      void this.cloud?.confirmSources(user,team,sources.map(source=>source.id)).catch(()=>undefined)
       if (this.closed || generation !== this.generation || await this.options.currentUserId() !== user) return
-      const tasks=this.localState(user,team,null).tasks
+      const batch=localCodexTaskBatch(this.db,user,team,this.cloudTaskCursors.get(team)??'')
+      this.cloudTaskCursors.set(team,batch.cursor)
+      const tasks=this.localState(user,team,null,batch.ids,true).tasks
       await this.cloud?.sync(user, team, tasks, task => {
         // Read a bounded ascending slice from the existing native projection. The
         // durable cloud ledger keeps identity/ACKs; this cursor only rotates reads.
         const collected=this.collectedSource(user,task.id,team)??{sessionId:'',homeKey:'',native:!!task.installationId}
-        const page=readLocalCodexEvents(this.db,{owner:user,task:task.id,...collected},this.cloudReadCursors.get(task.id),{},undefined,true)
-        if(page.nextCursor)this.cloudReadCursors.set(task.id,page.nextCursor);else this.cloudReadCursors.delete(task.id)
+        const page=readLocalCodexEvents(this.db,{owner:user,task:task.id,...collected},this.cloud?.journal.localReadCursor(user,team,task.id),{},undefined,true)
+        // Reconcile invokes this callback inside its transaction, after allocating the mapping.
+        this.cloud?.journal.saveLocalReadCursor(user,team,task.id,page.nextCursor??'')
         const source=task.installationId?this.machine.timingSource(user,team,task.id):(()=>{const binding=this.binding(user,team,task.id);return binding.status==='active'&&binding.session_id?{sessionId:binding.session_id,live:true}:undefined})()
         return source?this.timings.project(JSON.stringify([user,team,'local',task.id]),source,page.items,new Map()):page.items
       })
     }
-    if(!this.closed&&generation===this.generation&&await this.options.currentUserId()===user)void this.options.onCloudSynced?.().catch(()=>undefined)
   }
 
   private ingest(row: Binding): boolean {

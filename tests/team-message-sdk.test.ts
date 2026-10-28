@@ -48,3 +48,30 @@ it('SDK and Host keep one native or Team destination and immutable forward ident
  expect(await sdk.forwardTeamMessages(input)).toEqual(result)
  expect(service.forwardTeamMessages).toHaveBeenCalledWith(input,undefined)
 })
+
+it('SDK and Host share versioned extension reads and preserve paging/cancellation',async()=>{
+ const page={message:{key:'source'},items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:10}
+ const read=vi.fn(async()=>page)
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageExtensions:1}}),readTeamExtensions:read}
+ const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params,undefined,undefined,undefined,undefined,init?.signal??undefined)}))}) as typeof fetch
+ const controller=new AbortController(),sdk=new ArkmeSdk({fetchImpl})
+ expect(await sdk.readTeamExtensions('conversation-ref','message-ref',{afterSeq:3,throughSeq:10,limit:2},controller.signal)).toEqual(page)
+ expect(read).toHaveBeenCalledWith('conversation-ref','message-ref',{afterSeq:3,throughSeq:10,limit:2},controller.signal)
+})
+it('extension SDK rejects an older provider before executing any read',async()=>{
+ const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{teamMessageInteractions:1}}}))) as typeof fetch
+ await expect(new ArkmeSdk({fetchImpl}).readTeamExtensions('conversation','message')).rejects.toThrow('不支持')
+ expect(fetchImpl).toHaveBeenCalledOnce()
+})
+it('requires mention capability and passes safe identity spans and filters unchanged',async()=>{
+ const read=vi.fn(async()=>({messages:[],hasMore:false})),send=vi.fn(async(c)=>({...c,state:'queued'}))
+ let supported=true
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageInteractions:1,...(supported?{teamPersonMentions:1}:{})}}),readTeamMessages:read,sendTeamMessage:send}
+ const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}) as typeof fetch
+ const sdk=new ArkmeSdk({fetchImpl}),options={personRef:'opaque-person',personMode:'mentioned' as const,limit:20}
+ await sdk.readTeamMessages('opaque-conversation',options);expect(read).toHaveBeenCalledWith('opaque-conversation',options,undefined)
+ const command={conversationRef:'opaque-conversation',clientUid:'original',expectedReplySeq:0,fileRefs:[],content:{text_content:'@人',template_kind:1,mentions:[{personRef:'opaque-person',displayName:'人',startIndex:0,length:2}]}}
+ await sdk.sendTeamMessage(command);expect(send).toHaveBeenCalledWith(command,undefined)
+ supported=false
+ await expect(new ArkmeSdk({fetchImpl}).readTeamMessages('opaque-conversation',options)).rejects.toThrow('不支持')
+})

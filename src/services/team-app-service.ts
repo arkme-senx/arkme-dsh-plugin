@@ -1,3 +1,5 @@
+import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
@@ -141,6 +143,28 @@ export class TeamAppService {
     if (message.conversation_uid !== context.conversation_uid || message.side !== context.side || !str(message.message_uid)) throw invalid()
     return await this.key(str(message.message_uid), actor)
   }
+  private async mentionContent(raw: unknown, actor: number, context: Record<string, unknown>) {
+    const content = {...obj(raw)}, payload = {...obj(content.content_payload)}, text = str(content.text_content)
+    if (payload.mention_metadata || payload.mentionMetadata) throw invalid()
+    const inputs = content.mentions
+    delete content.mentions
+    if (inputs === undefined) return content
+    if (!Array.isArray(inputs) || inputs.length > 100 || inputs.length && context.side !== 'team') throw invalid()
+    const humans = []
+    let end = 0
+    for (const input of inputs) {
+      const m = obj(input), start = m.startIndex, length = m.length
+      if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < end || typeof length !== 'number' || !Number.isSafeInteger(length) || length <= 1 || start + length > text.length) throw invalid()
+      const person = await this.open('person', m.personRef, actor), id = recordOwnerId(person.user_id)
+      if (person.conversation_uid !== context.conversation_uid || person.side !== 'team' || typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw invalid()
+      const token = text.slice(start, start + length)
+      if (token !== `@${str(m.displayName)}`) throw invalid()
+      humans.push({user_id:id,display_name_snapshot:str(m.displayName),start_index:start,length})
+      end = start + length
+    }
+    if (humans.length) content.content_payload = {...payload,payload_kind:payload.payload_kind ?? 1,schema_version:1,text_state:1,mention_metadata:encodeMentionMetadata(text,{humans,bots:[]})}
+    return content
+  }
   private async key(value: string, actor: number): Promise<string> {
     return createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`team:${actor}:${value}`).digest('hex')
   }
@@ -207,28 +231,36 @@ export class TeamAppService {
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
   }
+  private async mediaItems(raw:unknown,actor:number,locator:Record<string,unknown>,version:number) {
+    return await Promise.all(list(raw).map(async f => {
+      const ref=await this.ref('media',{...locator,record_version:version,file_asset_uid:str(f.file_asset_uid),file_name:str(f.file_name),mime_type:str(f.mime_type),size:num(f.size)},actor)
+      return {key:await this.key(`media:${str(locator.message_uid)}:${version}:${str(f.file_asset_uid)}`,actor),ref,
+        url:`${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,name:str(f.file_name)||'附件',mimeType:str(f.mime_type),size:num(f.size),kind:num(f.file_kind)}
+    }))
+  }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
-    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
+    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id), ...(obj(content.content_payload).mention_metadata ? { has_mentions: true } : {}) }
+    const mentions = []
+    if (context.side === 'team') {
+      for (const m of list(obj(obj(content.content_payload).mention_metadata).human_mentions).slice(0, 100)) {
+        const identity = await this.identity({}, actor, {id:m.user_id,context})
+        if (identity.personRef) mentions.push({personRef:identity.personRef,displayName:str(m.display_name_snapshot) || str(content.text_content).slice(num(m.start_index)+1,num(m.start_index)+num(m.length)),startIndex:num(m.start_index),length:num(m.length)})
+      }
+    }
     const reply = obj(v.reply)
     const replyPreview = str(reply.message_uid) ? {
       ref: await this.ref('message', {conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},actor),
       key:await this.key(str(reply.message_uid),actor),seq:num(reply.seq),version:num(reply.record_version),
       state: ['available','edited'].includes(str(reply.state)) ? str(reply.state) as 'available'|'edited' : 'unavailable' as const,
+      title: ['available','edited'].includes(str(reply.state)) ? str(reply.title) : '',
+      media: ['available','edited'].includes(str(reply.state)) ? await this.mediaItems(reply.media,actor,{conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},num(reply.record_version)) : [],
       text: ['available','edited'].includes(str(reply.state)) ? str(reply.text) : '',sender:await this.identity(['available','edited'].includes(str(reply.state))?reply.sender:{},actor),
       ...(reply.state === 'available' && readMessageQuote(reply.quote) ? {quote:readMessageQuote(reply.quote)!} : {}),
     } : undefined
     const markContent = { title: str(content.title), textContent: str(content.text_content), textFormat: obj(content.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const }
     const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
-    const projectedMedia = await Promise.all(list(content.media).map(async f => {
-        const ref = await this.ref('media', { ...locator, record_version: num(content.version), file_asset_uid: str(f.file_asset_uid), file_name: str(f.file_name), mime_type: str(f.mime_type), size:num(f.size) }, actor)
-        return {
-          key: await this.key(`media:${uid}:${num(content.version)}:${str(f.file_asset_uid)}`, actor), ref,
-          // This local route reauthorizes every byte read, not an upstream signed URL.
-          url: `${this.runtime.config.routePath}/team/media?ref=${encodeURIComponent(ref)}`,
-          name: str(f.file_name) || '附件', mimeType: str(f.mime_type), size: num(f.size), kind: num(f.file_kind),
-        }
-      }))
+    const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
     return {ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
@@ -239,8 +271,8 @@ export class TeamAppService {
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       ...(replyPreview ? {reply:replyPreview} : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
-        text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
-        ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
+        ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
+        ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
       media: projectedMedia,
@@ -782,18 +814,33 @@ export class TeamAppService {
         const data=await post('conversations/messages/annotations/change',{...context,audience,message_uid:targets[0]!.message_uid,action:kind,...(anchor?{operation_uid:change.operationId,anchor}:{annotation_uid:change.annotationId})})
         return readTeamUnderlineSnapshot(data)
       }
+      case 'team.app.extensions': {
+        const context=await conversation(),target=await this.open('message',p.messageRef,actor)
+        if(target.conversation_uid!==context.conversation_uid||target.side!==context.side)throw invalid()
+        const data=await post('conversations/messages/extensions',{...context,message_uid:target.message_uid,after_seq:num(p.afterSeq),through_seq:num(p.throughSeq),limit:num(p.limit)||30},true)
+        return {message:await this.message(data.message,actor,context),items:await Promise.all(list(data.items).map(row=>this.message(row,actor,context))),
+          totalCount:num(data.total_count),hasMore:data.has_more===true,nextSeq:num(data.next_seq),throughSeq:num(data.through_seq)} satisfies import('../team-app-contract.js').TeamExtensionPage
+      }
       case 'team.app.locate':
       case 'team.app.timeline': {
         const context = await conversation()
         const target = operation === 'team.app.locate' ? await this.open('message', p.messageRef, actor) : undefined
         if (target && (target.conversation_uid !== context.conversation_uid || target.side !== context.side)) throw invalid()
-        const data = await post(operation === 'team.app.locate' ? 'conversations/timeline/locate' : 'conversations/timeline/page', { ...context, ...(target ? {message_uid:target.message_uid} : {before_seq:num(p.beforeSeq)}), limit:num(p.limit)||50 }, true)
+        const data = await post(operation === 'team.app.locate' ? 'conversations/timeline/locate' : 'conversations/timeline/page', { ...context, ...(target ? {message_uid:target.message_uid} : {before_seq:num(p.beforeSeq)}), limit:Math.max(1,Math.min(100,num(p.limit)||50)) }, true)
+        let rows = list(data.messages)
+        if (p.personRef !== undefined) {
+          const person = await this.open('person',p.personRef,actor)
+          if (context.side !== 'team' || person.side !== 'team' || person.conversation_uid !== context.conversation_uid || !['owner','mentioned'].includes(str(p.personMode))) throw invalid()
+          rows = rows.filter(row => row.state === 'published' && obj(row.record).status === 'available' && (p.personMode === 'owner'
+            ? String(row.actor_user_id) === String(person.user_id)
+            : list(obj(obj(obj(row.record).content_payload).mention_metadata).human_mentions).some(m => String(m.user_id) === String(person.user_id))))
+        }
         const current = await this.conversation(data.conversation, actor)
         const external = list(data.messages).find(v => v.side === 'external')
         if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
           current.visitor = await this.identity(obj(data.conversation).visitor, actor, { id: external.actor_user_id, context })
         }
-        return { conversation: current, messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),
+        return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
       case 'team.app.person.private.open':
@@ -852,7 +899,7 @@ export class TeamAppService {
         const quote = p.quote === undefined ? undefined : readMessageQuote(p.quote)
         if (p.quote !== undefined && (!quote || !reply || quote.recordVersion !== num(p.replyRecordVersion))) throw invalid()
         try {
-          const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: obj(p.content),
+          const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: await this.mentionContent(p.content,actor,context),
             ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
           return { message: await this.message(data, actor, context) }
         } catch (error) {
@@ -867,7 +914,18 @@ export class TeamAppService {
         const data = await post('conversations/messages/send-status', { message_uid: m.message_uid, side: m.side })
         return { message: await this.message(data, actor, m) }
       }
-      case 'team.app.edit': { const m = await message(); return await post('conversations/messages/update', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version), content: obj(p.content) }) }
+      case 'team.app.edit': {
+        const m = await this.open('message', p.messageRef, actor), explicitMentions = obj(p.content).mentions !== undefined, content = await this.mentionContent(p.content,actor,m), payload = {...obj(content.content_payload)}
+        if (m.has_mentions === true && !explicitMentions) {
+          const data = await post('conversations/messages/batch-get', {conversation_uid:m.conversation_uid,side:m.side,items:[{message_uid:m.message_uid,expected_record_version:num(p.version)}]}, true)
+          const rows = list(data.messages), row = rows[0], original = obj(row?.record)
+          if (rows.length !== 1 || row?.message_uid !== m.message_uid || original.version !== num(p.version) || original.status !== 'available') throw invalid()
+          const mentions = await retainedRecordMentionMetadata(obj(original.content_payload), str(original.text_content), str(content.text_content))
+          if (mentions) payload.mention_metadata = mentions
+          if (Object.keys(payload).length) content.content_payload = {...payload, payload_kind:payload.payload_kind ?? 1, schema_version:1, text_state:1}
+        }
+        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content})
+      }
       case 'team.app.cancel': {
         if (p.conversationRef !== undefined) {
           const context = await conversation()

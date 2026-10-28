@@ -11,7 +11,7 @@ export function codexObjectFixture(){
  const body=(descriptor:Record<string,unknown>)=>JSON.parse(gunzipSync(objects.get(String(descriptor.sha256))!).toString()) as Record<string,unknown>
  const page=(source:string,task:string,events:Record<string,unknown>[],extra:Record<string,unknown>={})=>{
   const data=gzipSync(JSON.stringify({schema:'codex.content.v1',events})),hash=createHash('sha256').update(data).digest('hex');objects.set(hash,data)
-  return {items:events.map(event=>({...event,text:''})),content_objects:[{descriptor:{source_id:source,task_id:task,kind:'messages',sha256:hash,size:data.length},grant:grant(hash)}],has_more:false,...extra}
+  return {task_summary:{source_id:source,task_id:task,task_title:'Codex',project_key:'p',project_name:'项目',branch:'dev',task_metadata_version:1,summary_version:1,event_count:events.length,latest_at:Number(events.at(-1)?.at??0),state:'turn_ended'},items:events.map(event=>({...event,text:''})),content_objects:[{descriptor:{source_id:source,task_id:task,kind:'messages',sha256:hash,size:data.length},grant:grant(hash)}],has_more:false,...extra}
  }
  return {objects,uploads,grant,fetch,prepare,body,page}
 }

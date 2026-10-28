@@ -1,11 +1,17 @@
 import { createRoot } from 'react-dom/client'
-import { ArkmeLongArticleWindow } from '../../src/client/ArkmeLongArticleWindow.js'
+import { registerLongArticleWindowRoot } from '../../src/client/long-article-window-root.js'
 import { installArkmeRedesignStyles } from '../../src/client/redesign/styles.js'
 import { arkmeAuthStore } from '../../src/client/auth-store.js'
 import { bindLongArticleWindowAccount, openLongArticleWindow, openBrowseWindow } from '../../src/client/long-article-window.js'
 installArkmeRedesignStyles()
 if (location.search.includes('arkmeLongArticle=1')) {
-  createRoot(document.getElementById('root')!).render(<ArkmeLongArticleWindow />)
+  // Use the production registration so sibling overlays and body portals are tested.
+  registerLongArticleWindowRoot({
+    effect: (setup: () => unknown) => setup(),
+    slots: { register: (_options: unknown, Component: () => React.ReactNode) => {
+      createRoot(document.getElementById('root')!).render(<Component />)
+    } },
+  } as unknown as Parameters<typeof registerLongArticleWindowRoot>[0])
 } else {
   await arkmeAuthStore.refresh()
   bindLongArticleWindowAccount()

@@ -1,3 +1,4 @@
+import { recordingStrategy } from './recording-strategy-contract.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
 import type { ArkmeArkoHistoryQuery } from './arko-history-contract.js'
@@ -79,6 +80,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
+  if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
@@ -983,7 +985,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       if(request.operation==='codex.work-records'&&origin===undefined&&!['tasks','events','marks'].includes(String((request.params?.request as {action?:unknown})?.action)))throw new ArkmePluginError('origin-required','该敏感操作需要受信任来源',false,403)
       if (request.operation === 'offline-context' && origin === undefined) throw new ArkmePluginError('origin-required','上下文操作需要受信任来源',false,403)
-      if (['explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'codex.copy-link', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'codex.copy-link', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1230,11 +1232,11 @@ export async function dispatchArkmeHostOperation(
     case 'team.codex.change': {
       if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
       const teamRef = stringParam(params, 'teamRef')
-      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'))
+      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'),{cursor:optionalTeamStringParam(params,'cursor'),after:optionalTeamStringParam(params,'after'),from:optionalTeamStringParam(params,'from')},requestSignal)
       if (operation === 'team.codex.invite') return await teamCodex.invite(teamRef)
       const id = stringParam(params, 'id')
-      if (operation === 'team.codex.image') return await teamCodex.image(teamRef,id,stringParam(params,'turnId'),stringParam(params,'kind'),stringParam(params,'ref'),params.full===true,optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'eventId'))
-      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'),{...(typeof params.after==='string'?{after:params.after}:{}),...(typeof params.from==='string'?{from:params.from}:{}),...(typeof params.through==='string'?{through:params.through}:{})})
+      if (operation === 'team.codex.image') return await teamCodex.image(teamRef,id,stringParam(params,'turnId'),stringParam(params,'kind'),stringParam(params,'ref'),params.full===true,optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'eventId'),requestSignal)
+      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'),{...(typeof params.after==='string'?{after:params.after}:{}),...(typeof params.from==='string'?{from:params.from}:{}),...(typeof params.through==='string'?{through:params.through}:{})},requestSignal)
       await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
       return { ok: true }
     }
@@ -1246,6 +1248,7 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.marks-read':return await service.readTeamMarks(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,params.markRefs as string[],requestSignal)
     case 'team.messages.marks-change':return await service.changeTeamMark(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,stringParam(params,'markRef'),params.change as import('./message-annotations.js').MessageUnderlineChange,requestSignal)
     case 'team.messages.conversations':return await service.listTeamConversations(params.side as import('./team-app-contract.js').TeamSide,params.options as {cursor?:string;limit?:number},requestSignal)
+    case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
@@ -1561,6 +1564,16 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.transcript.page': {
+      const source = params.source ?? 'system'
+      if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
+        throw new ArkmePluginError('recording-page-input-invalid', '录音分页参数无效', false, 400)
+      }
+      return await service.recordingTranscriptPage(numberParam(params, 'dateStamp', Number.NaN), {
+        source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
+ ...(params.window === undefined ? {} : {window: {dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN), endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN), timeZone:stringParam(objectValue(params.window),'timeZone'), date:stringParam(objectValue(params.window),'date')}}),
+      })
+    }
     case 'recordings.entities.start': return await service.startRecordingEntities({
       dateStamp: numberParam(params, 'dateStamp', Number.NaN),
       transcriptSource: (params.transcriptSource ?? 'system') as 'system' | 'doubao',
@@ -1597,6 +1610,12 @@ export async function dispatchArkmeHostOperation(
         date: stringParam(objectValue(params.window), 'date'),
       },
     )
+    case 'recordings.strategies': {
+      if (params.action === 'start' || params.action === 'preference-set') throw new ArkmePluginError('recording-strategy-write-required', '请使用策略处理入口', false, 400)
+      return service.recordingStrategies(params, requestSignal)
+    }
+    case 'recordings.strategies.preference.set': return service.recordingStrategies({ ...params, action: 'preference-set' }, requestSignal)
+    case 'recordings.strategies.start': return service.recordingStrategies({ ...params, action: 'start' }, requestSignal)
     case 'recordings.compare': return await service.recordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.compare.start': return await service.startRecordingComparison(numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.forward.capabilities': return await service.recordingForwardCapabilities(requestSignal)
@@ -1632,6 +1651,12 @@ export async function dispatchArkmeHostOperation(
       requestSignal,
       ...(params.window === undefined ? [] : [params.window as ArkmeRecordingWindow]),
     )
+    case 'recordings.import.file': return await service.importRecordingFile({
+      ...(params.strategy === undefined ? {} : { strategy: recordingStrategy(params.strategy) }),
+      fileRef: stringParam(params, 'fileRef').trim(),
+      startAtMillis: numberParam(params, 'startAtMillis', Number.NaN),
+      ownership: recordingImportOwnershipParam(params),
+    }, requestSignal)
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
@@ -1649,7 +1674,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'recordings.import.status': return await service.recordingImportStatus(stringParam(params, 'importRef').trim())
     case 'recordings.import.retry': return await service.retryRecordingImport(
-      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
+      stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)), requestSignal,
     )
     case 'recordings.import.cancel': return await service.cancelRecordingImport(
       stringParam(params, 'importRef').trim(), Math.trunc(numberParam(params, 'expectedRevision', 0)),
@@ -1818,6 +1843,7 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
     })
     case 'search.locations': return await service.searchLocations(params as unknown as import('./location-search.js').LocationQuery, requestSignal)
+    case 'articles.list': return await service.searchScene({ scene: 'long_article', articleScope: (typeof params.scope === 'string' ? params.scope : 'recent') as import('./types.js').ArkmeLongArticleBrowseScope, limit: typeof params.limit === 'number' ? params.limit : 30, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'search.scene': {
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
       const limit = numberParam(params, 'limit', 20)
@@ -2295,6 +2321,7 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'source.member-event.profile': return await service.memberEventProfile(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
     case 'source.member-event.private.open': return await service.memberEventPrivateChat(stringParam(params, 'sourceRef'), stringParam(params, 'eventId'), requestSignal)
+    case 'source.person-records.page': return await service.personRecordsPage(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), { ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(typeof params.limit === 'number' ? { limit: params.limit } : {}), ...(Array.isArray(params.knownEventRefs) ? { knownEventRefs: params.knownEventRefs.filter((ref): ref is string => typeof ref === 'string') } : {}), ...(params.validateOnly === true ? { validateOnly: true } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'source.person-records.sources': return await service.personRecordSources(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), typeof params.cursor === 'string' ? params.cursor : undefined, requestSignal)
     case 'source.person-records.capabilities': return await service.personRecordsCapabilities(stringParam(params, 'sourceRef'), stringParam(params, 'memberRef'), requestSignal)
     case 'source.member-records': return await service.sourceMemberRecords(

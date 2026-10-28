@@ -444,3 +444,15 @@ it('drops retry closures for evicted failed marks without discarding visible ret
  vi.mocked(callArkme).mockRejectedValueOnce(new Error('network'));await session.change(target,{kind:'add',anchor,operationId:'failure'})
  expect(session.retry).toBeDefined();session.retain([]);expect(session.retry).toBeUndefined();expect(session.snapshots.size).toBe(0);session.dispose()
 })
+
+it('uses cloud failure and retry semantics for a custom transport with a local-format reference',async()=>{
+ const t={...target,localMarkRef:'codex-ref'},change=vi.fn(async()=>{throw Error('response lost')}),list=vi.fn(async()=>[{actionRef:'codex-ref',snapshot:{...initial,revision:2,items:[mark]}}])
+ const session=new MessageUnderlineSession('self',42,vi.fn(),'local',{capabilities:async()=>({supported:true,maxLength:2000,storage:'cloud'}),list,change})
+ await session.prepare();session.snapshots.set(underlineTargetKey(t),{...initial,items:[]})
+ await session.change(t,{kind:'add',anchor,operationId:'stable'})
+ expect(session.snapshots.size).toBe(0)
+ await session.retry?.()
+ expect(list).toHaveBeenCalledOnce();expect(change).toHaveBeenCalledOnce()
+ expect(session.snapshots.get(underlineTargetKey(t))?.items).toEqual([mark])
+ session.dispose()
+})

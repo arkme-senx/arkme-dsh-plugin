@@ -57,34 +57,6 @@ export class LocalMessageMarkStore {
   }
   completeCloudOperation(scope: string, key: string) { this.db.prepare('DELETE FROM native_annotation_outbox WHERE scope=? AND key=?').run(scope, key) }
 
-  private codexLegacyFilter(){return `scope>=? AND scope<? AND target IN (SELECT value FROM json_each(?))
-      AND CASE WHEN json_valid(json_extract(scope,'$[3]')) THEN json_extract(json_extract(scope,'$[3]'),'$[2]') END IN (SELECT value FROM json_each(?))`}
-  codexLegacyAcknowledged(prefix:string,tasks:readonly string[],messages:readonly string[],target:string):number {
-    const row=this.db.prepare(`SELECT COALESCE(SUM(json_extract(payload,'$.codex_migration.next')),0) n FROM local_message_marks
-      WHERE ${this.codexLegacyFilter()} AND json_extract(payload,'$.codex_migration.target')=?`)
-      .get(prefix,prefix+'~',JSON.stringify(messages),JSON.stringify(tasks),target)
-    return Number(row?.n??0)
-  }
-  *codexLegacyRows(prefix:string,tasks:readonly string[],messages:readonly string[]):IterableIterator<{scope:string;target:string;payload:string}> {
-    // Keyset one row at a time: never hold an active SQLite reader across an HTTP await.
-    let after:[string,string]=['','']
-    const statement=this.db.prepare(`SELECT scope,target,payload FROM local_message_marks WHERE ${this.codexLegacyFilter()} AND (scope,target)>(?,?) ORDER BY scope,target LIMIT 1`)
-    for(;;){
-      const row=statement.get(prefix,prefix+'~',JSON.stringify(messages),JSON.stringify(tasks),...after) as {scope:string;target:string;payload:string}|undefined
-      if(!row)return
-      after=[row.scope,row.target];yield row
-    }
-  }
-  legacyRows(prefix:string,after:readonly[string,string],limit=4){
-    return this.db.prepare(`SELECT scope,target,payload FROM local_message_marks WHERE scope>=? AND scope<? AND (scope,target)>(?,?)
-      AND COALESCE(json_extract(payload,'$.codex_migration.status'),'pending')='pending' AND json_array_length(payload,'$.annotations')>0 ORDER BY scope,target LIMIT ?`)
-      .all(prefix,prefix+'~',...after,limit) as unknown as {scope:string;target:string;payload:string}[]
-  }
-  updateLocalPayload(scope:string,target:string,before:string,payload:unknown):boolean {
-    const result=this.db.prepare('UPDATE local_message_marks SET payload=? WHERE scope=? AND target=? AND payload=?').run(JSON.stringify(payload),scope,target,before)
-    return Number(result.changes)===1
-  }
-
   read(scope: string, target: string, viewerId: number, digest: string): MessageUnderlineSnapshot {
     const row = this.db.prepare('SELECT payload FROM local_message_marks WHERE scope=? AND target=?').get(scope, target) as { payload: string } | undefined
     if (!row) return { revision: 0, accessible: true, items: [] }

@@ -2,6 +2,7 @@
 export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
 {v0} 条相关消息|{v0} related messages
 录音 {v0}|Recorded {v0}
+修改当天所有“{v0}”片段|Edit all “{v0}” segments for this day
 始于前一天|Started the previous day
 延续至下一天|Continues into the next day
 暂无内容预览，展开查看详情|No preview available. Expand for details

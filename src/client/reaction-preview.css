@@ -25,6 +25,12 @@
   }
 }
 
+/* Messages with reactions already expose an inline add entry. Keep one visible
+   entry for mouse, keyboard and touch; standalone surfaces keep their own entry. */
+[data-arkme-reaction-preview]:has([data-arkme-message-reactions] [data-arkme-reaction-toggle]) > .arkme-reaction-hover-toolbar {
+  display: none;
+}
+
 .arkme-day-message[aria-current=true] { position: relative; }
 .arkme-day-message[aria-current=true]::before { content: ''; position: absolute; left: -10px; top: 0; bottom: 0; width: 2px; background: var(--day-accent); pointer-events: none; }
 .arkme-reaction-cancelled { opacity: .6; position: relative; display: inline-block; vertical-align: baseline; text-decoration: none; }

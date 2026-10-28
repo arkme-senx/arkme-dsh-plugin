@@ -11,6 +11,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  personRecordsPage(sourceRef: string, memberRef: string, options?: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal }): Promise<import('../../person-records.js').PersonRecordsPage>
   sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineCapabilities>
   sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../../message-annotations.js').MessageUnderlineSnapshot }[]>
   changeSourceUnderline(sourceRef: string, actionRef: string, change: import('../../message-annotations.js').MessageUnderlineChange, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineSnapshot>

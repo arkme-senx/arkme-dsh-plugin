@@ -6,7 +6,7 @@ describe('recording speaker editor', () => {
   it('matches the desktop editor shell and exposes only owner-supported assignment scopes', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSpeakerEditor item={{
       itemId: 'item-1', itemRef: 'sealed-item', speakerLabel: '说话人 1', speakerColorIndex: 1,
-      speakerNumber: 1, speakerKey: 'speaker-opaque', sameSpeakerItemCount: 3, text: '内容',
+      speakerNumber: 1, speakerKey: 'speaker-opaque', canBindSpeaker: true, sameSpeakerItemCount: 3, text: '内容',
       startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
     }} onUpdated={() => {}} onClose={() => {}} />)
     expect(markup).toContain('width:278px')
@@ -20,7 +20,7 @@ describe('recording speaker editor', () => {
   it('allows the owner-supported flagged-speaker batch scope', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSpeakerEditor item={{
       itemId: 'item-flagged', itemRef: 'sealed-flagged-item', speakerLabel: '已识别说话人', speakerColorIndex: 2,
-      speakerNumber: -1, speakerKey: 'formal-speaker-opaque', sameSpeakerItemCount: 2, text: '内容',
+      speakerNumber: -1, speakerKey: 'formal-speaker-opaque', canBindSpeaker: true, sameSpeakerItemCount: 2, text: '内容',
       startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
     }} onUpdated={() => {}} onClose={() => {}} />)
 
@@ -30,7 +30,7 @@ describe('recording speaker editor', () => {
   it('defaults the timeline entry to the system group without locking the scope', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSpeakerEditor initialBatchUpdate item={{
       itemId: 'item-1', itemRef: 'sealed-item', speakerLabel: '说话人 1', speakerColorIndex: 1,
-      speakerNumber: 1, speakerKey: 'speaker-opaque', sameSpeakerItemCount: 3, text: '内容',
+      speakerNumber: 1, speakerKey: 'speaker-opaque', canBindSpeaker: true, sameSpeakerItemCount: 3, text: '内容',
       startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
     }} onUpdated={() => {}} onClose={() => {}} />)
 

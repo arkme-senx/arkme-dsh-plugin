@@ -5,6 +5,7 @@ import { arkmeTheme as theme } from './arkme-theme.js'
 import { longArticleAccountKey, longArticleWindowBridge, type LongArticleWindowTarget } from './long-article-window.js'
 import { ArkmeBrowseWindow } from './ArkmeBrowseWindow.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { connectLongArticleRealtime } from './long-article-realtime.js'
 
 export function ArkmeLongArticleWindow() {
   useArkmeLocale()
@@ -12,6 +13,11 @@ export function ArkmeLongArticleWindow() {
   const [target, setTarget] = useState<LongArticleWindowTarget>()
   const [error, setError] = useState('')
   const [invalidated, setInvalidated] = useState(false)
+  const eventAccount = !invalidated && target?.surface !== 'location' ? target?.accountKey : undefined
+  useEffect(() => {
+    if (!eventAccount) return
+    return connectLongArticleRealtime(() => longArticleAccountKey() === eventAccount)
+  }, [eventAccount])
   useEffect(() => {
     if (!bridge) { setError('当前客户端不支持独立长文窗口'); return }
     let active = true

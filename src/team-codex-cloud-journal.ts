@@ -56,6 +56,7 @@ export class TeamCodexCloudJournal {
       source TEXT PRIMARY KEY REFERENCES codex_cloud_sources(id), confirmed_at INTEGER NOT NULL DEFAULT 0,
       attempts INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, blocked TEXT NOT NULL DEFAULT '');`)
     const taskColumns = new Set((db.prepare('PRAGMA table_info(codex_cloud_tasks)').all() as {name:string}[]).map(c=>c.name))
+    if(!taskColumns.has('local_read_cursor'))db.exec("ALTER TABLE codex_cloud_tasks ADD COLUMN local_read_cursor TEXT NOT NULL DEFAULT ''")
     if (!taskColumns.has('classification')) db.exec("ALTER TABLE codex_cloud_tasks ADD COLUMN classification TEXT NOT NULL DEFAULT ''")
     if (!taskColumns.has('classification_ack')) db.exec('ALTER TABLE codex_cloud_tasks ADD COLUMN classification_ack INTEGER NOT NULL DEFAULT 0')
 
@@ -172,6 +173,17 @@ export class TeamCodexCloudJournal {
     return row && {taskId:row.id,sourceId:row.source,sourceName:row.name}
   }
 
+  localReadCursor(owner:number,team:string,id:string):string|undefined {
+    const row=this.db.prepare('SELECT t.local_read_cursor c FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND s.local_team=? AND t.local_id=?').get(owner,team,id)
+    return row?.c?String(row.c):undefined
+  }
+  /** The ingestion callback runs inside reconcile's existing SQLite transaction. */
+  saveLocalReadCursor(owner:number,team:string,id:string,cursor:string):void {
+    this.db.prepare('UPDATE codex_cloud_tasks SET local_read_cursor=? WHERE local_id=? AND source IN (SELECT id FROM codex_cloud_sources WHERE owner=? AND local_team=?)').run(cursor,id,owner,team)
+  }
+  hasPendingTask(owner:number,team:string,id:string):boolean {
+    return !!this.db.prepare(`SELECT 1 FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND (?='self' OR s.local_team=?) AND t.local_id=? AND (t.ack<t.version OR t.pending_count>0 OR t.blocked_count>0 OR t.blocked<>'') LIMIT 1`).get(owner,team,team,id)
+  }
   /** Source-side canonical projection over the same durable ledger that device B consumes. */
   readPage(owner:number,team:string,localId:string,cursor='',window?:{after?:string;from?:string;through?:string}):TeamCodexEventPage|undefined {
     const mapping=this.mapping(owner,team,localId)
@@ -286,7 +298,10 @@ export class TeamCodexCloudJournal {
   }
   classificationBatch(owner:number,localTeam:string):CloudBatch|undefined{
     if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='codex_session_visibility'").get()){
-      const rows=this.db.prepare(`SELECT c.id,v.visibility FROM codex_cloud_tasks c JOIN codex_cloud_sources s ON s.id=c.source JOIN codex_tasks t ON t.id=c.local_id JOIN codex_session_visibility v ON v.installation_id=t.installation_id AND v.session_id=t.session_id WHERE s.owner=? AND s.local_team=? AND v.visibility IN ('user','internal')`).all(owner,localTeam)
+      const rows=this.db.prepare(`SELECT c.id,v.visibility FROM codex_cloud_tasks c JOIN codex_cloud_sources s ON s.id=c.source JOIN codex_tasks t ON t.id=c.local_id JOIN codex_session_visibility v ON v.installation_id=t.installation_id AND v.session_id=t.session_id
+        WHERE s.owner=? AND s.local_team=? AND v.visibility IN ('user','internal')
+        AND (c.classification='' OR json_extract(c.classification,'$.kind')<>CASE v.visibility WHEN 'user' THEN 'user' ELSE 'background' END
+          OR json_extract(c.classification,'$.evidence')<>'native-persistent-root') ORDER BY c.rowid LIMIT 100`).all(owner,localTeam)
       for(const row of rows)this.classify(String(row.id),row.visibility==='user'?'user':'background','native-persistent-root')
     }
     const rows=this.db.prepare(`SELECT t.*,s.team,s.name FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND s.local_team=? AND t.classification<>'' AND t.classification_ack<json_extract(t.classification,'$.version') ORDER BY t.rowid LIMIT 100`).all(owner,localTeam)
@@ -308,9 +323,16 @@ export class TeamCodexCloudJournal {
       ORDER BY (t.source=?),t.rowid LIMIT 100`).all(owner,localTeam,localTeam,JSON.stringify([...eligible]),this.previousSource) as unknown as TaskRow[]
   }
 
-  counts(owner:number,team:string,eligible:ReadonlySet<string>):{pending:number;blocked:number} {
-    const where=`s.owner=? AND (?='self' OR s.local_team=?) AND t.local_id IN (SELECT value FROM json_each(?))`
-    const params=[owner,team,team,JSON.stringify([...eligible])] as const
+  counts(owner:number,team:string,eligible?:ReadonlySet<string>):{pending:number;blocked:number} {
+    const capture=!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='codex_tasks'").get()
+    const sourceEligible=capture?` AND (EXISTS(SELECT 1 FROM codex_tasks c JOIN codex_installations i ON i.id=c.installation_id
+      WHERE c.id=t.local_id AND i.user_id=s.owner AND i.team_ref=s.local_team AND i.status='active' AND c.excluded=0 AND c.deleted=0
+      AND EXISTS(SELECT 1 FROM codex_session_visibility v WHERE v.installation_id=c.installation_id AND v.session_id=c.session_id AND v.visibility='user')
+      AND NOT EXISTS(SELECT 1 FROM codex_project_exclusions p WHERE p.installation_id=c.installation_id AND p.project_key=c.project_key))
+      OR EXISTS(SELECT 1 FROM connections c WHERE c.id=t.local_id AND c.user_id=s.owner AND c.team_ref=s.local_team AND c.status='active'
+        AND NOT EXISTS(SELECT 1 FROM codex_legacy_migrations m WHERE m.connection_id=c.id)))`:''
+    const where=`s.owner=? AND (?='self' OR s.local_team=?)${eligible?' AND t.local_id IN (SELECT value FROM json_each(?))':sourceEligible}`
+    const params=eligible?[owner,team,team,JSON.stringify([...eligible])]:[owner,team,team]
     const row=this.db.prepare(`SELECT COALESCE(SUM((t.blocked<>'')+t.blocked_count),0) blocked,
       COALESCE(SUM((t.blocked='' AND t.ack<t.version)+t.pending_count),0) pending
       FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE ${where}`).get(...params)!

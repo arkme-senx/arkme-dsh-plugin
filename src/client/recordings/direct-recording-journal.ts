@@ -1,5 +1,6 @@
 /** Origin-local, account-partitioned PCM journal. A committed chunk and its index are atomic. */
 export interface LocalMicrophoneRecording {
+  strategy?: import('../../recording-strategy-contract.js').RecordingStrategy
   id: string
   accountKey: string
   userId: number

@@ -5,7 +5,7 @@ import type { TeamSendInput, TeamSendTask } from './team-send-contract.js'
 
 export type { TeamConversation, TeamMessage, TeamPage, TeamReplyTarget, TeamReplyPreview, TeamSide, TeamTimeline } from './team-app-contract.js'
 export type { TeamSendInput, TeamSendTask } from './team-send-contract.js'
-export type TeamMessageReadOptions = { beforeSeq?: number; limit?: number; messageRef?: string }
+export type TeamMessageReadOptions = { beforeSeq?: number; limit?: number; messageRef?: string; personRef?: string; personMode?: 'owner' | 'mentioned' }
 export type TeamReportReason = 'spam'|'harassment'|'illegal'|'privacy'|'other'
 export interface TeamReportResult {reportUid:string}
 export type TeamMarkAudience = 'team'|'conversation'
@@ -17,6 +17,7 @@ export interface TeamForwardInput {
  commentText?:string;commentRecordUid?:string
 }
 export interface TeamMessagePort {
+ readTeamExtensions(conversationRef:string,messageRef:string,options?:TeamExtensionOptions,signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage>
  forwardTeamMessages(input:TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>
  createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>
 
@@ -31,3 +32,6 @@ export interface TeamMessagePort {
   teamMessageTasks(conversationRef: string, signal?: AbortSignal): Promise<TeamSendTask[]>
   updateTeamSend(conversationRef: string, taskRef: string, action: 'retry'|'cancel', signal?: AbortSignal): Promise<TeamSendTask>
 }
+
+export type TeamExtensionOptions = {afterSeq?:number;throughSeq?:number;limit?:number}
+export type {TeamExtensionPage} from './team-app-contract.js'

@@ -9,8 +9,8 @@ import { arkmeUi } from './ui-controller.js'
 import { tr } from './locale.js'
 
 /** All people use the same card/menu; identity is bound to the authorized conversation. */
-export function useTeamVisitorActions({ conversation, accountKey, onRecords, onOpen, resolveIdentity }: {
-  conversation: TeamConversation; accountKey: string; onRecords(person?: TeamIdentity): void; onOpen(): void
+export function useTeamVisitorActions({ conversation, accountKey, onRecords, onOpen, resolveIdentity, onMention }: {
+  conversation: TeamConversation; accountKey: string; onRecords(person?: TeamIdentity, mode?: 'owner' | 'mentioned'): void; onMention?(person: TeamIdentity): void; onOpen(): void
   resolveIdentity?(identity: TeamIdentity): TeamIdentity
 }) {
   const [selected, setSelected] = useState<{ identity: TeamIdentity; visitor: boolean }>()
@@ -55,7 +55,7 @@ export function useTeamVisitorActions({ conversation, accountKey, onRecords, onO
     layer: conversation.side !== 'team' ? null : <>
       {menu && <div style={{ position: 'fixed', width: 0, height: 0 }}><ArkmeActionMenu
         label={tr('{v0} 的成员操作', { v0: name })} point={menu} autoFocus onClose={() => setMenu(undefined)}
-        actions={[{ id: 'owner-records', label: tr(visitor?.isMe ? '看我的快记' : '看TA的快记'), onSelect: () => { setMenu(undefined); onRecords(selected?.visitor === false ? visitor : undefined) } }]} /></div>}
+        actions={[...(visitor?.personRef && !visitor.isMe && onMention ? [{id:'mention',label:`@${name}`,onSelect:()=>{setMenu(undefined);onMention(visitor)}}] : []), ...(visitor?.personRef ? [{id:'mentioned-records',label:tr(visitor.isMe ? '@我的快记' : '@TA的快记'),onSelect:()=>{setMenu(undefined);onRecords(visitor,'mentioned')}}] : []), { id: 'owner-records', label: tr(visitor?.isMe ? '看我的快记' : '看TA的快记'), onSelect: () => { setMenu(undefined); onRecords(selected?.visitor === false ? visitor : undefined) } }]} /></div>}
       {profile && <ArkmeMemberProfileCard member={{ displayName: name, ...(visitor?.imageRef ? { avatarRef: visitor.imageRef } : {}) }}
         imagePort={teamAvatarImages} imageKey={visitor?.imageKey} hideSend={visitor?.isMe === true} busy={busy} error={error} onClose={close} onSend={() => { void openPrivate() }} />}
     </>,

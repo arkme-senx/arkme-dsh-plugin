@@ -536,7 +536,7 @@ describe('recording timeline math', () => {
   it('uses the rail coordinate when clicking inside a segment, and allows panning from the segment', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = { itemId: 'a', itemRef: 'ref', speakerKey: 's', speakerLabel: 'speaker',
-      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 1_800_000, text: '', isBackground: false }
+      speakerColorIndex: 0, canBindSpeaker: true, startAtMillis: dayStart, endAtMillis: dayStart + 1_800_000, text: '', isBackground: false }
     const select = vi.fn()
     const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
       isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
@@ -564,7 +564,7 @@ describe('recording timeline math', () => {
   it('always displays the selected time and exposes cancellation during media loading', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = { itemId: 'a', itemRef: 'ref', speakerKey: 's', speakerLabel: 'speaker',
-      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 60_000, text: '', isBackground: false }
+      speakerColorIndex: 0, canBindSpeaker: true, startAtMillis: dayStart, endAtMillis: dayStart + 60_000, text: '', isBackground: false }
     const toggle = vi.fn()
     const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
       playheadMillis={dayStart + 30_000} isPlaying={false} playbackLoading
@@ -605,7 +605,7 @@ describe('recording timeline math', () => {
   it('selects a short segment when its minimum-width hit area extends beyond its real duration', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = { itemId: 'short', itemRef: 'short-ref', speakerKey: 's', speakerLabel: 'short',
-      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart, endAtMillis: dayStart + 500, text: '', isBackground: false }
+      speakerColorIndex: 0, canBindSpeaker: true, startAtMillis: dayStart, endAtMillis: dayStart + 500, text: '', isBackground: false }
     const select = vi.fn()
     const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}
       isPlaying={false} onSelectAtMillis={select} onTogglePlayback={() => {}} />)
@@ -633,7 +633,7 @@ describe('recording timeline math', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const items = Array.from({ length: 1000 }, (_, index) => ({
       itemId: String(index), itemRef: String(index), speakerKey: String(index % 2), speakerLabel: 'speaker',
-      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart + index * 1000,
+      speakerColorIndex: 0, canBindSpeaker: true, startAtMillis: dayStart + index * 1000,
       endAtMillis: dayStart + index * 1000 + 200, text: '', isBackground: false,
     }))
     const select = vi.fn()
@@ -652,7 +652,7 @@ describe('recording timeline math', () => {
   it('keeps a clipped minimum-width segment selection inside the visible day', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = { itemId: 'clipped', itemRef: 'clipped-ref', speakerKey: 's', speakerLabel: 'speaker',
-      speakerColorIndex: 0, sameSpeakerItemCount: 1, startAtMillis: dayStart - 10_000,
+      speakerColorIndex: 0, canBindSpeaker: true, startAtMillis: dayStart - 10_000,
       endAtMillis: dayStart + 500, text: '', isBackground: false }
     const select = vi.fn()
     const renderer = create(<ArkmeRecordingTimeline items={[item]} dayStartMillis={dayStart}

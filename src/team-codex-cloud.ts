@@ -39,6 +39,7 @@ export class TeamCodexCloud {
   private readonly failures = new Map<string, { state: CloudState; retryAt: number; attempts: number }>()
   private syncing = false
   private confirming = false
+  private readonly settingsCursors=new Map<string,string>()
   constructor(private readonly db: DatabaseSync, private readonly port: TeamCodexCloudPort, private readonly currentUser: () => Promise<number | undefined>, private readonly now = Date.now,
     private readonly onConnectionEvidence: (owner:number) => void = () => undefined) {
     this.journal = new TeamCodexCloudJournal(db)
@@ -92,7 +93,7 @@ export class TeamCodexCloud {
     this.failures.clear()
     this.queueCapabilities.clear()
     this.queueRetries.clear()
-    this.lastReads.clear()
+    this.lastReads.clear();this.settingsCursors.clear()
   }
   private async guard(owner: number, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
@@ -138,10 +139,16 @@ export class TeamCodexCloud {
         }
       }
       // Minimal control confirmations survive disabled content upload and restarts.
-      const sources=this.db.prepare('SELECT * FROM codex_cloud_sources WHERE owner=? AND local_team=?').all(owner,localTeam)
+      const key=JSON.stringify([owner,localTeam]),after=this.settingsCursors.get(key)??''
+      const hasInstallations=!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='codex_installations'").get()
+      const desired=!consent.enabled?"'disabled'":hasInstallations?"CASE WHEN i.status='paused' THEN 'paused' ELSE 'enabled' END":"'enabled'"
+      const query=`SELECT s.*,${desired} desired_mode FROM codex_cloud_sources s ${hasInstallations?'LEFT JOIN codex_installations i ON i.id=s.local_source AND i.user_id=s.owner':''}
+        WHERE s.owner=? AND s.local_team=? AND (s.settings_ack<s.settings_version OR s.settings_mode<>${desired})`
+      let sources=this.db.prepare(query+' AND s.id>? ORDER BY s.id LIMIT 20').all(owner,localTeam,after)
+      if(!sources.length)sources=this.db.prepare(query+' ORDER BY s.id LIMIT 20').all(owner,localTeam)
+      this.settingsCursors.set(key,String(sources.at(-1)?.id??''))
       for(const row of sources){
-        const installation=this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='codex_installations'").get()?this.db.prepare("SELECT status FROM codex_installations WHERE id=? AND user_id=?").get(String(row.local_source),owner):undefined
-        const mode=!consent.enabled?'disabled':installation?.status==='paused'?'paused':'enabled'
+        const mode=String(row.desired_mode)
         if(row.settings_mode!==mode)this.db.prepare('UPDATE codex_cloud_sources SET settings_mode=?,settings_version=settings_version+1,settings_at=? WHERE id=?').run(mode,this.now(),String(row.id))
         const current=this.db.prepare('SELECT settings_mode,settings_version,settings_ack,settings_at FROM codex_cloud_sources WHERE id=?').get(String(row.id))!
         if(Number(current.settings_ack)>=Number(current.settings_version))continue
@@ -257,21 +264,22 @@ export class TeamCodexCloud {
     }
   }
 
-  async state(owner: number, localTeam: string, local: TeamCodexState, page = 1, memberRef = '', sourceId = '', projectKey = ''): Promise<TeamCodexState> {
+  async state(owner: number, localTeam: string, local: TeamCodexState, page = 1, memberRef = '', sourceId = '', projectKey = '', position:{cursor?:string|undefined;after?:string|undefined;from?:string|undefined} = {},externalSignal?:AbortSignal): Promise<TeamCodexState> {
     if (!Number.isSafeInteger(page) || page < 1 || page > 10000 || (memberRef && !decimal(memberRef)) || (sourceId && !validId(sourceId)) || (projectKey && (!sourceId || Buffer.byteLength(projectKey) > 1024))) throw new ArkmePluginError('team-codex-invalid', '云端筛选参数无效', false, 400)
-    const signal = this.controller.signal
+    if([position.cursor,position.after,position.from].filter(Boolean).length>1 || [position.cursor,position.after,position.from].some(value=>value!==undefined&&value.length>2048))throw new ArkmePluginError('team-codex-invalid','云端分页位置无效',false,400)
+    const signal = externalSignal?AbortSignal.any([this.controller.signal,externalSignal]):this.controller.signal
     const active = new Set(eligible(local.tasks).map(t => t.id))
-    const readKey=JSON.stringify([owner,localTeam,page,memberRef,sourceId,projectKey])
-    const counts = this.journal.counts(owner, localTeam, active)
+    const readKey=JSON.stringify([owner,localTeam,page,memberRef,sourceId,projectKey,...(position.cursor||position.after||position.from?[position.cursor??'',position.after??'',position.from??'']:[])])
+    const counts = this.journal.counts(owner, localTeam)
     const settingsPending = !!this.db.prepare(`SELECT 1 FROM codex_cloud_sources WHERE owner=? AND (?='self' OR local_team=?) AND settings_ack<settings_version LIMIT 1`).get(owner,localTeam,localTeam)
     const ambiguous = local.tasks.filter(t=>t.cloudBlocked && t.status==='active' && !t.excluded && !t.projectExcluded).length
     counts.blocked += ambiguous
     try {
       const personal=localTeam==='self'
       const team = personal?null:await this.destination(owner, localTeam, signal)
-      const cursor=page>1?this.lastReads.get(JSON.stringify([owner,localTeam,page-1,memberRef,sourceId,projectKey]))?.nextCursor:undefined
-      if(page>1&&!cursor)throw new ArkmePluginError('team-codex-cursor-invalid','列表位置已变化，请刷新后继续',false,400)
-      const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { protocol_version:2,view: personal?'self':'team',...(personal?{}:{team_ref:team}),page, ...(cursor?{cursor}:{}), limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
+      const cursor=position.cursor || (!position.after&&!position.from&&page>1?this.lastReads.get(JSON.stringify([owner,localTeam,page-1,memberRef,sourceId,projectKey]))?.nextCursor:undefined)
+      if(page>1&&!cursor&&!position.after&&!position.from)throw new ArkmePluginError('team-codex-cursor-invalid','列表位置已变化，请刷新后继续',false,400)
+      const data = obj(await this.post(owner, '/api/v1/team-codex/tasks/list', { protocol_version:2,view: personal?'self':'team',...(personal?{}:{team_ref:team}),page, ...(cursor?{cursor}:{}), ...(position.after?{after:position.after}:{}), ...(position.from?{from:position.from}:{}), limit: 50, ...(memberRef ? { member_ref: memberRef } : {}), ...(sourceId ? {source_id:sourceId} : {}), ...(projectKey ? {project_key:projectKey} : {}) }, signal))
       if (!Array.isArray(data.items) || data.items.length > 50 || data.page !== page || typeof data.has_more !== 'boolean') return invalid()
       if(Object.hasOwn(data,'capabilities'))this.queueCapabilities.set(owner,{supported:supportsCodexCloudQueue(data),until:this.now()+300_000})
       const own = new Map<string, TeamCodexTask>()
@@ -282,10 +290,10 @@ export class TeamCodexCloud {
       const remote = new Map<string, TeamCodexTask>()
       // Preserve a known source-side decision even when that row is no longer in local.tasks.
       const hasVisibility=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_session_visibility'").get()
-      const hidden=new Set(hasVisibility ? (this.db.prepare(`SELECT c.id,s.id source FROM codex_cloud_tasks c
+      const hidden=new Set(hasVisibility && data.items.length ? (this.db.prepare(`SELECT c.id,s.id source FROM codex_cloud_tasks c
         JOIN codex_cloud_sources s ON s.id=c.source JOIN codex_tasks t ON t.id=c.local_id
         JOIN codex_session_visibility v ON v.installation_id=t.installation_id AND v.session_id=t.session_id
-        WHERE s.owner=? AND (?='self' OR s.local_team=?) AND v.visibility<>'user'`).all(owner,localTeam,localTeam) as {id:string;source:string}[])
+        WHERE s.owner=? AND (?='self' OR s.local_team=?) AND v.visibility<>'user' AND c.id IN (${data.items.map(()=>'?').join(',')})`).all(owner,localTeam,localTeam,...data.items.map(value=>str(obj(value).task_id))) as {id:string;source:string}[])
         .map(row=>JSON.stringify([row.source,row.id])) : [])
       for (const value of data.items) {
         const row = obj(value), id = validId(row.task_id), sourceId = validId(row.source_id), user = decimal(row.owner_ref)
@@ -302,7 +310,7 @@ export class TeamCodexCloud {
         const queueSummary=summary?{...summary,items:undefined,count:Number(row.queue_count),waitingCount:Number(row.queue_waiting_count??0)}:undefined
         const queueCloud:TeamCodexTask['queueCloud']=user!==String(owner)?'private':queueSummary?'ready'
           :this.queueCapabilities.get(owner)?.supported?'unavailable':'unsupported'
-        remote.set(id, { id, title: str(row.task_title) || 'Codex', status: 'active',
+        remote.set(id, { id, title: str(row.task_title) || 'Codex', metadataVersion:Number(row.task_metadata_version), summaryVersion:Number(row.summary_version), status: 'active',
           state: row.state === 'in_progress' ? 'working' : row.state === 'interrupted' ? 'interrupted' : row.state === 'turn_ended' ? 'finished' : 'waiting',
           updatedAt: Number(row.latest_at), eventCount: Number(row.event_count), member, projectKey: str(row.project_key), projectName: str(row.project_name), branch: str(row.branch),
           cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true },queueCloud,...(queueSummary?{queueSummary}:{}) })
@@ -312,6 +320,7 @@ export class TeamCodexCloud {
       if (page === 1 && (!memberRef || memberRef === String(owner))) for (const task of local.tasks) {
         const mapping = this.journal.mapping(owner, localTeam, task.id)
         if (sourceId && mapping?.sourceId !== sourceId || projectKey && task.projectKey !== projectKey) continue
+        if(mapping && !task.excluded && !task.projectExcluded && !this.journal.hasPendingTask(owner,localTeam,task.id))continue
         remote.set(mapping?.taskId ?? task.id, mapping ? own.get(mapping.taskId)! : task)
       }
       const failure = this.failures.get(`${owner}:${localTeam}`)
@@ -320,9 +329,9 @@ export class TeamCodexCloud {
       this.lastReads.delete(readKey)
       this.lastReads.set(readKey,{tasks:visible.filter(task=>task.cloud?.remote),hasMore:data.has_more,nextCursor:str(data.next_cursor)||undefined})
       if(this.lastReads.size>100)this.lastReads.delete(this.lastReads.keys().next().value!)
-      return { ...local, localOnly: false, tasks: visible.sort((a, b) => b.updatedAt - a.updatedAt),
+      return { ...local, localTaskPage:undefined, localOnly: false, tasks: visible.sort((a, b) => b.updatedAt - a.updatedAt),
         // Successful list reads must not be discarded because an earlier upload failed.
-        cloud: { status:'ready', ...(failure ? {message:failure.state.message} : {}), ...counts, page, hasMore: data.has_more, reviewingTasks, settingsPending,
+        cloud: { status:'ready', ...(failure ? {message:failure.state.message} : {}), ...counts, page, hasMore: data.has_more, hasNewer:data.has_newer===true, firstCursor:str(data.first_cursor)||undefined, nextCursor:str(data.next_cursor)||undefined, previousCursor:str(data.previous_cursor)||undefined, reviewingTasks, settingsPending,
           uploadEnabled: this.consent(owner,localTeam)?.enabled === 1,
           sourceName: this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME,
           ...(counts.blocked ? { message: ambiguous ? '部分任务存在跨账号归属冲突，仅保留在本机，未继续上传。' : '部分记录存在版本冲突或被拒绝，已保留本地内容，未覆盖云端。' } : {}) } }
@@ -334,9 +343,10 @@ export class TeamCodexCloud {
       const retained=(cached?.tasks??[]).map(task=>({...task,
         ...(task.queue?{queue:{...task.queue,availability:'stale' as const}}:{}),...(task.queueSummary?{queueSummary:{...task.queueSummary,availability:'stale' as const}}:{})}))
       if(failure.status!=='offline')this.lastReads.clear()
-      const current=page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : []
+      const remotePosition=!!(position.cursor||position.after||position.from||sourceId||projectKey)
+      const current=!remotePosition&&page===1 && (!memberRef || memberRef===String(owner)) ? local.tasks : []
       const currentIds=new Set(current.map(task=>this.journal.mapping(owner,localTeam,task.id)?.taskId??task.id))
-      return { ...local, tasks:[...current,...retained.filter(task=>!currentIds.has(task.id))],
+      return { ...local,...(cached||remotePosition?{localTaskPage:undefined}:{}), tasks:[...current,...retained.filter(task=>!currentIds.has(task.id))],
         cloud: { ...failure, ...counts, settingsPending, page, ...(cached?{hasMore:cached.hasMore}:{}), uploadEnabled:this.consent(owner,localTeam)?.enabled === 1,
           sourceName:this.consent(owner,localTeam)?.source_name ?? DEFAULT_CODEX_SOURCE_NAME } }
     }
@@ -369,7 +379,7 @@ export class TeamCodexCloud {
     throw new ArkmePluginError('team-codex-member-unavailable', '暂时无法核对这位成员的云端身份，请刷新团队后重试', true, 409)
   }
 
-  async accountPost<T>(owner:number,path:string,body:Record<string,unknown>):Promise<T>{return this.post(owner,path,body,this.controller.signal)}
+  async accountPost<T>(owner:number,path:string,body:Record<string,unknown>,signal?:AbortSignal):Promise<T>{return this.post(owner,path,body,signal?AbortSignal.any([this.controller.signal,signal]):this.controller.signal)}
   localEvents(owner:number,team:string,localId:string,cursor='',window?:{after?:string;from?:string;through?:string}){
     return this.journal.readPage(owner,team,localId,cursor,window)
   }
@@ -391,9 +401,9 @@ export class TeamCodexCloud {
     const value=await this.imageBytes(owner,sourceId,taskId,eventId,imageId,full)
     return {dataUrl:`data:${value.mediaType};base64,${Buffer.from(value.data).toString('base64')}`}
   }
-  async events(owner: number, localTeam: string, taskId: string, sourceId: string, cursor = '', window?:{after?:string;from?:string;through?:string}): Promise<TeamCodexEventPage> {
+  async events(owner: number, localTeam: string, taskId: string, sourceId: string, cursor = '', window?:{after?:string;from?:string;through?:string},externalSignal?:AbortSignal): Promise<TeamCodexEventPage> {
     if (!validId(taskId) || !validId(sourceId) || cursor.length > 16384) throw new ArkmePluginError('team-codex-invalid', '云端记录标识无效', false, 400)
-    const signal = this.controller.signal
+    const signal = externalSignal?AbortSignal.any([this.controller.signal,externalSignal]):this.controller.signal
     const personal=localTeam==='self'
     const team = personal?null:await this.destination(owner, localTeam, signal)
     const data = obj(await readCodexContent(await this.post(owner, '/api/v1/team-codex/content/list', {protocol_version:2,view:personal?'self':'team',...(personal?{}:{team_ref:team}),source_id:sourceId,task_id:taskId,limit:50,cursor,...window},signal),sourceId,taskId,signal,owner,this.contentCache))
@@ -404,11 +414,15 @@ export class TeamCodexCloud {
       if (!str(row.event_id) || !str(row.turn_id) || !Number.isSafeInteger(row.version) || Number(row.version) < 1 || !Number.isSafeInteger(row.turn_seq) || Number(row.turn_seq) < 1 || Number(row.turn_seq) > Math.floor(Number.MAX_SAFE_INTEGER / 3) || !Number.isSafeInteger(row.at) || Number(row.at) < 1 || typeof row.text !== 'string' || typeof row.truncated !== 'boolean' || !['UserPromptSubmit','Progress','Interrupt','Stop'].includes(String(kind))) return invalid()
       const timing=codexTurnTiming(row.timing)
       return { eventId: str(row.event_id), version: Number(row.version), sequence:Number(row.turn_seq)*4+({UserPromptSubmit:0,Progress:1,Interrupt:2,Stop:3}[String(kind)]??0),turnSequence:Number(row.turn_seq),messageSequence:Number(row.message_seq??0),cursor:str(row.cursor), turnId: str(row.turn_id), kind: kind as TeamCodexEvent['kind'], text: row.text, at: Number(row.at), truncated: row.truncated,
+        ...(row.private_images_unavailable===true?{privateImagesUnavailable:true}:{}),
         ...(Array.isArray(row.private_images)?{privateImages:row.private_images.map(obj).map(im=>({ref:str(im.image_id),width:Number(im.width),height:Number(im.height),state:im.state==='ready'?'ready' as const:im.state==='pending'?'pending' as const:'unavailable' as const}))}:{}),
         ...(timing && (kind==='UserPromptSubmit'||kind==='Stop'&&timing.state==='finished'||kind==='Interrupt'&&timing.state==='interrupted')?{timing}:{}) }
     })
     const queue=data.owner_view===true?this.queues.read(owner,localTeam,sourceId,taskId,data.queue_snapshot,this.now()):undefined
     const queueCloud:NonNullable<TeamCodexTask['queueCloud']>=data.owner_view===true?queue?'ready':'unavailable':'private'
-    return { items,queueCloud,...(queue?{queue}:{}),latestCursor:str(data.latest_cursor),firstCursor:items[0]?.cursor??'',...(data.has_more ? { nextCursor: str(data.next_cursor) } : {}) }
+    const summary=obj(data.task_summary)
+    if(summary.source_id!==sourceId || summary.task_id!==taskId || typeof summary.task_title!=='string' || Buffer.byteLength(summary.task_title)>1024 || typeof summary.project_key!=='string' || Buffer.byteLength(summary.project_key)>1024 || typeof summary.project_name!=='string' || Buffer.byteLength(summary.project_name)>256 || typeof summary.branch!=='string' || Buffer.byteLength(summary.branch)>256 || !Number.isSafeInteger(summary.task_metadata_version) || Number(summary.task_metadata_version)<1 || !Number.isSafeInteger(summary.summary_version) || Number(summary.summary_version)<0 || !Number.isSafeInteger(summary.event_count) || Number(summary.event_count)<0 || !Number.isSafeInteger(summary.latest_at) || Number(summary.latest_at)<0 || !['','empty','in_progress','interrupted','turn_ended'].includes(String(summary.state)))return invalid()
+    const taskSummary={title:summary.task_title || 'Codex',metadataVersion:Number(summary.task_metadata_version),summaryVersion:Number(summary.summary_version),projectKey:summary.project_key,projectName:summary.project_name,branch:summary.branch,state:summary.state==='in_progress'?'working' as const:summary.state==='interrupted'?'interrupted' as const:summary.state==='turn_ended'?'finished' as const:'waiting' as const,updatedAt:Number(summary.latest_at),eventCount:Number(summary.event_count)}
+    return { taskSummary,items,queueCloud,...(queue?{queue}:{}),latestCursor:str(data.latest_cursor),firstCursor:items[0]?.cursor??'',...(data.has_more ? { nextCursor: str(data.next_cursor) } : {}) }
   }
 }

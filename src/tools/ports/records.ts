@@ -26,6 +26,7 @@ export interface ArkmeRecordToolPort {
   }): Promise<ArkmeRecordSearchResult>
   searchScene(options: {
     scene: ArkmeSearchSceneKind
+    articleScope?: import('../../types.js').ArkmeLongArticleBrowseScope
     limit: number
     cursor?: string
     signal?: AbortSignal

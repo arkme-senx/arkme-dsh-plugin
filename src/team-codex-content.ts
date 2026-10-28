@@ -63,7 +63,7 @@ async function readObjects(value:unknown,source:string,task:string,signal:AbortS
   for(const rawEvent of body.events){const event=object(rawEvent),id=String(event.event_id),meta=wanted.get(id);if(!meta)continue
    if(decoded.has(id)||event.version!==meta.version||event.turn_id!==meta.turn_id||event.turn_seq!==meta.turn_seq||event.kind!==meta.kind||event.at!==meta.at||Number(event.message_seq??0)!==Number(meta.message_seq??0))throw new Error('CONTENT_INDEX_MISMATCH')
    // EventData JSON scalars have explicit zero values even when omitted in an object.
-   decoded.set(id,{...event,text:event.text??'',truncated:event.truncated??false,cursor:meta.cursor,private_images:meta.private_images,images_version:meta.images_version})
+   decoded.set(id,{...event,text:event.text??'',truncated:event.truncated??false,cursor:meta.cursor,private_images:meta.private_images,images_version:meta.images_version,private_images_unavailable:meta.private_images_unavailable})
   }
  }
  if(decoded.size!==wanted.size)throw new Error('CONTENT_PAGE_INCOMPLETE')

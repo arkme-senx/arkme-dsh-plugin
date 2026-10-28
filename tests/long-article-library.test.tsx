@@ -33,7 +33,7 @@ it('opens a large standalone library and preserves recent cards while switching 
   await mount()
   expect(renderer.root.findByProps({'aria-label':'长文库'}).props.role).toBe('dialog')
   expect(renderer.root.findAllByProps({role:'tab'}).map(tab=>text(tab.props.children))).toEqual(['最近','我共享的','共享给我的'])
-  expect(mocks.call).toHaveBeenCalledExactlyOnceWith('search.scene',{scene:'long_article',limit:30},expect.any(AbortSignal))
+  expect(mocks.call).toHaveBeenCalledExactlyOnceWith('search.scene',{scene:'long_article',limit:20},expect.any(AbortSignal))
   await act(async()=>button('我共享的').props.onClick())
   expect(mocks.call.mock.calls.at(-1)?.[1].articleScope).toBe('shared_by_me')
   expect(text(renderer.toJSON())).toContain('后端接口开发中，开发完成后此功能完整可用。')
@@ -87,4 +87,29 @@ it('native library opens articles and automatically published new documents thro
   await act(async()=>button('新建长文').props.onClick())
   expect(open).toHaveBeenLastCalledWith(expect.objectContaining({autoPublish:true,sourceRef:'signed-self',sourceKey:'signed-self'}))
   expect(renderer.root.findAllByProps({'data-test-editor':'signed-self'})).toHaveLength(0)
+})
+it('keeps native category pages when the window regains focus and refreshes only on a content change', async () => {
+  let changed!:()=>void
+  const stop=vi.fn()
+  vi.stubGlobal('arkmeLongArticle',{version:3,onChanged:(listener:()=>void)=>{changed=listener;return stop}})
+  await act(async()=>{renderer=create(<ArkmeLongArticleLibraryDialog standalone onClose={close}/>)})
+  const reads=mocks.call.mock.calls.length
+  await act(async()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('focus'))})
+  expect(mocks.call).toHaveBeenCalledTimes(reads)
+  expect(renderer.root.findAllByProps({'data-arkme-long-article-result':'true'})).toHaveLength(1)
+  await act(async()=>{changed();await new Promise(resolve=>setTimeout(resolve,120))})
+  expect(mocks.call).toHaveBeenCalledTimes(reads+1)
+  act(()=>renderer.unmount())
+  expect(stop).toHaveBeenCalledOnce()
+})
+it('passes the original sharing relation and display metadata into the independent reader',async()=>{
+ const open=vi.fn(async()=>true)
+ vi.stubGlobal('arkmeLongArticle',{version:3,open,active:async()=>true})
+ vi.stubGlobal('location',{search:'?arkmeLongArticle=1'})
+ const foreign={...article,recordOwnerUserId:7,templateKind:2,displayKind:1,textFormat:'markdown',messageActionRef:'signed-original',targetSource:{...target,kind:'group_chat',sourceRef:'signed-group'}}
+ mocks.call.mockResolvedValue({...page,items:[foreign]})
+ await act(async()=>{renderer=create(<ArkmeLongArticleLibraryDialog standalone onClose={close}/>)})
+ await act(async()=>renderer.root.findByProps({'data-arkme-long-article-result':'true'}).props.onClick({currentTarget:{}}))
+ expect(open).toHaveBeenCalledWith(expect.objectContaining({sourceRef:'signed-group',article:{mode:'existing',item:expect.objectContaining({recordOwnerUserId:7,messageActionRef:'signed-original',templateKind:2,displayKind:1,textFormat:'markdown'})}}))
+ expect(mocks.call.mock.calls.some(([op])=>op==='source.long-article.detail'||op==='source.timeline-around')).toBe(false)
 })

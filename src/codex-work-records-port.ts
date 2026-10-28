@@ -4,7 +4,7 @@ import type { SelectedTextNoteQuote } from './selected-text-note.js'
 import type { ArkmeMessageCopyLinkResult,ArkmeSourceSendResult } from './types.js'
 export interface CodexTaskLocator{teamRef:string;id:string;sourceId?:string}
 export type CodexReadRequest=
- | {action:'tasks';teamRef:string;page?:number;memberRef?:string;sourceId?:string;projectKey?:string}
+ | {action:'tasks';teamRef:string;page?:number;cursor?:string;after?:string;from?:string;memberRef?:string;sourceId?:string;projectKey?:string}
  | ({action:'events';cursor?:string;before?:number;after?:string;from?:string;through?:string}&CodexTaskLocator)
  | {action:'marks';sourceRef:string;refs:string[]}
  | {action:'excerpt-source';recordUid:string}

@@ -1,4 +1,5 @@
 import { readRecordExcerpt } from './record-excerpt.js'
+import { RECORDING_STRATEGIES, type RecordingStrategy } from './recording-strategy-contract.js'
 import { sameArkoTurnIntent, isValidArkoPendingTurn, validArkoStoredTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from './arko-turn-contract.js'
 import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
@@ -109,6 +110,9 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (typeof source.phase !== 'string' || !RECORDING_IMPORT_PHASES.has(source.phase as RecordingImportPhase)) return undefined
   const recordingKind = source.recordingKind === undefined ? 0 : source.recordingKind
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
+  if (source.strategy !== undefined && !RECORDING_STRATEGIES.some(strategy => strategy.id === source.strategy)) {
+    throw new Error('本地录音处理策略损坏，已保留恢复信息')
+  }
   return {
     jobId: source.jobId as string,
     ...(typeof source.clientTaskId === 'string' ? { clientTaskId: source.clientTaskId } : {}),
@@ -125,6 +129,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     startAtMillis: source.startAtMillis as number,
     belongUserId: source.belongUserId as number,
     recordingKind,
+    ...(source.strategy === undefined ? {} : { strategy: source.strategy as RecordingStrategy }),
     sourceHandle: source.sourceHandle as string,
     uploadedBytes: source.uploadedBytes as number,
     createdAtMillis: source.createdAtMillis as number,
@@ -746,7 +751,7 @@ export class ArkmeStateStore {
       .map(cloneRecordingImportJob))
   }
 
-  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal) {
+  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal) {
     const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
     let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
     await this.update(state => {

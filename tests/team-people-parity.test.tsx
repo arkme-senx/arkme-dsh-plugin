@@ -39,7 +39,7 @@ it('uses a verified internal person ref for private chat, and the same person fo
   expect(call).toHaveBeenCalledWith('team.app.person.private.open',{conversationRef:'conversation',expectedAccountKey:'prod:90',personRef:'person-ref'},expect.any(AbortSignal))
   expect(activate).toHaveBeenCalledWith({sourceRef:'chat'})
   await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
-  await act(async()=>document.querySelector<HTMLElement>('[role="menuitem"]')!.click())
+  await act(async()=>[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(n=>n.textContent==='看TA的快记')!.click())
   expect(onRecords).toHaveBeenCalledWith(person)
 })
 it('shows own profile without a private-chat send button and supports own records',async()=>{
@@ -87,6 +87,7 @@ it('uses the common author/time layout, no redundant title, resizable shell and 
   expect(host.querySelector('h2')?.textContent).not.toBe('消息详情')
   expect(host.querySelector('[role="separator"]')).toBeTruthy()
   await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="所在对话：测试团队 · 访客"]')!.click())
-  expect(onLocate).toHaveBeenCalledOnce();expect(host.textContent).toContain('相关快记暂未接通')
+  expect(onLocate).toHaveBeenCalledOnce();expect(host.textContent).not.toContain('相关快记暂未接通')
+  expect(host.querySelector('[role="alert"]')).toBeTruthy()
   expect(host.querySelector('textarea')).toBeNull()
 })

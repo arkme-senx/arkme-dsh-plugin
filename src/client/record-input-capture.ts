@@ -368,9 +368,11 @@ export async function arkmeMicrophonePermissionState(
   }
   try {
     const result = await source.permissions.query({ name: 'microphone' as PermissionName })
-    lastMicrophonePermission = result.state
-    setStoredExplicitMicrophoneGrant(grantScope, result.state === 'granted')
-    return lastMicrophonePermission
+    // Electron's browser grant can precede OS consent; only explicit capture confirms device access.
+    lastMicrophonePermission = result.state === 'granted' && !arkmeMicrophoneCaptureReady(grantScope)
+      ? 'prompt' : result.state
+    if (result.state !== 'granted') setStoredExplicitMicrophoneGrant(grantScope, false)
+    return result.state
   } catch {
     return arkmeMicrophoneCaptureReady(grantScope) ? 'granted' : 'prompt'
   }

@@ -1,5 +1,5 @@
-import {CodexLegacyMarks} from './services/codex-legacy-marks.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
+import type { ArkmeRecordingTranscriptPageOptions } from './types.js'
 import { RealtimeDictationService } from './services/realtime-dictation-service.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { DictationService } from './services/dictation-service.js'
@@ -506,6 +506,9 @@ export class ArkmeService {
     if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
     return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
   }
+  async readTeamExtensions(conversationRef:string,messageRef:string,options:import('./team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage> {
+    return await this.executeTeamApp('team.app.extensions',{conversationRef,messageRef,...options},signal) as import('./team-app-contract.js').TeamExtensionPage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -693,6 +696,7 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
       (raw, session) => this.chat.calendarSharedRecordingPreview(raw, session))
     this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy, this.profile)
+    this.search.articleActionRef = (raw, sourceRef, signal) => this.chat.articleSearchActionRef(raw, sourceRef, signal)
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
@@ -1204,6 +1208,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
+        ...(this.config.recordingWorkbenchEnabled !== false && this.config.recordingImportDirectory
+          ? { recordingFileImport: true as const } : {}),
+        recordingTranscriptPages: true,
         authStatus: true,
         passwordLogin: true,
         realtimeDictationV1: true,
@@ -1232,18 +1239,25 @@ arkoImagesV1:true,
         entityArchive: true,
         teamProfiles: true,
         teamExternalChats: true,
+        teamMessageExtensions: 1,
         teamMessageInteractions: 1,
+        teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,
         ...(this.runtime.stateStore.commonGroups ? { commonGroups: true as const } : {}),
         remoteRecordSearch: true,
         contactDirectoryReads: true,
         speakerPresence: true,
+        personRecordsV1: true,
+        articleLibraryV1: true,
         relationPages: true,
         recordingEntities: true,
         recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        recordingStrategiesV1: true,
+        recordingStrategyRecordingsV1: true,
+        recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
         sourceTimeline: true,
         unifiedChatTimeline: true,
@@ -1477,11 +1491,13 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal) }
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
+  recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
   async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) { return await this.recording.copyRecordingLink(itemRefs, signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
+  async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
@@ -1981,6 +1997,9 @@ arkoImagesV1:true,
     return await this.chat.listSourceMembers(sourceRef, options)
   }
 
+  async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}) {
+    return this.chat.personRecordsPage(sourceRef, memberRef, options)
+  }
   async personRecordSources(sourceRef: string, memberRef: string, cursor?: string, signal?: AbortSignal) {
     return this.chat.personRecordSources(sourceRef, memberRef, cursor, signal)
   }
@@ -2470,33 +2489,30 @@ arkoImagesV1:true,
 
   async forwardNativeChat(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> { return await this.messageActions.forwardNative(snapshot, expectedUserId, options) }
   async codexWorkRecords(request:import('./codex-work-records-port.js').CodexWorkRequest,signal?:AbortSignal):Promise<import('./codex-work-records-port.js').CodexWorkResult>{
-    signal?.throwIfAborted();const owner=this.codexWorkRecordsOwner
+    signal?.throwIfAborted();if(!request||typeof request!=='object'||typeof request.action!=='string')throw new ArkmePluginError('INVALID_PARAMETER','Codex 请求无效',false,400);const owner=this.codexWorkRecordsOwner
     if(request.action==='excerpt-source')return this.excerptOriginal(request.recordUid,signal)
     if(!owner)throw new ArkmePluginError('CAPABILITY_UNSUPPORTED','当前环境不支持 Codex 工作记录',false,503)
     switch(request.action){
-      case 'tasks':return owner.state(request.teamRef,request.page,request.memberRef,request.sourceId,request.projectKey)
-      case 'events':return owner.events(request.teamRef,request.id,request.before,request.sourceId,request.cursor,{...(request.after?{after:request.after}:{}),...(request.from?{from:request.from}:{}),...(request.through?{through:request.through}:{})})
+      case 'tasks':return owner.state(request.teamRef,request.page,request.memberRef,request.sourceId,request.projectKey,{cursor:request.cursor,after:request.after,from:request.from},signal)
+      case 'events':return owner.events(request.teamRef,request.id,request.before,request.sourceId,request.cursor,{...(request.after?{after:request.after}:{}),...(request.from?{from:request.from}:{}),...(request.through?{through:request.through}:{})},signal)
       case 'marks':return this.codexLocalMarks(request.sourceRef,request.refs,signal)
       case 'mark':return this.changeCodexLocalMark(request.sourceRef,request.ref,request.change,signal)
       case 'settings':await owner.change(request.teamRef,request.id,request.mode,undefined,request.sourceName);return {ok:true}
       case 'excerpt':return this.sendQuotedSelfNote(request,signal)
-      case 'copy-link':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot);return this.copyCodexChatLink(snapshot,request.expectedUserId,signal)}
-      case 'forward':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot);return this.forwardCodexChat(snapshot,request.expectedUserId,{targetSourceRef:request.targetSourceRef,requestId:request.requestId,recordUid:request.recordUid,sendAtMillis:request.sendAtMillis,...(request.commentRecordUid?{commentRecordUid:request.commentRecordUid}:{}),...(request.commentText?{commentText:request.commentText}:{}),...(signal?{signal}:{})})}
+      case 'copy-link':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot,signal);return this.copyCodexChatLink(snapshot,request.expectedUserId,signal)}
+      case 'forward':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot,signal);return this.forwardCodexChat(snapshot,request.expectedUserId,{targetSourceRef:request.targetSourceRef,requestId:request.requestId,recordUid:request.recordUid,sendAtMillis:request.sendAtMillis,...(request.commentRecordUid?{commentRecordUid:request.commentRecordUid}:{}),...(request.commentText?{commentText:request.commentText}:{}),...(signal?{signal}:{})})}
       default:throw new ArkmePluginError('INVALID_PARAMETER','不支持的 Codex 操作',false,400)
     }
   }
-  private codexWorkRecordsOwner?:Pick<import('./team-codex-service.js').TeamCodexService,'cloudMarkCapabilities'|'cloudMarks'|'changeCloudMark'|'state'|'events'|'change'|'prepareExport'|'readPrivateImage'|'canonicalMessageTarget'|'legacyMarkAliases'>
+  private codexWorkRecordsOwner?:Pick<import('./team-codex-service.js').TeamCodexService,'cloudMarkCapabilities'|'cloudMarks'|'changeCloudMark'|'state'|'events'|'change'|'prepareExport'|'readPrivateImage'|'canonicalMessageTarget'>
   async readCodexImage(ref:string,options:{maxBytes:number;signal?:AbortSignal}){if(!this.codexWorkRecordsOwner)throw new ArkmePluginError('CAPABILITY_UNSUPPORTED','Codex 来源未就绪',false,503);return this.codexWorkRecordsOwner.readPrivateImage(ref,options)}
   setCodexWorkRecords(owner:NonNullable<ArkmeService['codexWorkRecordsOwner']>){this.codexWorkRecordsOwner=owner}
-  async codexLocalMarkCapabilities(sourceRef:string,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.cloudMarkCapabilities(sourceRef)??new NativeLocalMarks(this.runtime,'codex').capabilities(sourceRef,signal)}
-  private codexLegacyMarks?:CodexLegacyMarks
-  private legacyCodexMarks(){return this.codexLegacyMarks??=new CodexLegacyMarks(this.runtime,()=>this.codexWorkRecordsOwner)}
-  async migrateLegacyCodexMarks(){await this.legacyCodexMarks().sync()}
+  async codexLocalMarkCapabilities(sourceRef:string,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.cloudMarkCapabilities(sourceRef,signal)??new NativeLocalMarks(this.runtime,'codex').capabilities(sourceRef,signal)}
   async codexLocalMarks(sourceRef:string,refs:string[],signal?:AbortSignal){
-    const cloud=await this.codexWorkRecordsOwner?.cloudMarks(sourceRef,refs)
-    return cloud?this.legacyCodexMarks().read(sourceRef,cloud,signal):new NativeLocalMarks(this.runtime,'codex').list(sourceRef,refs,signal)
+    const cloud=await this.codexWorkRecordsOwner?.cloudMarks(sourceRef,refs,signal)
+    return cloud??new NativeLocalMarks(this.runtime,'codex').list(sourceRef,refs,signal)
   }
-  async changeCodexLocalMark(sourceRef:string,ref:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.changeCloudMark(sourceRef,ref,change)??new NativeLocalMarks(this.runtime,'codex').change(sourceRef,ref,change,signal)}
+  async changeCodexLocalMark(sourceRef:string,ref:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.changeCloudMark(sourceRef,ref,change,signal)??new NativeLocalMarks(this.runtime,'codex').change(sourceRef,ref,change,signal)}
   nativeLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).capabilities(sourceRef, signal) }
   nativeLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).list(sourceRef, refs, signal) }
   changeNativeLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).change(sourceRef, ref, change, signal) }
@@ -2937,8 +2953,9 @@ arkoImagesV1:true,
     mediaRef: string,
     range?: string,
     signal?: AbortSignal,
+    method: 'GET' | 'HEAD' = 'GET',
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-    return await this.chat.fetchMedia(mediaRef, range, signal)
+    return await this.chat.fetchMedia(mediaRef, range, signal, method)
   }
 
   async sendDirectText(

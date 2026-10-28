@@ -25,7 +25,6 @@ export function SelectedTextSelfNoteContent({ value, detail = false, recordUid }
       {(clipped || expanded || value.quote.text.length > 90 || value.quote.text.includes('\n')) && <button type="button" onClick={e => { e.stopPropagation(); setExpanded(v => !v) }} style={{ padding: 0, border: 0, font: 'inherit', color: arkmeTheme.tertiary, background: 'transparent', cursor: 'pointer' }}>{tr(expanded ? '收起引用' : '展开引用')}</button>}
       {value.storage==='cloud'&&value.quote.source&&recordUid&&<ExcerptOriginal recordUid={recordUid}/>}
     </div>
-    {value.migrationConflict&&<p role="status" style={{color:arkmeTheme.secondary,fontSize:11}}>{tr('旧摘录仍保存在本机。原记录已有改动或引用中含旧标签、提及，需核对后再同步引用样式。')}</p>}
     {value.noteText && <div data-arkme-quote-prose style={{ color: arkmeTheme.secondary, fontSize: 11 }}>{tr(value.kind === 'forward' ? '附言' : '我的笔记')}</div>}
     {value.noteText && <div data-arkme-quote-prose style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><ArkmeRichText text={value.noteText} linkLabelMode="raw" /></div>}
   </div>

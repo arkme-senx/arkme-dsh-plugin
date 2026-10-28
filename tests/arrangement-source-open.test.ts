@@ -8,9 +8,10 @@ function fixture(evidence: Record<string, unknown>) {
     runtime: {
       requireSession: vi.fn(async () => session),
       authenticatedAudioPost: vi.fn(async () => ({ audio_summary_ls: [{ id: 'summary-a' }] })),
-      authenticatedPost: vi.fn(async () => ({ record_core: { record_uid: 'record-a', status: 1, content_access_state: 1, origin_kind: 1 } })),
+      authenticatedPost: vi.fn(async (): Promise<Record<string, unknown>> => ({ record_core: { record_uid: 'record-a', status: 1, content_access_state: 1, origin_kind: 1 } })),
     },
-    arrangement: { sourceEvidence: vi.fn(async () => evidence) },
+    arrangement: { sourceEvidence: vi.fn(async () => evidence), sourceDocument: vi.fn(async () => 'original agent instruction') },
+    source: { searchTargetSource: vi.fn(async (): Promise<unknown> => ({ ref: 'conversation-ref' })) },
     privacy: { lockedRecordUids: vi.fn(async () => new Set<string>()) },
     record: { personalRecordDetail: vi.fn(async () => ({ text: 'original' })) },
     callHistory: { arrangementCallDetail: vi.fn(async () => ({ startedAtMillis: 1791800000000, transcriptSegments: [] })) },
@@ -50,6 +51,41 @@ describe('arrangement source access boundary', () => {
     const {host,open} = fixture({kind:'audio_summary',summary_id:'summary-a',date_stamp:1791734400000,tz_offset:28800000})
     host.runtime.requireSession.mockResolvedValueOnce({userId:11,refreshToken:'account-session'}).mockResolvedValueOnce({userId:22,refreshToken:'another-account'})
     await expect(open()).rejects.toMatchObject({code:'arrangement-source-account-changed'})
+  })
+  it('opens the freshly authorized agent evidence without a second document read', async () => {
+    const { host, open } = fixture({ kind: 'agent', text: 'preview' })
+    expect(await open()).toEqual({ kind: 'document', title: '来源指令', text: 'preview' })
+    expect(host.arrangement.sourceDocument).not.toHaveBeenCalled()
+    expect(host.runtime.authenticatedAudioPost).not.toHaveBeenCalled()
+  })
+  it('delegates an accessible personal record to its owner', async () => {
+    const { host, open } = fixture({ kind: 'record', record_uid: 'record-a' })
+    expect(await open()).toEqual({ kind: 'record', item: { text: 'original' } })
+    expect(host.record.personalRecordDetail).toHaveBeenCalledWith('record-a', undefined)
+    expect(host.source.searchTargetSource).not.toHaveBeenCalled()
+  })
+  it.each([3, 4])('resolves a conversation record of origin %s and fails if its source disappeared', async origin => {
+    const { host, open } = fixture({ kind: 'record', record_uid: 'record-a' })
+    host.runtime.authenticatedPost.mockResolvedValue({ record_core: {
+      record_uid: 'record-a', status: 1, content_access_state: 1, origin_kind: origin,
+      origin_container_ref: 'conversation-a', send_at: 1234,
+    } })
+    expect(await open()).toEqual({ kind: 'conversation', source: { ref: 'conversation-ref' }, itemUid: 'record-a', sendAtMillis: 1234 })
+    expect(host.source.searchTargetSource).toHaveBeenCalledWith(3, 'conversation-a', '', undefined)
+    expect(host.record.personalRecordDetail).not.toHaveBeenCalled()
+    host.source.searchTargetSource.mockResolvedValue(undefined)
+    await expect(open()).rejects.toMatchObject({ code: 'arrangement-source-missing' })
+  })
+  it.each([
+    { record_uid: 'different-record', status: 1, content_access_state: 1, origin_kind: 1 },
+    { record_uid: 'record-a', status: 0, content_access_state: 1, origin_kind: 1 },
+    { record_uid: 'record-a', status: 1, content_access_state: 0, origin_kind: 1 },
+  ])('rejects unavailable record facts before opening a target: %o', async core => {
+    const { host, open } = fixture({ kind: 'record', record_uid: 'record-a' })
+    host.runtime.authenticatedPost.mockResolvedValue({ record_core: core })
+    await expect(open()).rejects.toMatchObject({ code: 'arrangement-source-restricted' })
+    expect(host.record.personalRecordDetail).not.toHaveBeenCalled()
+    expect(host.source.searchTargetSource).not.toHaveBeenCalled()
   })
 })
 

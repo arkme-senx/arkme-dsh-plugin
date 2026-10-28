@@ -16,7 +16,6 @@ export interface SelectedTextNotePresentation {
   header: string
   noteText: string
   storage: 'local' | 'cloud'
-  migrationConflict?:boolean
   kind?: 'forward'
 }
 export function readSelectedTextNoteQuote(value: unknown): SelectedTextNoteQuote | undefined {

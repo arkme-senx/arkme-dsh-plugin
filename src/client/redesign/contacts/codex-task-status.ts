@@ -1,4 +1,4 @@
-import type { TeamCodexTask } from '../../../team-codex-contract.js'
+import type { TeamCodexTask, TeamCodexTaskSummary } from '../../../team-codex-contract.js'
 
 export type CodexTaskStatus = 'running' | 'finished' | 'interrupted' | 'unknown' | 'paused' | 'waiting'
 
@@ -28,4 +28,17 @@ export function mergeCodexActivityTasks(tasks: readonly TeamCodexTask[]): TeamCo
       && (task.captureHealth?.checkedAt ?? 0) > (previous.captureHealth?.checkedAt ?? 0)) unique.set(key, task)
   }
   return [...unique.values()].sort((a,b)=>b.updatedAt-a.updatedAt)
+}
+
+/** Metadata and activity have independent source versions; a late page must not undo either. */
+export function mergeCodexTaskSummary<T extends TeamCodexTask>(task:T,summary:TeamCodexTaskSummary):T {
+  if(!task.cloud?.remote)return summary.updatedAt>=task.updatedAt?{...task,...summary}:task
+  const result={...task}
+  if(Number.isSafeInteger(summary.metadataVersion) && summary.metadataVersion! >= (task.metadataVersion??0)) {
+    result.title=summary.title;result.projectKey=summary.projectKey??'';result.projectName=summary.projectName??'';result.branch=summary.branch??'';result.metadataVersion=summary.metadataVersion!
+  }
+  if(Number.isSafeInteger(summary.summaryVersion) && summary.summaryVersion! >= (task.summaryVersion??0)) {
+    result.state=summary.state;result.updatedAt=summary.updatedAt;result.eventCount=summary.eventCount;result.summaryVersion=summary.summaryVersion!
+  }
+  return result
 }

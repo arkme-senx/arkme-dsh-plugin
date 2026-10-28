@@ -9,6 +9,19 @@ import type { ArkmeRecordReeditSubmission } from '../src/record-reedit-contract.
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  it('preserves the chosen recording strategy through restart and refuses corrupted identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-strategy-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob({ strategy: 'baseline-sd-asr/20261026' }))
+    await expect(new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({ strategy: 'baseline-sd-asr/20261026' })
+    const path = join(root, 'state.json')
+    const raw = JSON.parse(await readFile(path, 'utf8'))
+    raw.recordingImportJobsByUser['10001']['job-1'].strategy = 'unknown-algorithm'
+    await writeFile(path, JSON.stringify(raw))
+    await expect(new ArkmeStateStore(root).getRecordingImportJob(10001, 'job-1')).rejects.toThrow('策略损坏')
+    expect(JSON.parse(await readFile(path, 'utf8')).recordingImportJobsByUser['10001']['job-1'].strategy).toBe('unknown-algorithm')
+  })
+
   it('persists cancellation completion across host relaunch without storing credentials', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-cancellation-'))
     const store = new ArkmeStateStore(root)

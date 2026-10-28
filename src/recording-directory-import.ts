@@ -1,3 +1,4 @@
+import { recordingStrategy } from './recording-strategy-contract.js'
 import { MAX_RECORDING_IMPORT_BYTES, RecordingImportContractError, sameRecordingImportIdentity,
   type RecordingImportIdentity, type RecordingDirectoryCandidate, type RecordingDirectorySnapshot,
   type RecordingDirectorySource, type RecordingDirectoryEntry, type RecordingDirectorySelection,
@@ -42,6 +43,7 @@ export interface RecordingDirectoryResult {
   stopped?: 'cancelled' | 'account_changed' | 'authentication_required' | 'account_unavailable' | 'capacity' | 'owner_unavailable'
 }
 interface DirectoryRecordingOwner {
+  recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingImportUserId(): Promise<number>
   recordingDirectorySnapshot(candidates: readonly RecordingDirectoryCandidate[], expectedUserId: number, signal?: AbortSignal): Promise<RecordingDirectorySnapshot>
   acceptRecordingImport(sourceHandle: string, metadata: Omit<RecordingImportIdentity, 'userId'> & { mimeType: string; recordingKind: 3 } & Partial<RecordingToolBatchMember>, expectedUserId: number, signal?: AbortSignal): Promise<PublicRecordingImportJob>
@@ -190,6 +192,8 @@ export async function importRecordingDirectory(
   const memberKeys = new Map(scan.files.map(file => [file.relativePath, recordingToolMemberKey([
     'directory', file.sourceSnapshot, file.relativePath, file.fileName, file.fileSize, file.startAtMillis, belongUserId,
   ])]))
+  const strategy = scan.files.some(file => approved.get(file.relativePath)?.outcome === 'pending_upload')
+    ? recordingStrategy((await owner.recordingStrategies({ action: 'preference', expectedUserId: prepared.expectedUserId }, signal) as { strategy: string }).strategy) : undefined
   let members: Record<string, RecordingToolBatchMember> = {}
   if (planner) {
     // Refresh the frozen selection, not the filesystem selection: avoid assigning slots to known duplicates.
@@ -200,7 +204,7 @@ export async function importRecordingDirectory(
       approved.set(file.relativePath, await previewFile(source, file, file.startAtMillis, belongUserId, snapshot, namedCount, signal))
     }
     const plan = await planner(prepared.expectedUserId, scan.files.map(file => ({ key: memberKeys.get(file.relativePath)!,
-      isNew: approved.get(file.relativePath)?.outcome === 'pending_upload' })), signal)
+      isNew: approved.get(file.relativePath)?.outcome === 'pending_upload', ...(strategy ? { strategy } : {}) })), signal)
     members = plan.members
     result.workflow = { supported: plan.supported, batchIds: [...new Set(Object.values(members).map(row => row.batch.batchId))], untrackedUploads: 0 }
     await assertAccount(owner, prepared.expectedUserId, signal)
@@ -253,7 +257,7 @@ export async function importRecordingDirectory(
           }
           const existingNames = new Set(snapshot.existingFileNames.map(recordingImportFileNameKey))
           const local = snapshot.local.filter(value => recordingImportFileNameKey(value.identity.fileName) === key)
-          const exact = local.find(value => sameRecordingImportIdentity(value.identity, { ...metadata, userId: prepared.expectedUserId }))
+          const exact = local.find(value => sameRecordingImportIdentity(value.identity, { ...metadata, userId: prepared.expectedUserId, ...(value.identity.strategy ? { strategy: value.identity.strategy } : {}) }))
           if (local.length > 0) {
             if (exact === undefined) item = { ...item, outcome: 'conflict', message: '同名本地任务与该录音不一致' }
             else if (exact.task.phase === 'failed' && exact.task.retryable && exact.task.errorCode !== 'recording_storage_exhausted') {
@@ -273,7 +277,7 @@ export async function importRecordingDirectory(
             item = { ...item, outcome: uploaded ? 'matched_uploaded' : 'conflict',
               message: uploaded ? '已有元数据匹配且上传已收尾的录音' : '已有同名录音，但无法确认与该文件匹配且上传完成' }
           } else {
-            admitted = await owner.acceptRecordingImport(sourceHandle, { ...metadata, recordingKind: 3,
+            admitted = await owner.acceptRecordingImport(sourceHandle, { ...metadata, recordingKind: 3, strategy: members[memberKeys.get(file.relativePath)!] ? recordingStrategy(members[memberKeys.get(file.relativePath)!]!.strategy) : recordingStrategy(strategy),
               ...members[memberKeys.get(file.relativePath)!] }, prepared.expectedUserId, signal)
             sourceHandle = undefined // The existing coordinator owns the admitted copy.
           }

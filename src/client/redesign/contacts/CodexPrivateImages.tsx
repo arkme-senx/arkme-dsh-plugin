@@ -36,6 +36,9 @@ export function CodexPrivateImages({teamRef,task,event}:Props) {
   const [selected,setSelected]=useState<Image>(),dialog=useRef<HTMLDivElement>(null),previousFocus=useRef<HTMLElement|null>(null)
   const params={teamRef,id:task.id,turnId:event.turnId,kind:event.kind,...(task.cloud?.remote?{sourceId:task.cloud.sourceId,eventId:event.eventId}:{})}
   useEffect(()=>{
+    if(selected&&(event.privateImagesUnavailable||!event.privateImages?.some(image=>image.ref===selected.ref)))setSelected(undefined)
+  },[event.privateImages,event.privateImagesUnavailable,selected])
+  useEffect(()=>{
     if(!selected)return
     previousFocus.current=document.activeElement as HTMLElement|null;dialog.current?.focus()
     const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();setSelected(undefined)}else if(e.key==='Tab'){
@@ -46,6 +49,7 @@ export function CodexPrivateImages({teamRef,task,event}:Props) {
     document.addEventListener('keydown',key)
     return ()=>{document.removeEventListener('keydown',key);previousFocus.current?.focus()}
   },[selected])
+  if(event.privateImagesUnavailable)return <small role="status">{tr('图片暂不可读，请稍后重试')}</small>
   if(!event.privateImages?.length)return null
   return <div className="arkme-codex-private-images" data-private-media="owner-only" onContextMenu={e=>e.stopPropagation()}>
     <div className="arkme-codex-private-gallery">{event.privateImages.map((image,index)=><div key={image.ref} className="arkme-codex-private-tile">

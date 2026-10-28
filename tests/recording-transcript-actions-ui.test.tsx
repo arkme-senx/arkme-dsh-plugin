@@ -3,17 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingComparison, ArkmeRecordingDay, ArkmeRecordingWorkbenchItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: mocks.call }))
+vi.mock('react-dom',()=>({createPortal:(node:unknown)=>node}))
 import { prepareRecordingTranscriptComparison } from '../src/client/recordings/prepare-recording-transcript-comparison.js'
 import { RecordingTranscriptComparison } from '../src/client/recordings/RecordingTranscriptComparison.js'
 import { RecordingTranscriptForward } from '../src/client/recordings/RecordingTranscriptForward.js'
 import { createRecordingForwardAttempt } from '../src/client/recordings/recording-forward-client.js'
+import { RecordingComparisonMenu } from '../src/client/recordings/RecordingComparisonMenu.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const item = (id: string, sessionKey = 'session'): ArkmeRecordingWorkbenchItem => ({
   itemId: id, itemRef: `ref-${id}`, sessionKey, transcriptSource: 'system', startAtMillis: 1_000, endAtMillis: 5_000,
-  speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人', sameSpeakerItemCount: 1, isSelf: false, isBackground: false, text: '😀你好你好',
+  speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人', canBindSpeaker: true, isSelf: false, isBackground: false, text: '😀你好你好',
 })
-const section = (items: ArkmeRecordingWorkbenchItem[]) => ({ items, state: items.length > 0 ? 'ready' as const : 'empty' as const, message: '', totalDurationMillis: 4_000, processingCount: 0 })
+const section = (items: ArkmeRecordingWorkbenchItem[]) => ({ items, dateStamp: 0, transcriptSource: items[0]?.transcriptSource ?? 'system', viewRef: `view-${items.map(item => item.itemId).join('-')}`, nextCursor: '', state: items.length > 0 ? 'ready' as const : 'empty' as const, message: '', totalDurationMillis: 4_000, processingCount: 0 })
 const comparison = (): ArkmeRecordingComparison => ({ dateStamp: 0, system: section([item('system')]), doubao: section([]), candidateCount: 0, failedCount: 0, silentCount: 0 })
 let renderer: ReactTestRenderer
 beforeEach(() => {
@@ -52,7 +54,7 @@ describe('transcript comparison lifecycle', () => {
     expect(row.props.onDoubleClick).toBeTypeOf('function')
   })
 
-  it('double-clicks the exact system counterpart and continues its playlist despite overlapping sessions', async () => {
+  it('plays and continues the exact enhanced source despite overlapping system recordings', async () => {
     const audios: Array<EventTarget & { currentTime: number; pause: ReturnType<typeof vi.fn> }> = []
     vi.stubGlobal('Audio', class extends EventTarget {
       currentTime = 0
@@ -64,50 +66,93 @@ describe('transcript comparison lifecycle', () => {
     const selected = item('target', 'right-session')
     const next = { ...item('next', 'right-session'), startAtMillis: 6000, endAtMillis: 9000 }
     initial.system = section([item('a-wrong-session', 'wrong-session'), selected, next])
-    initial.doubao = section([{ ...item('doubao', 'right-session'), transcriptSource: 'doubao', startAtMillis: 5500, endAtMillis: 5900 }])
+    initial.doubao = section([{ ...item('doubao', 'right-session'), transcriptSource: 'doubao', startAtMillis: 5500, endAtMillis: 5900 }, { ...next, itemRef: 'ref-enhanced-next', transcriptSource: 'doubao' }])
     mocks.call.mockResolvedValue({ playbackRef: 'media', startOffsetMillis: 0, endOffsetMillis: 4000 })
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={{ data: initial, pending: false, notice: '' }} onClose={() => {}} />) })
     const row = renderer.root.findByProps({ 'data-transcript-time': 5500 })
     expect(row.props.onClick).toBeUndefined()
     await act(async () => { row.props.onDoubleClick() })
-    expect(mocks.call.mock.calls[0]?.[1]).toEqual({ itemRef: 'ref-target' })
-    // Flutter starts the nearest segment at its beginning when the time falls outside it.
+    expect(mocks.call.mock.calls[0]?.[1]).toEqual({ itemRef: 'ref-doubao' })
+    // Independent enhanced audio starts at its own beginning.
     expect(audios[0]?.currentTime).toBe(0)
     expect(renderer.root.findAllByProps({ 'aria-label': '暂停播放' }).length).toBeGreaterThan(0)
     await act(async () => { audios[0]!.dispatchEvent(new Event('ended')) })
-    expect(mocks.call.mock.calls[1]?.[1]).toEqual({ itemRef: 'ref-next' })
+    expect(mocks.call.mock.calls[1]?.[1]).toEqual({ itemRef: 'ref-enhanced-next' })
     await act(async () => { renderer.unmount() })
     expect(audios[1]?.pause).toHaveBeenCalled()
   })
 
-  it('opens an accepted task, polls only pending work and stops after completion', async () => {
+  it('views without submitting, starts only on the explicit button, then polls until completion', async () => {
     const initial = comparison(); initial.candidateCount = 1
     const pending = comparison(); pending.doubao.processingCount = 1
     const complete = comparison(); complete.doubao = section([item('complete')])
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 1, inFlightCount: 0, missingAudioCount: 1 }).mockResolvedValueOnce(pending).mockResolvedValue(complete)
     const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
     await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
-    expect(JSON.stringify(renderer.toJSON())).toContain('历史音频留存已过期')
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick() })
+    expect(JSON.stringify(renderer.toJSON())).toContain('部分录音没有可用于豆包转写的音频')
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
     expect(mocks.call).toHaveBeenCalledTimes(4)
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(mocks.call).toHaveBeenCalledTimes(4)
   })
 
-  it('does not offer a transcript reload for a missing playback counterpart', async () => {
-    const initial = comparison()
-    initial.doubao = section([{ ...item('doubao', 'other-session'), transcriptSource: 'doubao', startAtMillis: 10_000 }])
-    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={{ data: initial, pending: false, notice: '' }} onClose={() => {}} />) })
-    await act(async () => { renderer.root.findByProps({ 'data-transcript-time': 10_000 }).props.onDoubleClick() })
-    expect(JSON.stringify(renderer.toJSON())).toContain('该片段暂无可播放的系统录音')
-    expect(renderer.root.findAllByType('button').filter(button => button.children.includes('重试'))).toHaveLength(0)
-    expect(mocks.call).not.toHaveBeenCalled()
+  it('does not resubmit on double click and cancels a pending explicit submission on close', async () => {
+    const initial = comparison(); initial.candidateCount = 1
+    mocks.call.mockResolvedValueOnce(initial)
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    let resolve!: (value: unknown) => void
+    mocks.call.mockImplementationOnce(async () => new Promise(yes => { resolve = yes }))
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    const start = renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!
+    await act(async () => { start.props.onClick(); start.props.onClick() })
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'recordings.compare.start')).toHaveLength(1)
+    const signal = mocks.call.mock.calls.at(-1)![2] as AbortSignal
+    await act(async () => renderer.unmount())
+    expect(signal.aborted).toBe(true)
+    await act(async () => resolve({ queuedCount: 1, inFlightCount: 0, missingAudioCount: 0 }))
+    expect(mocks.call).toHaveBeenCalledTimes(2)
   })
 
-  it('does not open an empty comparison when audio has expired', async () => {
+  it('keeps formal results visible on explicit submission failure and allows retry', async () => {
+    const initial = comparison(); initial.candidateCount = 1
+    mocks.call.mockResolvedValueOnce(initial)
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    mocks.call.mockRejectedValueOnce(new Error('提交暂时失败'))
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    await act(async () => renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick())
+    expect(JSON.stringify(renderer.toJSON())).toContain('提交暂时失败')
+    expect(JSON.stringify(renderer.toJSON())).toContain('你好')
+    expect(renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.disabled).toBe(false)
+  })
+
+  it('can view an empty comparison without any processing candidate or submission', async () => {
+    mocks.call.mockResolvedValue(comparison())
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    expect(prepared.pending).toBe(false)
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.compare', { dateStamp: 0 }, expect.any(AbortSignal))
+  })
+
+  it('reports media failure without replacing enhanced audio with a nearby system clip', async () => {
+    const initial = comparison()
+    initial.doubao = section([{ ...item('doubao', 'other-session'), transcriptSource: 'doubao', startAtMillis: 10_000, endAtMillis: 11_000 }])
+    mocks.call.mockRejectedValue(new Error('原始来源音频不可用'))
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={{ data: initial, pending: false, notice: '' }} onClose={() => {}} />) })
+    await act(async () => { renderer.root.findByProps({ 'data-transcript-time': 10_000 }).props.onDoubleClick() })
+    expect(JSON.stringify(renderer.toJSON())).toContain('原始来源音频不可用')
+    expect(renderer.root.findAllByType('button').filter(button => button.children.includes('重试'))).toHaveLength(0)
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.playback.open', { itemRef: 'ref-doubao' }, expect.any(AbortSignal))
+  })
+
+  it('reports unavailable material without assuming that retention expired', async () => {
     const initial = comparison(); initial.candidateCount = 1
     mocks.call.mockResolvedValueOnce(initial).mockResolvedValueOnce({ queuedCount: 0, inFlightCount: 0, missingAudioCount: 1 })
-    await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).rejects.toThrow('历史音频留存已过期')
+    const prepared = await prepareRecordingTranscriptComparison(0, new AbortController().signal)
+    await act(async () => { renderer = create(<RecordingTranscriptComparison dateStamp={0} mediaPath="/media" prepared={prepared} onClose={() => {}} />) })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('开始豆包转写'))!.props.onClick() })
+    expect(JSON.stringify(renderer.toJSON())).toContain('部分录音没有可用于豆包转写的音频')
     expect(mocks.call).toHaveBeenCalledTimes(2)
   })
 
@@ -119,10 +164,11 @@ describe('transcript comparison lifecycle', () => {
     expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['recordings.compare'])
   })
 
-  it('does not abandon existing pending work when a new backfill fails', async () => {
+  it('reads existing pending work without submitting another backfill', async () => {
     const initial = comparison(); initial.candidateCount = 1; initial.doubao.processingCount = 1
     mocks.call.mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error('offline'))
     await expect(prepareRecordingTranscriptComparison(0, new AbortController().signal)).resolves.toMatchObject({ pending: true })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
   })
 
   it('keeps text readable on polling failure and offers retry only for that failure', async () => {
@@ -387,7 +433,7 @@ it('does not open a comparison for a previously selected date when its response 
     throw new Error(operation)
   })
   await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
-  await act(async () => { renderer.root.findByProps({ 'aria-label': '转写对比' }).props.onClick() })
+  await act(async () => { renderer.root.findByType(RecordingComparisonMenu).props.onDoubao() })
   expect(renderer.root.findByProps({ 'aria-label': '正在准备转写对比' }).props.disabled).toBe(true)
   const signal = mocks.call.mock.calls.find(([op]) => op === 'recordings.compare')?.[2] as AbortSignal
   await act(async () => { renderer.root.findByProps({ 'aria-label': '9月3日' }).props.onClick() })
@@ -396,4 +442,16 @@ it('does not open a comparison for a previously selected date when its response 
   expect(signal.aborted).toBe(true)
   expect(renderer.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)
   expect(renderer.root.findByProps({ 'aria-label': '转写对比' }).props.disabled).toBe(false)
+})
+
+it('keeps comparison discovery available when a recording has no formal transcript text', async () => {
+  mocks.call.mockImplementation(async (operation, params) => {
+    if (operation === 'recordings.calendar') return { days: [] }
+    if (operation === 'recordings.summary-model-config') return { options: [] }
+    if (operation === 'recordings.day') return { dateStamp: params.dateStamp, transcript: section([]), summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } }
+    throw new Error(operation)
+  })
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+  expect(renderer.root.findByProps({ 'aria-label': '转写对比' }).props.disabled).toBe(false)
+  expect(mocks.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })

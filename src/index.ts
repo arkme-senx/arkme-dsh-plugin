@@ -338,7 +338,6 @@ export function apply(ctx: Context, config: Config): void {
       return (await service.accountScope.scopedSession())?.userId
     },
     profile: () => service.cachedProfile(),
-    onCloudSynced:()=>service.migrateLegacyCodexMarks(),
     teams: teamService,
     cloud: {
       post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
@@ -572,9 +571,16 @@ export function apply(ctx: Context, config: Config): void {
       currentSelection?: () => unknown
     } | undefined
     const sessionPersistence = adaptSessionPersistence(apiCtx.get('sessionPersistence'))
+    const llm = apiCtx.get('llm') as {
+      resolveModelInfo?: (provider: string, model: string, signal?: AbortSignal) => Promise<{ inputModalities?: readonly string[] }>
+    } | undefined
     const apiProxy = new DshApiProxyAdapter(
       publicApi,
       {
+        ...(typeof llm?.resolveModelInfo !== 'function' ? {} : {
+          modelInputModalities: async (provider: string, model: string) =>
+            (await llm.resolveModelInfo!(provider, model, AbortSignal.timeout(2_000))).inputModalities,
+        }),
         ...(typeof agentDefaultModel?.currentSelection !== 'function'
           ? {}
           : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),

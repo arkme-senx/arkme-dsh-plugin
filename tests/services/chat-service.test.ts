@@ -3699,7 +3699,7 @@ describe('received Markdown long article detail', () => {
     })
     expect(x.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail', {
       chat_session_uid: 'chat-1', record_uid: 'record-snapshot-1', record_owner_user_id: 99, rel_uid: 'rel-snapshot-1', seq: 9,
-    }, expect.anything(), undefined)
+    }, expect.anything(), undefined, { lane: 'interactive-read', bypassCache: true })
     expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
     expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw, 42)
   })
@@ -3711,6 +3711,10 @@ describe('received Markdown long article detail', () => {
   it('rejects a response belonging to a different record', async () => {
     const x = fixture(); x.raw.record.payload.record_uid = 'other'
     await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).rejects.toMatchObject({ code: 'long-article-detail-unavailable' })
+  })
+  it.each([2, 4])('does not label owner status %s as a temporary failure', async status => {
+    const x = fixture(); Object.assign(x.raw.record, {status, payload: undefined});
+    await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).rejects.toMatchObject({code:'long-article-access-revoked',retryable:false});
   })
   it('preserves server denial and never falls back to an owner read', async () => {
     const x = fixture(); x.runtime.authenticatedChatPost.mockRejectedValueOnce(new Error('not authorized'))
@@ -3829,3 +3833,32 @@ it.each([99, '9223372036854775806'])('keeps the original record owner %s for loc
  expect(items[0]).toMatchObject({itemUid:'record',recordOwnerUserId:owner,textContent:'原文'})
  expect(profile.publicProfilesByUserIds).not.toHaveBeenCalled()
 })
+
+it.each(['send_to_self','default_category','topic'] as const)('forwards articles to %s with negotiated owner snapshots',async kind=>{
+ const session={userId:42,refreshToken:'refresh'}
+ const authenticatedPost=vi.fn(async()=>({protocol_version:1,nested_display_kind:true,article_snapshot:true}))
+ const createPersonalRecord=vi.fn(async()=>({accepted:true,record_uid:'article-copy',status:1}))
+ const runtime={config,requireSession:async()=>session,stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'},authenticatedPost}
+ const source={openSourceRef:async(ref:string)=>({version:1,userId:42,kind:ref==='source'?'private_chat':kind,ownerRef:ref==='source'?'chat-1':'target'})}
+ const service=new ChatService(runtime as never,source as never,{} as never,{} as never,{createPersonalRecord} as never,{} as never,{} as never,{} as never,{invalidateRecordProjection:async()=>{}} as never)
+ const action=snapshotActionRef({displayKind:1,templateKind:2,textContent:'old truncated preview',imageCount:1})
+ const result=await service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'article-copy',sendAtMillis:123})
+ expect(result.itemUid).toBe('article-copy')
+ expect(createPersonalRecord).toHaveBeenCalledWith(kind==='topic'?'/api/v1/topics/records/article-forward/create':'/api/v1/records/article-forward/create',expect.objectContaining({record_uid:'article-copy',send_at:123,sources:[{record_uid:'record-snapshot-1',record_owner_user_id:42,chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}),session,undefined)
+ expect(JSON.stringify(createPersonalRecord.mock.calls)).not.toContain('old truncated preview')
+ authenticatedPost.mockResolvedValueOnce({protocol_version:0} as never)
+ await expect(service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'another'})).rejects.toMatchObject({code:'article-forward-unavailable'})
+ expect(createPersonalRecord).toHaveBeenCalledTimes(1)
+})
+
+
+it('preserves global person order when two sessions reuse the same relation uid', async () => {
+ const session={userId:42,accessToken:'fixture',refreshToken:'fixture'};
+ const rows=[['a','same',300,1],['b','other',200,2],['b','same',100,1]].map(([sid,uid,at,seq])=>({source:{chat_session_uid:sid,kind:2,title:sid},relation:{chat_session_uid:sid,rel_uid:uid,record_uid:'same-record',sender_user_id:7,seq},event_at:at}));
+ const runtime={config,stateStore:{uniqueCode:async()=>'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:vi.fn().mockResolvedValue({protocol_version:1,applied_scope:'shared',items:rows,has_more:false})};
+ const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'a'}),sourceItem:async(source:unknown)=>source} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never);
+ Object.assign(chat,{projectChatTimelineItems:async(group:typeof rows)=>group.map(row=>({itemUid:row.relation.record_uid,sequence:row.relation.seq}))});
+ const result=await chat.personRecordsPage('source',chatMemberRef(42,'a',7));
+ expect(result.items.map(item=>item.sendAtMillis)).toEqual([300,200,100]);
+ expect(new Set(result.items.map(item=>item.eventRef)).size).toBe(3);
+});

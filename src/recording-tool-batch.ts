@@ -1,9 +1,11 @@
+import { recordingStrategy, type RecordingStrategy } from './recording-strategy-contract.js'
 import { createHash } from 'node:crypto'
 import { assertRecordingImportBatchActive, RecordingImportContractError } from './recording-import-contract.js'
 import { recordingImportBatchID, validRecordingImportBatch, type RecordingImportBatch } from './recording-workflow-contract.js'
 
 /** Private Host journal: freeze membership before the first network upload. */
 export interface RecordingToolBatchMember {
+  strategy?: RecordingStrategy
   clientTaskId: string
   batch: RecordingImportBatch
 }
@@ -11,20 +13,21 @@ export interface RecordingToolBatchPlan {
   supported: boolean
   members: Record<string, RecordingToolBatchMember>
 }
-export type RecordingToolBatchPlanner = (userId: number, candidates: Array<{ key: string; isNew: boolean }>, signal?: AbortSignal) => Promise<RecordingToolBatchPlan>
+export type RecordingToolBatchPlanner = (userId: number, candidates: Array<{ key: string; isNew: boolean; strategy?: RecordingStrategy }>, signal?: AbortSignal) => Promise<RecordingToolBatchPlan>
 
 export function recordingToolMemberKey(identity: unknown): string {
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
 }
 
 export function planRecordingToolBatch(
-  existing: unknown, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string,
+  existing: unknown, candidates: Array<{ key: string; isNew: boolean; strategy?: RecordingStrategy }>, timeZone: string,
 ): { journal: Record<string, RecordingToolBatchMember>; members: Record<string, RecordingToolBatchMember> } {
   if (existing !== undefined && (!existing || typeof existing !== 'object' || Array.isArray(existing))) {
     throw new Error('录音导入批次记录损坏，已保留原记录，请勿重复上传')
   }
   const journal = structuredClone(existing ?? {}) as Record<string, RecordingToolBatchMember>
   for (const [key, member] of Object.entries(journal)) {
+    recordingStrategy(member?.strategy)
     if (!/^[a-f0-9]{64}$/.test(key) || !member || !validRecordingImportBatch(member.batch)
       || !validRecordingImportBatch({ ...member.batch, batchId: member.clientTaskId })) {
       throw new Error('录音导入批次记录损坏，已保留原记录，请勿重复上传')
@@ -38,7 +41,7 @@ export function planRecordingToolBatch(
   if (fresh.length) {
     const batchId = recordingImportBatchID()
     fresh.forEach((row, itemIndex) => {
-      journal[row.key] = { clientTaskId: recordingImportBatchID(), batch: { batchId, itemIndex, itemCount: fresh.length, timeZone } }
+      journal[row.key] = { strategy: recordingStrategy(row.strategy), clientTaskId: recordingImportBatchID(), batch: { batchId, itemIndex, itemCount: fresh.length, timeZone } }
     })
   }
   const members: Record<string, RecordingToolBatchMember> = {}

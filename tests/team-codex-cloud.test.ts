@@ -345,6 +345,16 @@ describe('cloud coordinator account/team boundaries', () => {
     const result = await f.cloud.events(11, 'opaque-team', '22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111')
     expect(result).toMatchObject({ nextCursor: 'opaque_cursor', items: [{ eventId: 'event', version: 2, text: '只有回答', sequence: 15, truncated: true }] })
   })
+  it('reads the source empty-state summary without treating it as an incomplete response',async()=>{
+    const f=cloudFixture(),original=f.post.getMockImplementation()!
+    f.post.mockImplementation(async(owner,path,body)=>{
+      if(!path.endsWith('/content/list'))return original(owner,path,body)
+      const page=f.objects.page(String(body.source_id),String(body.task_id),[])
+      return {...page,task_summary:{...page.task_summary,state:'empty'}}
+    })
+    const result=await f.cloud.events(11,'opaque-team','22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111')
+    expect(result.taskSummary).toMatchObject({state:'waiting',eventCount:0})
+  })
   it('sends source-scoped project filters and never mixes unrelated local tasks', async () => {
     const f = cloudFixture()
     await f.cloud.enable(11,'opaque-team')
@@ -425,4 +435,34 @@ it('checks the account again after private object downloads before exposing text
  const cloud=new TeamCodexCloud(db(),{post:async()=>wire,selectedTeam:async()=>{throw Error('personal read needs no team')}} as never,async()=>owner)
  vi.stubGlobal('fetch',async(url:URL|string|Request,input?:RequestInit)=>{owner=22;return objects.fetch(url,input)})
  try{await expect(cloud.events(11,'self',task,source)).rejects.toMatchObject({code:'ACCOUNT_OR_DESTINATION_MISMATCH'})}finally{cloud.fence()}
+})
+
+it('reconciles changed native classifications in bounded batches without rewriting accepted facts',()=>{
+ const database=db(),journal=new TeamCodexCloudJournal(database)
+ database.exec(`CREATE TABLE codex_tasks(id TEXT PRIMARY KEY,installation_id TEXT,session_id TEXT);
+ CREATE TABLE codex_session_visibility(installation_id TEXT,session_id TEXT,visibility TEXT);`)
+ const tasks=Array.from({length:350},(_,i)=>({...task,id:'native-'+i}))
+ journal.reconcile(11,'opaque-team','101',tasks,()=>[])
+ for(const item of tasks){database.prepare('INSERT INTO codex_tasks VALUES(?,?,?)').run(item.id,'installation',item.id);database.prepare('INSERT INTO codex_session_visibility VALUES(?,?,?)').run('installation',item.id,'user')}
+ let total=0
+ for(let round=0;round<4;round++){
+  const batch=journal.classificationBatch(11,'opaque-team')!;expect(batch.tasks.length).toBeLessThanOrEqual(100);total+=batch.tasks.length
+  journal.acknowledgeClassifications(batch,{owner_ref:'11',task_results:batch.tasks.map(task=>({task_id:task.task_id,classification_result:{status:'saved',version:task.classification!.version}}))})
+ }
+ expect(total).toBe(350)
+ const before=database.prepare('SELECT total_changes() n').get()!.n
+ expect(journal.classificationBatch(11,'opaque-team')).toBeUndefined()
+ expect(database.prepare('SELECT total_changes() n').get()!.n).toBe(before)
+})
+
+it('does not convert a cancelled task read into an offline fallback or retry state',async()=>{
+ const database=db(),controller=new AbortController();let finish!:(value:unknown)=>void
+ const post=vi.fn(async(_owner:number,path:string)=>path.endsWith('tasks/list')?new Promise(resolve=>{finish=resolve}):{teams:[]})
+ const cloud=new TeamCodexCloud(database,{post,selectedTeam:async()=>({} as never)},async()=>11)
+ try{
+  const reading=cloud.state(11,'self',{localOnly:true,self:null,installations:[],tasks:[]},1,'','','',{},controller.signal)
+  await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));controller.abort();finish({items:[],page:1,has_more:false})
+  await expect(reading).rejects.toMatchObject({name:'AbortError'})
+  expect((cloud as any).failures.size).toBe(0)
+ }finally{cloud.fence()}
 })

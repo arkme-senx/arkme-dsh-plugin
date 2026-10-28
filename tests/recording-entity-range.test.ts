@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { recordingEntityDisplayRange } from '../src/recording-entity-range.js'
 
 describe('entity original-text evidence', () => {
+  it('preserves owner offsets when the displayed text keeps whitespace and background prefixes', () => {
+    const text = '  (背景音) 🙂武汉  '
+    expect(recordingEntityDisplayRange(text, text, 9, 11, '武汉')).toEqual({ start: 9, length: 2 })
+    expect(recordingEntityDisplayRange(text, text, 8, 10, '武汉')).toBeUndefined()
+  })
   it('maps Unicode code points after whitespace and background-prefix removal', () => {
     expect(recordingEntityDisplayRange('  (背景音) 🙂武汉  ', '🙂武汉', 9, 11, '武汉')).toEqual({ start: 1, length: 2 })
     expect(recordingEntityDisplayRange('🙂武汉', '🙂武汉', 1, 3, '武汉')).toEqual({ start: 1, length: 2 })

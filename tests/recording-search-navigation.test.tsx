@@ -9,6 +9,24 @@ let renderer: ReactTestRenderer | undefined
 const target = {sessionId:'s',childId:'c',itemIndex:0,transcriptSource:'system' as const,transcriptVersion:'v'}
 afterEach(async () => { await act(async()=>renderer?.unmount());arkmeUi.showRecordings();vi.restoreAllMocks() })
 describe('precise recording search navigation',()=>{
+  it('reads later pages after the day arrives before resolving an exact search target', async () => {
+    const day = new Date(); day.setHours(0, 0, 0, 0)
+    const item = {itemId:'exact',itemRef:'ref',sessionKey:'opaque',transcriptSource:'system',startAtMillis:day.getTime()+1000,endAtMillis:day.getTime()+2000,speakerKey:'sp',speakerColorIndex:0,speakerLabel:'张三',sameSpeakerItemCount:1,text:'命中',textStartOffset:0,textEndOffset:2,textTotalLength:2,searchIdentityHash:recordingSearchIdentityHash(target),searchVersion:'v'}
+    const page = {dateStamp:day.getTime(),transcriptSource:'system',viewRef:'view',state:'ready',processingCount:0,totalDurationMillis:1000,items:[],nextCursor:'later'}
+    mocks.call.mockReset().mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') return {days:[]}
+      if (operation === 'recordings.day') return {dateStamp:params.dateStamp,totalDurationMillis:1000,transcript:page,summary:{state:'empty',items:[]},timeline:{state:'empty',items:[]}}
+      if (operation === 'recordings.transcript.page') return {...page,items:[item],nextCursor:''}
+      throw new Error('unexpected '+operation)
+    })
+    arkmeUi.showRecordingTarget(day.getTime(), day.getTime()+1000, target)
+    await act(async () => {renderer=create(<ArkmeRecordingSurface onOpenRecordingImport={()=>{}} recordingRefreshRevision={0}/>); await new Promise(resolve=>setTimeout(resolve,10))})
+    await act(async () => {await new Promise(resolve=>setTimeout(resolve,10))})
+    expect(mocks.call.mock.calls.some(([operation])=>operation==='recordings.transcript.page')).toBe(true)
+    expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.searchHighlighted).toBe(true)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('该转写条目已更新或不可用')
+    expect(mocks.call.mock.calls.some(([operation])=>operation==='recordings.playback.open')).toBe(false)
+  })
   it.each([false,true])('validates the precise day item and never plays (stale=%s)',async stale=>{
     const day = new Date();day.setHours(0,0,0,0)
     mocks.call.mockReset().mockImplementation(async (operation, params)=>{

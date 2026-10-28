@@ -27,7 +27,7 @@ function installNativeTransport(route: string): void {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(runtime) || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new Error('会话来源标识无效')
     return { runtime, id: value }
   }
-  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected) || writable.get(split(selected)!.runtime) === true))
+  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected)))
   const scheduleFailure = (id: string | undefined, code?: string) => {
     if (id !== selected) return
     if (code) surface.setAttribute('data-arkme-schedule-error', code)
@@ -79,8 +79,9 @@ function installNativeTransport(route: string): void {
         && cut !== undefined && cut.runtimeRef === localRuntimeRef
     })
     const row = matches.length === 1 ? matches[0] : undefined
-    // Do not move an active/selected local conversation when an upload completes.
-    return row && !row.archived && (local.running || selected === local.sessionId)
+    // A verified native journal stays executable even when idle. Cloud history
+    // must not displace its local owner after an upload or Runtime change.
+    return row && !row.archived
       ? { ...row, coveredLocalHistory: { ...row.coveredLocalHistory!, source: 'local' } } : row
   }
   const preferred = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? row.sessionRef : identity(row.runtimeRef, row.sessionRef)
@@ -167,7 +168,7 @@ function installNativeTransport(route: string): void {
     },
     canonicalLocal(id: string) { const row = folded.get(id); return row && row.coveredLocalHistory?.source !== 'local' ? preferred(row) : undefined },
     preferredSession(id: string) { const row = folded.get(id); return row ? preferred(row) : hiddenRemote.get(id) },
-    writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
+    writable(id: string) { return !split(id) },
     select(id: string | undefined) {
       const changed = selected !== id
       selected = id
@@ -405,10 +406,10 @@ function installNativeTransport(route: string): void {
         return Response.json(envelope)
       }
       const endpoint = message.method
-      // Phase one: only actions with complete per-session routing are admitted.
-      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result', 'schedule/catalog', 'schedule/list', 'schedule/history', 'schedule/update', 'schedule/delete']
+      // The browser UI only executes local sessions, including retained selections.
+      const allowed = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history']
       let result: any
-      if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
+      if (!allowed.includes(endpoint)) result = failure('其他电脑的会话仅支持只读查看，请在对话所属电脑上执行。')
       else {
         try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined) }
         catch (error) {

@@ -1,4 +1,4 @@
-import { createRef } from 'react'
+import { cloneElement, createRef, useLayoutEffect, useRef, type ReactElement, type Ref } from 'react'
 import { FileAudio } from '@phosphor-icons/react/dist/icons/FileAudio'
 import { UploadSimple } from '@phosphor-icons/react/dist/icons/UploadSimple'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
@@ -29,6 +29,18 @@ vi.mock('../src/client/recordings/recording-import-journal.js', async importOrig
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 
+// File-selection tests exercise an opened panel, like the real toolbar action.
+// Hidden-page ownership and automatic recovery are tested with native Web Locks
+// in recording-import-ownership.test.tsx.
+function createOpenedDialog(element: ReactElement<{ ref?: Ref<ArkmeRecordingImportDialogHandle> }>, options?: Parameters<typeof create>[1]) {
+  function OpenedDialog() {
+    const ref = useRef<ArkmeRecordingImportDialogHandle>(null)
+    useLayoutEffect(() => { ref.current!.open() }, [])
+    return cloneElement(element, { ref })
+  }
+  return create(<OpenedDialog />, options)
+}
+
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 
 function button(renderer: ReactTestRenderer, label: string): ReactTestInstance {
@@ -52,6 +64,7 @@ describe('recording import dialog behavior', () => {
   beforeEach(async () => {
     mocks.lookupArkmeRecordingImport.mockReset().mockResolvedValue(null)
     mocks.callArkme.mockReset().mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: false }
@@ -67,7 +80,7 @@ describe('recording import dialog behavior', () => {
       ok: true, format: 'M4A', durationMillis: 1_000,
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -91,6 +104,42 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
   }
+
+  it('uses one current account setting per submitted batch, never a file selector', async () => {
+    let strategy = 'baseline-sd-asr/20261026'
+    mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy }
+      if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.workflow') return { supported: false }
+      throw new Error(operation)
+    })
+    const journal = memoryJournal(); await remount(journal)
+    await choose([new File(['a'], 'one.m4a'), new File(['b'], 'two.m4a')])
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    let release!: () => void
+    mocks.uploadArkmeRecording.mockImplementationOnce(async () => await new Promise(resolve => { release = () => resolve({ kind: 'local', phase: 'accepted' }) }))
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect([...journal.records.values()].every(row => row.submission && row.strategy === strategy)).toBe(true)
+    strategy = 'system-sd-asr/v1'
+    await act(async () => { release(); await tick() })
+    expect(mocks.uploadArkmeRecording.mock.calls.map(call => call[4].strategy)).toEqual(['baseline-sd-asr/20261026', 'baseline-sd-asr/20261026'])
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies')).toHaveLength(1)
+    await choose([new File(['c'], 'three.m4a')])
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording.mock.calls.at(-1)![4].strategy).toBe('system-sd-asr/v1')
+  })
+
+  it('keeps candidates unsubmitted when the account setting cannot be read', async () => {
+    const journal = memoryJournal(); await remount(journal)
+    await choose([new File(['a'], 'unsubmitted.m4a')])
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (...args) => { if (args[0] === 'recordings.strategies') throw new Error('设置读取失败'); return original(...args) })
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    expect([...journal.records.values()][0]!.submission).toBeUndefined()
+    expect(renderedText(renderer.root)).toContain('设置读取失败')
+  })
 
   it('uses the native chooser when available and keeps a cancellation quiet', async () => {
     const pick = vi.fn(async () => [])
@@ -137,7 +186,7 @@ describe('recording import dialog behavior', () => {
   async function remount(journal: ReturnType<typeof memoryJournal>, userId = 42) {
     await act(async () => { renderer.unmount(); await tick() })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={1_725_000_000_000}
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={userId} journal={journal} onAccepted={() => {}} />)
       await tick()
     })
@@ -156,7 +205,7 @@ describe('recording import dialog behavior', () => {
   })
   it('resumes a submitted but not locally copied file after remount, retaining batch identity', async () => {
     const journal = memoryJournal(); await remount(journal)
-    mocks.callArkme.mockImplementation(async operation => operation === 'recordings.workflow' ? { supported: true }
+    mocks.callArkme.mockImplementation(async operation => operation === 'recordings.strategies' ? { userId: 42, strategy: 'system-sd-asr/v1' } : operation === 'recordings.workflow' ? { supported: true }
       : operation === 'recordings.import.preflight' ? { duplicateFileNames: [] } : currentSnapshot())
     mocks.uploadArkmeRecording.mockImplementationOnce(async () => await new Promise(() => {}))
     await choose([new File(['a'], 'resumed.m4a')])
@@ -165,7 +214,8 @@ describe('recording import dialog behavior', () => {
     expect(record.submission).toBeTruthy(); expect(record.batch).toBeTruthy()
     await remount(journal)
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
-    expect(mocks.uploadArkmeRecording.mock.calls[1]![4]).toMatchObject({ batch: record.batch, clientTaskId: record.id })
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4]).toMatchObject({ batch: record.batch, clientTaskId: record.id, strategy: record.strategy })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies')).toHaveLength(1)
     expect(journal.records.size).toBe(0)
   })
   it('reconciles a lost Host reply before touching an unavailable source', async () => {
@@ -209,6 +259,7 @@ describe('recording import dialog behavior', () => {
 
   it('assigns manually submitted files one batch only after capability confirmation', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: true }
@@ -225,6 +276,7 @@ describe('recording import dialog behavior', () => {
 
   it('keeps an ordinary upload when Host reports the workflow contract unsupported', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: false }
@@ -240,7 +292,8 @@ describe('recording import dialog behavior', () => {
     'keeps selected files without uploading when capability discovery fails: %s', async message => {
       let capabilityError = true
       mocks.callArkme.mockImplementation(async operation => {
-        if (operation === 'recordings.import.list') return currentSnapshot()
+        if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
+      if (operation === 'recordings.import.list') return currentSnapshot()
         if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
         if (operation === 'recordings.workflow') {
           if (capabilityError) throw new Error(message)
@@ -311,12 +364,13 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer.unmount(); await tick() })
     let resolveList!: (value: ReturnType<typeof currentSnapshot>) => void
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return await new Promise<ReturnType<typeof currentSnapshot>>(resolve => { resolveList = resolve })
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
 
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -445,6 +499,7 @@ describe('recording import dialog behavior', () => {
 
   it('checks Audio-owner duplicates when files are added and only removes duplicates after confirmation', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: ['A.m4a'] }
       throw new Error(`unexpected operation: ${String(operation)}`)
@@ -474,6 +529,7 @@ describe('recording import dialog behavior', () => {
   it('does not retain a stale duplicate verdict after the staged row is removed and selected again', async () => {
     let preflightCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.preflight') {
@@ -548,6 +604,7 @@ describe('recording import dialog behavior', () => {
       return { ok: true, format: 'M4A', durationMillis: 1_000 }
     })
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: true }
@@ -582,6 +639,7 @@ describe('recording import dialog behavior', () => {
       return accepted
     })
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: true }
@@ -657,6 +715,7 @@ describe('recording import dialog behavior', () => {
       ? { ok: false, message: '文件暂时无法读取' }
       : { ok: true, format: 'M4A', durationMillis: 1_000 })
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: true }
@@ -682,6 +741,7 @@ describe('recording import dialog behavior', () => {
 
   it('keeps the original fixed batch identity when a browser upload fails and is retried', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: true }
@@ -736,6 +796,7 @@ describe('recording import dialog behavior', () => {
     vi.useFakeTimers()
     vi.setSystemTime(startAtMillis + 12_000)
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([{
         kind: 'owner', taskKey: 'owner-task', sessionRef: 'session-opaque',
         fileName: '后台.m4a', fileSize: 2_048, parsedSize: 2_048,
@@ -758,7 +819,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
@@ -819,6 +880,7 @@ describe('recording import dialog behavior', () => {
     vi.useFakeTimers()
     vi.setSystemTime(startAtMillis)
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([{
         kind: 'local', importRef: 'opaque-local', revision: 2, phase: 'uploading',
         fileName: '本地上传.m4a', fileSize: 2_048, durationMillis: 3_000, progress: .5,
@@ -830,7 +892,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -854,6 +916,7 @@ describe('recording import dialog behavior', () => {
     vi.useFakeTimers()
     vi.setSystemTime(nowMillis)
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([{
         kind: 'local', importRef: 'opaque-accepted', revision: 6, phase: 'accepted',
         fileName: '等待云端进度.m4a', fileSize: 2_048, durationMillis: 3_000, progress: 1,
@@ -865,7 +928,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -893,6 +956,7 @@ describe('recording import dialog behavior', () => {
     vi.useFakeTimers()
     vi.setSystemTime(nowMillis)
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([{
         kind: 'owner', taskKey: 'owner-handoff', sessionRef: 'session-opaque',
         fileName: '交接中.m4a', fileSize: 2_048, parsedSize: 2_048,
@@ -909,7 +973,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -936,6 +1000,7 @@ describe('recording import dialog behavior', () => {
   it('opens the desktop completed page and keeps terminal owner tasks out of the current list', async () => {
     const startAtMillis = new Date(2026, 7, 25, 18, 30, 0).getTime()
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') return {
         items: [{
@@ -963,7 +1028,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1011,6 +1076,7 @@ describe('recording import dialog behavior', () => {
     })
     const historyRequests: Array<Record<string, unknown>> = []
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') {
         historyRequests.push(params as Record<string, unknown>)
@@ -1023,7 +1089,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1048,13 +1114,14 @@ describe('recording import dialog behavior', () => {
 
   it('matches the desktop completed-page empty copy and vertical rhythm', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') return { items: [], total: 0, offset: 0, hasMore: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1075,13 +1142,14 @@ describe('recording import dialog behavior', () => {
       resolveHistory = resolve
     })
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') return historyResult
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1104,6 +1172,7 @@ describe('recording import dialog behavior', () => {
     const startAtMillis = new Date(2026, 7, 25, 18, 30, 0).getTime()
     let historyCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') {
         historyCalls += 1
@@ -1130,7 +1199,7 @@ describe('recording import dialog behavior', () => {
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1151,6 +1220,7 @@ describe('recording import dialog behavior', () => {
     const startAtMillis = new Date(2026, 7, 25, 18, 30, 0).getTime()
     let historyAttempts = 0
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') {
         historyAttempts += 1
@@ -1180,7 +1250,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1204,6 +1274,7 @@ describe('recording import dialog behavior', () => {
     const startAtMillis = new Date(2026, 7, 25, 18, 30, 0).getTime()
     let listCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') {
         listCalls += 1
         if (listCalls > 1) throw new Error('任务刷新失败')
@@ -1246,6 +1317,7 @@ describe('recording import dialog behavior', () => {
     const startAtMillis = new Date(2026, 7, 25, 18, 30, 0).getTime()
     let historyCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.history') {
         historyCalls += 1
@@ -1265,7 +1337,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={() => {}}
       />)
@@ -1294,6 +1366,7 @@ describe('recording import dialog behavior', () => {
       createdAtMillis: 1, updatedAtMillis: 2,
     }
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([active])
       if (operation === 'recordings.import.cancel') return {
         ...active,
@@ -1303,7 +1376,7 @@ describe('recording import dialog behavior', () => {
       }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
-    await act(async () => { renderer.unmount(); renderer = create(<ArkmeRecordingImportDialog
+    await act(async () => { renderer.unmount(); renderer = createOpenedDialog(<ArkmeRecordingImportDialog
       importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
       currentUserId={42} onAccepted={() => {}}
     />); await tick() })
@@ -1326,6 +1399,7 @@ describe('recording import dialog behavior', () => {
       ? { ...common, kind: 'local', importRef: 'pending', revision: 3, phase: 'failed', status: 'failed' }
       : { ...common, kind: 'owner', taskKey: 'owner-delete', sessionRef: 'owner-ref', parsedSize: 100, status: kind === 'completed' ? 'completed' : 'transcribing' }
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') {
         if (deleted) throw new Error('文件列表刷新失败')
         return currentSnapshot(kind === 'completed' ? [] : [file])
@@ -1342,7 +1416,7 @@ describe('recording import dialog behavior', () => {
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={common.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
       await tick()
     })
@@ -1364,12 +1438,13 @@ describe('recording import dialog behavior', () => {
       progress: 1, status: 'transcribing', statusDetail: '', createdAtMillis: 1, updatedAtMillis: 2,
     }
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([file])
       throw new Error('删除未成功')
     })
     await act(async () => {
       renderer.unmount()
-      renderer = create(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={file.startAtMillis} currentUserId={42} onAccepted={onAccepted} />)
       await tick()
     })
@@ -1415,6 +1490,7 @@ describe('recording import dialog behavior', () => {
 
   it('rechecks files at submission time to close the race after the add-time duplicate check', async () => {
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') {
         const call = mocks.callArkme.mock.calls.filter(([name]) => name === 'recordings.import.preflight').length
@@ -1514,6 +1590,7 @@ describe('recording import dialog behavior', () => {
       createdAtMillis: 1, updatedAtMillis: 2,
     }
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot([owner])
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
@@ -1594,13 +1671,14 @@ describe('recording import dialog behavior', () => {
     await act(async () => { renderer.unmount(); await tick() })
     const onAccepted = vi.fn()
     mocks.callArkme.mockImplementation(async operation => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42} onAccepted={onAccepted}
       />)
@@ -1704,6 +1782,7 @@ describe('recording import dialog behavior', () => {
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.workflow') return { supported: false }
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') {
         listCalls += 1
         if (listCalls === 1) return currentSnapshot()
@@ -1779,12 +1858,12 @@ describe('recording import dialog behavior', () => {
       return await new Promise(() => undefined)
     })
     await act(async () => {
-      renderer = create(<ArkmeRecordingImportDialog
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog
         importPath="/arkme-self/api/recording/import"
         defaultStartAtMillis={1_725_000_000_000}
         currentUserId={42}
         onAccepted={() => {}}
-      />, { createNodeMock: element => element.type === 'dialog' ? { showModal: vi.fn(), close } : null })
+      />, { createNodeMock: element => element.type === 'dialog' ? { showModal: vi.fn(), close, focus: vi.fn() } : null })
       await tick()
     })
     await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
@@ -1803,6 +1882,7 @@ describe('recording import dialog behavior', () => {
   it('locks submission behind the add-time duplicate check and aborts it when the account owner unmounts', async () => {
     let preflightSignal: AbortSignal | undefined
     mocks.callArkme.mockImplementation(async (operation, _params, signal?: AbortSignal) => {
+      if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') {
         preflightSignal = signal

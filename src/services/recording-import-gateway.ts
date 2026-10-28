@@ -1,14 +1,7 @@
+import { abortRecordingFileUpload, uploadRecordingFile } from './recording-file-upload.js'
 import { assertRecordingImportBatchActive } from '../recording-import-contract.js'
 import { RECORDING_IMPORT_CONTRACT_VERSION } from '../recording-workflow-contract.js'
 import { recordingBatchOffset } from '../recording-import-identity.js'
-import OSS from 'ali-oss'
-import {
-  isRetryableRecordingUploadError,
-  RECORDING_UPLOAD_REQUEST_TIMEOUT,
-  RECORDING_UPLOAD_RETRY_DELAYS,
-  throwIfRecordingUploadAborted,
-  waitForRecordingUploadRetry,
-} from './recording-import-upload-retry.js'
 import {
   RecordingImportContractError,
   type RecordingImportJob,
@@ -36,28 +29,6 @@ import {
   type ServiceRuntime,
 } from './service.js'
 
-interface AudioOssClient {
-  cancel(): void
-  multipartUpload(
-    objectPath: string,
-    filePath: string,
-    options: {
-      parallel: number
-      partSize: number
-      checkpoint: Record<string, unknown> | undefined
-      mime: string
-      progress: (percentage: number, checkpoint?: Record<string, unknown>) => Promise<void>
-    },
-  ): Promise<unknown>
-}
-
-interface AudioOssCredentials {
-  accessKeyId: string
-  accessKeySecret: string
-  stsToken: string
-  expiration: string
-}
-
 interface RecoveredAudioSession {
   sessionId: string
   finished: boolean
@@ -84,9 +55,6 @@ const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'primary_transcript',
   'enhancement_transcript',
 ])
-
-// @types/ali-oss predates the SDK's retryMax option.
-type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0] & { retryMax: number }) => AudioOssClient
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -227,7 +195,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
 
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly createOssClient: AudioOssClientFactory = options => new OSS(options) as unknown as AudioOssClient,
+    private readonly uploadFile: typeof uploadRecordingFile = uploadRecordingFile,
   ) {}
 
   async findExistingFileNames(input: {
@@ -564,6 +532,15 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     }
     const timezoneOffsetMillis = job.batch ? recordingBatchOffset(job.startAtMillis, job.batch.timeZone) : -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
     const session = await this.requireJobSession(job)
+    // An older Audio accepts unknown JSON fields. Check the alternative recipe
+    // before creation so an out-of-order client rollout cannot silently publish
+    // the default algorithm as the user's chosen official result.
+    if (job.strategy === 'baseline-sd-asr/20261026') {
+      const strategies = await this.runtime.authenticatedAudioPost<unknown>('/api/v1/audio/strategies', {}, session, signal, { bypassCache: true })
+      if (!Array.isArray(strategies) || !strategies.some(value => value !== null && typeof value === 'object' && value.id === job.strategy)) {
+        throw new RecordingImportContractError('recording-strategy-unavailable', '服务器暂不支持所选录音策略，请稍后重试')
+      }
+    }
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       job.batch ? '/api/v1/audio/import-batches/new-session' : '/api/v1/audio/new-session',
       {
@@ -571,6 +548,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         ...(job.createRequestUID ? { create_request_uid: job.createRequestUID } : {}),
         ...(job.batch ? { import_batch: { contract_version: RECORDING_IMPORT_CONTRACT_VERSION, batch_id: job.batch.batchId, item_index: job.batch.itemIndex, item_count: job.batch.itemCount, time_zone: job.batch.timeZone, file_sha256: job.sha256, file_size: job.fileSize, ownership: job.belongUserId === job.userId ? 'self' : 'other' } } : {}),
         recording_kind: job.recordingKind,
+        ...(job.strategy === undefined ? {} : { strategy: job.strategy }),
         operate_at: job.createdAtMillis,
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,
@@ -599,7 +577,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         start_at: 0,
         duration: job.durationMillis,
         file_name: remoteFileName(job),
-        source_size: job.fileSize,
+        expected_size: job.fileSize,
       },
       await this.requireJobSession(job),
       signal,
@@ -613,107 +591,44 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     onProgress: (uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
-    await this.requireJobSession(job)
+    if (job.childId === undefined) throw new ArkmePluginError('recording-import-child-missing', '缺少录音上传任务', true)
+    const controller = new AbortController()
+    const uploadSignal = signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal])
     const renew = async () => {
-      if (job.childId === undefined) throw new ArkmePluginError('recording-import-child-missing', '缺少录音上传任务', true)
-      await this.runtime.authenticatedAudioPost('/api/v1/audio/renew-upload', { child_id: job.childId }, await this.requireJobSession(job), signal, { lane: 'write', bypassCache: true })
+      uploadSignal.throwIfAborted()
+      await this.runtime.authenticatedAudioPost('/api/v1/audio/renew-upload', { child_id: job.childId },
+        await this.requireJobSession(job), uploadSignal, { lane: 'write', bypassCache: true })
     }
-    await renew()
-    const credentials = await this.audioOssCredentials(job, signal)
-    const client = this.createOssClient({
-      region: 'oss-cn-hangzhou',
-      bucket: this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test',
-      secure: true,
-      accessKeyId: credentials.accessKeyId,
-      accessKeySecret: credentials.accessKeySecret,
-      stsToken: credentials.stsToken,
-      timeout: RECORDING_UPLOAD_REQUEST_TIMEOUT,
-      // The Host owns the retry budget and backoff; avoid nested SDK retries.
-      retryMax: 0,
-      refreshSTSTokenInterval: 5 * 60 * 1000,
-      refreshSTSToken: async () => {
-        await this.requireJobSession(job)
-        const refreshed = await this.audioOssCredentials(job, signal)
-        return {
-          accessKeyId: refreshed.accessKeyId,
-          accessKeySecret: refreshed.accessKeySecret,
-          stsToken: refreshed.stsToken,
-        }
-      },
-    })
-    if (signal?.aborted === true) {
-      try { client.cancel() } catch { /* cancellation remains authoritative */ }
-      throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+    try { await renew() } catch (error) {
+      if (uploadSignal.aborted) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+      throw error
     }
-    let rejectAborted: ((reason: RecordingImportContractError) => void) | undefined
-    const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject })
-    const abort = (): void => {
-      try { client.cancel() } catch { /* cancellation remains authoritative */ }
-      rejectAborted?.(new RecordingImportContractError('recording-import-cancelled', '录音导入已取消'))
-    }
-    signal?.addEventListener('abort', abort, { once: true })
-    let renewalRunning = false
-    let renewalFailed = false
+    if (uploadSignal.aborted) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+    let renewal: Promise<void> | undefined
     let renewalError: unknown
-    const renewal = setInterval(() => {
-      if (renewalRunning) return
-      renewalRunning = true
-      void renew().catch(error => {
-        renewalFailed = true
-        renewalError = error
-        try { client.cancel() } catch { /* retain source for retry */ }
-        rejectAborted?.(error)
-      }).finally(() => { renewalRunning = false })
+    const timer = setInterval(() => {
+      if (renewal !== undefined) return
+      renewal = renew().catch(error => { renewalError = error; controller.abort(error) }).finally(() => { renewal = undefined })
     }, 5 * 60 * 1000)
     try {
-      const objectPath = `pc_upload/${String(job.userId)}/${job.sessionId}/${remoteFileName(job)}`
-      let latestCheckpoint = job.uploadCheckpoint
-      const upload = (async () => {
-        for (let attempt = 0; ; attempt += 1) {
-          throwIfRecordingUploadAborted(signal)
-          if (attempt > 0) await this.requireJobSession(job)
-          // Authentication may yield while cancellation is in progress.
-          throwIfRecordingUploadAborted(signal)
-          if (renewalFailed) throw renewalError
-          let progressFailed = false
-          try {
-            await client.multipartUpload(objectPath, job.sourceHandle, {
-              parallel: 1,
-              partSize: 5 * 1024 * 1024,
-              checkpoint: latestCheckpoint,
-              mime: job.mimeType,
-              progress: async (percentage, checkpoint) => {
-                try {
-                  if (signal?.aborted === true) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
-                  const bounded = Math.min(1, Math.max(0, percentage))
-                  await onProgress(Math.round(job.fileSize * bounded), checkpoint)
-                  if (checkpoint !== undefined) latestCheckpoint = checkpoint
-                } catch (error) {
-                  progressFailed = true
-                  throw error
-                }
-              },
-            })
-            return
-          } catch (error) {
-            if (renewalFailed) throw renewalError
-            const delay = RECORDING_UPLOAD_RETRY_DELAYS[attempt]
-            if (signal?.aborted === true || progressFailed || !isRetryableRecordingUploadError(error)) throw error
-            if (delay === undefined) {
-              // SDK socket errors carry `code` but no `retryable`; normalize
-              // them so the coordinator retains the manual retry affordance.
-              throw new ArkmePluginError('recording-import-upload-failed',
-                error instanceof Error ? error.message : '录音上传失败', true, 503, { cause: error })
-            }
-            await waitForRecordingUploadRetry(delay, signal)
-          }
-        }
-      })()
-      await Promise.race([upload, aborted])
+      await this.uploadFile(
+        job,
+        async (path, body) => await this.authenticatedOwnerPost<Record<string, unknown>>(
+          job.userId, path, body, uploadSignal, { lane: 'write', bypassCache: true },
+        ),
+        onProgress,
+        async () => await this.requireJobSession(job),
+        uploadSignal,
+        this.runtime.fetchImpl,
+      )
+      if (renewal !== undefined) await renewal
+      if (renewalError !== undefined) throw renewalError
+    } catch (error) {
+      throw renewalError ?? error
     } finally {
-      clearInterval(renewal)
-      signal?.removeEventListener('abort', abort)
+      clearInterval(timer)
+      controller.abort()
+      if (renewal !== undefined) await renewal
     }
   }
 
@@ -751,6 +666,14 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     }
     const sessionId = recovered?.sessionId ?? job.sessionId
     if (sessionId === undefined) return
+    try {
+      await abortRecordingFileUpload(job, async (path, body) => await this.authenticatedOwnerPost<Record<string, unknown>>(
+        job.userId, path, body, undefined, { lane: 'write', bypassCache: true },
+      ))
+    } catch {
+      // Owner deletion must still stop late completion if cloud abort is
+      // unavailable. Its pending parts retain the existing lifecycle cleanup.
+    }
     await this.runtime.authenticatedAudioPost(
       '/api/v1/audio/del-session',
       { session_id: sessionId },
@@ -758,25 +681,6 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
       undefined,
       { lane: 'write', bypassCache: true },
     )
-  }
-
-  private async audioOssCredentials(job: RecordingImportJob, signal?: AbortSignal): Promise<AudioOssCredentials> {
-    const raw = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/get-sts-token', {}, await this.requireJobSession(job), signal,
-      { lane: 'interactive-read', bypassCache: true },
-    )
-    const credentials = {
-      accessKeyId: stringValue(raw.access_key_id).trim(),
-      accessKeySecret: stringValue(raw.access_key_secret).trim(),
-      stsToken: stringValue(raw.security_token).trim(),
-      expiration: stringValue(raw.expiration).trim(),
-    }
-    if (credentials.accessKeyId === '' || credentials.accessKeySecret === '' || credentials.stsToken === ''
-      || credentials.expiration === '' || !Number.isFinite(Date.parse(credentials.expiration))
-      || Date.parse(credentials.expiration) <= Date.now()) {
-      throw new ArkmePluginError('recording-import-sts-invalid', '录音上传授权无效或已过期', true, 502)
-    }
-    return credentials
   }
 
   private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {

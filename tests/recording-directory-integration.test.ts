@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ToolCallId as CallId } from '@deepseek-ai/dsh-llm'
 import { appendToolResult, sessionEvents } from './helpers/tool-session.js'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareRecordingDirectory, importRecordingDirectory } from '../src/recording-directory-import.js'
 import { LocalRecordingDirectorySource } from '../src/recording-directory-source.js'
 import { ArkmeConversationalConfirmation } from '../src/tools/shared/conversational-confirmation.js'
@@ -14,6 +14,15 @@ import { ArkmeStateStore } from '../src/state-store.js'
 import { ArkmeLocalDatabase } from '../src/local-database.js'
 import { RecordingImportContractError, type RecordingImportOwnerGateway, type RecordingDirectoryUploadedSession } from '../src/recording-import-contract.js'
 import type { RecordingImportGateway } from '../src/recording-import-coordinator.js'
+
+const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
+beforeEach(() => {
+  vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
+    return originalAudioPost.call(this, path, body, session, ...rest)
+  })
+})
+afterEach(() => vi.restoreAllMocks())
 
 const roots: string[] = []
 const databases: ArkmeLocalDatabase[] = []

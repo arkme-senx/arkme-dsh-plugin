@@ -1,7 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import type { ArkmeRecordingPrivateTranscriptItem } from '../recording-presentation.js'
 import type { ArkmeRecordingTranscriptSource } from '../types.js'
 import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityDay, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityPort } from '../recording-entity-contract.js'
 import { recordingEntityDisplayRange } from '../recording-entity-range.js'
@@ -26,8 +25,12 @@ function array(value: unknown, maximum: number): Record<string, unknown>[] {
   if (!Array.isArray(value) || value.length > maximum) throw invalid()
   return value.map(objectValue)
 }
+export interface RecordingEntityTranscriptRow {
+ sessionId: string; childId: string; asrItemIndex: number; transcriptSource: ArkmeRecordingTranscriptSource
+ startAtMillis: number; endAtMillis: number; text: string; rawTranscriptText?: string; searchVersion?: string
+}
 export interface RecordingEntityTranscriptReader {
-  entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingPrivateTranscriptItem[]>
+  entityTranscriptRows(dateStamp: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingEntityTranscriptRow[]>
 }
 
 /** Only transport/projection: Relation remains the recognition and publication owner. */
@@ -195,7 +198,7 @@ export class RecordingEntityService implements RecordingEntityPort {
       const range = row && recordingEntityDisplayRange(row.rawTranscriptText ?? row.text, row.text, start, end, observedText)
       const target = row && range ? {
         identityHash: recordingSearchIdentityHash({ sessionId: row.sessionId, childId: row.childId, itemIndex: row.asrItemIndex, transcriptSource: row.transcriptSource }),
-        transcriptVersion: recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
+        transcriptVersion: row.searchVersion ?? recordingSearchVersion({ ...row, text: row.rawTranscriptText ?? row.text }), transcriptSource: row.transcriptSource, ...range,
         ...(row.startAtMillis < dayStart.getTime() || row.endAtMillis > dayEnd.getTime() ? { sourceText: row.text } : {}),
       } : undefined
       const excerpt = row && range ? Array.from(row.text).slice(Math.max(0, range.start - 30), range.start + range.length + 60).join('') : observedText

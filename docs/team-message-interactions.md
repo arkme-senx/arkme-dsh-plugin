@@ -40,3 +40,38 @@ node tests/e2e/team-message-official-cli-acceptance.mjs
 默认合成 HTTP 模式检查精确版本读取失败发生在 native 草稿创建之前，以及重试成功。配齐 `TEAM_INTERACTION_STACK_TEAM/RECORD/CHAT` 三个显式 `http://127.0.0.1:<port>` 地址后，业务读写转给仓内 opt-in 真实服务 fixture，逐项操作引用发送、共享标记、表态、转发、举报与问 DSH，并回查 owner 接受事实。目录组合元数据和账号是隔离夹具，不连接真实用户。先运行常规三服务 driver，再运行本脚本；最后才运行 driver 的撤权模式，避免并行改变同一组夹具的权限和消息。
 
 新宿主 `sessions.create` 只登记会话。附件桥必须通过 `controllerOperation` retain 并等待 ready，再访问 scoped conversation；成功或失败都释放临时引用。原生主视图接管后仍只提供草稿，不代用户发送。iframe Error 的消息采用结构检查，避免跨 JavaScript realm 的 `instanceof Error` 丢失具体失败原因。
+
+
+## 2026-10-26 延展体验对齐
+
+| 能力 | UI | 公开 SDK | Tools | Owner |
+| --- | --- | --- | --- | --- |
+| 直系回复分页/计数、逐层浏览 | TeamMessageDetail；群聊与 Team 共用父预览、列表样式和输入目标附件 | readTeamExtensions(conversationRef, messageRef, {afterSeq, throughSeq, limit}, signal)，features.teamMessageExtensions=1 | 现有 arkme_team_messages 增加 extensions:true、conversation_ref、message_ref 及游标 | TeamAppService |
+| 延展中的继续输入 | 详情 footer 与原会话共用同一份 composer、草稿和稳定队列；选择“延展回复”绑定当前消息 | 既有发送方法不变 | 既有显式写入确认不变 | TeamSendQueue |
+| 父媒体、整条/选区预览 | ArkmeExtensionParentPreview；pending/持久任务保留 reply | 可选 title/media 字段 | 复用只读结果 | 当前账号作用域不透明引用 |
+
+计数是固定 through_seq 内当前消息的直系已发布回复数量；打开子回复查询下一层，不声称全树总数。返回父层重新读取已经加载的页与水位，恢复滚动。通知失效或请求失败立即清旧内容；迟到请求不能跨会话/账号更新面板。媒体仍走 Team 授权，不接受外部签名 URL 或 Chat 引用。
+
+后端部署顺序：先部署 jotmo-team 的 extensions 只读接口和独立索引，再部署客户端。旧 reply_to 和发送命令不变；不支持的新 Provider 明确提示升级。未修改插件版本号、根 README 或 DSH 源码。
+
+本次验证入口为 tests/team-extension-detail.test.tsx、team-extension-parity.test.tsx、team-message-sdk.test.ts、team-app-service.test.ts 和增强的官方 CLI acceptance；打包后在全新官方 0.2.1-rc.2 Profile 验证 UI/SDK/真实 Agent Session Tool。业务上游仍是隔离合成 HTTP，真实 Mongo 查询计划在 jotmo-team 独立验证；不等于线上多服务或 Windows/Linux 实机验收。具体运行结果见同任务 meta change c20261026-team-extension-ux/verification.md。
+
+## 2026-10-27 延展发送时序与输入框修复
+
+Team 输入区与私聊/群聊复用 ArkmeComposerCard：显式延展或重新编辑时输入区顶部收平，与目标预览共用完整边框；取消或接收发送后立即恢复普通圆角。
+
+发送先持久化冻结的 attempt（含原 reply、选区和稳定 UID），同一次状态更新消费当前输入区的 reply 并创建带父预览的待发气泡。等待 Host 入队时，继续输入属于下一条草稿。精简成功应答缺少父预览、本人归属与时间时，以当前账号已接受的任务补齐这些本地展示字段，沿用冻结任务的 reply，直到当前授权时间线替换本地投影；不可用的权威父预览优先，不恢复旧正文。明确拒绝仍恢复原回复目标与正文，并保留后续输入；网络应答不确定继续使用原 UID 重试。
+
+| 能力面 | 本轮范围 | 验证入口 |
+| --- | --- | --- |
+| UI | 既有输入框与发送状态修复 | team-messaging-panel.test.tsx 的慢入队、精简 ACK、选区、拒绝恢复、权威不可用覆盖；官方 CLI acceptance 的 ARKME_E2E_EXTENSION_SEND_ONLY=1 场景 |
+| Tools / SDK | N/A：未改变 Host 路由、查询、命令或权限；不为纯客户端展示与草稿时序增加 API | 既有发送/任务 owner 继续使用 TeamSendQueue |
+| Host owner | 既有 TeamSendQueue，业务语义保持原合同 | team-send-queue.test.ts |
+
+官方场景从新 tgz 安装到全新官方 DSH Profile，以延迟真实 Host 入队请求和精简合成业务应答验证输入清理、气泡连续性及两种窗口宽度。合成 HTTP 结果不代表真实账号或多设备验收。
+
+本轮最终相关回归 148 项通过，typecheck、build 与新 tgz 的官方宿主延迟应答验收通过（1280/850 宽度）。全量首次运行 14,227 通过、23 跳过、4 个录音/转发用例超时；这 4 项按原超时限制串行复验通过。该全量运行早于最后的精简 ACK 归属/时间补全，最后补全后已复跑上述受影响用例；不把串行复验或局部复验改写为一次全量全绿。
+
+最终上线前复核另确认：手机号预检等待期间，刷新可能已获知团队暂停或对话被屏蔽。发送在预检后再次检查当前可写状态，保持原正文和延展目标，不创建待发项；两种竞态先以失败测试复现，再验证修复。此项仍仅收紧既有 UI 的发送时机，最终业务授权继续由 Host owner 负责。
+
+同步最新 dev 的团队表态/免打扰更新时，保留 ARKME_E2E_EXTENSION_SEND_ONLY 与 ARKME_E2E_REACTIONS_ONLY 两组验收及各自断言，避免解决脚本冲突时丢失任一场景。

@@ -40,6 +40,7 @@ interface ModelCatalogApiValue {
       id: string
       name: string
       description?: string
+      inputModalities?: readonly string[]
       reasoning?: {
         efforts: Array<{ id: string; name: string; description?: string }>
         defaultEffort?: string
@@ -353,6 +354,7 @@ export class DshApiProxyAdapter {
     private readonly options: {
       eventRetryBaseMillis?: number
       defaultModelSelection?: () => unknown
+      modelInputModalities?: (provider: string, model: string) => Promise<readonly string[] | undefined>
     } = {},
   ) {}
 
@@ -575,6 +577,8 @@ export class DshApiProxyAdapter {
           providerName,
           model: boundedUtf8(model.id, 128),
           displayName: boundedUtf8(model.name, 256),
+          ...(Array.isArray(model.inputModalities)
+            ? { supportsImages: model.inputModalities.includes('image') } : {}),
           ...(model.description === undefined
             ? {}
             : { description: boundedUtf8(model.description, 512) }),
@@ -591,7 +595,14 @@ export class DshApiProxyAdapter {
     return result
   }
 
-  async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection }> {
+  private async imageSupport(selection: DshRemoteModelSelection): Promise<{ supportsImages?: boolean }> {
+    try {
+      const modalities = await this.options.modelInputModalities?.(selection.provider, selection.model)
+      return Array.isArray(modalities) ? { supportsImages: modalities.includes('image') } : {}
+    } catch { return {} }
+  }
+
+  async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection; supportsImages?: boolean }> {
     await this.requireSession(input.sessionId, false)
     const legacyModels = this.api.sessions?.models
     if (typeof legacyModels === 'function') {
@@ -601,7 +612,7 @@ export class DshApiProxyAdapter {
       }))
       const current = modelSelection(value.current, 'session.models.current')
       if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前模型')
-      return { current }
+      return { current, ...await this.imageSupport(current) }
     }
 
     const list = this.api.sessions?.list
@@ -618,7 +629,7 @@ export class DshApiProxyAdapter {
       ?? modelSelection(projection?.lastUsed, 'modelSelection.lastUsed')
       ?? modelSelection((await this.modelCatalog()).default, 'modelCatalog.default')
     if (current === undefined) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前或默认模型')
-    return { current }
+    return { current, ...await this.imageSupport(current) }
   }
 
   async selectSessionModel(input: {
@@ -627,7 +638,7 @@ export class DshApiProxyAdapter {
     model: string
     reasoningEffort?: string
     dshRpcId: string
-  }): Promise<{ selected: DshRemoteModelSelection }> {
+  }): Promise<{ selected: DshRemoteModelSelection; supportsImages?: boolean }> {
     await this.requireSession(input.sessionId, false)
     const selectModel = this.api.sessions?.selectModel
     if (typeof selectModel !== 'function') this.unsupported('session.model.select')
@@ -645,7 +656,7 @@ export class DshApiProxyAdapter {
       || (input.reasoningEffort !== undefined && selected.reasoningEffort !== input.reasoningEffort)) {
       throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与请求不一致的模型')
     }
-    return { selected }
+    return { selected, ...await this.imageSupport(selected) }
   }
 
   async sessionModelMatches(input: {

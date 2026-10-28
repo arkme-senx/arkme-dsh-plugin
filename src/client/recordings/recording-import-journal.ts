@@ -21,6 +21,7 @@ export interface ImportQueueRecord {
   source: ImportFileSource
   selected: boolean
   startAt: string
+  strategy?: import('../../recording-strategy-contract.js').RecordingStrategy
   ownership: 'self' | 'other'
   /** Absent means a candidate, never permission to upload it automatically. */
   submission?: string

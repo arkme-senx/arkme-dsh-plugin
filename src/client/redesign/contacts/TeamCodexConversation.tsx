@@ -12,7 +12,7 @@ import { callArkme } from '../../api.js'
 import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
 import { compareCodexEvents } from '../../../team-codex-contract.js'
-import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask } from '../../../team-codex-contract.js'
+import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask, TeamCodexTaskSummary } from '../../../team-codex-contract.js'
 import { codexPromptPresentation, type CodexQuestionReply } from '../../../team-codex-prompt-text.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
 import { CodexTurnDuration } from './CodexTurnDuration.js'
@@ -70,7 +70,7 @@ export const CodexMessageBody = memo(function CodexMessageBody({ text }: { text:
   }}>{text}</Markdown></div>
 })
 
-interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; children?: ReactNode|((detail:TeamCodexTask)=>ReactNode) }
+interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; onTaskSummary?(summary:TeamCodexTaskSummary):void; children?: ReactNode|((detail:TeamCodexTask)=>ReactNode) }
 function visiblePrompt(raw: string) {
   const prompt = codexPromptPresentation(raw)
   return { text: codexImageSafeText(prompt.text), ...(prompt.replies ? {
@@ -95,7 +95,9 @@ export function TeamCodexConversation(props: CodexConversationProps) {
   const account=userId?`${auth!.environment}:${userId}`:''
   return <CodexConversationReader key={`${account}:${codexReadingKey(props.teamRef,props.task)}`} {...props} account={account} userId={userId}/>
 }
-function CodexConversationReader({ teamRef, task, reading, inputName, children, account, userId }: CodexConversationProps & { account:string;userId:number|undefined }) {
+function CodexConversationReader({ teamRef, task, reading, inputName, children, onTaskSummary, account, userId }: CodexConversationProps & { account:string;userId:number|undefined }) {
+  const summaryListener=useRef(onTaskSummary)
+  summaryListener.current=onTaskSummary
   const [items, setItems] = useState(reading.items)
   const [detailQueue,setDetailQueue]=useState<TeamCodexTask['queue']>()
   const [detailQueueCloud,setDetailQueueCloud]=useState<TeamCodexTask['queueCloud']>()
@@ -153,6 +155,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         else if(page.items.at(-1)?.cursor!==last&&reading.loaded&&!reading.atBottom)setNewContent(true)
       }
       if(!live.current||controller.signal.aborted)return
+      if(page.taskSummary)summaryListener.current?.(page.taskSummary)
       const merged=mode==='latest'?nextItems:mergeCodexEvents(previous,nextItems)
       const edge=older!==undefined||!reading.atBottom&&!forward&&mode!=='latest'?'older':'newer'
       const fitted=fitCodexReadingWindow(merged,edge)

@@ -29,6 +29,7 @@ export class MessageUnderlineSession {
   capability: MessageUnderlineCapabilities | undefined
   notice = ''
   retry: (() => Promise<void>) | undefined
+  private get cloudStorage() { return (this.capability?.storage ?? this.storage) === 'cloud' }
   constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud', private transport?: MessageMarkTransport) {}
   invalidate() { this.accessEpoch++; this.snapshots.clear(); this.failures.clear(); this.notice = ''; this.retry = undefined; this.publish() }
   subscribe(invalidate: () => void) { return this.transport?.subscribe?.(invalidate) }
@@ -106,7 +107,7 @@ export class MessageUnderlineSession {
       if (!this.controller.signal.aborted) {
         // A failed cloud lookup cannot confirm source visibility. Invalidate
         // pending completions too: rollback must not restore the cleared text.
-        if (this.storage === 'cloud' || accessLost(error)) {
+        if (this.cloudStorage || accessLost(error)) {
           this.accessEpoch++
           this.snapshots.clear()
         }
@@ -143,7 +144,7 @@ export class MessageUnderlineSession {
       this.failures.delete(key); this.notice = result.syncNotice ?? (this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''); this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted || accessEpoch !== this.accessEpoch) return
-      if (this.storage === 'cloud' || accessLost(error)) {
+      if (this.cloudStorage || accessLost(error)) {
         this.accessEpoch++
         this.snapshots.clear()
       }
@@ -154,7 +155,7 @@ export class MessageUnderlineSession {
       this.retry = async () => {
         // Reconfirm access after clearing cloud text; preserve the original
         // operation ID when the owner allows the same command to be retried.
-        if (this.storage === 'cloud') {
+        if (this.cloudStorage) {
           await this.read([target])
           const confirmed = this.snapshots.get(key)
           if (!confirmed?.accessible || this.pending.has(key)) return

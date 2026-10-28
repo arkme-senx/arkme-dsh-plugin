@@ -32,6 +32,8 @@ export interface TeamCodexQueueSnapshot {
 export interface TeamCodexTask {
   id: string
   title: string
+  metadataVersion?: number
+  summaryVersion?: number
   status: TeamCodexConnectionStatus
   state: 'waiting' | 'working' | 'finished' | 'interrupted'
   updatedAt: number
@@ -66,9 +68,12 @@ export interface TeamCodexInstallation {
   updatedAt: number
   excludedProjects: { key: string; name: string }[]
 }
+export interface CodexTaskPosition { cursor?:string|undefined;after?:string|undefined;from?:string|undefined }
+export interface CodexTaskPage {hasMore:boolean;hasNewer:boolean;firstCursor?:string|undefined;nextCursor?:string|undefined;previousCursor?:string|undefined}
 export interface TeamCodexState {
   localOnly: boolean
-  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; page: number; uploadEnabled?: boolean; settingsPending?: boolean; sourceName?: string; reviewingTasks?: number }
+  localTaskPage?:CodexTaskPage|undefined
+  cloud?: { status: 'ready' | 'offline' | 'blocked' | 'unsupported'; pending: number; blocked: number; message?: string; hasMore?: boolean; hasNewer?:boolean; firstCursor?:string|undefined; nextCursor?:string|undefined; previousCursor?:string|undefined; page: number; uploadEnabled?: boolean; settingsPending?: boolean; sourceName?: string; reviewingTasks?: number }
   self: ArkmeTeamMember | null
   tasks: TeamCodexTask[]
   installations: TeamCodexInstallation[]
@@ -112,8 +117,11 @@ export interface TeamCodexEvent {
   timing?: TeamCodexTurnTiming
   /** Host-local, owner-only references. Never serialized into the team cloud journal. */
   privateImages?: { ref: string; width: number; height: number; state: 'ready' | 'pending' | 'unavailable';imageRef?:string }[]
+  privateImagesUnavailable?:boolean
 }
+export type TeamCodexTaskSummary = Pick<TeamCodexTask, 'title'|'state'|'updatedAt'|'eventCount'|'metadataVersion'|'summaryVersion'|'projectKey'|'projectName'|'branch'> & Partial<Pick<TeamCodexTask,'status'|'excluded'|'projectExcluded'|'captureHealth'>>
 export interface TeamCodexEventPage {
+  taskSummary?: TeamCodexTaskSummary
   queue?: TeamCodexQueueSnapshot
   queueCloud?: TeamCodexTask['queueCloud']
   items: TeamCodexEvent[]
