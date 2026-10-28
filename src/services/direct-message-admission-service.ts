@@ -50,7 +50,10 @@ export async function postChatMessageCreation<T>(
   options?: ArkmeRemoteRequestOptions,
 ): Promise<T> {
   try { return await runtime.authenticatedChatPost<T>(path, body, session, signal, ...(options === undefined ? [] : [options])) }
-  catch (error) { throw admissionResponseError(error, String(body.chat_session_uid ?? ''), 'arkme-code-1004') }
+  catch (error) {
+    if(error instanceof ArkmeUpstreamResponseError){const reason=String(objectValue(error.responseData).reason??'');if(['identity_stale','representation_forbidden','invalid_representation'].includes(reason))throw new ArkmePluginError(`team-${reason}`,'团队身份已失效，请重新选择后发送；内容已保留',false,409,{cause:error})}
+    throw admissionResponseError(error, String(body.chat_session_uid ?? ''), 'arkme-code-1004')
+  }
 }
 
 /** Chat remains the fact and eligibility owner; source references enforce account binding on the Host. */

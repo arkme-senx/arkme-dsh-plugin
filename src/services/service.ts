@@ -91,9 +91,9 @@ arkoFileRefs(userId:number):Promise<string[]>
     error?: string,
   ): Promise<void>
   removeExtensionReviewOperation(userId: number, clientMutationId: string): Promise<void>
-  getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
+  getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined>
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
-  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void>
+  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void>
   getRecordReeditDraft(
     userId: number,
     sourceIdentityKey: string,

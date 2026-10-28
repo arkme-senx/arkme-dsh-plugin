@@ -67,13 +67,19 @@ export function createArkmeFileTransfers(options: {
     },
     ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
     reconcile: async (input, signal) => {
-      const page = await options.chat.readSource(input.sourceRef, { limit: 100, signal })
-      const item = page.items.find(value => value.itemUid === input.recordUid && value.isMe)
-      if (item === undefined) return undefined
-      const result = { sourceRef: input.sourceRef, itemUid: item.itemUid, status: item.status, ...(item.sequence === undefined ? {} : { sequence: item.sequence }), localState: 'synced' as const }
+      const exact=await options.chat.confirmSourceSend(input,signal)
+      let result:import('./types.js').ArkmeSourceSendResult
+      if(exact===undefined)return undefined
+      if(exact!==null)result=exact
+      else{
+        const page=await options.chat.readSource(input.sourceRef,{limit:100,signal})
+        const item=page.items.find(value=>value.itemUid===input.recordUid&&value.isMe)
+        if(!item)return undefined
+        result={sourceRef:input.sourceRef,itemUid:item.itemUid,status:item.status,...(item.sequence===undefined?{}:{sequence:item.sequence}),localState:'synced'}
+      }
       if (input.location === undefined) return result
       try {
-        await options.chat.saveMessageLocation(input.sourceRef, item.itemUid, input.location, undefined, { signal })
+        await options.chat.saveMessageLocation(input.sourceRef, result.itemUid, input.location, undefined, { signal })
         return result
       } catch (error) {
         const message = error instanceof ArkmePluginError ? error.message : '位置服务暂不可用，请稍后重试'

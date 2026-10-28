@@ -1,3 +1,4 @@
+import {readTeamRepresentationSelection} from './services/group-representation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
@@ -775,6 +776,8 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   })
   const backgroundSound = richBackgroundSoundParam(params)
   return {
+    ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
+    ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
     ...(params.textFormat === undefined ? {} : { textFormat: params.textFormat as 'plain' | 'markdown' }),
@@ -1112,6 +1115,8 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'explore.enrich') return service.exploreEnrich(params.refs, requestSignal)
   if (operation === 'explore.mutate') return service.exploreMutate(params as unknown as ExploreMutation, requestSignal)
   if (operation === 'explore.source') return service.exploreSource(stringParam(params, 'ref'), requestSignal)
+  if (operation === 'team.app.group.context') return await service.executeTeamApp(operation, params, requestSignal)
+  if (operation === 'team.app.public-card') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation.startsWith('team.app.')) return await service.executeTeamApp(operation as TeamAppOperation, params, requestSignal)
   if (operation === 'record.app.detail') return await service.personalRecordDetail(String(params.recordUid ?? ''), requestSignal)
   if (operation.startsWith('app.migration.')) {
@@ -2512,6 +2517,7 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       messageActionRefsParam(params),
       {
+        ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
         ...(stringParam(params, 'targetSourceRef') === '' ? {} : { targetSourceRef: stringParam(params, 'targetSourceRef') }),
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
@@ -2578,6 +2584,8 @@ export async function dispatchArkmeHostOperation(
         stringParam(params, 'sourceRef'),
         stringParam(params, 'textContent'),
         {
+          ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
+          ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
           ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
           ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
           ...(numberParam(params, 'recordDurationMillis', 0) <= 0 ? {} : { recordDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0))) }),
@@ -2816,6 +2824,8 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'fileAssetUid'),
       {
+        ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
+        ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
@@ -2825,6 +2835,8 @@ export async function dispatchArkmeHostOperation(
     )
     case 'source.long-article.own': return await service.ownLongArticle(stringParam(params, 'itemUid'), numberParam(params, 'expectedUserId', 0), requestSignal)
     case 'source.long-article.publish': return await service.publishLongArticle(stringParam(params, 'sourceRef'), {
+      ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
+      ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
       ...(params.expectedUserId === undefined ? {} : { expectedUserId: numberParam(params, 'expectedUserId', 0) }),
       title: stringParam(params, 'title'), textContent: stringParam(params, 'textContent'),
       textFormat: params.textFormat === 'markdown' ? 'markdown' : 'plain',
@@ -2854,8 +2866,11 @@ export async function dispatchArkmeHostOperation(
     case 'source.long-article.draft.get': return await service.getLongArticleDraft(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid') || undefined,
+      stringParam(params,'draftScope') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
+      ...(stringParam(params,'draftScope')?{draftScope:stringParam(params,'draftScope')} : {}),
       ...(params.autoPublish === true ? { autoPublish: true } : {}),
       ...(typeof params.baseVersion === 'number' && Number.isSafeInteger(params.baseVersion) && params.baseVersion > 0 ? { baseVersion: params.baseVersion } : {}),
       ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
@@ -2873,7 +2888,8 @@ export async function dispatchArkmeHostOperation(
     case 'source.long-article.draft.delete': return await service.removeLongArticleDraft(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid') || undefined,
-      ...(params.expectedRecordUid === undefined ? [] : [stringParam(params, 'expectedRecordUid')]),
+      stringParam(params,'expectedRecordUid') || undefined,
+      stringParam(params,'draftScope') || undefined,
     )
     case 'source.record-reedit.detail': return await service.recordReeditEditor(
       stringParam(params, 'sourceRef'),

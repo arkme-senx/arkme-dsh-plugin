@@ -1007,17 +1007,17 @@ export class RecordService {
     return await this.longArticleDetail(sourceRef, itemUid)
   }
 
-  async getLongArticleDraft(sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
+  async getLongArticleDraft(sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
-    const richDraft = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid)
+    const richDraft = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid, draftScope)
     if (uid === undefined || richDraft?.autoPublish === true || richDraft?.textFormat === 'markdown' || richDraft?.images !== undefined) return richDraft
     const sourceIdentityKey = await this.recordReeditSourceIdentityKey(source)
     const current = await this.runtime.stateStore.getRecordReeditDraft(session.userId, sourceIdentityKey, uid)
     this.assertLongArticleDraftHasNoAttachmentChanges(current)
     if (current !== undefined) return this.longArticleDraftFromRecordReedit(current, sourceRef)
-    const legacy = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid)
+    const legacy = await this.runtime.stateStore.getLongArticleDraft(session.userId, sourceRef, uid, draftScope)
     if (legacy === undefined) return undefined
     const detail = await this.longArticleDetail(sourceRef, uid)
     const migrated = await this.putRecordReeditDraft(session.userId, {
@@ -1040,6 +1040,7 @@ export class RecordService {
   async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(draft.sourceRef, session.userId)
+    if(draft.draftScope!==undefined&&(draft.draftScope.length>256||draft.draftScope.includes('\u0000')))throw new ArkmePluginError('article-draft-scope-invalid','草稿身份无效',false,400)
     const itemUid = draft.itemUid?.trim() || undefined
     if (draft.title.length > 100 || draft.textContent.length > 40000 || draft.durationMillis < 0) {
       throw new ArkmePluginError('long-article-draft-invalid', '长文草稿内容无效', false)
@@ -1079,13 +1080,13 @@ export class RecordService {
     await this.runtime.stateStore.removeLongArticleDraft(session.userId, draft.sourceRef, itemUid)
   }
 
-  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
+  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const uid = itemUid?.trim() || undefined
     if (expectedRecordUid !== undefined) {
       if (uid !== undefined || expectedRecordUid.trim() === '') throw new ArkmePluginError('long-article-draft-invalid', '长文草稿标识无效', false)
-      await this.runtime.stateStore.removeLongArticleDraft(session.userId, sourceRef, undefined, expectedRecordUid)
+      await this.runtime.stateStore.removeLongArticleDraft(session.userId, sourceRef, undefined, expectedRecordUid,draftScope)
       return
     }
     if (uid !== undefined) {

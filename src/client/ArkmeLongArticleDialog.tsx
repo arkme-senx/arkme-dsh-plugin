@@ -53,6 +53,8 @@ function errorMessage(error: unknown): string {
 }
 
 export interface ArkmeLongArticleDialogProps {
+  draftScope?:string | undefined
+  representation?:import('../team-group-contract.js').TeamRepresentationSelection | undefined
   sourceRef: string
   windowMode?: {
     displayName: string
@@ -125,7 +127,7 @@ export function ArkmeLongArticleDialog(props: ArkmeLongArticleDialogProps) {
       {...props} sourceRef={selection.sourceRef} item={selection.item} onClose={onClose} onUpdated={onUpdated} windowMode={windowMode} workspace={workspace} />} />
 }
 
-function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCreated, onUpdated, onDeleted, onPrepared, sendOnConfirm, windowMode, workspace }: ArkmeLongArticleDialogProps & { workspace?: ArticleWorkspaceFrame }) {
+function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, overlayZIndex, onClose, onCreated, onUpdated, onDeleted, onPrepared, sendOnConfirm, windowMode, workspace }: ArkmeLongArticleDialogProps & { workspace?: ArticleWorkspaceFrame }) {
   useArkmeLocale()
   const { notice: imageNotice, showNotice: showImageNotice } = useArkmeFileActionNotice(5000)
   const messageActionRef = useRef(item?.messageActionRef)
@@ -192,6 +194,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const articleRef = useRef(article); articleRef.current = article
   const imagesRef = useRef<ArkmeLongArticleImage[]>([])
   const baseVersionRef = useRef<number>()
+  const publicationTime=useRef<number>()
   const ids = useRef<{ recordUid: string; relationUid: string }>()
   const getIds = () => ids.current ??= { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID() }
   const [accountChanged, setAccountChanged] = useState(false)
@@ -215,13 +218,16 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const draftParams = useMemo(() => ({
     sourceRef,
     ...(itemUid === undefined ? {} : { itemUid }),
-  }), [itemUid, sourceRef])
+    ...(draftScope?{draftScope}:{}),
+  }), [itemUid, sourceRef,draftScope])
 
   const saveDraft = useCallback(async () => {
     if (accountChanged || skipUnmountSaveRef.current) return
     const running = startedAtRef.current > 0 ? Date.now() - startedAtRef.current : 0
     const value = {
       sourceRef,
+      ...(draftScope?{draftScope}:{}),
+      ...(publicationTime.current===undefined?{}:{sendAtMillis:publicationTime.current}),
       ...(publishedUid.current ? { itemUid: publishedUid.current } : {}),
       ...(!manualCompose ? { autoPublish: true } : {}),
       title: titleRef.current,
@@ -251,7 +257,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
   const deleteDraft = useCallback(async () => {
     await saving.current.catch(() => {})
     await windowModeRef.current?.verifyAccount()
-    await callArkme<void>('source.long-article.draft.delete', { sourceRef, ...(publishedUid.current ? { itemUid: publishedUid.current } : {}) })
+    await callArkme<void>('source.long-article.draft.delete', { sourceRef,...(draftScope?{draftScope}:{}), ...(publishedUid.current ? { itemUid: publishedUid.current } : {}) })
   }, [sourceRef])
 
   const loadDetail = useCallback(async () => {
@@ -318,7 +324,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
           setInitialDocument(draft.document ?? (draft.textFormat === 'markdown' ? undefined : arkmePlainEditorDocument(draft.textContent)))
           setDraftFormat(draft.textFormat ?? (draft.images?.length ? 'markdown' : 'plain'))
           imagesRef.current = draft.images ?? []
-          if (draft.recordUid && draft.relationUid) ids.current = { recordUid: draft.recordUid, relationUid: draft.relationUid }
+          if (draft.recordUid && draft.relationUid) ids.current = { recordUid: draft.recordUid, relationUid: draft.relationUid };publicationTime.current=draft.sendAtMillis
           setTitle(draft.title)
           setTextContent(draft.textContent)
           setDurationBaseMillis(draft.durationMillis)
@@ -459,6 +465,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
     const localTitle = titleRef.current, localText = textRef.current
     const duration = durationBaseRef.current + (startedAtRef.current > 0 ? Math.max(0, Date.now() - startedAtRef.current) : 0)
     const firstPublish = !publishedUid.current
+    if(firstPublish)publicationTime.current??=submittedAt
     submittingRef.current = true; setSubmitting(true); setError(''); setFailedReferences([])
     try {
       await windowModeRef.current?.verifyAccount()
@@ -467,7 +474,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       if (skipUnmountSaveRef.current) throw new Error('账号已切换，请重新打开长文')
       if (onPrepared) {
         const submissionIds = getIds()
-        onPrepared({ sourceRef, ...submissionIds, title: normalizedTitle, textContent: normalizedText,
+        onPrepared({ sourceRef,...(draftScope?{draftScope}:{}), ...submissionIds, title: normalizedTitle, textContent: normalizedText,
           textFormat: format, durationMillis: duration, updatedAtMillis: Date.now(),
           ...(value ? { document: value.document, images: value.images } : {}) })
         skipUnmountSaveRef.current = true; closeReadRef.current(); return
@@ -475,6 +482,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       let updated: ArkmeLongArticleDetail
       if (firstPublish) {
         const result = await callArkme<ArkmeSourceSendResult>(value ? 'source.long-article.publish' : 'source.send-rich', {
+          ...(representation?{representation}:{}),sendAtMillis:publicationTime.current,
           sourceRef, title: normalizedTitle, textContent: normalizedText, displayKind: 1,
           thinkingDurationMillis: duration, assets: [], ...getIds(), expectedUserId: authAtOpen.current?.userId,
           ...(value ? { textFormat: format, images: value.images, recordDurationMillis: duration } : {}),
@@ -520,7 +528,7 @@ function ArkmeLongArticleContent({ sourceRef, item, overlayZIndex, onClose, onCr
       }
       // Only remove the new-record slot after any newer edits have a durable
       // confirmed-record draft. A failed migration keeps the original backup.
-      if (firstPublish) await callArkme<void>('source.long-article.draft.delete', { sourceRef, expectedRecordUid: getIds().recordUid }).catch(() => {})
+      if (firstPublish) await callArkme<void>('source.long-article.draft.delete', { sourceRef,...(draftScope?{draftScope}:{}), expectedRecordUid: getIds().recordUid }).catch(() => {})
       setPublicationFailed(false)
       if (windowMode && longArticleWindowBridge()?.version === 3) void longArticleWindowBridge()?.changed?.()
       if (!manualCompose) void Promise.resolve().then(() => onUpdated?.(updated)).catch(() => showImageNotice({ kind: 'error', message: '长文已发布，列表更新失败，请重新打开核对' }))
