@@ -1,3 +1,4 @@
+import type {TeamRepresentationSelection} from '../../team-group-contract.js'
 import type {
   ArkmeConversationMemberPresentation, ArkmeConversationMemberPage, ArkmeConversationMemberCache, ArkmeConversationMemberList, ArkmeConversationMemberRecordMode, ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
@@ -11,6 +12,8 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+  groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamGroupContext>
+  teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamPublicCard>
   personRecordsPage(sourceRef: string, memberRef: string, options?: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal }): Promise<import('../../person-records.js').PersonRecordsPage>
   sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineCapabilities>
   sourceUnderlines(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<{ actionRef: string; snapshot: import('../../message-annotations.js').MessageUnderlineSnapshot }[]>
@@ -84,7 +87,7 @@ export interface ArkmeConversationToolPort {
       relationUid?: string
       botRefs?: readonly string[]
       signal?: AbortSignal
-      agentAuthored?: boolean
+      representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
     },
   ): Promise<ArkmeSourceSendResult>
   extendMessageCopyLink(

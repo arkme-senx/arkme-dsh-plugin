@@ -1,3 +1,4 @@
+import type {TeamRepresentationSelection} from '../team-group-contract.js'
 import { randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
@@ -84,7 +85,7 @@ export interface ArkmeAiPolishChatPort {
     initialAiPolish?: Record<string, unknown>,
     contentPayload?: Record<string, unknown>,
     signal?: AbortSignal,
-    options?: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext },
+    options?: { representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext },
   ): Promise<ArkmeSourceSendResult>
 }
 
@@ -536,7 +537,7 @@ export class GroupAiPolishService {
       recordUid: string,
       relationUid: string,
       session: ArkmeSessionCredentials,
-      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; contentPayload?: Record<string, unknown>; signal?: AbortSignal } = {},
+      options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; contentPayload?: Record<string, unknown>; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
       let config: ArkmeAiPolishConfigSnapshot
       try {

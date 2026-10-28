@@ -7150,6 +7150,7 @@ describe('conversation send directory projection', () => {
     })
 
     expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', {
+      sendAtMillis: expect.any(Number),
       sourceRef: 'source-harness',
       humanMentions: [],
       botMentions: [],

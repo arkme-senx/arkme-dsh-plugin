@@ -1,3 +1,4 @@
+import type {TeamRepresentationSelection} from '../team-group-contract.js'
 import { useSyncExternalStore } from 'react'
 import type { ArkmeLongArticleDetail, ArkmeLongArticleDraft, ArkmeSourceSendResult } from '../types.js'
 import { callArkme } from './api.js'
@@ -69,7 +70,7 @@ export class ComposerArticleStore {
       relationUid: article.kind === 'new' ? article.draft.relationUid : crypto.randomUUID(), sendAtMillis: Date.now(), sending: false, error: '' })
   }
   remove(key: string): void { if (!this.get(key)?.sending) this.write(key, undefined) }
-  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string, consumed?: () => Promise<void>): Promise<ArkmeSourceSendResult | undefined> {
+  async send(key: string, sourceRef: string, expectedUserId: number, expectedEnvironment: string, consumed?: () => Promise<void>, representation?:TeamRepresentationSelection): Promise<ArkmeSourceSendResult | undefined> {
     const state = this.get(key)
     const sameAccount = () => { const auth = arkmeAuthStore.getSnapshot().auth; return auth?.status === 'authenticated' && auth.userId === expectedUserId && auth.environment === expectedEnvironment }
     if (!state || state.sending || !sameAccount()) return undefined
@@ -80,18 +81,19 @@ export class ComposerArticleStore {
       const article = state.article
       const result = article.kind === 'existing'
         ? await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
+          ...(representation?{representation}:{}),
           sourceRef: article.detail.sourceRef, actionRefs: [article.messageActionRef], targetSourceRef: sourceRef,
           expectedUserId, recordUid: state.recordUid, relationUid: state.relationUid, sendAtMillis: state.sendAtMillis,
         })
         : await callArkme<ArkmeSourceSendResult>('source.long-article.publish', {
-          sourceRef, expectedUserId, recordUid: state.recordUid, relationUid: state.relationUid,
+          sourceRef, expectedUserId, recordUid: state.recordUid, relationUid: state.relationUid, sendAtMillis:state.sendAtMillis,...(representation?{representation}:{}),
           title: article.draft.title, textContent: article.draft.textContent, textFormat: article.draft.textFormat,
           images: article.draft.images, recordDurationMillis: article.draft.durationMillis,
         })
       if (this.ownsSubmission(key, sending)) this.write(key, undefined)
       // Delete only the matching local editor draft, not a newer article opened elsewhere.
       if (article.kind === 'new' && sameAccount()) {
-        await callArkme('source.long-article.draft.delete', { sourceRef, expectedRecordUid: state.recordUid }).catch(() => {})
+        await callArkme('source.long-article.draft.delete', { sourceRef,...(state.article.kind==='new'&&state.article.draft.draftScope?{draftScope:state.article.draft.draftScope}:{}), expectedRecordUid: state.recordUid }).catch(() => {})
       }
       return sameAccount() ? result : undefined
     } catch (error) {

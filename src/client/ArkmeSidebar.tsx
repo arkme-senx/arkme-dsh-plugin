@@ -1,3 +1,5 @@
+import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
+import type {TeamGroupIdentity,TeamRepresentationSelection} from '../team-group-contract.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
 import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
@@ -1523,6 +1525,7 @@ export function ArkmeTimelineMessageHeader({
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
   return <span style={styles.messageHeader}>
     {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
+    {item.representation&&<TeamRepresentationBadge value={item.representation}/>}
   </span>
 }
 
@@ -2130,7 +2133,12 @@ export function ArkmeSurface({
     () => activeConversation && !sourceIsChat ? arkmeUi.getRecordRevision() : 0,
     () => 0,
   )
-  const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  const teamIdentityScope=JSON.stringify([authenticatedAccountKey,conversationKey])
+  const [teamIdentityState,setTeamIdentityState]=useState<{scope:string;value?:TeamGroupIdentity}>({scope:''})
+  const selectedTeamIdentity=source?.kind==='group_chat'&&teamIdentityState.scope===teamIdentityScope?teamIdentityState.value:undefined
+  const selectTeamIdentity=(value:TeamGroupIdentity|undefined)=>setTeamIdentityState({scope:teamIdentityScope,...(value?{value}:{})})
+  const baseComposerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  const composerDraftKey=baseComposerDraftKey===undefined?undefined:selectedTeamIdentity?`${baseComposerDraftKey}:team:${selectedTeamIdentity.team.key??selectedTeamIdentity.team.jotmoId}`:baseComposerDraftKey
   useConversationDraftPresence(activeConversation ? composerDraftKey : undefined)
   const directAdmission = useDirectMessageAdmission(authenticatedAccountKey, source,
     activeConversation && source?.directMessageAdmissionApplicable === true)
@@ -2597,7 +2605,7 @@ export function ArkmeSurface({
   const createLongArticle = async () => {
     if (!source) return
     try {
-      if (!await openLongArticleWindow({ ...source, sourceKey: conversationKey })) setLongArticleCreating(true)
+      if (selectedTeamIdentity || !await openLongArticleWindow({ ...source, sourceKey: conversationKey })) setLongArticleCreating(true)
     } catch (caught) { setError(errorMessage(caught)) }
   }
   const [agreed, setAgreed] = useState(true)
@@ -2712,6 +2720,7 @@ export function ArkmeSurface({
     itemUids: string[]
     items: ArkmeTimelineItem[]
     selectedTargetKeys: string[]
+    representations?:Record<string,TeamGroupIdentity>
     keyword: string
     commentText: string
     sendError: string
@@ -2980,7 +2989,7 @@ export function ArkmeSurface({
   const copyLinkDetailRequestRef = useRef<AbortController>()
   const copyLinkDetailScopeRef = useRef({ sending: false })
   const forwardPickerScopeRef = useRef<AbortController>()
-  const forwardSubmissionScopeRef = useRef({ sending: false })
+  const forwardSubmissionScopeRef = useRef({ sending: false, commands:new Map<string,{fingerprint:string;recordUid:string;relationUid:string;sendAtMillis:number}>() })
   const copyLinkRefreshTimerRef = useRef<number>()
   const lastReadAckRef = useRef('')
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
@@ -3016,7 +3025,7 @@ export function ArkmeSurface({
     copyLinkDetailRequestRef.current?.abort()
     copyLinkDetailRequestRef.current = undefined
     copyLinkDetailScopeRef.current = { sending: false }
-    forwardSubmissionScopeRef.current = { sending: false }
+    forwardSubmissionScopeRef.current = { sending: false, commands:new Map() }
     forwardPickerScopeRef.current?.abort()
     forwardPickerScopeRef.current = undefined
     if (copyLinkRefreshTimerRef.current !== undefined) {
@@ -4299,7 +4308,7 @@ export function ArkmeSurface({
     copyLinkDetailRequestRef.current?.abort()
     copyLinkDetailRequestRef.current = undefined
     copyLinkDetailScopeRef.current = { sending: false }
-    forwardSubmissionScopeRef.current = { sending: false }
+    forwardSubmissionScopeRef.current = { sending: false, commands:new Map() }
     forwardPickerScopeRef.current?.abort()
     forwardPickerScopeRef.current = undefined
     if (copyLinkRefreshTimerRef.current !== undefined) {
@@ -5009,6 +5018,7 @@ export function ArkmeSurface({
 
   const send = async () => {
     const scope = captureComposerAsyncScope()
+    const representationAtSendStart = selectedTeamIdentity?.selection
     const roleAtSendStart = source !== undefined && isArkmeSelfWorkspaceSource(source) ? selectedSelfRole : undefined
     const checkSocialAccess = async () => {
       if (isSocialSource(source)) {
@@ -5026,12 +5036,12 @@ export function ArkmeSurface({
       // Prompt before acquiring the shared sending state; recheck after draft sync.
       if (!await checkSocialAccess()) return
       await withConversationSend(composerDraftKey, async consumed => {
-        if (await checkSocialAccess()) await sendCore(consumed, roleAtSendStart)
+        if (await checkSocialAccess()) await sendCore(consumed, roleAtSendStart, representationAtSendStart)
       })
     }
     catch (caught) { if (!isSocialBindingRequired(caught)) setError(errorMessage(caught)) }
   }
-  const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole) => {
+  const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole, representation?: TeamRepresentationSelection) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       await commitRecordReedit()
@@ -5043,7 +5053,7 @@ export function ArkmeSurface({
       const auth = arkmeAuthStore.getSnapshot().auth
       if (!sameComposerAsyncScope(scope) || auth?.status !== 'authenticated') return
       messagePreparing.stop()
-      const result = await composerArticleStore.send(articleDraftKey, source.sourceRef, authenticatedUserId, auth.environment, consumed)
+      const result = await composerArticleStore.send(articleDraftKey, source.sourceRef, authenticatedUserId, auth.environment, consumed, representation)
       if (!result || !sameComposerAsyncScope(scope)) return
       // Read the canonical forwarded/published card; do not synthesize article text as a normal message.
       const page = await callArkme<ArkmeTimelinePage>('source.timeline', { sourceRef: source.sourceRef, limit: 50 }).catch(() => undefined)
@@ -5086,11 +5096,11 @@ export function ArkmeSurface({
     const inputStartedAtMillis = recordInputCaptureOwner.getStartedAtMillis(targetDraftKey)
     const locationCaptureRequested = arkmeSourceSupportsLocationCapture(targetSource.kind)
     messageMerge.assertCanBegin()
-    const { recordUid, relationUid } = arkmeComposerDraftStore.beginFileSend(
+    const { recordUid, relationUid, sendAtMillis: frozenSendAtMillis } = arkmeComposerDraftStore.beginFileSend(
       targetDraftKey,
       extensionTarget === undefined
-        ? undefined
-        : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid, extensionTarget.quote ?? null]),
+        ? JSON.stringify(['send',representation??null])
+        : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid, extensionTarget.quote ?? null, representation??null]),
     )
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
@@ -5117,7 +5127,7 @@ export function ArkmeSurface({
     const pendingAssets = pendingAttachments.flatMap(attachment => attachment.asset === undefined ? [] : [attachment.asset])
     const pendingFileRefs = pendingAttachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
     pendingComposerFocusDraftKeyRef.current = targetDraftKey
-    const now = Date.now()
+    const now = frozenSendAtMillis ?? Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
     const optimisticAvatarRef = selfProfile?.avatarRef.trim()
     const optimisticMentions = optimisticTimelineMentionTargets(
@@ -5267,6 +5277,7 @@ export function ArkmeSurface({
         providerWriteStarted = true
         const result = await callArkme<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
           sourceRef: targetSource.sourceRef,
+          ...(representation?{representation}:{}), sendAtMillis:now,
           messageActionRef: arkmeTimelineMessageActionRef(extensionTarget.item),
           ...(extensionTarget.quote === undefined ? {} : { quote: extensionTarget.quote }),
           textContent,
@@ -5410,6 +5421,7 @@ export function ArkmeSurface({
         const locationCapture = await locationCapturePromise
         if (!sameTargetAccount()) throw new Error('账号已切换，本次位置采集结果已丢弃')
         const fileSendParams = {
+          ...(representation?{representation}:{}), sendAtMillis:now,
           sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: allFileRefs, title: '', textContent: rawTextContent, textFormat, displayKind: 0,
           expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
@@ -5465,6 +5477,7 @@ export function ArkmeSurface({
       providerWriteStarted = true
       const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
+          ...(representation?{representation}:{}), sendAtMillis:now,
           sourceRef: targetSource.sourceRef, title: '', textContent: rawTextContent, textFormat, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
@@ -5476,6 +5489,7 @@ export function ArkmeSurface({
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
+          ...(representation?{representation}:{}), sendAtMillis:now,
           sourceRef: targetSource.sourceRef, textContent: rawTextContent, textFormat, recordUid, relationUid, expectedUserId: targetUserId,
           ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
           captureContext,
@@ -7501,14 +7515,20 @@ export function ArkmeSurface({
         await requireDirectMessageSendAllowed(targetSource, controller.signal)
         if (!isCurrent()) controller.abort()
         controller.signal.throwIfAborted()
+        const representation=forwardTargetPicker?.representations?.[arkmeForwardTargetKey(targetSource)]?.selection
+        const fingerprint=JSON.stringify([sourceRef,actionRefs,targetSource.sourceRef,normalizedCommentText,representation??null])
+        let command=submissionScope.commands.get(targetSource.sourceRef)
+        if(!command||command.fingerprint!==fingerprint){command={fingerprint,recordUid:crypto.randomUUID(),relationUid:crypto.randomUUID(),sendAtMillis:Date.now()};submissionScope.commands.set(targetSource.sourceRef,command)}
         return {
           targetSource,
           result: native ? await native.delivery.send(targetSource, normalizedCommentText, controller.signal) : await callArkme<ArkmeSourceSendResult>('source.forward-messages', {
             sourceRef,
             targetSourceRef: targetSource.sourceRef,
             actionRefs,
-            recordUid: crypto.randomUUID(),
-            relationUid: crypto.randomUUID(),
+            recordUid: command.recordUid,
+            relationUid: command.relationUid,
+            sendAtMillis:command.sendAtMillis,
+            ...(representation?{representation}:{}),
             ...(normalizedCommentText === '' ? {} : { commentText: normalizedCommentText }),
           }, controller.signal),
         }
@@ -8139,7 +8159,7 @@ export function ArkmeSurface({
                       // The viewport already supplies the gap above the composer.
                       marginBottom: messageLineBottomGap,
                     }}>
-                      {!isExtensionMessage && messageAvatar}
+                      {!isExtensionMessage && (item.representation?<span style={{position:'relative',display:'inline-flex',alignSelf:'flex-start'}}>{messageAvatar}<TeamRepresentationBadge value={item.representation} compact/></span>:messageAvatar)}
                       <div style={{
                         ...styles.messageBody,
                         ...(presentationIsMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),
@@ -8340,6 +8360,7 @@ export function ArkmeSurface({
       <blockquote style={{ margin: '5px 0 0', maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{forwardTargetPicker.native.preview.quote.text}</blockquote>
       <div style={{ marginTop: 5, fontSize: 11, color: arkmeTheme.tertiary }}>引用样式仅本机显示，接收方及其他设备显示分段文本。</div>
     </div> : undefined}
+    identityControls={!forwardTargetPicker.native&&authenticatedAccountKey?forwardSelectedTargets.filter(target=>target.kind==='group_chat').map(target=><div key={target.sourceRef} style={{display:'flex',alignItems:'center',gap:8}}><span>{target.displayName}</span><TeamGroupIdentityPicker accountKey={authenticatedAccountKey} sourceRef={target.sourceRef} value={forwardTargetPicker.representations?.[arkmeForwardTargetKey(target)]} disabled={messageActionBusy==='forward'} onSelect={value=>setForwardTargetPicker(current=>{if(!current)return current;const representations={...current.representations};const key=arkmeForwardTargetKey(target);if(value)representations[key]=value;else delete representations[key];return {...current,representations}})}/></div>):undefined}
     selectedAvatars={forwardSelectedTargets.length?<>{forwardSelectedTargets.slice(0,6).map(target=><ArkmeDirectorySourceAvatar key={target.sourceRef} source={target} size={26}/>)}</>:undefined}
     comment={forwardTargetPicker.native?.delivery.comment??forwardTargetPicker.commentText} commentFrozen={forwardTargetPicker.native?.delivery.comment!==undefined}
     onCommentChange={commentText=>setForwardTargetPicker(current=>current?{...current,commentText}:current)} error={forwardTargetPicker.sendError}
@@ -9212,6 +9233,7 @@ export function ArkmeSurface({
               }} />
             </div>
             <div data-arkme-composer-footer="tools" style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} onPointerDown={event => event.stopPropagation()} aria-label={tr("添加内容")} aria-haspopup="menu" aria-expanded={addMenuOpen} disabled={composerFileAddingDisabled} onClick={() => { setAddMenuOpen(value => !value) }}>{activeRecordReeditComposer !== undefined && preparingReeditFiles ? <ArkmeFilePreparingIndicator /> : <ArkmeComposerPlusIcon />}</ArkmeComposerToolButton><ArkmeEmojiPicker
+              representation={selectedTeamIdentity?.selection}
               key={`emoji-picker:${authenticatedAccountKey}:${conversationOverlayKey}`}
               accountKey={authenticatedAccountKey}
               disabled={activeSelectMode !== undefined || directAdmission.blocked || activeRecordReeditComposer !== undefined}
@@ -9257,6 +9279,7 @@ export function ArkmeSurface({
                 && activeRecordReeditComposer === undefined && <TeamGroupIdentityPicker
                   key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
                   accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
+                  value={selectedTeamIdentity} onSelect={selectTeamIdentity}
                   selfName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
@@ -9661,14 +9684,17 @@ export function ArkmeSurface({
       />}
       {articlePickerOpen && source !== undefined && authenticatedUserId !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeArticlePicker key={`${articleDraftKey}:${articlePickerScope.generation}`} sourceRef={source.sourceRef} userId={authenticatedUserId}
-          onCreate={() => openLongArticleWindow({ ...source, sourceKey: conversationKey })}
+          onCreate={async()=>{if(selectedTeamIdentity){setLongArticleCreating(true);return true};return await openLongArticleWindow({ ...source, sourceKey: conversationKey })}}
           onClose={() => { setArticlePickerScope(undefined); if (sameComposerAsyncScope(articlePickerScope)) textareaRef.current?.focus() }}
           onSelect={article => { if (articleDraftKey && sameComposerAsyncScope(articlePickerScope)) composerArticleStore.set(articleDraftKey, article) }} />,
         document.body,
       )}
       {activeConversation && longArticleCreating && source !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeLongArticleDialog
+          key={composerDraftKey}
           sourceRef={source.sourceRef}
+          draftScope={selectedTeamIdentity?.team.key ?? selectedTeamIdentity?.team.jotmoId}
+          representation={selectedTeamIdentity?.selection}
           sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {

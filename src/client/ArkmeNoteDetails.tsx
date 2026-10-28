@@ -1,3 +1,4 @@
+import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
 import { arkmeExtensionDetailListStyles } from './extension-detail-list-styles.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
@@ -1260,6 +1261,8 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
         senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
+        {value.sourceTeam&&<TeamRepresentationBadge value={value.sourceTeam}/>}
+        {value.originTeam&&<div style={{fontSize:11}}>原始内容来源：<TeamRepresentationBadge value={value.originTeam}/></div>}
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
         </h3>}

@@ -1,3 +1,4 @@
+import type { TeamRepresentationSelection } from '../team-group-contract.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -248,17 +249,19 @@ interface ArkmeEmojiPickerBaseProps {
 /** Text insertion cannot accidentally acquire the private/group chat sticker-send contract. */
 export type ArkmeEmojiPickerProps = ArkmeEmojiPickerBaseProps & ({
   mode: 'text'
+  representation?: never
   sourceRef?: never
   onUploadSticker?: never
   onStickerSent?: never
 } | {
   mode?: 'all'
+  representation?: TeamRepresentationSelection | undefined
   sourceRef?: string
   onUploadSticker?: (file: File) => Promise<ArkmeUploadedAsset>
   onStickerSent?: (result: ArkmeSourceSendResult) => void | Promise<void>
 })
 
-export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: ArkmeEmojiPickerProps) {
+export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey, sourceRef, representation, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: ArkmeEmojiPickerProps) {
   useArkmeLocale()
   const hostRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
@@ -520,6 +523,7 @@ export function ArkmeEmojiPicker({ disabled, mode = 'all', accountKey, scopeKey,
     try {
       const result = await callArkme<ArkmeSourceSendResult>('favorite-stickers.send', {
         sourceRef, fileAssetUid: sticker.fileAssetUid, recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(),
+        sendAtMillis: Date.now(), ...(representation===undefined?{}:{representation}),
       })
       setOpen(false)
       await onStickerSent?.(result)

@@ -50,7 +50,7 @@ export interface ArkmeComposerDraftSnapshot {
   attachments: readonly ArkmeComposerAttachment[]
   mentions: readonly ArkmeComposerMention[]
   emojis: readonly ArkmeComposerEmoji[]
-  fileSendIdentity?: { recordUid: string; relationUid: string; fingerprint: string }
+  fileSendIdentity?: { recordUid: string; relationUid: string; fingerprint: string; sendAtMillis?: number }
 }
 
 export type ArkmeComposerDeleteDirection = 'backward' | 'forward'
@@ -369,14 +369,14 @@ export class ArkmeComposerDraftStore {
   private contentEditRevision = 0
   private readonly restoredKeys = new Set<string>()
   isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
-  beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string } {
+  beginFileSend(key: string, submissionScope = 'file-send'): { recordUid: string; relationUid: string; sendAtMillis?: number } {
     const draft = this.get(key)
     // The tile ID is transient; send idempotency must survive draft restoration.
     const fingerprint = JSON.stringify([submissionScope, serializeArkmeComposerDraft(draft), draft.attachments.map(item => item.localFile?.fileRef ?? item.asset?.fileAssetUid ?? arkmeAttachmentId(item))])
     const current = draft.fileSendIdentity
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
-    const identity = { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fingerprint }
+    const identity = { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fingerprint, sendAtMillis:Date.now() }
     this.store(key, { ...draft, fileSendIdentity: identity }, 'preserve')
     return identity
   }
