@@ -15,7 +15,7 @@ let renderer: ReactTestRenderer
 const dateStamp = new Date(2026, 9, 17).getTime()
 function makeDay(date = dateStamp): ArkmeRecordingDay {
   return { dateStamp: date, totalDurationMillis: 5000,
-    transcript: { state: 'ready', message: '', totalDurationMillis: 5000, processingCount: 0, items: [{ itemId: 'one', itemRef: 'one', startAtMillis: date + 1000, endAtMillis: date + 6000, speakerNumber: 1, speakerKey: 'a', speakerColorIndex: 0, speakerLabel: '我', sameSpeakerItemCount: 1, isSelf: true, isBackground: false, text: '有录音' }] },
+    transcript: { dateStamp: date, transcriptSource: 'system', nextCursor: '', viewRef: 'view', state: 'ready', message: '', totalDurationMillis: 5000, processingCount: 0, items: [{ itemId: 'one', itemRef: 'one', startAtMillis: date + 1000, endAtMillis: date + 6000, speakerNumber: 1, speakerKey: 'a', speakerColorIndex: 0, speakerLabel: '我', sameSpeakerItemCount: 1, isSelf: true, isBackground: false, text: '有录音' }] },
     summary: { state: 'ready', message: '', items: ['最新总结', '正在阅读的旧版总结'].map((content, i) => ({ id: String(i), status: 'done', selectable: true, generationStage: 2, generatedAtMillis: 2000 - i * 1000, modelDisplayName: '模型', content, error: '', timelineEvents: [] })) },
     timeline: { state: 'empty', message: '', items: [] } }
 }
@@ -129,7 +129,7 @@ it('keeps the chosen version through repeated independent transcript polling', a
   const original = mocks.call.getMockImplementation()!
   mocks.call.mockImplementation(async (op, p) => {
     const value = await original(op, p)
-    if (op === 'recordings.day') value.transcript.state = 'processing'
+    if (op === 'recordings.day') { value.transcript.state = 'processing'; value.transcript.processingCount = 1 }
     return value
   })
   await open()

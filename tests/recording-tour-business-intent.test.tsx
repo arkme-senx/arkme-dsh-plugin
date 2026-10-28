@@ -5,7 +5,7 @@ vi.mock('../src/client/ArkmeRecordingTour.js', () => ({ useRecordingTour: () => 
 vi.mock('../src/client/recordings/useRecordingPlayback.js', () => ({ useRecordingPlayback: () => ({ playItem: boundary.playItem, stop: boundary.stop, isPlaying: false, isLoading: false, error: '' }) }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: async (operation: string, params: { dateStamp: number }) => operation === 'recordings.day' ? {
  dateStamp: params.dateStamp, totalDurationMillis: 1000,
- transcript: { state: 'ready', message: '', processingCount: 0, items: [{ itemId:'real',itemRef:'real-ref',speakerKey:'speaker',speakerLabel:'我',speakerColorIndex:0,startAtMillis:1000,endAtMillis:2000,text:'真实转写' }] },
+ transcript: { dateStamp:params.dateStamp, transcriptSource:'system', viewRef:'real-view', nextCursor:'', state: 'ready', message: '', processingCount: 0, items: [{ itemId:'real',itemRef:'real-ref',speakerKey:'speaker',speakerLabel:'我',speakerColorIndex:0,startAtMillis:1000,endAtMillis:2000,text:'真实转写' }] },
  summary: {state:'empty',items:[],message:''},timeline:{state:'empty',items:[],message:''},
 } : operation === 'recordings.calendar' ? {days:[]} : {options:[]} }))
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'

@@ -124,7 +124,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
   onClose(): void
 }) {
   useArkmeLocale()
-  const { contextKey: key, options: allOptions, loading, error: optionsError, ready: optionsReady, pending, refresh, save, savePerson, accountScope, unassign } = useRecordingSpeakerOptions(item)
+  const { contextKey: key, options: allOptions, loading, error: optionsError, ready: optionsReady, pending, refresh, save, savePerson, accountScope, unassign, groupItemCount } = useRecordingSpeakerOptions(item)
   const correction = useRecordingSpeakerCorrection(item.itemRef)
   const excludedKeys = correction.context?.supported ? correction.context.excludedSpeakers.map(person => person.optionKey) : []
   const options = useMemo(() => allOptions.map(option => ({ ...option, recommended: option.recommended && !correction.loading && !correction.error && !excludedKeys.includes(option.optionKey) })), [allOptions, correction.context, correction.loading, correction.error])
@@ -222,8 +222,9 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
     const target = options.find(option => option.optionKey === selected)
     setMutationError('')
     try {
-      const result = pickedPerson ? await savePerson(batch ? 'speaker' : 'item', pickedPerson.speakerRef) : await save(batch ? 'speaker' : 'item',
+      const result = pickedPerson ? await savePerson(item.canBindSpeaker && batch ? 'speaker' : 'item', pickedPerson.speakerRef) : await save(item.canBindSpeaker && batch ? 'speaker' : 'item',
         target === undefined ? { newSpeakerName } : { optionKey: target.optionKey },
+
       )
       if (result === undefined) return
       if (viewGeneration.current !== generation) return
@@ -246,10 +247,10 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
     const generation = viewGeneration.current
     setRemoving(true); setMutationError('')
     try {
-      const result = await unassign(batch ? 'speaker' : 'item')
+      const result = await unassign(item.canBindSpeaker && batch ? 'speaker' : 'item')
       if (result === undefined || viewGeneration.current !== generation) return
       onUpdated(result.day, { itemId: item.itemId, scope: result.scope,
-        count: result.scope === 'speaker' ? item.sameSpeakerItemCount : 1,
+        count: result.changedItems,
         ...(result.warning ? { warning: result.warning } : {}) })
       if (result.warning) setMutationError(result.warning)
       else onClose()
@@ -259,7 +260,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
       if (viewGeneration.current === generation) setRemoving(false)
     }
   }
-  const canBatch = initialBatchUpdate || item.sameSpeakerItemCount > 1
+  const canBatch = item.canBindSpeaker
   const selectedCurrent = options.some(option => option.currentAssignment && option.optionKey === selected)
   const canSubmit = optionsReady && !pending && !removing && !selectedCurrent
     && (!!pickedPerson || options.some(option => option.optionKey === selected) || (newSpeakerName !== '' && !exactMatch))
@@ -279,10 +280,10 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
       {item.speakerAvatarRef && <ArkmeUserAvatar avatarRef={item.speakerAvatarRef} size={20} label={tr("{v0}的头像", { v0: item.speakerLabel })} />}
       <span style={styles.optionLabel} title={item.speakerLabel}>{item.speakerLabel}</span>
       <button type="button" data-arkme-feedback="neutral" aria-label={tr("取消说话人标记")}
-        disabled={pending || removing || key === undefined}
+        disabled={pending || removing || key === undefined || (batch && groupItemCount === undefined)}
         style={{ ...styles.unassign, flexShrink: 0, fontSize: 12, ...(pending || removing ? { opacity: .5, cursor: 'default' } : {}) }}
         onClick={() => { void removeAssignment() }}>
-        {removing ? tr("取消中…") : batch ? tr("取消 {v0} 处标记", { v0: item.sameSpeakerItemCount }) : tr("取消标记")}
+        {removing ? tr("取消中…") : batch ? groupItemCount === undefined ? tr('正在读取范围…') : tr("取消 {v0} 处标记", { v0: groupItemCount }) : tr("取消标记")}
       </button>
     </div>}
     <div style={{ display: 'flex', flexShrink: 0, flexWrap: 'wrap', gap: 8, padding: '2px 4px 9px', fontSize: 12 }}>
@@ -306,7 +307,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
     {canBatch && <div role="group" aria-label={tr('应用范围')} style={styles.scope}>
       {[false, true].map(value => <button key={String(value)} type="button" data-arkme-feedback="neutral" aria-pressed={batch === value}
         disabled={pending || removing} style={{ ...styles.scopeOption, ...(batch === value ? { background: desktop.base, color: desktop.text } : {}), ...(pending || removing ? { opacity: .5, cursor: 'default' } : {}) }}
-        onClick={() => { if (!pending && !removing) setBatch(value) }}>{value ? tr('当天同组 {v0} 处', { v0: item.sameSpeakerItemCount }) : tr('仅此片段')}</button>)}
+        onClick={() => { if (!pending && !removing) setBatch(value) }}>{value ? groupItemCount === undefined ? tr('当天同组') : tr('当天同组 {v0} 处', { v0: groupItemCount }) : tr('仅此片段')}</button>)}
     </div>}
     <div style={styles.bottom}>
       <span style={styles.scopeHint}>{batch ? tr('系统分组，可能包含不同的人') : tr('仅修改当前片段')}</span>

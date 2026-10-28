@@ -83,7 +83,7 @@ const items: ArkmeRecordingWorkbenchItem[] = scenes.flatMap((scene,sceneIndex) =
  return {
   itemId:`recording-tour-sample:${sceneIndex}:${index}`,itemRef:`recording-tour-sample:${sceneIndex}:${index}`,transcriptSource:'system',sessionKey:`recording-tour-sample:${sceneIndex}`,
   startAtMillis:at(time),endAtMillis:at(time)+40000,speakerNumber:speakerIndex+1,speakerKey:`sample-speaker:${speakerIndex}`,speakerColorIndex:speakerIndex,speakerLabel:speaker,
-  sameSpeakerItemCount:scenes.flatMap(value=>value.lines).filter(line=>line[1]===speaker).length,isSelf:speaker==='小林',isBackground:false,text,
+  canBindSpeaker:false,textStartOffset:0,textEndOffset:Array.from(text).length,textTotalLength:Array.from(text).length,isSelf:speaker==='小林',isBackground:false,text,
  }
 }))
 const clock = (millis:number) => new Date(millis).toTimeString().slice(0,8)
@@ -122,6 +122,6 @@ const version: ArkmeRecordingVersion = {id:'recording-tour-sample:version',statu
 const totalDurationMillis=items.reduce((total,item)=>total+item.endAtMillis-item.startAtMillis,0)
 export const recordingTourSample: ArkmeRecordingDay = {
  dateStamp,totalDurationMillis,
- transcript:{state:'ready',items,message:'',totalDurationMillis,processingCount:0},
+ transcript:{dateStamp,transcriptSource:'system',viewRef:'recording-tour-sample',nextCursor:'',state:'ready',items,message:'',totalDurationMillis,processingCount:0},
  summary:{state:'ready',items:[version],message:''},timeline:{state:'ready',items:[version],message:''},
 }

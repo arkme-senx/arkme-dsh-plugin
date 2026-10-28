@@ -26,6 +26,7 @@ export interface RecordingImportUploadOptions {
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
   /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  strategy?: import('../recording-strategy-contract.js').RecordingStrategy
   recordingKind?: 1 | 3
 }
 
@@ -68,6 +69,7 @@ export async function uploadArkmeRecording(
     request.setRequestHeader('X-Arkme-Start-At', String(startAtMillis))
     request.setRequestHeader('X-Arkme-Belong-User', String(belongUserId))
     request.setRequestHeader('X-Arkme-Recording-Kind', String(options.recordingKind ?? 3))
+    if (options.strategy) request.setRequestHeader('X-Arkme-Recording-Strategy', options.strategy)
     if (options.clientTaskId) request.setRequestHeader('X-Arkme-Import-Task', options.clientTaskId)
     if (options.batch) request.setRequestHeader('X-Arkme-Import-Batch', encodeURIComponent(JSON.stringify(options.batch)))
     request.upload.onprogress = event => {
@@ -163,8 +165,12 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
   | 'recordings.day'
+  | 'recordings.transcript.page'
   | 'recordings.compare'
   | 'recordings.compare.start'
+  | 'recordings.strategies'
+  | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
   | 'recordings.forward.capabilities'
   | 'recordings.copy-link'
   | 'recordings.forward'

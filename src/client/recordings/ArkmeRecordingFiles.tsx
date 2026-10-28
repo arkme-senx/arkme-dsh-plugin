@@ -1,3 +1,4 @@
+import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -17,6 +18,7 @@ export interface RecordingFilesCount {
 }
 
 interface Props {
+  mediaPath?: string
   accountKey: string | undefined
   dateStamp: number
   refreshRevision: number
@@ -64,7 +66,8 @@ export function ArkmeRecordingFiles(props: Props) {
   return props.accountKey ? <RecordingFiles key={props.accountKey} {...props} /> : <p style={note}>{tr('登录后查看音频文件')}</p>
 }
 
-function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+  const [comparison, setComparison] = useState<{sessionRef: string; fileName: string}>()
   const [current, setCurrent] = useState<RecordingFile[]>([])
   const [history, setHistory] = useState<RecordingFile[]>([])
   const [currentWarning, setCurrentWarning] = useState('')
@@ -350,6 +353,7 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
+      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
       {(['start', 'ownership', 'delete'] as const).filter(kind => !('importRef' in menu.file) || kind === 'delete').map(kind => <button key={kind} role="menuitem" type="button" style={{ ...button, display: 'block', width: '100%', textAlign: 'left', border: 0, background: 'transparent', color: kind === 'delete' ? theme.danger : theme.text }} onClick={() => openAction(menu.file, kind)}>{tr(kind === 'start' ? '修改录音时间' : kind === 'ownership' ? '修改数据归属' : '删除文件')}</button>)}
     </div>, document.body)}
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}
@@ -362,5 +366,6 @@ function RecordingFiles({ dateStamp, active, refreshRevision, onChanged, onCount
       {mutationError && <p role="alert" style={{ ...note, color: theme.danger }}>{mutationError}</p>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}><button type="button" style={button} disabled={busy} onClick={() => setAction(undefined)}>{tr('取消')}</button><button type="button" style={{ ...button, color: action.kind === 'delete' ? theme.danger : theme.text }} disabled={busy} onClick={() => { void mutate() }}>{tr(busy ? '处理中…' : action.kind === 'delete' ? '确认删除' : '保存')}</button></div>
     </dialog>}
+    {active && comparison && <RecordingStrategyComparison {...comparison} mediaPath={mediaPath ?? '/arkme-self/api/media'} onClose={() => setComparison(undefined)} />}
   </section>
 }

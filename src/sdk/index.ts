@@ -1,3 +1,10 @@
+export * from '../recording-strategy-contract.js'
+import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
+export type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
+import { isRecordingInstantOnOrAfterUnixEpoch, isRecordingLocalDateOnOrAfterMinimum } from '../recording-time.js'
+import type { ArkmeRecordingTranscriptPage, ArkmeRecordingTranscriptPageOptions } from '../types.js'
+export type { ArkmeRecordingTranscriptPage, ArkmeRecordingTranscriptPageOptions, ArkmeRecordingWorkbenchItem } from '../types.js'
+export { appendRecordingTranscriptPage, readCompleteRecordingTranscript } from '../recording-transcript-page.js'
 import { connectRealtimeDictation, type RealtimeDictationOptions } from '../realtime-dictation-client.js'
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot, RealtimeDictationHandle } from '../realtime-dictation-contract.js'
 export type * from '../realtime-dictation-contract.js'
@@ -710,6 +717,15 @@ export class ArkmeSdk {
   async offlineContext(input:OfflineContextRequest,signal?:AbortSignal):ReturnType<OfflineContextPort['offlineContext']> {
     if((await this.capabilities(signal)).features.offlineContextV1!==true)throw new Error('当前服务不支持录音聊天上下文')
     return this.call('offline-context',input,signal)
+  }
+  async recordingStrategies<T extends import('../recording-strategy-contract.js').RecordingStrategyRequest>(input: T, signal?: AbortSignal): Promise<import('../recording-strategy-contract.js').RecordingStrategyResponse<T>> {
+    const features = (await this.capabilities(signal)).features
+    if (input.action === 'recordings') {
+      if (features.recordingStrategyRecordingsV1 !== true) throw new Error('当前 Provider 不支持按日期选择策略对比录音')
+    } else if (input.action === 'preference' || input.action === 'preference-set') {
+      if (features.recordingProcessingPreferenceV1 !== true) throw new Error('当前 Provider 不支持统一录音处理设置')
+    } else if (features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
+    return this.call(input.action === 'start' ? 'recordings.strategies.start' : input.action === 'preference-set' ? 'recordings.strategies.preference.set' : 'recordings.strategies', { ...input }, signal)
   }
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
@@ -2481,6 +2497,51 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.commentText === undefined || options.commentText.trim() === '' ? {} : { commentText: options.commentText.trim() }),
+    }, options.signal)
+  }
+
+  /** Import a staged, account-bound file; cloud credentials and object keys stay in Host. */
+  async importRecordingFile(input: RecordingFileImportInput, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(input.fileRef)
+      || !Number.isSafeInteger(input.startAtMillis)
+      || !isRecordingInstantOnOrAfterUnixEpoch(input.startAtMillis) || input.startAtMillis > Date.now()
+      || !['self', 'other'].includes(input.ownership)) throw new TypeError('Invalid recording import input')
+    await this.requireRecordingFileImport(signal)
+    if (input.strategy !== undefined && (await this.capabilities(signal)).features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持选择录音策略')
+    return this.call('recordings.import.file', {
+      ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
+      fileRef: input.fileRef, startAtMillis: input.startAtMillis, ownership: input.ownership,
+    }, signal)
+  }
+
+  async recordingImportStatus(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
+    if (importRef.trim() === '') throw new TypeError('A recording import reference is required')
+    await this.requireRecordingFileImport(signal)
+    return this.call('recordings.import.status', { importRef }, signal)
+  }
+
+  async retryRecordingImport(importRef: string, expectedRevision: number, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    signal?.throwIfAborted()
+    if (importRef.trim() === '' || !Number.isSafeInteger(expectedRevision) || expectedRevision <= 0) {
+      throw new TypeError('A recording import reference and positive revision are required')
+    }
+    await this.requireRecordingFileImport(signal)
+    return this.call('recordings.import.retry', { importRef, expectedRevision }, signal)
+  }
+
+  private async requireRecordingFileImport(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.recordingFileImport !== true) throw new Error('当前 Provider 不支持录音文件导入')
+    signal?.throwIfAborted()
+  }
+
+  async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}): Promise<ArkmeRecordingTranscriptPage> {
+    if (!Number.isSafeInteger(dateStamp) || (options.window ? dateStamp < -26 * 3600_000 : !isRecordingLocalDateOnOrAfterMinimum(dateStamp))) throw new TypeError('A recording date timestamp is required')
+    if ((await this.capabilities(options.signal)).features.recordingTranscriptPages !== true) throw new Error('当前 Provider 不支持录音分页读取')
+    return await this.call<ArkmeRecordingTranscriptPage>('recordings.transcript.page', {
+      dateStamp, ...(options.window === undefined ? {} : {window: options.window}), ...(options.source === undefined ? {} : { source: options.source }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
   }
 

@@ -1538,6 +1538,9 @@ arkoImagesV1?:true
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+    recordingStrategiesV1?: true
+    recordingStrategyRecordingsV1?: true
+    recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
     unifiedChatTimeline?: true
     durableChatTimeline?: true
@@ -1599,6 +1602,9 @@ arkoImagesV1?:true
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */
     extensionPreviews?: true
+    /** Staged, account-bound recording import with resumable task status. */
+    recordingFileImport?: true
+    recordingTranscriptPages?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -3264,6 +3270,8 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** Available only for complete projections; paged reads obtain counts when editing. */
+  sameSpeakerItemCount?: number
   /** User-confirmed source, independent of the speaker identity. */
   soundSource?: ArkmeRecordingSoundSource
   /** Includes a confirmed playback subrange after provider resegmentation. */
@@ -3284,12 +3292,16 @@ export interface ArkmeRecordingWorkbenchItem {
   speakerColorIndex: number
   speakerLabel: string
   speakerAvatarRef?: string
-  sameSpeakerItemCount: number
+  canBindSpeaker: boolean
   isSelf: boolean
   /** Explicit recording attribution, independent of isSelf (speaker identity). Optional for legacy payloads. */
   recordingBelongsToViewer?: boolean
   isBackground: boolean
   text: string
+  /** Unicode code-point coordinates within the exact owner utterance. */
+  textStartOffset: number
+  textEndOffset: number
+  textTotalLength: number
 }
 
 export interface ArkmeRecordingPlayback {
@@ -3331,6 +3343,7 @@ export interface ArkmeRecordingSpeakerMembers {
 }
 
 export interface ArkmeRecordingSpeakerRecommendation {
+  groupItemCount?: number
   optionKey?: string
 }
 
@@ -3390,7 +3403,8 @@ export interface ArkmeRecordingSpeakerOption extends ArkmeRecordingSpeakerCandid
 
 export interface ArkmeRecordingSpeakerMutationResult {
   scope: 'item' | 'speaker'
-  affectedCount: number
+  changedClusters: number
+  changedItems: number
   day: ArkmeRecordingDay
   warning?: string
 }
@@ -3522,13 +3536,13 @@ export interface ArkmeRecordingDailyMetrics {
   asrInputUnknownCount: number
   /** Completed children whose API explicitly lacks historical input telemetry. */
   asrInputMissingHistoryCount?: number
-  /** Confirmed VAD archive bytes, not upload size or ASR slice size. */
+  /** Confirmed retained speech bytes: accepted playback packs or historical VAD archives, never upload/temporary ASR input size. */
   archiveBytes: number
   archiveState: 'ready' | 'partial' | 'processing' | 'unavailable'
   confirmedCount: number
   pendingCount: number
   unknownCount: number
-  /** Unicode code points in the final visible transcript, excluding whitespace. */
+  /** Unicode code points in this transcript payload, excluding whitespace; paged consumers aggregate before showing whole-day totals. */
   textCount: number
 }
 
@@ -3537,6 +3551,26 @@ export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptIte
   identityCoverage?: 'complete' | 'partial'
   totalDurationMillis: number
   processingCount: number
+  /** Present when the day contains device captures. Independent of ASR work. */
+  captureCoverage?: { receiving: number; interrupted: number }
+}
+
+export interface ArkmeRecordingTranscriptPage extends ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem> {
+  /** Original civil-day window of import notifications; retained on refresh. */
+  window?: ArkmeRecordingWindow
+  dateStamp: number
+  transcriptSource: ArkmeRecordingTranscriptSource
+  /** Opaque identity of all recording revisions in this read snapshot. */
+  viewRef: string
+  /** Empty only when this snapshot has been read completely. */
+  nextCursor: string
+}
+
+export interface ArkmeRecordingTranscriptPageOptions {
+  window?: ArkmeRecordingWindow
+  source?: ArkmeRecordingTranscriptSource
+  cursor?: string
+  signal?: AbortSignal | undefined
 }
 
 /** Recording coverage is independent of ASR: silence and pending ASR still have audio. */
@@ -3556,15 +3590,15 @@ export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
   coverage?: ArkmeRecordingCoverage
-  transcript: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  transcript: ArkmeRecordingTranscriptPage
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
 
 export interface ArkmeRecordingComparison {
   dateStamp: number
-  system: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
-  doubao: ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem>
+  system: ArkmeRecordingTranscriptPage
+  doubao: ArkmeRecordingTranscriptPage
   candidateCount: number
   failedCount: number
   silentCount: number
@@ -4161,6 +4195,10 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'recordings.strategies'
+  | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
+  | 'recordings.transcript.page'
   | 'source.person-records.page'
   | 'articles.list'
   | 'native-chat.annotations'
@@ -4596,6 +4634,9 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'recordings.import.file'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
   | 'arko.lifecycle.query'
   | 'arko.lifecycle.change'
   | 'arko.deleted'
@@ -4645,6 +4686,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
+  | 'recordings.strategies'
+  | 'recordings.strategies.start'
+  | 'recordings.strategies.preference.set'
   | 'recordings.forward.capabilities'
   | 'recordings.copy-link'
   | 'recordings.forward'
@@ -4654,8 +4698,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.import.preflight'
   | 'recordings.import.list'
   | 'recordings.import.history'
-  | 'recordings.import.status'
-  | 'recordings.import.retry'
   | 'recordings.import.cancel'
   | 'recordings.import.session.update-start'
   | 'recordings.import.session.update-ownership'

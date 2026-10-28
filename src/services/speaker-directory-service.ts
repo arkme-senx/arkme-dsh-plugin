@@ -1,3 +1,4 @@
+import { RecordingReadOwner } from './recording-read-owner.js'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryPage, SpeakerDirectorySeen, SpeakerDirectoryStatus, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
@@ -167,7 +168,7 @@ export class SpeakerDirectoryService {
           locator: { viewerUserId: session.userId, sessionId: str(locator.session_id), childId: str(locator.child_id), asrItemStartAt: start, asrItemEndAt: end, speakerNumber: locator.num as number } }
       })
       const items = await Promise.all(samples.map(async ({ locator, ...row }) => ({ ...row,
-        ...(this.media ? { mediaRef: await this.media.issueRecordingPlaybackMediaRef(locator, signal) } : {}) })))
+        ...(this.media ? { mediaRef: await this.media.issueRecordingPlaybackMediaRef({ viewerUserId: locator.viewerUserId, locator: await this.resolveSampleLocator(locator, session, signal) }, signal) } : {}) })))
       signal?.throwIfAborted()
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
       return { supported: true, items }
@@ -177,6 +178,21 @@ export class SpeakerDirectoryService {
       if (this.unavailable(error)) return this.fallbackSamples(ref, session.userId, signal)
       throw error
     }
+  }
+
+  // Legacy sample timestamps describe the source utterance, never an OSS key.
+  // Resolve the exact owner ordinal before issuing the normal media reference.
+  private async resolveSampleLocator(sample: { sessionId: string; childId: string; asrItemStartAt: number; asrItemEndAt: number; speakerNumber: number }, session: Awaited<ReturnType<ServiceRuntime['requireSession']>>, signal?: AbortSignal) {
+    const owner = new RecordingReadOwner(this.runtime)
+    let cursor = '', revision = ''
+    do {
+      const page = await owner.transcript(sample.sessionId, 'primary', { startAt: 0, endAt: Number.MAX_SAFE_INTEGER }, session, { cursor, revision }, signal)
+      revision = page.revision
+      const row = page.items.find(item => item.locator.child_id === sample.childId && item.speakerEdit?.start === sample.asrItemStartAt && item.speakerEdit.end === sample.asrItemEndAt && item.speakerEdit.sourceNumber === sample.speakerNumber)
+      if (row) return row.locator
+      cursor = page.nextCursor
+    } while (cursor)
+    throw new ArkmePluginError('speaker-sample-changed', '试听片段已更新，请刷新后重试', true, 409)
   }
 
   private async fallbackSamples(ref: Record<string, unknown>, userId: number, signal?: AbortSignal): Promise<SpeakerVoiceSamples> {

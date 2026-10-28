@@ -25,7 +25,7 @@ try {
     await new Promise(r => setTimeout(r, 100))
   }
   const cli = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
-  const ui = spawn(process.execPath, [cli, 'run', 'tests/e2e/recording-import-owner.e2e.test.tsx'], { cwd: root, env, stdio: 'inherit', shell: false })
+  const ui = spawn(process.execPath, [cli, 'run', 'tests/e2e/recording-import-owner.e2e.test.tsx'], { cwd: root, env: { ...env, NODE_EXTRA_CA_CERTS: join(evidence, 'cloud-ca.pem') }, stdio: 'inherit', shell: false })
   const [code] = await once(ui, 'exit')
   if (code !== 0) throw new Error(`UI integration failed (${code})`)
 } finally {

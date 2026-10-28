@@ -8,7 +8,7 @@ import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecor
 
 const item: ArkmeRecordingWorkbenchItem = { itemId: 'item', itemRef: 'sealed', transcriptSource: 'system', sessionKey: 'session',
   speakerLabel: '万宇', assignedSpeakerOptionKey: 'assigned', speakerColorIndex: 1, speakerNumber: 1, speakerKey: 'speaker',
-  sameSpeakerItemCount: 3, text: '内容', startAtMillis: 1000, endAtMillis: 2000, isBackground: false, isSelf: false }
+  sameSpeakerItemCount: 3, canBindSpeaker: true, text: '内容', startAtMillis: 1000, endAtMillis: 2000, isBackground: false, isSelf: false }
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 describe('speaker removal interaction', () => {
   let renderer: ReactTestRenderer
@@ -22,7 +22,7 @@ describe('speaker removal interaction', () => {
       if (operation === 'recordings.speaker.cached-options') return null
       if (operation === 'recordings.speaker.options') return []
       if (operation === 'recordings.speaker.recommendation') return {}
-      return { scope: 'item', affectedCount: 1, day: { dateStamp: 1 } }
+      return { scope: 'item', changedItems: 1, changedClusters: 0, day: { dateStamp: 1 } }
     })
   })
   afterEach(async () => { await act(async () => { renderer?.unmount(); await tick() }); vi.unstubAllGlobals() })

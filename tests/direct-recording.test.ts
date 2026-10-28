@@ -32,13 +32,32 @@ async function setup() {
   const upload = vi.fn(async () => ({ id: 'accepted-job' })) as unknown as ReturnType<typeof vi.fn<DirectRecordingDependencies['upload']>>
   const membership = vi.fn(async () => member())
   let id = 0
-  const deps: DirectRecordingDependencies = { journal, capture, upload, membership, lock: vi.fn(async () => release), now: () => 1790000000000, id: () => `record-${++id}` }
+  const deps: DirectRecordingDependencies = { strategy: vi.fn(async () => 'system-sd-asr/v1' as const), journal, capture, upload, membership, lock: vi.fn(async () => release), now: () => 1790000000000, id: () => `record-${++id}` }
   const store = new DirectRecordingStore(deps)
   store.configure(account); await flush()
   return { store, deps, journal, capture, upload, membership, stop, release, chunk: (bytes = 32000) => options.onChunk(new ArrayBuffer(bytes), .4), interrupt: (reason: string) => options.onInterrupted(reason), get options() { return options } }
 }
 
 describe('direct microphone recording lifecycle', () => {
+  it('freezes the account setting before capture and retains it through later setting changes', async () => {
+    const h = await setup()
+    const strategy = vi.fn(async () => 'baseline-sd-asr/20261026' as const)
+    h.deps.strategy = strategy
+    await h.store.start(); h.chunk()
+    expect([...h.journal.records.values()][0]!.strategy).toBe('baseline-sd-asr/20261026')
+    h.deps.strategy = vi.fn(async () => 'system-sd-asr/v1' as const)
+    await h.store.stop()
+    expect(h.upload.mock.calls[0]![4]?.strategy).toBe('baseline-sd-asr/20261026')
+    await h.store.start(); h.chunk(); await h.store.stop()
+    expect(h.upload.mock.calls[1]![4]?.strategy).toBe('system-sd-asr/v1')
+  })
+  it('does not open the microphone when reading the account setting fails', async () => {
+    const h = await setup(); h.deps.strategy = vi.fn(async () => { throw new Error('设置读取失败') })
+    await h.store.start()
+    expect(h.capture).not.toHaveBeenCalled()
+    expect(h.store.getSnapshot()).toMatchObject({ phase: 'idle', error: '设置读取失败' })
+    expect(h.release).toHaveBeenCalledOnce()
+  })
   it('uses Flutter free/VIP/SVIP duration limits and falls back for expired membership', () => {
     expect([0, 1, 2].map(type => directRecordingLimit(member(type as 0 | 1 | 2), 100))).toEqual([300000, 3600000, 7200000])
     expect(directRecordingLimit({ ...member(2), expireAtMillis: 99 }, 100)).toBe(300000)
@@ -124,17 +143,17 @@ describe('direct microphone recording lifecycle', () => {
     h.store.confirmSubmittedCoverage(account.key, [])
     expect(h.store.getSnapshot().submitted).toHaveLength(0)
   })
-  it('retains a failed upload and retries the exact same name/time/owner without recapturing', async () => {
+  it('retains a failed upload and retries the exact same name/time/owner/strategy without recapturing', async () => {
     const h = await setup(); h.upload.mockRejectedValueOnce(new Error('网络离线'))
-    await h.store.start(); h.chunk(); await h.store.stop()
+    await h.store.start('baseline-sd-asr/20261026'); h.chunk(); await h.store.stop()
     expect(h.store.getSnapshot().error).toContain('录音仍保留在本机')
     const record = h.store.getSnapshot().pending[0]!
     const file = await h.store.download(record.id); expect(file?.size).toBe(32044)
     await h.store.upload(record.id)
     expect(h.upload.mock.calls[0]![1].name).toBe(h.upload.mock.calls[1]![1].name)
     expect(h.upload.mock.calls.map(call => call[4])).toEqual([
-      expect.objectContaining({ recordingKind: 1 }),
-      expect.objectContaining({ recordingKind: 1 }),
+      expect.objectContaining({ recordingKind: 1, strategy: 'baseline-sd-asr/20261026' }),
+      expect.objectContaining({ recordingKind: 1, strategy: 'baseline-sd-asr/20261026' }),
     ])
     expect(h.capture).toHaveBeenCalledOnce(); expect(h.journal.records.size).toBe(0)
   })
