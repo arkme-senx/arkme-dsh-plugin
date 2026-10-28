@@ -1,3 +1,5 @@
+import {ArkmeComposerTargetPreview} from '../src/client/ArkmeComposerTargetPreview.js'
+import {liveTeamSnapshotStack} from './fixtures/team-snapshot-live.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
@@ -1177,6 +1179,55 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.edit')).toHaveLength(0)
     const saved=JSON.parse(localStorage.getItem(storageKey)!)
     expect(saved.pendingEdit).toBeUndefined();expect(saved.text).toBe('下一条草稿')
+  })
+  it.skipIf(!process.env.T15_OWNER_STACK)('UI input/send/edit/snapshot reaches the real owner stack',async()=>{
+    const live=await liveTeamSnapshotStack(process.env.T15_OWNER_STACK!)
+    try {
+      const opened=await live.dispatch('team.app.open',{publicRef:'a'.repeat(32)}) as {conversation:TeamConversation}
+      arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:2});socialAccessStore.confirm('test:2',true)
+      mocks.call.mockImplementation((op,params,signal)=>live.dispatch(op,params??{},signal))
+      await act(async()=>{renderer=create(<TeamConversationPane conversation={opened.conversation} accountKey="test:2" onChanged={()=>{}} />);await tick()})
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('T15 PC UI input'))
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false),{timeout:10000})
+      await send()
+      await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue'),JSON.stringify(renderer!.toJSON())).toBe(true),{timeout:10000})
+      await live.teamDelivery.recover()
+      await act(async()=>{invalidateTeamMessages('test:2');await tick()})
+      const ownRow=()=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.content?.text_content==='T15 PC UI input')!
+      await vi.waitFor(()=>expect(ownRow()?.props.message.canEdit).toBe(true),{timeout:10000})
+      await act(async()=>{ownRow().props.onSnapshot();await tick()})
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail?.startAtMillis).toBeGreaterThan(0),{timeout:10000})
+      const initial=renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail
+      expect(initial.completeAtMillis).toBeGreaterThanOrEqual(initial.startAtMillis)
+      await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onClose())
+      await act(async()=>ownRow().props.onEdit())
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('T15 PC UI edited'))
+      await send()
+      await vi.waitFor(()=>expect(renderer!.root.findAllByType(TeamConversationMessage).some(row=>row.props.message.content?.text_content==='T15 PC UI edited'),JSON.stringify(live.trace.slice(-8))).toBe(true),{timeout:10000})
+      const edited=renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.content?.text_content==='T15 PC UI edited')!
+      await act(async()=>edited.props.onSnapshot())
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail?.editDurationMillis).toBeGreaterThanOrEqual(0),{timeout:10000})
+      expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail.startAtMillis).toBe(initial.startAtMillis)
+      live.fixture.pcUIEndToEnd=true;await live.save()
+    } finally {await act(async()=>renderer?.unmount());renderer=undefined;await live.close()}
+  },30000)
+  it('freezes the input only during metadata preparation and accepts the original send',async()=>{
+    const reply={messageRef:'parent-ref',messageKey:'parent',version:1,text:'original parent',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'问题',assets:[],reply}))
+    let release!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.capabilities'?new Promise(resolve=>release=resolve):op==='team.app.send.enqueue'?accepted():[])
+    await mount();await send()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(true)
+    expect(renderer!.root.findByType(ArkmeComposerTargetPreview).props.disabled).toBe(true)
+    await act(async()=>renderer!.root.findByType(ArkmeComposerTargetPreview).props.onClose())
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('must not replace frozen input'))
+    await act(async()=>release({schemaVersion:0}))
+    await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(true))
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content.text_content).toBe('问题')
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].reply).toEqual(reply)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('next draft'))
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('next draft')
   })
   it('can dismiss an orphaned edit recovery item while preserving the next composer',async()=>{
     localStorage.setItem(storageKey,JSON.stringify({text:'下一条草稿',assets:[],pendingEdit:{messageKey:'deleted',messageRef:'old-ref',version:1,content:{template_kind:1,text_content:'old edit'},revisionUid:'stable-edit',protocolVersion:1,metadataRef:'sealed-private'}}))
