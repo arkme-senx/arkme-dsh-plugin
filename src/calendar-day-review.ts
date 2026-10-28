@@ -7,10 +7,19 @@ export const DAY_REVIEW_LABELS: Record<DayReviewSource, string> = {
 }
 export interface DayReviewQuery { accountScope: string; bucketDate: string; timezone: string }
 export interface DayReviewEvidence { ref: string; kind: DayReviewSource; label: string }
-export interface DayReviewPoint { text: string; sourceRefs: string[] }
+export interface DayReviewDetails {
+  scene: string; roles: string[]; events: string[]; mood: string; todos: string[]; quotes: string[]
+  otherInfo: Array<{ label: string; value: string }>
+}
+export interface DayReviewCoverageDetails {
+  queryStatus: 'complete' | 'partial' | 'unknown'; contentStatus: 'complete' | 'partial' | 'unknown'
+  historyStatus: 'complete' | 'partial' | 'unknown'; relationStatus: 'complete' | 'partial' | 'unknown'
+  visibleCount: number; textCount: number; mediaCount: number; skippedCount: number
+}
+export interface DayReviewPoint { text: string; sourceRefs: string[]; details?: DayReviewDetails }
 export interface DayReviewEvent extends DayReviewPoint { title: string; startAtMillis: number | null; endAtMillis: number | null }
 export interface DayReviewCoverage {
-  kind: DayReviewSource; status: 'complete' | 'partial' | 'unavailable' | 'empty'; count: number; note: string
+  kind: DayReviewSource; status: 'complete' | 'partial' | 'unavailable' | 'empty'; count: number; note: string; details?: DayReviewCoverageDetails
 }
 export interface DayReviewResult {
   id: string; snapshotId: string; generatedAtMillis: number; modelName: string; sourceKinds: DayReviewSource[]
@@ -36,6 +45,23 @@ export function reviewKinds(v: unknown): DayReviewSource[] {
   if (!values.length || new Set(values).size !== values.length || values.some(x => !DAY_REVIEW_SOURCES.includes(x as DayReviewSource))) invalid()
   return DAY_REVIEW_SOURCES.filter(x => values.includes(x))
 }
+const optionalText = (v: unknown, max: number): string => v === '' ? '' : reviewText(v, max)
+function parseDetails(value: unknown): DayReviewDetails {
+  const d = reviewObject(value)
+  const list = (v: unknown) => array(v, 32).map(x => reviewText(x, 2000))
+  return { scene: optionalText(d.scene, 200), mood: optionalText(d.mood, 1000), roles: list(d.roles), events: list(d.events),
+    todos: list(d.todos), quotes: list(d.quotes), otherInfo: array(d.other_info, 20).map(x => {
+      const item = reviewObject(x); return { label: reviewText(item.label, 100), value: reviewText(item.value, 2000) }
+    }) }
+}
+function parseCoverageDetails(value: unknown, kind: DayReviewSource, count: number): DayReviewCoverageDetails {
+  const d = reviewObject(value)
+  const status = (v: unknown): DayReviewCoverageDetails['queryStatus'] => ['complete', 'partial', 'unknown'].includes(String(v)) ? v as DayReviewCoverageDetails['queryStatus'] : invalid()
+  const details = { queryStatus: status(d.query_status), contentStatus: status(d.content_status), historyStatus: status(d.history_status), relationStatus: status(d.relation_status),
+    visibleCount: number(d.visible_count), textCount: number(d.text_count), mediaCount: number(d.media_count), skippedCount: number(d.skipped_count) }
+  if (kind !== 'chat' || details.visibleCount !== count + details.skippedCount || details.textCount > count || details.mediaCount > count) invalid()
+  return details
+}
 export function parseDayReviewQuery(value: unknown): DayReviewQuery {
   const v = reviewObject(value), bucketDate = reviewText(v.bucketDate, 10), timezone = reviewText(v.timezone, 100)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(bucketDate) || new Date(`${bucketDate}T00:00:00Z`).toISOString().slice(0, 10) !== bucketDate) invalid()
@@ -59,14 +85,14 @@ export function parseDayReviewResult(value: unknown, q: DayReviewQuery): DayRevi
   const point = (value: unknown): DayReviewPoint => {
     const p = reviewObject(value), sourceRefs = array(p.source_refs, 100).map(x => reviewText(x, 4096))
     if (!sourceRefs.length || new Set(sourceRefs).size !== sourceRefs.length || sourceRefs.some(x => !refs.has(x))) invalid()
-    return { text: reviewText(p.text, 10000), sourceRefs }
+    return { text: reviewText(p.text, 10000), sourceRefs, ...(p.details === undefined ? {} : { details: parseDetails(p.details) }) }
   }
   const coverage = array(v.coverage, 5).map(x => {
     const item = reviewObject(x), kind = item.kind as DayReviewSource, status = item.status as DayReviewCoverage['status']
     if (!sourceKinds.includes(kind) || !['complete', 'partial', 'unavailable', 'empty'].includes(status)) invalid()
     const count = number(item.count)
     if (status === 'empty' && count !== 0) invalid()
-    return { kind, status, count, note: item.note ? reviewText(item.note, 1000) : '' }
+    return { kind, status, count, note: item.note ? reviewText(item.note, 1000) : '', ...(item.details === undefined ? {} : { details: parseCoverageDetails(item.details, kind, count) }) }
   })
   if (coverage.length !== sourceKinds.length || new Set(coverage.map(x => x.kind)).size !== sourceKinds.length) invalid()
   const dateAt = (time: number) => new Intl.DateTimeFormat('en-CA', { timeZone: q.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(time)

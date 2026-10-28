@@ -1,3 +1,4 @@
+import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
 import { parseDayReviewQuery, reviewText } from './calendar-day-review.js'
@@ -912,6 +913,7 @@ export interface ArkmeHostApiOptions {
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
+  const dayReviewConfirmation = new DayReviewConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const started = performance.now()
     const controller = new AbortController()
@@ -920,6 +922,19 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
     }
     res.once('close', abortDisconnectedRequest)
     try {
+      const confirmationUrl = new URL(req.url ?? '/', `http://localhost:${options.expectedPort}`)
+      if (confirmationUrl.searchParams.has('dayReviewConfirmation')) {
+        if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) throw new ArkmePluginError('loopback-required', '确认只能从当前本机页面打开', false, 403)
+        const id = confirmationUrl.searchParams.get('dayReviewConfirmation')!
+        if (req.method === 'GET' && confirmationUrl.searchParams.has('intent')) {
+          if (req.headers['sec-fetch-dest'] !== 'document' || req.headers['sec-fetch-mode'] !== 'navigate' || req.headers['sec-fetch-user'] !== '?1') throw new ArkmePluginError('day-review-human-required', '请亲自打开确认页', false, 403)
+          const raw = confirmationUrl.searchParams.get('intent')!
+          if (raw.length > 24000) throw new ArkmePluginError('invalid-params', '生成参数过大', false, 400)
+          const input = JSON.parse(raw) as Record<string, unknown>
+          await dayReviewConfirmation.prepare({ ...input, ...parseDayReviewQuery(input) }, confirmationUrl.searchParams.get('action') as 'create' | 'resume' | 'reconcile', controller.signal, id)
+        }
+        await dayReviewConfirmation.handle(req, res, id); return
+      }
       if (req.method !== 'POST') {
         throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
       }
@@ -941,6 +956,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (['calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile'].includes(request.operation)) {
+        throw new ArkmePluginError('day-review-human-required', '请在宿主确认页亲自确认本次生成', false, 403)
+      }
       if (['dictation.transcribe', 'dictation.realtime'].includes(request.operation) && (!isLoopback(req.socket.remoteAddress) || origin === undefined || new URL(origin).host !== req.headers.host)) {
         throw new ArkmePluginError('origin-required', '听写必须从当前本机页面发起', false, 403)
       }
@@ -1025,6 +1043,11 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           if (!res.headersSent) throw error
           if (!res.destroyed) res.write('{"error":"远程连接已断开，请重试"}\n')
         } finally { if (res.headersSent) res.end() }
+        return
+      }
+      if (request.operation === 'calendar.day-review.confirmation') {
+        if (origin === undefined) throw new ArkmePluginError('origin-required', '确认状态需要当前页面来源', false, 403)
+        writeJson(res, 200, { ok: true, value: await dayReviewConfirmation.status(stringParam(params, 'confirmationId')) }, started)
         return
       }
       const value = await measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
