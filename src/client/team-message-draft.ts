@@ -30,3 +30,15 @@ export function updateTeamDraftText(draft: TeamDraft, text: string, now = Date.n
 export function validTeamDraftStart(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
+
+export function restoreTeamDraftContent(original: TeamContent, next: Pick<TeamDraft,'text'|'mentions'>): Pick<TeamDraft,'text'|'mentions'> {
+  const before=original.mentions ?? [], after=next.mentions ?? []
+  const same=original.text_content===next.text && before.length===after.length && before.every((mention,index)=>{
+    const other=after[index]!
+    return mention.personRef===other.personRef && mention.displayName===other.displayName && mention.startIndex===other.startIndex && mention.length===other.length
+  })
+  const append=!!original.text_content && !!next.text && !same
+  const text=append ? `${original.text_content}\n\n${next.text}` : original.text_content || next.text
+  const mentions=append ? [...before,...after.map(mention=>({...mention,startIndex:mention.startIndex+original.text_content.length+2}))] : original.text_content ? before : after
+  return {text,...(mentions.length ? {mentions} : {})}
+}

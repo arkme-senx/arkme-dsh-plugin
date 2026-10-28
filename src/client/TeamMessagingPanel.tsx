@@ -79,7 +79,7 @@ import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
-import { loadTeamDraft, persistTeamDraft, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
+import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { TeamConversationTools } from './TeamConversationTools.js'
@@ -130,10 +130,6 @@ function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media:
       name: asset.fileName, mimeType: asset.mimeType, size: asset.size, kind: asset.fileKind,
     })), ...(draft.localFiles ?? []).map(file => ({ ref: file.fileRef, key: file.fileRef, url: createArkmeSdk().localFileUrl(file.fileRef), name: file.fileName, mimeType: file.mimeType, size: file.size, kind: file.fileKind }))],
   }
-}
-
-function restoreTeamDraftText(original: string, next: string): string {
-  return !original ? next : !next || next === original ? original : `${original}\n\n${next}`
 }
 
 export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: number }) {
@@ -586,8 +582,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
         if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
-          const mentions=[...(attempt.content.mentions ?? []),...(draftRef.current.text && draftRef.current.text !== attempt.content.text_content ? (draftRef.current.mentions ?? []).map(m=>({...m,startIndex:m.startIndex+(attempt.content.text_content ? attempt.content.text_content.length+2 : 0)})) : [])]
-          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), ...(mentions.length ? {mentions} : {}), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
+          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, ...restoreTeamDraftContent(attempt.content,draftRef.current), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
         }
@@ -698,7 +693,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     resolveIdentity: personName,
     onRecords: (person,mode='owner') => { setDetailKey(undefined); setRecordMode(mode); setRecordPerson(person); setVisitorRecords(true) },
     onMention: person => {
-      if (!person.personRef || busy || !current.channel.enabled || current.blocked || editing || draft.attempt) return
+      if (!person.personRef || editing && busy || !current.channel.enabled || current.blocked) return
       const inserted=insertArkmeComposerMentionToken(richDraft,{mentionRef:person.personRef},person.nickname,editorSelection.current.start,editorSelection.current.end)
       if (!inserted) return
       const serialized=serializeArkmeComposerDraft({...richDraft,...inserted})
