@@ -54,8 +54,9 @@ jobs:
         run: node scripts/prepare-runtime-version.mjs --run-number "$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
       - name: 构建并打包 Runtime
         run: |
-          pnpm run build
-          pnpm run pack:runtime
+          # The generated package version must not trigger a second dependency install.
+          pnpm --config.verifyDepsBeforeRun=warn run build
+          pnpm --config.verifyDepsBeforeRun=warn run pack:runtime
       - name: 传递待发布制品
         uses: actions/upload-artifact@v4
         with:
