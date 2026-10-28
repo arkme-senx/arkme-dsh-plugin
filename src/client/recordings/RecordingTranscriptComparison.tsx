@@ -9,7 +9,7 @@ import { arkmeTheme as colors } from '../arkme-theme.js'
 import { useRecordingPlayback } from './useRecordingPlayback.js'
 import { refreshRecordingTranscriptPage } from '../../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './useRecordingTranscriptPages.js'
-import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow, useRecordingComparisonScroll } from './RecordingComparisonView.js'
+import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow } from './RecordingComparisonView.js'
 
 export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, onClose }: {
   dateStamp: number
@@ -28,7 +28,6 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   const submission = useRef<AbortController>()
   useEffect(() => () => submission.current?.abort(), [])
   const [revision, setRevision] = useState(0)
-  const { columns, synchronize } = useRecordingComparisonScroll()
   const primaryPages = useRecordingTranscriptPages(data.system, String(dateStamp), page => setData(current => ({ ...current, system: page })))
   const enhancedPages = useRecordingTranscriptPages(data.doubao, String(dateStamp), page => setData(current => ({ ...current, doubao: page })))
   const player = useRecordingPlayback(mediaPath, async (last, signal) => {
@@ -84,13 +83,13 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
       {(playbackNotice || player.error) && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{playbackNotice || player.error}</div>}
       {notice !== '' && <div role="status" style={{ color: colors.secondary, padding: '8px 20px' }}>{notice}</div>}
     </>}>
-    {(['system', 'doubao'] as const).map((source, index) => <RecordingComparisonColumn key={source} title={source === 'system' ? '系统转写' : '豆包转写'} kind={source === 'system' ? '正式结果' : '对比结果'} actions={<>
+    {(['system', 'doubao'] as const).map(source => <RecordingComparisonColumn key={source} title={source === 'system' ? '系统转写' : '豆包转写'} kind={source === 'system' ? '正式结果' : '对比结果'} actions={<>
       {player.isPlaying && data[source].items.some(item => item.itemRef === player.activeItemRef) && <RecordingTranscriptButton aria-label={tr('暂停播放')} onClick={player.pause} style={{ border: 0, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', background: 'transparent' }}><Pause size={18} /></RecordingTranscriptButton>}
       {source === 'doubao' && !pending && data.candidateCount > 0 && <RecordingTranscriptButton disabled={submitting} onClick={() => { void startEnhancement() }}>{submitting ? '正在提交…' : '开始豆包转写'}</RecordingTranscriptButton>}
       {source === 'doubao' && pending && <small role="status" style={{ color: colors.secondary }}>{tr('豆包转写中…')}</small>}
     </>}>
       {source === 'doubao' && !pending && data.candidateCount > 0 && <p style={{ margin: '0 20px', fontSize: 12, color: colors.secondary }}>将处理当天尚未完成豆包转写的音频，正式结果不变。</p>}
-      <RecordingComparisonPane paneRef={element => { columns.current[index] = element }} onScroll={event => synchronize(event, index)} pagination={{
+      <RecordingComparisonPane pagination={{
         cursor: data[source].nextCursor ? `${data[source].viewRef}:${data[source].nextCursor}` : undefined,
         loading: source === 'system' ? primaryPages.loading : enhancedPages.loading,
         error: source === 'system' ? primaryPages.error : enhancedPages.error,

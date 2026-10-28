@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject, type Ref, type UIEvent } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { TextAlignLeft } from '@phosphor-icons/react/dist/icons/TextAlignLeft'
 import { RECORDING_STRATEGIES, type RecordingStrategy } from '../../recording-strategy-contract.js'
@@ -8,7 +8,7 @@ import { canStartDayComparison, comparisonError, comparisonSourceState, readDayC
 import { useRecordingDayComparisons } from './useRecordingDayComparisons.js'
 import { useRecordingDayStrategyPages } from './useRecordingDayStrategyPages.js'
 import { useRecordingStrategyPlayback } from './useRecordingStrategyPlayback.js'
-import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow, useRecordingComparisonScroll } from './RecordingComparisonView.js'
+import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow } from './RecordingComparisonView.js'
 import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingDayComparisonProgress } from './RecordingDayComparisonProgress.js'
 import comparisonCss from './recording-day-comparison.css?inline'
@@ -22,7 +22,6 @@ export function RecordingDayStrategyComparison({ dateStamp, strategy, mediaPath,
   dateStamp: number; strategy: RecordingStrategy; mediaPath: string; onClose(): void
 }) {
   const { sources, loading, error, refresh, reload } = useRecordingDayComparisons(dateStamp)
-  const { columns, synchronize } = useRecordingComparisonScroll()
   const stopPlayback = useRef<(() => void) | undefined>()
   const submission = useRef<AbortController>()
   const [submitting, setSubmitting] = useState(false), [notice, setNotice] = useState('')
@@ -67,17 +66,16 @@ export function RecordingDayStrategyComparison({ dateStamp, strategy, mediaPath,
       {metadataErrors.length > 0 && <p role="alert">{metadataErrors.length} 个音频的策略信息读取失败，其他内容仍可查看。 <RecordingTranscriptButton disabled={submitting} onClick={() => { void refresh().catch(reason => setNotice(comparisonError(reason))) }}>重试</RecordingTranscriptButton></p>}
       {notice && <p role="status" className="recording-day-notice">{notice}<RecordingTranscriptButton aria-label="收起提交提示" onClick={() => setNotice('')}>收起</RecordingTranscriptButton></p>}
     </div></>}>
-    {(['official', strategy] as const).map((selection, index) => <DayTranscript key={selection} dateStamp={dateStamp} sources={sources}
+    {(['official', strategy] as const).map(selection => <DayTranscript key={selection} dateStamp={dateStamp} sources={sources}
       selection={selection} title={selection === 'official' ? '系统转写' : name(strategy)} kind={selection === 'official' ? '正式结果' : '对比结果'}
       mediaPath={mediaPath} stopPlayback={stopPlayback} loadingSources={loading || !!error}
-      paneRef={element => { columns.current[index] = element }} onScroll={event => synchronize(event, index)}
       action={selection !== 'official' && candidates.length > 0 ? <RecordingTranscriptButton style={{ marginInlineStart: 'auto', background: theme.primaryAction, color: theme.onPrimaryAction }} disabled={submitting} onClick={() => { void start() }}>{submitting ? '正在提交…' : `处理当天未生成部分（${candidates.length}）`}</RecordingTranscriptButton> : undefined} />)}
   </RecordingComparisonView>
 }
 
-function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, stopPlayback, paneRef, onScroll, loadingSources, action }: {
+function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, stopPlayback, loadingSources, action }: {
   sources: DayComparisonSource[]; selection: RecordingStrategy | 'official'; title: string; kind: '正式结果' | '对比结果'; dateStamp: number
-  mediaPath: string; stopPlayback: MutableRefObject<(() => void) | undefined>; paneRef: Ref<HTMLDivElement>; onScroll(event: UIEvent<HTMLDivElement>): void
+  mediaPath: string; stopPlayback: MutableRefObject<(() => void) | undefined>
   loadingSources: boolean; action: React.ReactNode
 }) {
   const { pages, pagination } = useRecordingDayStrategyPages(sources, selection, dateStamp)
@@ -93,7 +91,7 @@ function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, 
   const emptyDescription = processing ? '已完成的内容会自动显示，无需再次提交。' : failed ? '可展开处理详情查看原因，已完成的内容会保留。' : missing ? action ? '使用上方按钮生成尚未处理的录音；已有结果不会重复处理。' : '可展开处理详情查看原件可用情况和未生成原因。' : '可以返回查看其他日期的录音。'
   return <RecordingComparisonColumn title={title} kind={kind} actions={<>{action}{player.activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.stop}><Pause size={18} /></RecordingTranscriptButton>}</>}>
     <RecordingDayComparisonProgress sources={sources} selection={selection} pages={pages} />
-    <RecordingComparisonPane paneRef={paneRef} onScroll={onScroll} pagination={pagination}>
+    <RecordingComparisonPane pagination={pagination}>
       {player.error && <p role="alert" style={{ color: theme.danger }}>{player.error}</p>}
       {!loadingSources && !pagination.loading && !pagination.cursor && !pagination.error && visible.length === 0 && <div data-comparison-empty className="recording-day-empty">
         <TextAlignLeft size={30} aria-hidden style={{ opacity: .5 }} /><strong>{emptyTitle}</strong><p>{emptyDescription}</p>

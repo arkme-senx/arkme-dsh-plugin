@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { RecordingComparisonView, RecordingComparisonRow, RecordingComparisonPane, useRecordingComparisonScroll } from '../src/client/recordings/RecordingComparisonView.js'
+import { RecordingComparisonView, RecordingComparisonRow, RecordingComparisonPane } from '../src/client/recordings/RecordingComparisonView.js'
 
 let root: Root | undefined
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; document.body.replaceChildren() })
@@ -69,26 +69,26 @@ it('keeps keyboard dismissal and navigation working when a completed action remo
   expect(close).toHaveBeenCalledOnce()
 })
 
-it('synchronizes independent segmentations by time rather than by row position and avoids scroll feedback', async () => {
-  function Pair() {
-    const { columns, synchronize } = useRecordingComparisonScroll()
-    return <>{[[1000, 4000], [500, 2500, 4100]].map((times, index) => <RecordingComparisonPane key={index} paneRef={element => { columns.current[index] = element }} onScroll={e => synchronize(e, index)}>
-      {times.map(time => <div key={time} data-transcript-time={time}>{time}</div>)}
-    </RecordingComparisonPane>)}</>
-  }
-  await render(<Pair />)
+it('scrolls each column independently and paginates only the column near its bottom', async () => {
+  const next = [vi.fn().mockResolvedValue(undefined), vi.fn().mockResolvedValue(undefined)]
+  await render(<>{[[1000, 4000], [500, 2500, 4100]].map((times, index) => <RecordingComparisonPane key={index} pagination={{ cursor: 'next', loading: false, error: '', next: next[index]! }}>
+    {times.map(time => <div key={time} data-transcript-time={time}>{time}</div>)}
+  </RecordingComparisonPane>)}</>)
   const left = document.querySelector('[data-transcript-time="1000"]')!.parentElement!
   const right = document.querySelector('[data-transcript-time="500"]')!.parentElement!
-  const rect = (top: number, height = 40) => ({ top, bottom: top + height } as DOMRect)
   for (const pane of [left, right]) {
-    pane.getBoundingClientRect = () => rect(100, 100)
     Object.defineProperties(pane, { scrollHeight: { value: 1000 }, clientHeight: { value: 100 } })
   }
-  left.children[0]!.getBoundingClientRect = () => rect(20)
-  left.children[1]!.getBoundingClientRect = () => rect(100)
-  Array.from(right.children).forEach((row, index) => { row.getBoundingClientRect = () => rect(100 + index * 80) })
-  left.dispatchEvent(new Event('scroll', { bubbles: true }))
-  expect(right.scrollTop).toBe(160)
-  right.dispatchEvent(new Event('scroll', { bubbles: true }))
-  expect(left.scrollTop).toBe(0)
+  left.scrollTop = 600; right.scrollTop = 80
+  await act(async () => { left.dispatchEvent(new Event('scroll')) })
+  expect(right.scrollTop).toBe(80)
+  expect(next[0]).toHaveBeenCalledOnce()
+  expect(next[1]).not.toHaveBeenCalled()
+  right.scrollTop = 650
+  await act(async () => { right.dispatchEvent(new Event('scroll')) })
+  expect(left.scrollTop).toBe(600)
+  expect(next[1]).toHaveBeenCalledOnce()
+  await act(async () => { left.dispatchEvent(new Event('scroll')); right.dispatchEvent(new Event('scroll')) })
+  expect(next[0]).toHaveBeenCalledOnce()
+  expect(next[1]).toHaveBeenCalledOnce()
 })

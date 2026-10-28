@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type Ref, type UIEvent } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { arkmeTheme as colors } from '../arkme-theme.js'
@@ -66,7 +66,7 @@ type ComparisonPagination = {
 }
 
 /** Only viewport loading is shared; each comparison keeps its own cursor and data owner. */
-export function RecordingComparisonPane({ paneRef, onScroll, pagination, children }: { paneRef?: Ref<HTMLDivElement>; onScroll?(event: UIEvent<HTMLDivElement>): void; pagination?: ComparisonPagination; children: ReactNode }) {
+export function RecordingComparisonPane({ pagination, children }: { pagination?: ComparisonPagination; children: ReactNode }) {
   const pane = useRef<HTMLDivElement | null>(null)
   const requested = useRef<string>()
   const latest = useRef(pagination); latest.current = pagination
@@ -86,11 +86,7 @@ export function RecordingComparisonPane({ paneRef, onScroll, pagination, childre
     const observer = new ResizeObserver(fill); observer.observe(element)
     return () => observer.disconnect()
   }, [])
-  return <div ref={element => {
-    pane.current = element
-    if (typeof paneRef === 'function') paneRef(element)
-    else if (paneRef) (paneRef as React.MutableRefObject<HTMLDivElement | null>).current = element
-  }} onScroll={event => { onScroll?.(event); fill() }} style={{ overflowY: 'auto', overflowWrap: 'anywhere', minWidth: 0, minHeight: 0, flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
+  return <div ref={pane} onScroll={fill} style={{ overflowY: 'auto', overflowWrap: 'anywhere', minWidth: 0, minHeight: 0, flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
     {children}
     {pagination?.loading && <p role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr('正在加载…')}</p>}
     {pagination?.error && <div role="alert" style={{ color: colors.danger, fontSize: 12 }}>{pagination.error} <RecordingTranscriptButton disabled={pagination.loading} onClick={() => { requested.current = undefined; void pagination.next().catch(() => undefined) }}>{tr('重试')}</RecordingTranscriptButton></div>}
@@ -113,24 +109,4 @@ export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, end
     <span style={{ flex: '1 1 120px', minWidth: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{text}</span>
     <time style={{ flex: 'none', fontSize: 12, color: colors.secondary }}>{time} · {duration > 0 && duration < 1 ? '<1' : Math.floor(duration)}{tr('秒')}</time>
   </div>
-}
-
-/** Align the visible time, never speaker numbers or row indexes from independent algorithms. */
-export function useRecordingComparisonScroll() {
-  const columns = useRef<Array<HTMLDivElement | null>>([])
-  const synchronized = useRef<{ element: HTMLDivElement; top: number }>()
-  const synchronize = (event: UIEvent<HTMLDivElement>, column: number) => {
-    const element = event.currentTarget
-    if (synchronized.current?.element === element && Math.abs(synchronized.current.top - element.scrollTop) < 2) return
-    const top = element.getBoundingClientRect().top
-    const first = Array.from(element.querySelectorAll<HTMLElement>('[data-transcript-time]')).find(row => row.getBoundingClientRect().bottom > top)
-    const other = columns.current[1 - column]
-    if (!first || !other) return
-    const time = Number(first.dataset.transcriptTime)
-    const nearest = Array.from(other.querySelectorAll<HTMLElement>('[data-transcript-time]')).reduce<HTMLElement | undefined>((best, row) => !best || Math.abs(Number(row.dataset.transcriptTime) - time) < Math.abs(Number(best.dataset.transcriptTime) - time) ? row : best, undefined)
-    if (!nearest) return
-    const nextTop = Math.max(0, Math.min(other.scrollHeight - other.clientHeight, other.scrollTop + nearest.getBoundingClientRect().top - other.getBoundingClientRect().top))
-    synchronized.current = { element: other, top: nextTop }; other.scrollTop = nextTop
-  }
-  return { columns, synchronize }
 }
