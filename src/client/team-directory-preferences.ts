@@ -31,6 +31,12 @@ export class TeamDirectoryPreferenceStore {
     return state
   }
   read = (account: string): TeamDirectoryPreferences => account ? this.state(account).view : empty
+  canPresent(account: string, conversation: TeamConversation): boolean {
+    const state = this.state(account)
+    const allowed = (key: string) => state.saved.get(state.aliases.get(key) ?? key)?.accessible !== false
+    return allowed(teamConversationEntryKey(conversation)) &&
+      (conversation.side === 'external' || allowed(teamFolderEntryKey(conversation.channel)))
+  }
   error = (account: string) => account ? (this.state(account).error || this.state(account).notice) : ''
   acknowledgeNotice(account: string) { const state = this.state(account); state.notice = ''; this.publish(state) }
   private publish(state: State) {
@@ -77,21 +83,21 @@ export class TeamDirectoryPreferenceStore {
   }
   pin(account: string, target: TeamEntryTarget, pinned: boolean) { return this.change(account, [target], pinned ? 'pin' : 'unpin') }
   remove(account: string, target: TeamEntryTarget) { return this.change(account, [target], 'dismiss') }
-  restoreReference(account: string, ref: TeamEntryReference): Promise<void> {
-    return this.command(account, [{ key: ref.ref, ref }], 'restore', true)
-  }
   restoreTarget(account: string, target: TeamEntryTarget, publishedOnly = false): Promise<void> {
-    const state = this.state(account), entries = [this.remember(target)]
+    // Existing conversation sequences include historical publications. A folder's
+    // new activity counter may legitimately still be zero for that history.
+    if (publishedOnly && (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return Promise.resolve()
+    const entries = [this.remember(target)]
     if (target.kind === 'conversation' && target.conversation.side === 'team') {
       const channel = target.conversation.channel, key = teamFolderEntryKey(channel), ref: TeamEntryReference = { kind: 'folder', ref: channel.teamRef }
       entries.push({ key, ref })
     }
-    return this.command(account, entries, 'restore', publishedOnly)
+    return this.command(account, entries, 'restore')
   }
   private change(account: string, targets: TeamEntryTarget[], action: TeamEntryAction) {
     return this.command(account, targets.map(t => this.remember(t)), action)
   }
-  private command(account: string, entries: { key: string; ref: TeamEntryReference }[], action: TeamEntryAction, publishedOnly = false): Promise<void> {
+  private command(account: string, entries: { key: string; ref: TeamEntryReference }[], action: TeamEntryAction): Promise<void> {
     if (!account) return Promise.reject(new Error('请先登录'))
     const state = this.state(account), token = ++this.token
     for (const { key } of entries) {
@@ -104,7 +110,7 @@ export class TeamDirectoryPreferenceStore {
       try {
         // Recheck before a new explicit command. The Host replays any persisted response-loss command first.
         this.accept(state, await this.transport('team.app.entries.query', params), entries.map(e => e.key))
-        const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed && (!publishedOnly || (state.saved.get(state.aliases.get(e.key) ?? e.key)?.activitySeq ?? 0) > 0)) : entries
+        const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed) : entries
         if (!chosen.length) return
         const changes = chosen.map(e => ({ target: e.ref, action, expectedVersion: state.saved.get(state.aliases.get(e.key) ?? e.key)?.version ?? 0 }))
         this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }))

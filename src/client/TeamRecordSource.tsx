@@ -8,7 +8,6 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ResourceStore } from './resource-store.js'
 import { useResource } from './use-resource.js'
-import { openTeamMessages } from './team-messaging-events.js'
 import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 import { teamText as tr } from './team-messaging-i18n.js'
 

@@ -3,7 +3,6 @@ import type { ArkmeChatClientEvent } from '../types.js'
 import type { TeamConversation } from '../team-app-contract.js'
 import { callArkme } from './api.js'
 import { showBrowserNotification } from './browser-notification.js'
-import { openTeamMessages } from './team-messaging-events.js'
 
 type Notice = Extract<ArkmeChatClientEvent, { type: 'team-message-notification' }>['notification']
 interface Ports {
