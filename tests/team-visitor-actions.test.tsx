@@ -165,3 +165,14 @@ it('aborts old person pages and never mixes late results into a replacement iden
  await act(async()=>{finish({conversation,messages:[message(99)],hasMore:false,beforeSeq:99});await tick()})
  expect([...host.querySelectorAll('[data-team-visitor-record]')].map(n=>n.getAttribute('data-team-visitor-record'))).toEqual(['m2'])
 })
+it('retains a loaded person window when fresh signed references rotate for the same identities',async()=>{
+ call.mockResolvedValue({conversation,messages:[{...message(9),sender:{nickname:'同名',personKey:'same'}}],hasMore:true,beforeSeq:9})
+ const render=(generation:number)=><TeamVisitorRecords conversation={{...conversation,ref:`conversation-${generation}`}} accountKey="test:90" person={{nickname:'同名',personKey:'same',personRef:`person-${generation}`}} onClose={onClose} onLocate={onLocate}/>
+ await act(async()=>{root.render(render(1));await tick()})
+ for(let i=2;i<=10;i++)await act(async()=>{root.render(render(i));await tick()})
+ expect(call).toHaveBeenCalledOnce()
+ expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
+ call.mockResolvedValue({conversation,messages:[],hasMore:false,beforeSeq:8})
+ await act(async()=>{findButton('加载更早消息').click();await tick()})
+ expect(call.mock.calls.at(-1)![1]).toMatchObject({conversationRef:'conversation-10',personRef:'person-10',beforeSeq:9})
+})

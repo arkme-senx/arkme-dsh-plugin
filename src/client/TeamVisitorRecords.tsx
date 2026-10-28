@@ -17,6 +17,9 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
 }) {
   const target = person ?? conversation.visitor
   const personRef = target?.personRef
+  const source=useRef({conversationRef:conversation.ref,target});source.current={conversationRef:conversation.ref,target}
+  // Signed refs rotate on refresh; only a different account/conversation/person resets paging.
+  const scopeKey=JSON.stringify([accountKey,conversation.key,conversation.side,target?.personKey ?? personRef ?? 'external',mode])
   const [windowed,setWindowed] = useState(false)
   const [messages, setMessages] = useState<TeamMessage[]>([]), [loading, setLoading] = useState(true)
   const [hasMore, setHasMore] = useState(true), [error, setError] = useState(''), [locating, setLocating] = useState(false)
@@ -25,12 +28,13 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
   const nextPage = useCallback(async () => {
     if (pending.current || complete.current || controller.current?.signal.aborted) return
     const active=controller.current
+    const {conversationRef,target}=source.current,personRef=target?.personRef
     pending.current = true; setLoading(true); setError('')
     try {
       // Skip a few all-team pages so an empty first page doesn't imply no visitor records.
       for (let scan = 0; scan < (personRef ? 1 : 5); scan++) {
         const page = await callArkme<TeamTimeline>('team.app.timeline', {
-          conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: before.current, ...(personRef ? {personRef,personMode:mode} : {}),
+          conversationRef, expectedAccountKey: accountKey, beforeSeq: before.current, ...(personRef ? {personRef,personMode:mode} : {}),
         }, active?.signal)
         if (active?.signal.aborted || active !== controller.current) return
         if (page.conversation.side !== 'team') throw new Error(tr('当前无法查看此团队对话'))
@@ -50,7 +54,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
     } finally {
       if(active === controller.current){pending.current = false;if (!active?.signal.aborted) setLoading(false)}
     }
-  }, [conversation.ref, accountKey, person?.personKey, personRef, mode])
+  }, [scopeKey])
   useEffect(() => {
     before.current=0;complete.current=false;pending.current=false;loaded.current=[];setMessages([]);setWindowed(false)
     controller.current = new AbortController(); void nextPage()
