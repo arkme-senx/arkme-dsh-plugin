@@ -7,6 +7,7 @@ import { teamTaskActive, teamTaskFiles, type TeamSendInput, type TeamSendTask } 
 import { teamContentWithAssets } from '../team-send-content.js'
 
 interface Ports {
+  metadataDigest?(conversationRef: string, uid: string, ref: string, actor: number): Promise<string>
   currentUser(): Promise<number | undefined>
   files(): FileTransfers
   identify(ref: string, userId: number): Promise<string>
@@ -14,6 +15,7 @@ interface Ports {
   execute(operation: TeamAppOperation, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown>
 }
 const fail = (code: string, message: string) => new ArkmePluginError(`team-${code}`, message, false, 409)
+const publicTask = (task: TeamSendTask): TeamSendTask => {const view=structuredClone(task);delete view.metadataRef;delete view.metadataDigest;return view}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const transient = (error: unknown): boolean => error instanceof ArkmePluginError
   ? error.retryable || ['arkme-network-error', 'arkme-timeout', 'team-dependency_unavailable', 'team-rate_limited', 'team-reply_conflict'].includes(error.code)
@@ -84,13 +86,15 @@ export class TeamSendQueue {
       if (reply.messageKey && key !== reply.messageKey) throw fail('invalid_request', '引用消息与当前会话不匹配')
       reply = { ...reply, messageKey: key }
     }
+    const metadataDigest = input.metadataRef ? await this.ports.metadataDigest?.(input.conversationRef,input.clientUid,input.metadataRef,user) : undefined
+    if (input.metadataRef && !metadataDigest) throw fail('capture-unavailable','无法核对发送快照，请保留原请求后重试')
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
-    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(reply ? {reply} : {})})
+    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.metadataRef ? {metadataRef:input.metadataRef} : {}),...(reply ? {reply} : {})})
     const tasks = await this.ports.files().mutateTeamSends(user, tasks => {
       const prior = tasks.find(task => task.clientUid === input.clientUid)
       if (prior) {
-        if (prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
+        if (prior.metadataDigest !== metadataDigest || prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
           || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
           || JSON.stringify(prior.reply && {key:prior.reply.messageKey,version:prior.reply.version,quote:prior.reply.quote}) !== JSON.stringify(inputCopy.reply && {key:inputCopy.reply.messageKey,version:inputCopy.reply.version,quote:inputCopy.reply.quote})) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
@@ -100,15 +104,15 @@ export class TeamSendQueue {
       if (tasks.filter(task => !['sent', 'cancelled'].includes(task.state)).length >= 100) throw fail('queue-full', '待发送消息过多，请先处理失败消息')
       const completed = tasks.filter(task => ['sent', 'cancelled'].includes(task.state) && !task.fileRefs.length).slice(0, -100)
       for (const task of completed) tasks.splice(tasks.indexOf(task), 1)
-      tasks.push({ ...inputCopy,  taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
+      tasks.push({ ...inputCopy, ...(metadataDigest ? {metadataDigest} : {}), taskRef: randomUUID(), conversationKey, createdAtMillis: Date.now(), state: 'queued',
         files: teamTaskFiles(files), attempts: 0, nextAttemptAt: 0 })
     })
     this.wake(0)
-    return { ...tasks.find(task => task.clientUid === input.clientUid)!, conversationRef: input.conversationRef }
+    return publicTask({ ...tasks.find(task => task.clientUid === input.clientUid)!, conversationRef: input.conversationRef })
   }
   async list(conversationRef: string): Promise<TeamSendTask[]> {
     const user = await this.user(), key = await this.ports.identify(conversationRef, user)
-    return (await this.ports.files().teamSends(user)).map(recoverLegacyReply).filter(task => task.conversationKey === key).map(task => ({ ...task, conversationRef, files: structuredClone(this.progress.get(`${user}:${task.taskRef}`) ?? task.files) }))
+    return (await this.ports.files().teamSends(user)).map(recoverLegacyReply).filter(task => task.conversationKey === key).map(task => publicTask({ ...task, conversationRef, files: structuredClone(this.progress.get(`${user}:${task.taskRef}`) ?? task.files) }))
   }
   async retry(conversationRef: string, taskRef: string): Promise<TeamSendTask> {
     const user = await this.user(), key = await this.ports.identify(conversationRef, user)
@@ -125,7 +129,7 @@ export class TeamSendQueue {
         task.state = task.cancelRequested ? 'cancelling' : 'queued'; task.nextAttemptAt = 0
       })
       this.wake(0)
-      return { ...tasks.find(task => task.taskRef === taskRef)!, conversationRef }
+      return publicTask({ ...tasks.find(task => task.taskRef === taskRef)!, conversationRef })
     } finally { this.active.delete(lane) }
   }
   async cancel(conversationRef: string, taskRef: string): Promise<TeamSendTask> {
@@ -136,7 +140,7 @@ export class TeamSendQueue {
     try {
       const task = (await this.ports.files().teamSends(user)).find(task => task.taskRef === taskRef && task.conversationKey === key)
       if (!task) throw fail('task-missing', '发送任务不存在')
-      if (['sent', 'cancelled'].includes(task.state)) return task
+      if (['sent', 'cancelled'].includes(task.state)) return publicTask(task)
       await this.guard(user, epoch, controller.signal)
       // Persist the user's new intent before I/O. Recovery must never send after
       // a cancellation response is lost, including across Host restarts.
@@ -156,7 +160,7 @@ export class TeamSendQueue {
         }
         throw error
       }
-      return { ...task, conversationRef }
+      return publicTask({ ...task, conversationRef })
     } finally { this.active.delete(lane); this.wake(0) }
   }
   private async completeCancellation(task: TeamSendTask, signal: AbortSignal): Promise<void> {
@@ -175,14 +179,16 @@ export class TeamSendQueue {
   }
   private command(task: TeamSendTask): Record<string, unknown> {
     return { conversationRef: task.conversationRef, clientUid: task.clientUid,
-      expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content,
+      ...(task.metadataRef ? {metadataRef:task.metadataRef} : {}), expectedReplySeq: task.expectedReplySeq, content: task.sendContent ?? task.content,
       ...(task.reply ? {replyToRef:task.reply.messageRef,replyRecordVersion:task.reply.version,...(task.reply.quote ? {quote:task.reply.quote} : {})} : {}) }
   }
   private async save(user: number, task: TeamSendTask): Promise<void> {
     await this.ports.files().mutateTeamSends(user, tasks => {
       const index = tasks.findIndex(item => item.taskRef === task.taskRef)
       if (index < 0) throw fail('task-missing', '发送任务不存在')
-      tasks[index] = structuredClone(task)
+      const persisted=structuredClone(task)
+      if (['sent','cancelled'].includes(persisted.state)) {delete persisted.metadataRef}
+      tasks[index] = persisted
     })
   }
   async recover(): Promise<void> {

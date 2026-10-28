@@ -45,8 +45,8 @@ const styles = {
 } as const
 
 function epochMillis(value: number): number { return Number.isFinite(value) && value > 0 ? value < 100_000_000_000 ? value * 1000 : value : 0 }
-function sentAtLabel(value: number): string {
-  const timestamp = epochMillis(value)
+function sentAtLabel(value: number, explicitMillis = false): string {
+  const timestamp = explicitMillis ? (Number.isFinite(value) && value > 0 ? value : 0) : epochMillis(value)
   if (timestamp === 0) return tr("未记录")
   return new Date(timestamp).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
@@ -57,7 +57,7 @@ export function arkmeMessageSnapshotDurationLabel(value: number): string {
 export function arkmeCanOpenMessageSnapshot(item: ArkmeTimelineItem): boolean {
   return item.isMe && (item.messageActionRef?.trim() ?? '') !== '' && item.forwardRecords === undefined && item.sharedRecording === undefined
 }
-function detailTimeLabel(value: number | undefined): string { return value === undefined ? tr("未记录") : sentAtLabel(value) }
+function detailTimeLabel(value: number | undefined): string { return value === undefined ? tr("未记录") : sentAtLabel(value, true) }
 function numberLabel(value: number | undefined, suffix = ''): string { return value === undefined ? tr("未记录") : `${String(Math.round(value * 10) / 10)}${suffix}` }
 function batteryLabel(context: ArkmeMessageSnapshotDetail['captureContext']): string {
   if (context?.electric === undefined) return tr("未记录")
@@ -89,12 +89,12 @@ function SnapshotBackgroundWaveform({ amplitudes }: { amplitudes: readonly numbe
   </span>
 }
 
-export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void }) {
+export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onRetry }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onRetry?: () => void; onEnableBackgroundSound?: () => void }) {
   const text = detail?.textContent.trim() || item.textContent.trim() || item.title.trim() || '暂无内容'
   const error = loadError?.trim()
   if (error !== undefined && error !== '') return <>
     <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
-    <div role="alert" style={styles.error}>{tr("快记详情未加载成功：")}{error}</div>
+    <div role="alert" style={styles.error}>{tr("快记详情未加载成功：")}{error}{onRetry && <button type="button" onClick={onRetry}>{tr("重试")}</button>}</div>
   </>
   const durationMillis = Math.max(0, detail?.recordDurationMillis ?? item.recordDurationMillis ?? 0) + Math.max(0, detail?.editDurationMillis ?? item.editDurationMillis ?? 0)
   const context = detail?.captureContext ?? item.captureContext
@@ -124,7 +124,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
     { icon: <Cloud size={19} weight="light" />, label: '天气', value: detail?.weather ?? '未记录' },
     { icon: <Mountains size={19} weight="light" />, label: '海拔', value: numberLabel(detail?.altitudeMeters, 'm') },
     { icon: <PersonSimpleWalk size={19} weight="light" />, label: '移动状态', value: detail?.movement ?? '未记录' },
-    { icon: <Desktop size={19} weight="light" />, label: '终端', value: context?.clientName ?? '未记录' },
+    { icon: <Desktop size={19} weight="light" />, label: '终端', value: context?.clientName ?? detail?.captureUnavailable ?? '未记录' },
     { icon: <BatteryHigh size={19} weight="light" />, label: '设备电量', value: batteryLabel(context) },
     { icon: <Globe size={19} weight="light" />, label: '网络', value: context?.networkName ?? '未记录' },
     { icon: <CalendarBlank size={19} weight="light" />, label: '归属日期', value: detail?.belongDate ?? (metadataUnavailable ? '未记录' : new Date(epochMillis(item.sendAtMillis)).toLocaleDateString(arkmeIntlLocale())) },
@@ -137,7 +137,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
     <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
     <div style={styles.stats} aria-label={tr("快记统计")}>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("字数")}</span><strong style={styles.statValue}>{String(Array.from(text).length)}</strong></div>
-      <div style={styles.stat}><span style={styles.statLabel}>{tr("记录时长")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.recordDurationMillis === undefined && item.recordDurationMillis === undefined && detail?.editDurationMillis === undefined && item.editDurationMillis === undefined ? tr('未记录') : arkmeMessageSnapshotDurationLabel(durationMillis)}</strong></div>
+      <div style={styles.stat}><span style={styles.statLabel}>{tr("记录时长")}</span><strong style={styles.statValue}>{detail?.durationState === 'partial' ? tr('未完整记录') : detail?.durationState === 'not-recorded' ? tr('未记录') : metadataUnavailable && detail?.recordDurationMillis === undefined && item.recordDurationMillis === undefined && detail?.editDurationMillis === undefined && item.editDurationMillis === undefined ? tr('未记录') : arkmeMessageSnapshotDurationLabel(durationMillis)}</strong></div>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("查阅/回顾")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.viewTimes === undefined ? tr('未记录') : `${String(detail?.viewTimes ?? 0)}${tr('次')}`}</strong></div>
       <div style={styles.stat}><span style={styles.statLabel}>{tr("分享")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.shareTimes === undefined ? tr('未记录') : `${String(detail?.shareTimes ?? 0)}${tr('次')}`}</strong></div>
     </div>
@@ -150,7 +150,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
   </>
 }
 
-export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onEnableBackgroundSound?: () => void; onClose: () => void }) {
+export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onRetry, onClose }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onRetry?: () => void; onEnableBackgroundSound?: () => void; onClose: () => void }) {
   useArkmeLocale()
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement>()
@@ -165,7 +165,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadata
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label={tr("快记详情")} style={styles.dialog}>
         <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
-        <div style={styles.body}><ArkmeMessageSnapshotDialogContent item={item} {...(previewText === undefined ? {} : { previewText })} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
+        <div style={styles.body}><ArkmeMessageSnapshotDialogContent {...(onRetry?{onRetry}:{})} item={item} {...(previewText === undefined ? {} : { previewText })} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,
     document.body,

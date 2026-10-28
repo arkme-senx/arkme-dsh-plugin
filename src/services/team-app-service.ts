@@ -1,4 +1,5 @@
 import { GroupRepresentationCodec } from './group-representation.js'
+import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
@@ -267,7 +268,7 @@ export class TeamAppService {
     const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
-    return teamMessageProjection({ ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
+    return teamMessageProjection({ ...(v.own===true&&typeof v.metadata_saved==='boolean'?{metadataSaved:v.metadata_saved}:{}), ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
@@ -304,6 +305,18 @@ export class TeamAppService {
       title:str(n.title), body:str(n.body), eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
   }
 
+  private async frozenMetadata(ref: unknown, actor: number, context: Record<string, unknown>, uid: string, kind: 'send'|'edit', messageUid?: unknown) {
+    const value = await this.codec.open('team-app-capture', str(ref))
+    if (value.viewer !== actor || value.environment !== this.runtime.config.environment || value.conversation_uid !== context.conversation_uid || value.side !== context.side || value.operation_uid !== uid || value.kind !== kind || (kind === 'edit' && value.message_uid !== messageUid)) throw invalid()
+    return kind === 'send' ? readTeamRecordMetadata(value.metadata) : readTeamEditMetadata(value.metadata)
+  }
+  async sendMetadataDigest(conversationRef: string, uid: string, ref: string, actor: number): Promise<string> {
+    const session = await this.assertViewer(undefined)
+    if (session.userId !== actor) throw invalid()
+    const context = await this.resolveConversation(conversationRef, actor)
+    const metadata = await this.frozenMetadata(ref, actor, context, uid, 'send')
+    return createHash('sha256').update(JSON.stringify(metadata)).digest('hex')
+  }
   async assertViewer(expectedAccountKey: unknown): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
     if (expectedAccountKey !== undefined && expectedAccountKey !== `${this.runtime.config.environment}:${session.userId}`) {
@@ -406,6 +419,32 @@ export class TeamAppService {
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
     }
     switch (operation) {
+      case 'team.app.snapshot.capabilities': {
+        try { const data = await post('conversations/messages/metadata/capabilities', {}, true); return { schemaVersion: data.schema_version === 1 ? 1 : 0 } }
+        catch (error) { if (error instanceof ArkmePluginError && error.upstreamStatus === 404) return {schemaVersion: 0}; throw error }
+      }
+      case 'team.app.snapshot.seal': {
+        if(p.kind!=='send'&&p.kind!=='edit')throw invalid()
+        const context = await conversation(), uid = str(p.operationUid), kind = p.kind === 'edit' ? 'edit' : 'send'
+        if (!/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(uid) || !await this.runtime.stateStore.uniqueCode()) throw invalid()
+        const target = kind === 'edit' ? await message() : undefined
+        if (target && (target.conversation_uid !== context.conversation_uid || target.side !== context.side)) throw invalid()
+        const metadata = kind === 'send' ? readTeamRecordMetadata(p.metadata) : readTeamEditMetadata(p.metadata)
+        if (kind === 'edit' && (metadata as import('../team-snapshot-contract.js').TeamEditMetadata).revision_uid !== uid) throw invalid()
+        return { metadataRef: await this.codec.seal('team-app-capture', {viewer:actor, environment:this.runtime.config.environment, ...context, operation_uid:uid, kind, ...(target ? {message_uid:target.message_uid} : {}), metadata}) }
+      }
+      case 'team.app.snapshot.read': case 'team.app.snapshot.receipt': {
+        const context = await conversation(), target = await message()
+        if (target.conversation_uid !== context.conversation_uid || target.side !== context.side) throw invalid()
+        const capability=obj(await this.dispatch('team.app.snapshot.capabilities',{},session,post,signal))
+        if(capability.schemaVersion!==1)throw new ArkmePluginError('team-snapshot-unsupported','当前服务尚不支持团队记忆快照',false,409)
+        if (operation === 'team.app.snapshot.receipt') {
+          const data = await post('conversations/messages/edit-receipt/get', {...target, revision_uid:str(p.revisionUid)}, true)
+          return {revisionUid:str(data.revision_uid), accepted:data.accepted===true, ...(num(data.accepted_version)>0?{acceptedVersion:num(data.accepted_version)}:{}), ...(num(data.current_version)>0?{currentVersion:num(data.current_version)}:{})}
+        }
+        return decodeTeamMessageSnapshot(await post('conversations/messages/snapshot/get', target, true), str(p.messageRef))
+      }
+
       case 'team.app.external.mine': case 'team.app.external.share': {
         const source = await this.contacts?.openSourceRef?.(str(p.sourceRef), actor)
         if (!source || source.kind !== 'private_chat') throw invalid()
@@ -910,6 +949,7 @@ export class TeamAppService {
         if (p.quote !== undefined && (!quote || !reply || quote.recordVersion !== num(p.replyRecordVersion))) throw invalid()
         try {
           const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: await this.mentionContent(p.content,actor,context),
+            ...(p.metadataRef ? {record_metadata:await this.frozenMetadata(p.metadataRef,actor,context,str(p.clientUid),'send')} : {}),
             ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
           return { message: await this.message(data, actor, context) }
         } catch (error) {
@@ -926,6 +966,7 @@ export class TeamAppService {
       }
       case 'team.app.edit': {
         const m = await this.open('message', p.messageRef, actor), explicitMentions = obj(p.content).mentions !== undefined, content = await this.mentionContent(p.content,actor,m), payload = {...obj(content.content_payload)}
+        if (p.conversationRef) {const context=await conversation();if(context.conversation_uid!==m.conversation_uid||context.side!==m.side)throw invalid()}
         if (m.has_mentions === true && !explicitMentions) {
           const data = await post('conversations/messages/batch-get', {conversation_uid:m.conversation_uid,side:m.side,items:[{message_uid:m.message_uid,expected_record_version:num(p.version)}]}, true)
           const rows = list(data.messages), row = rows[0], original = obj(row?.record)
@@ -934,7 +975,8 @@ export class TeamAppService {
           if (mentions) payload.mention_metadata = mentions
           if (Object.keys(payload).length) content.content_payload = {...payload, payload_kind:payload.payload_kind ?? 1, schema_version:1, text_state:1}
         }
-        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content})
+        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content,
+          ...(p.metadataRef ? await this.frozenMetadata(p.metadataRef,actor,m,str(p.revisionUid),'edit',m.message_uid) : p.revisionUid ? {revision_uid:str(p.revisionUid)} : {})})
       }
       case 'team.app.cancel': {
         if (p.conversationRef !== undefined) {

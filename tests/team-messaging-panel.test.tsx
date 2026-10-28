@@ -369,7 +369,8 @@ describe('Team send UI recovery', () => {
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
     const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
     expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
-    expect(snapshot.props.metadataUnavailable).toContain('暂未接通')
+    expect(snapshot.props.metadataUnavailable).toContain('未提供')
+    expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.snapshot.read')).toBe(true)
     expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
     expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
     await act(async () => snapshot.props.onClose())
@@ -1164,4 +1165,38 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('重试')
     expect(JSON.stringify(renderer!.toJSON())).toContain('草稿未能保存到本机')
   })
+  it('recovers a frozen edit by exact receipt after remount without overwriting a later version',async()=>{
+    const pending={messageKey:'own',messageRef:'old-opaque-ref',version:1,content:{template_kind:1,text_content:'未确认的修改'},revisionUid:'stable-edit',protocolVersion:1,metadataRef:'sealed-private'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'下一条草稿',assets:[],pendingEdit:pending}))
+    const own:TeamMessage={key:'own',ref:'refreshed-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{template_kind:1,text_content:'后续版本'},media:[]}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.receipt'?{revisionUid:'stable-edit',accepted:true,acceptedVersion:2,currentVersion:3}:[])
+    await mount()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('未确认的修改')
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(true)
+    await send()
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.edit')).toHaveLength(0)
+    const saved=JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.pendingEdit).toBeUndefined();expect(saved.text).toBe('下一条草稿')
+  })
+  it('can dismiss an orphaned edit recovery item while preserving the next composer',async()=>{
+    localStorage.setItem(storageKey,JSON.stringify({text:'下一条草稿',assets:[],pendingEdit:{messageKey:'deleted',messageRef:'old-ref',version:1,content:{template_kind:1,text_content:'old edit'},revisionUid:'stable-edit',protocolVersion:1,metadataRef:'sealed-private'}}))
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    const dismiss=renderer!.root.findAllByType('button').find(button=>button.children.includes('关闭待核对项'))!
+    await act(async()=>dismiss.props.onClick())
+    const saved=JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.pendingEdit).toBeUndefined();expect(saved.text).toBe('下一条草稿')
+    expect(mocks.call.mock.calls.some(([op])=>op==='team.app.edit')).toBe(false)
+  })
+  it('discards a late private snapshot after closing the dialog',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'body'},media:[]}
+    let finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise(resolve=>finish=resolve):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onClose())
+    await act(async()=>finish({schemaVersion:1,version:1,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'private-device'}}}))
+    expect(renderer!.root.findAllByType(ArkmeMessageSnapshotDialog)).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('private-device')
+  })
+
 })

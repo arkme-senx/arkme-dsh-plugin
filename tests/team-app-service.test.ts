@@ -1255,3 +1255,24 @@ it('recovers an uncertain open from the frozen target after Host recreation with
  expect(f.requests.filter(v=>v.path.endsWith('/open-by-member')).map(v=>v.body.external_user_id)).toEqual(['123','123'])
  await expect(reopened.execute('team.app.outbound.open',{...params,recipient:{kind:'contact-lookup',contactRef:'different'}})).rejects.toThrow()
 })
+
+it('seals exact capture with account environment conversation and operation binding',async()=>{
+ const f=fixture(path=>path.endsWith('/messages/send')?{...message,own:true,actor_user_id:90,side:'external'}:({conversation,channel})),destination=(await open(f)).conversation!.ref
+ const uid='11111111-1111-4111-8111-111111111111'
+ const metadata={record_started_at:1000,send_at:1000,capture_context:{schema_version:1,captured_at:1000,client_name:'private-original',device_state:'recorded',location_state:'permission_denied'}}
+ const seal=async()=>await f.service.execute('team.app.snapshot.seal',{conversationRef:destination,operationUid:uid,kind:'send',metadata}) as {metadataRef:string}
+ const a=await seal(),b=await seal()
+ expect(a.metadataRef).not.toBe(b.metadataRef);expect(a.metadataRef).not.toContain('private-original')
+ expect(await f.service.sendMetadataDigest(destination,uid,a.metadataRef,90)).toBe(await f.service.sendMetadataDigest(destination,uid,b.metadataRef,90))
+ await expect(f.service.sendMetadataDigest(destination,'22222222-2222-4222-8222-222222222222',a.metadataRef,90)).rejects.toThrow()
+ await f.service.execute('team.app.send',{conversationRef:destination,clientUid:uid,content:{text_content:'body',template_kind:1},metadataRef:a.metadataRef})
+ expect(f.requests.findLast(r=>r.path.endsWith('/messages/send'))!.body.record_metadata).toEqual(metadata)
+ f.changeAccount()
+ await expect(f.service.sendMetadataDigest(destination,uid,a.metadataRef,90)).rejects.toThrow()
+})
+it('keeps unsupported capabilities separate from provider failures',async()=>{
+ const old=fixture(()=>new Response('not found',{status:404}))
+ await expect(old.service.execute('team.app.snapshot.capabilities',{})).resolves.toEqual({schemaVersion:0})
+ const broken=fixture(()=>new Response('unavailable',{status:503}))
+ await expect(broken.service.execute('team.app.snapshot.capabilities',{})).rejects.toThrow()
+})
