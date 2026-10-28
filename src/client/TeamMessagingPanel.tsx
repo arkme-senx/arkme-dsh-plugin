@@ -558,9 +558,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     if (!latest.current.conversation.channel.enabled || latest.current.conversation.blocked) return
     const target = draft.reply ?? (defaultReply ? {messageRef:defaultReply.ref,messageKey:defaultReply.key,version:defaultReply.version,text:defaultReply.content?.text_content ?? '',title:defaultReply.content?.title ?? '',media:defaultReply.media,senderName:defaultReply.sender.nickname} : undefined)
     const attempt = draft.attempt ?? { ...(target ? {reply:structuredClone(target)} : {}), uid: crypto.randomUUID(), createdAt: Date.now(), startedAtMillis: draft.startedAtMillis, content: teamDraftContent(draft), expectedReplySeq: timeline.conversation.latestTeamReplySeq, fileRefs: (draft.localFiles ?? []).map(file => file.fileRef) }
-    const acceptedDraft = { ...draft, startedAtMillis: draft.attempt ? draft.startedAtMillis : undefined, text: draft.attempt ? draft.text : '', mentions:draft.attempt ? draft.mentions ?? [] : [], attempt }
+    const acceptedDraft = { ...draft, startedAtMillis: draft.attempt ? draft.startedAtMillis : undefined, text: draft.attempt ? draft.text : '', attempt }
     // The frozen attempt owns this reply now; the live composer is the next draft.
     delete acceptedDraft.reply
+    if(!draft.attempt) delete acceptedDraft.mentions
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
     setOutgoing(outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender))
@@ -569,7 +570,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (ctrl.current.signal.aborted) return
       if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送状态暂时无法确认，请重试'))
       delivery.accept(task)
-      const next = { text: draftRef.current.text, mentions:draftRef.current.mentions ?? [], startedAtMillis: draftRef.current.startedAtMillis, assets: [] }
+      const next = { text: draftRef.current.text, ...(draftRef.current.mentions?.length ? {mentions:draftRef.current.mentions} : {}), startedAtMillis: draftRef.current.startedAtMillis, assets: [] }
       // Host admission is durable even if browser draft cleanup fails. The old
       // on-disk attempt keeps its UID so a remount can only replay the same send.
       try { persistTeamDraft(localStorage, storageKey, next) }
@@ -585,7 +586,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
         if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
-          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), mentions:[...(attempt.content.mentions ?? []),...(draftRef.current.text && draftRef.current.text !== attempt.content.text_content ? (draftRef.current.mentions ?? []).map(m=>({...m,startIndex:m.startIndex+(attempt.content.text_content ? attempt.content.text_content.length+2 : 0)})) : [])], assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
+          const mentions=[...(attempt.content.mentions ?? []),...(draftRef.current.text && draftRef.current.text !== attempt.content.text_content ? (draftRef.current.mentions ?? []).map(m=>({...m,startIndex:m.startIndex+(attempt.content.text_content ? attempt.content.text_content.length+2 : 0)})) : [])]
+          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), ...(mentions.length ? {mentions} : {}), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
         }

@@ -147,7 +147,7 @@ it('reads exactly one sparse mention page, continues explicitly and aborts after
 it('bounds loaded people rows at 200 while keeping an explicit path back to latest',async()=>{
  let seq=300
  const person={nickname:'访客',personRef:'sealed',personKey:'key'}
- call.mockImplementation(async()=>{const messages=Array.from({length:50},()=>message(seq--));return {conversation,messages,hasMore:true,beforeSeq:seq+1}})
+ call.mockImplementation(async()=>{const messages=Array.from({length:50},()=>({...message(seq--),sender:{nickname:'访客',personKey:'key'}}));return {conversation,messages,hasMore:true,beforeSeq:seq+1}})
  await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="test:90" person={person} onClose={onClose} onLocate={onLocate}/>);await tick()})
  for(let i=0;i<4;i++)await act(async()=>{findButton('加载更早消息').click();await tick()})
  expect(call).toHaveBeenCalledTimes(5)
@@ -156,7 +156,7 @@ it('bounds loaded people rows at 200 while keeping an explicit path back to late
 })
 it('aborts old person pages and never mixes late results into a replacement identity',async()=>{
  let finish!:(value:unknown)=>void
- call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValue({conversation,messages:[message(2)],hasMore:false,beforeSeq:2})
+ call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValue({conversation,messages:[{...message(2),sender:{nickname:'second',personKey:'second'}}],hasMore:false,beforeSeq:2})
  const render=(ref:string)=><TeamVisitorRecords conversation={conversation} accountKey="test:90" person={{nickname:ref,personRef:ref,personKey:ref}} onClose={onClose} onLocate={onLocate}/>
  await act(async()=>{root.render(render('first'));await tick()})
  const firstSignal=call.mock.calls[0]![2]

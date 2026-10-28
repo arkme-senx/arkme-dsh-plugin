@@ -790,7 +790,7 @@ describe('Team send UI recovery', () => {
     await act(async()=>detail.props.onLocate())
     expect(row().props.located).toBe(true)
     await act(async()=>row().findByProps({'aria-label':'宏顺 的用户卡片'}).props.onContextMenu({preventDefault(){},stopPropagation(){},clientX:10,clientY:10}))
-    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions[0].onSelect())
+    await act(async()=>renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.actions.some((a: { id: string }) => a.id === 'owner-records'))!.props.actions.find((a:{id:string})=>a.id==='owner-records').onSelect())
     expect(renderer!.root.findByType(TeamVisitorRecords).props.person).toMatchObject({personKey:'person-key',nickname:'宏顺'})
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
