@@ -16,3 +16,7 @@ export async function openNativeAccountSession(session: Pick<DshAccountSession, 
     accountScope: surface.getAttribute('data-arkme-account-scope') ?? '',
   } satisfies NativeSessionRequest }))
 }
+
+/** The outer shell retains account-scoped selection; the native frame renders available history. */
+export const HARNESS_HISTORY_PREVIEW = 'arkme:harness-history-preview'
+export type HarnessHistoryPreviewRequest = { session: DshAccountSession; accountId: string; accountScope: string }

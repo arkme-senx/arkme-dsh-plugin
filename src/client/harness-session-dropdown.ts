@@ -315,9 +315,9 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const rect = trigger.getBoundingClientRect()
     const width = Math.min(CONVERSATION_MENU_LAYOUT.width, win!.innerWidth - 24)
     const anchor = external?.anchor()
-    const hoverPosition = anchor && conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight })
-    const top = hoverPosition?.top ?? Math.max(8, Math.min(rect.bottom + 7, win!.innerHeight - 100))
-    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
+    const hoverPosition = anchor && external?.placement !== 'below' ? conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight }) : undefined
+    const top = hoverPosition?.top ?? Math.max(8, Math.min((anchor?.bottom ?? rect.bottom) + 7, win!.innerHeight - 100))
+    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(anchor?.left ?? rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
     variable(current.column, '--arkme-session-top', `${top}px`)
     variable(current.column, '--arkme-session-width', `${width}px`)
     variable(current.column, '--arkme-session-height', `${Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - top - CONVERSATION_MENU_LAYOUT.viewportInset)}px`)
