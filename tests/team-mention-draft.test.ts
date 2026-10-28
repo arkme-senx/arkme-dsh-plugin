@@ -15,6 +15,6 @@ it('retains exact identities through emoji encoding, persistence and edits; typi
  const restored=loadTeamDraft(storage,'account:conversation')
  expect(restored.mentions).toEqual(mentions)
  expect(updateTeamDraftText(restored,'前缀'+encoded.text).mentions?.[0]?.startIndex).toBe(mentions[0]!.startIndex+2)
- expect(updateTeamDraftText(restored,encoded.text.replace('@同名','@新名')).mentions).toEqual([])
+ expect(updateTeamDraftText(restored,encoded.text.replace('@同名','@新名')).mentions).toBeUndefined()
  expect(reconcileArkmeComposerMentions('','@同名',[])).toEqual([])
 })

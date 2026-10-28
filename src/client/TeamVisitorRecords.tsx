@@ -34,7 +34,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
         }, active?.signal)
         if (active?.signal.aborted || active !== controller.current) return
         if (page.conversation.side !== 'team') throw new Error(tr('当前无法查看此团队对话'))
-        const items = page.messages.filter(m => (personRef || (person ? !!person.personKey && m.sender.personKey === person.personKey : m.side === 'external')) && m.state === 'published' && m.contentStatus === 'available')
+        const items = page.messages.filter(m => (mode === 'mentioned' && !!personRef || (target?.personKey ? m.sender.personKey === target.personKey : m.side === 'external')) && m.state === 'published' && m.contentStatus === 'available')
         if (page.hasMore && (!page.beforeSeq || before.current > 0 && page.beforeSeq >= before.current)) throw new Error(tr('历史消息分页异常，请重试'))
         const next=[...new Map([...loaded.current,...items].map(m=>[m.key,m])).values()].sort((a,b)=>b.seq-a.seq)
         if(next.length>200)setWindowed(true)

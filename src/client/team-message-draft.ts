@@ -21,8 +21,11 @@ export function loadTeamDraft(storage: Pick<Storage, 'getItem'>, key: string): T
 
 /** Start on actual content input, retain across blur/remount, reset only once a draft is empty. */
 export function updateTeamDraftText(draft: TeamDraft, text: string, now = Date.now()): TeamDraft {
-  return { ...draft, text, mentions:rebaseTeamMentions(draft.text,text,draft.mentions), startedAtMillis: text || draft.assets.length || draft.localFiles?.length || draft.attachments?.length
+  const mentions=rebaseTeamMentions(draft.text,text,draft.mentions)
+  const next = { ...draft, text, startedAtMillis: text || draft.assets.length || draft.localFiles?.length || draft.attachments?.length
     ? validTeamDraftStart(draft.startedAtMillis) ?? now : undefined }
+  if(mentions.length) next.mentions=mentions; else delete next.mentions
+  return next
 }
 export function validTeamDraftStart(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
