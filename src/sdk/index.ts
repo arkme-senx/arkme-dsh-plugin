@@ -2303,6 +2303,10 @@ export class ArkmeSdk {
     if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持群内团队身份')
     return await this.call('team.app.group.context',{sourceRef},signal)
   }
+  async teamOutboundOpen(teamRef:string,recipient:import('../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../team-outbound-contract.js').TeamOutboundOpenResult>{
+    if((await this.capabilities(signal)).features.teamOutboundReception!==1)throw new Error('当前 Provider 不支持主动团队接待，请升级')
+    return await this.call('team.app.outbound.open',{teamRef,recipient,requestUid},signal)
+  }
   async teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamPublicCard>{
     if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持公开团队名片')
     return await this.call('team.app.public-card',{jotmoId},signal)
@@ -3068,3 +3072,5 @@ export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contr
 export type {TeamMention} from '../team-app-contract.js'
 
 export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
+
+export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'

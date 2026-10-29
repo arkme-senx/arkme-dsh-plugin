@@ -408,7 +408,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       receiptStore.refreshVisible(true)
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
   }, [conversation.ref, receiptStore])
   const returnToLatest = async () => {
     if (historyWindow.current) {
@@ -581,7 +581,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
-        if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
+        if (['social-phone-binding-required', 'team-invalid_request', 'team-invalid_recipient', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
           const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, ...restoreTeamDraftContent(attempt.content,draftRef.current), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
@@ -680,10 +680,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     })
   }
   if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
-  const rawCurrent = timeline?.conversation ?? conversation
+  const availableCurrent = timeline?.conversation ?? conversation
+  const rawCurrent = loadError && availableCurrent.visitor ? {...availableCurrent,visitor:{...availableCurrent.visitor,memberType:'unknown' as const}} : availableCurrent
   const rawVisitor = rawCurrent.visitor
-  const visitorIdentity = visibleMessages.find(m => m.side === 'external' && m.sender.personKey)?.sender
-  const withVisitorIdentity = rawVisitor && visitorIdentity && !rawVisitor.personKey ? { ...visitorIdentity, ...rawVisitor } : rawVisitor
+  const withVisitorIdentity = rawVisitor
   const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
   const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
   const personRecordsRevision = useMemo(() => JSON.stringify([timeline?.conversation.revision ?? conversation.revision,

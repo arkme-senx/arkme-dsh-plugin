@@ -2222,20 +2222,21 @@ export class ChatService {
   }
 
   async openPrivateChatFromUser(
-    peerUserId: number,
+    peerUserId: RecordOwnerId,
     options: { presentationDisplayName?: string; expectedViewerUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
+    peerUserId=recordOwnerId(peerUserId)
     const session = await this.runtime.requireSession()
     if (options.expectedViewerUserId !== undefined && options.expectedViewerUserId !== session.userId) {
       throw new ArkmePluginError('member-events-unavailable', '账号已切换，请重新打开用户卡片', false, 403)
     }
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
     }
-    if (peerUserId === session.userId) {
+    if (String(peerUserId) === String(session.userId)) {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
-    const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
+    const profile = typeof peerUserId === 'number' ? (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId) : undefined
     const displayName = options.presentationDisplayName?.trim() || profile?.displayName.trim() || '群成员'
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/create-private',
@@ -2263,12 +2264,12 @@ export class ChatService {
         ?? await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
       sourceKey: existingPrivateSource?.sourceKey
         ?? await this.source.chatDirectorySourceKey(session.userId, uid),
-      peerUserId,
+      ...(typeof peerUserId === 'number' ? {peerUserId} : {}),
       kind: 'private_chat',
       displayName: existingPrivateSource?.displayName ?? displayName,
       ...(existingPrivateSource?.avatarRef !== undefined
         ? { avatarRef: existingPrivateSource.avatarRef }
-        : profile?.avatarUrl === undefined
+        : profile?.avatarUrl === undefined || typeof peerUserId !== 'number'
           ? {}
           : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
       activeAtMillis: numberValue(chatSession.last_active_at) || existingPrivateSource?.activeAtMillis || Date.now(),
@@ -2318,7 +2319,7 @@ export class ChatService {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者私聊资料缺失，请稍后重试', true, 502)
     }
     const peerUserId = Math.trunc(numberValue(partner.user_id))
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者账号资料缺失，请稍后重试', true, 502)
     }
     const displayName = stringValue(partner.mark).trim()

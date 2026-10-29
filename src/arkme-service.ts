@@ -641,7 +641,11 @@ export class ArkmeService {
           ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
         }
       },
-    })
+    }, { resolve: async (recipient, session, signal) => {
+      if(recipient.kind==='chat-member')return (await this.chat.memberWorldTarget(recipient.sourceRef,recipient.memberRef,signal)).userId
+      if(recipient.kind==='directory-contact')return await this.contactDirectory.resolveTeamRecipient(recipient.contactRef,signal)
+      return await this.contact.resolveRegisteredContactUserId(recipient.contactRef,session,signal)
+    } })
     this.teamDelivery = new TeamSendQueue({
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
@@ -848,9 +852,11 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime, this.teamApp)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
-      resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
-        contactRef, session, signal,
-      ),
+      resolveRegisteredContactUserId: async (contactRef, session, signal) => {
+        const id=await this.contact.resolveRegisteredContactUserId(contactRef,session,signal)
+        if(typeof id!=='number')throw new ArkmePluginError('voiceprint-target-unsupported','当前声纹端口不支持此用户标识',false,409)
+        return id
+      },
     })
     this.auth = new AuthService(this.runtime, this.profile, {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
@@ -1235,6 +1241,7 @@ arkoImagesV1:true,
         arkoHistoryReadsV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
+        teamOutboundReception: 1,
         teamGroupRepresentation: 1,
         teamProfiles: true,
         teamExternalChats: true,
@@ -2507,6 +2514,7 @@ arkoImagesV1:true,
   }
 
   async groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('./team-group-contract.js').TeamGroupContext>{return await this.teamApp.execute('team.app.group.context',{sourceRef},signal) as import('./team-group-contract.js').TeamGroupContext}
+  async teamOutboundOpen(teamRef:string,recipient:import('./team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('./team-outbound-contract.js').TeamOutboundOpenResult>{return await this.teamApp.execute('team.app.outbound.open',{teamRef,recipient,requestUid},signal) as import('./team-outbound-contract.js').TeamOutboundOpenResult}
   async teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('./team-group-contract.js').TeamPublicCard>{return await this.teamApp.execute('team.app.public-card',{jotmoId},signal) as import('./team-group-contract.js').TeamPublicCard}
   async sendSourceText(
     sourceRef: string,

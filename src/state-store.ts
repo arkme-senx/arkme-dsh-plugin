@@ -33,6 +33,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+ teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   recordingToolBatches?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
@@ -376,6 +377,7 @@ function parseState(raw: string): PersistedState {
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     offlineContextJournal:source.offlineContextJournal,
+ ...(source.teamOutboundByAccount === undefined ? {} : {teamOutboundByAccount:source.teamOutboundByAccount as NonNullable<PersistedState['teamOutboundByAccount']>}),
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -878,6 +880,19 @@ export class ArkmeStateStore {
       } else {
         state.pendingByUser[key] = next
       }
+    })
+  }
+
+  async teamOutboundTarget(scope: string, requestUid: string): Promise<import('./team-outbound-contract.js').TeamOutboundRecovery | undefined> {
+    return this.read(state => { const entries=state.teamOutboundByAccount?.[scope]; const value=entries && Object.hasOwn(entries,requestUid) ? entries[requestUid] : undefined; return value ? structuredClone(value) : undefined })
+  }
+  async retainTeamOutboundTarget(scope: string, requestUid: string, value: import('./team-outbound-contract.js').TeamOutboundRecovery): Promise<void> {
+    await this.update(state => {
+      const entries=(state.teamOutboundByAccount??={})[scope]??={}
+      const old=Object.hasOwn(entries,requestUid)?entries[requestUid]:undefined
+      if(old && (old.teamId!==value.teamId || old.targetId!==value.targetId || old.selection!==value.selection))throw new Error('同一打开请求不能更换客户')
+      Object.defineProperty(entries,requestUid,{value:structuredClone(value),writable:true,enumerable:true,configurable:true})
+      while(Object.keys(entries).length>64)delete entries[Object.keys(entries)[0]!]
     })
   }
 
