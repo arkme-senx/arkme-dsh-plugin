@@ -12,7 +12,7 @@ const snapshot = (kind: 'folder' | 'conversation', extra = {}): TeamEntryPrefere
 const page = (items: TeamEntryPreferenceSnapshot[]): TeamEntryPreferencePage => ({ schemaVersion: 1, items, hasMore: false })
 function fixture() {
   const rows = new Map<string, TeamEntryPreferenceSnapshot>([['team-ref', snapshot('folder')], ['conversation-ref', snapshot('conversation')]])
-  const transport = vi.fn(async (operation: string, p: Record<string, any>) => {
+  const transport = vi.fn(async (operation: string, p: Record<string, any>, _signal?: AbortSignal) => {
     if (operation.endsWith('.cached') || operation.endsWith('.list')) return page([...rows.values()])
     if (operation.endsWith('.query')) return page(p.entries.map((e: any) => rows.get(e.ref)!))
     for (const c of p.changes) {
@@ -131,4 +131,56 @@ it('cancelled navigation neither writes nor blocks the next user command', async
   expect(teamEntryHidden(f.store.read('a'), direct)).toBe(true)
   expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).map(([, p]) => p.changes[0].action)).toEqual(['dismiss'])
   expect(f.store.error('a')).toBe('')
+})
+
+it('a later permission denial cannot be overwritten by an older in-flight projection', async () => {
+  const f = fixture(), original = f.transport.getMockImplementation()!
+  const old = page([snapshot('conversation', { pinned: true, version: 3 }), snapshot('folder', { pinned: true, version: 3 })])
+  let complete!: (value: TeamEntryPreferencePage) => void
+  let queries = 0
+  f.transport.mockImplementation(async (op, p) => {
+    if (op.endsWith('.query') && ++queries === 1) return new Promise<TeamEntryPreferencePage>(resolve => { complete = resolve })
+    return original(op, p)
+  })
+  const previous = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await vi.waitFor(() => expect(queries).toBe(1))
+  f.rows.set('team-ref', snapshot('folder', { accessible: false, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { accessible: false, activitySeq: 0 }))
+  const revoked = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  complete(old)
+  await Promise.all([previous, revoked])
+  expect(f.store.canPresent('a', conversation)).toBe(false)
+  expect(f.store.missingPins('a', [])).toEqual([])
+  // A later authorized read may establish new access; denial is not permanent.
+  f.rows.set('team-ref', snapshot('folder', { version: 4 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { version: 4 }))
+  await f.store.reconcile('a', [conversation], new AbortController().signal)
+  expect(f.store.canPresent('a', conversation)).toBe(true)
+})
+
+it('a cancelled reconciliation does not dispatch or poison later commands', async () => {
+  const f = fixture(), controller = new AbortController()
+  controller.abort()
+  const previous = f.store.reconcile('a', [conversation], controller.signal)
+  const write = f.store.pin('a', direct, true)
+  await expect(previous).rejects.toMatchObject({ name: 'AbortError' })
+  await write
+  expect(teamEntryPinned(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.every(([, , signal]) => !signal?.aborted)).toBe(true)
+})
+it('a slow reconciliation in one account does not block another account', async () => {
+  const f = fixture(), original = f.transport.getMockImplementation()!
+  let complete!: (value: TeamEntryPreferencePage) => void
+  f.transport.mockImplementation(async (op, p) => {
+    if (p.expectedAccountKey === 'a') return new Promise<TeamEntryPreferencePage>(resolve => { complete = resolve })
+    return original(op, p)
+  })
+  const read = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await vi.waitFor(() => expect(complete).toBeDefined())
+  await f.store.pin('b', direct, true)
+  expect(teamEntryPinned(f.store.read('b'), direct)).toBe(true)
+  complete(page([snapshot('conversation'), snapshot('folder')]))
+  await read
+  expect(teamEntryPinned(f.store.read('a'), direct)).toBe(false)
 })
