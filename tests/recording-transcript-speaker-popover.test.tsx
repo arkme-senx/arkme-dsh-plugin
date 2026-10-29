@@ -32,7 +32,7 @@ describe('recording transcript speaker popover', () => {
       if (operation === 'recordings.day') return {
         dateStamp: 1,
         totalDurationMillis: 1_000,
-        transcript: {
+        transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
           state: 'ready',
           message: '',
           totalDurationMillis: 1_000,

@@ -1,7 +1,9 @@
+import { readCompleteRecordingTranscript } from '../../src/recording-transcript-page.js'
+import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, recordingRevision, speakerReference } from '../fixtures/recording-owner.js'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
@@ -19,6 +21,15 @@ import {
 } from '../../src/recording-import-contract.js'
 import type { RecordingImportGateway } from '../../src/recording-import-coordinator.js'
 
+const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
+beforeEach(() => {
+  vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
+    return originalAudioPost.call(this, path, body, session, ...rest)
+  })
+})
+afterEach(() => vi.restoreAllMocks())
+
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
   recordBaseUrl: 'https://record.test', chatBaseUrl: 'https://chat.test', botBaseUrl: 'https://bot.test',
@@ -29,6 +40,163 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('exposes only aggregate capture coverage alongside received transcript work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme capture coverage '))
+    try {
+      const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+      const dayStart = new Date(2026, 8, 12).getTime()
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStart,
+          captureState: 'interrupted', coverage: { processing_count: 1 }, items: [{ text: '已收到的正文' }],
+        }]) ?? {}
+        return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+      })
+      const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl), dependencies())
+      const page = await service.recordingTranscriptPage(dayStart)
+      expect(page.captureCoverage).toEqual({ receiving: 0, interrupted: 1 })
+      expect(page.processingCount).toBe(1)
+      expect(page.items[0]?.text).toBe('已收到的正文')
+      expect(JSON.stringify(page)).not.toContain('recording_uid')
+      expect(JSON.stringify(page)).not.toContain('capture_state')
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+  it('seals the owner locator and resolves playback when requested', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme semantic media '))
+    try {
+      const sessions: ArkmeSessionStore = {
+        async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+        async write() {}, async delete() {},
+      }
+      const date = '2026-09-10'
+      const dayStart = new Date(`${date}T00:00:00`).getTime()
+      const locator = { child_id: childId, source: 'enhanced' as const, ordinal: 0 }
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+        const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStart, items: [],
+          enhanced: [{ text: 'Unknown speaker can play', start: 1000, end: 2000, speaker: { reference: '', kind: 'unknown', user_id: 0, label: '未知说话人' } }],
+        }]) ?? {}
+        return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+      })
+      const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'private-clip-ref') }
+      const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl), dependencies(gatewayNoop(), { media }))
+      const day = await service.recordingComparison(dayStart)
+      const item = day.doubao.items[0]!
+      expect(JSON.stringify(item)).not.toMatch(/audio_revision|refresh/)
+      expect(item.itemRef).not.toContain(locator.child_id)
+      expect(item).not.toHaveProperty('playbackRef')
+      expect((await service.recordingPlayback(item.itemRef)).playbackRef).toBe('private-clip-ref')
+      expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith(expect.objectContaining({
+        viewerUserId: 42, locator,
+      }), undefined)
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
+
+  it('pages workbench text with sealed cursors and explicitly exhausts unicode fragments for full consumers', async () => {
+    const startAt = new Date(2026, 8, 10).getTime()
+    const text = `  ${'汉🎙'.repeat(15_000)} 尾部\n`
+    const items = [{ text, start: 0, end: 1000 }, ...Array.from({ length: 250 }, (_, i) => ({ text: `句子 ${i}`, start: (i + 1) * 1000, end: (i + 2) * 1000 }))]
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'page-fixture' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ path, body })
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 300_000, items }])
+      if (data === undefined) throw new Error('Unexpected non-owner read')
+      return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+    })
+    const service = new RecordingService(runtime, dependencies())
+    const first = await service.recordingTranscriptPage(startAt)
+    expect(first.items).toHaveLength(1)
+    expect(first.items[0]!.textEndOffset).toBe(20_000)
+    expect(first.nextCursor).toMatch(/^arkme-recording-page-v1\./)
+    expect(first.viewRef).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(JSON.stringify(first)).not.toMatch(/recording_uid|child_id|speaker_reference|audio_revision/)
+    expect(calls.filter(call => call.path.endsWith('/transcript/query')).map(call => call.body.limit)).toEqual([1, 100])
+    const complete = await readCompleteRecordingTranscript(first, cursor => service.recordingTranscriptPage(startAt, { cursor }))
+    expect(complete.items.map(item => item.text)).toEqual(items.map(item => item.text))
+    expect(complete.items[0]!.textTotalLength).toBe(Array.from(text).length)
+    expect(complete.items[0]!.textEndOffset).toBe(Array.from(text).length)
+    expect(complete.nextCursor).toBe('')
+    expect(complete.viewRef).toBe(first.viewRef)
+    expect(new Set(complete.items.map(item => item.itemId)).size).toBe(items.length)
+    runtime.requestCoordinator.dispose()
+  })
+
+  it('fences continuations by account, source, date and every owner revision', async () => {
+    const startAt = new Date(2026, 8, 10).getTime()
+    let userId = 42, revision = recordingRevision
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: string[] = []
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'page-fixture' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname; calls.push(path)
+      const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt, revision, duration: 300_000,
+        items: Array.from({ length: 250 }, (_, i) => ({ text: `句子 ${i}` })),
+      }])
+      return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+    })
+    const service = new RecordingService(runtime, dependencies())
+    const first = await service.recordingTranscriptPage(startAt)
+    const count = calls.length
+    await expect(service.recordingTranscriptPage(startAt, { source: 'doubao', cursor: first.nextCursor })).rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+    await expect(service.recordingTranscriptPage(startAt + 86_400_000, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+    await expect(service.recordingTranscriptPage(startAt, { cursor: `${first.nextCursor}tampered` })).rejects.toMatchObject({ code: 'recording-ref-invalid' })
+    userId = 43
+    await expect(service.recordingTranscriptPage(startAt, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
+    expect(calls).toHaveLength(count)
+    userId = 42; revision = 'b'.repeat(64)
+    await expect(service.recordingTranscriptPage(startAt, { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'recording-view-changed' })
+    runtime.requestCoordinator.dispose()
+  })
+
+  it.each(['HooXi', '', undefined])('preserves owner identity and manual names while enriching the self profile: %s', async displayName => {
+    const startAt = new Date(2026, 8, 10).getTime()
+    const snapshots = [{ startAt, items: [
+      { text: '本人', speaker: { label: '我的声纹', user_id: 42 } },
+      { text: '同名他人', speaker: { reference: 'speaker:cccccccccccccccc', label: 'HooXi', user_id: 43 } },
+      { text: '真实背景声', background: true, event: '工作', speaker: { reference: '', kind: 'unknown', label: '未知说话人', user_id: 0 } },
+    ] }]
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'identity-fixture' } as StateStore, async (input, init) => {
+      const data = recordingOwnerResponse(new URL(String(input)).pathname, JSON.parse(String(init?.body ?? '{}')), snapshots)
+      if (data === undefined) throw new Error('The speaker registry is unavailable')
+      return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+    })
+    const service = new RecordingService(runtime, dependencies(gatewayNoop(), { profile: {
+      publicProfileSummariesByUserIds: async () => displayName === undefined ? new Map() : new Map([[42, { displayName, nickname: '', avatarUrl: 'https://example.test/self.png' }], [43, { displayName: '其他人的昵称', nickname: '' }]]) as never,
+      sealProfileImageRef: async () => 'opaque-avatar',
+    } }))
+    const first = await service.recordingTranscriptPage(startAt)
+    expect(first.items.map(item => item.speakerLabel)).toEqual([displayName || '我的声纹', 'HooXi', '未知说话人'])
+    expect(first.items.map(item => item.isSelf)).toEqual([true,false,false])
+    expect(first.items.map(item => item.canBindSpeaker)).toEqual([true,true,false])
+    expect(first.items[0]!.speakerKey).not.toBe(first.items[1]!.speakerKey)
+    expect(first.items[2]!.isBackground).toBe(true)
+    if (displayName !== undefined) expect(first.items[0]!.speakerAvatarRef).toBe('opaque-avatar')
+    expect(JSON.stringify(first)).not.toMatch(/speaker_reference|speaker:cccccccccccccccc/)
+    runtime.requestCoordinator.dispose()
+  })
+
+  it('keeps overlapping owner facts and includes the longest interval in complete generation', async () => {
+    const startAt = new Date(2026, 8, 10).getTime(), requests: Array<Record<string, unknown>> = []
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const long = '汉🎙'.repeat(15_000)
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'overlap-fixture' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      let data = recordingOwnerResponse(path, body, [{ startAt, duration: 60_000, items: [
+        { text: long, start: 0, end: 60_000 }, { text: '最后的重叠句', start: 10_000, end: 20_000 },
+      ] }])
+      if (path.endsWith('/summary/create')) { requests.push(body); data = { summary_id: 'accepted', flag: 1 } }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
+    })
+    const service = new RecordingService(runtime, dependencies())
+    await service.generateRecordingProjection(startAt, 'summary')
+    expect(requests[0]!.to_stamp).toBe(startAt + 60_000)
+    expect(requests[0]!.transcripts).toContain(long)
+    expect(requests[0]!.transcripts).toContain('最后的重叠句')
+    runtime.requestCoordinator.dispose()
+  })
   it('finishes the foreground day while background slots are occupied, including a queued shared profile read', async () => {
     const f = await speakerCacheFixture()
     const profile = new ProfileService(f.runtime)
@@ -39,6 +207,7 @@ describe('RecordingService', () => {
       scope: 'test:42', lane: 'background-read', service: 'audio', operation: () => gate,
     }))
     f.state.rows = [{ speaker_id: 'speaker', nick_name: '甲', ref_usr_id: 7 }]
+    f.state.ownerRecordings = [{startAt: new Date(2026, 9, 12).getTime(), items: [{text: '内容', speaker: {user_id: 7}}]}]
     const session = await f.runtime.requireSession()
     const background = profile.publicProfileSummariesByUserIds([7], session)
     let completed = false
@@ -59,8 +228,9 @@ describe('RecordingService', () => {
     const database = new ArkmeLocalDatabase(root, new ArkmeStateStore(root))
     let session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sessions: ArkmeSessionStore = { async read() { return session }, async write(value) { session = value }, async delete() {} }
-    const state = { rows: [{ speaker_id: 'speaker', nick_name: '甲' }] as Array<{ speaker_id: string; nick_name: string; ref_usr_id?: number }>, failWrite: false,
+    const state = { rows: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '甲' }] as Array<{ speaker_id: string; reference?: string; nick_name: string; ref_usr_id?: number }>, failWrite: false,
       members: {} as Record<string, unknown>, presenceMissing: false, recentDayStart: 0, recentTranscript: null as Record<string, unknown> | null,
+      ownerRecordings: undefined as OwnerTestRecording[] | undefined,
       transcripts: undefined as Record<number, Record<string, unknown>> | undefined,
       calendar: undefined as Record<string, unknown> | undefined,
       totalsSessions: [] as Record<string, unknown>[],
@@ -69,7 +239,7 @@ describe('RecordingService', () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       calls.push(path)
-      if (state.failWrite && path.endsWith('/assign-asr-item-to-spk')) throw new Error('unknown write result')
+      if (state.failWrite && path.endsWith('/recordings/transcript/speaker/assign')) throw new Error('unknown write result')
       if (state.presenceMissing && path.endsWith('/speaker-presence/list')) return new Response('', { status: 404 })
       let data: Record<string, unknown> = {}
       if (path.endsWith('/get-public-users-by-ids')) data = { items: [{ user_id: 7, nick_name: '甲' }] }
@@ -86,14 +256,12 @@ describe('RecordingService', () => {
         session_ls: [{ id: 'session', belong_usr: session.userId, start_at: 3600000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
         child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '内容' }] }],
       }
-      if (state.transcripts && path.endsWith('/one-day-trans')) {
-        const request = JSON.parse(String(init?.body ?? '{}'))
-        data = state.transcripts[request.start_at] ?? { session_ls: [], child_ls: [] }
-      }
       if (state.presenceMissing && path.endsWith('/one-day-trans')) {
         const request = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
         if (request.start_at === state.recentDayStart && state.recentTranscript !== null) data = state.recentTranscript
       }
+      if (path.endsWith('/recordings/transcript/speaker/assign') || path.endsWith('/recordings/speakers/bind')) data = { changed_items: 1, changed_clusters: 0 }
+      data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), state.ownerRecordings ?? [{ startAt: 3600000, items: [{ text: '内容', start: 1000, end: 2000 }] }]) ?? data
       return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
     }) as typeof fetch
     const runtime = new ServiceRuntime(config, sessions, database, fetchImpl)
@@ -102,66 +270,22 @@ describe('RecordingService', () => {
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
 
-  it('reads the totals index and bucket through existing endpoints without speaker or generated-content requests', async () => {
-    const f = await speakerCacheFixture()
-    const day = new Date(2026, 8, 1).getTime()
-    f.state.totalsSessions = [{ id: 'secret-session-id', user_id: 42, belong_usr: 0, start_at: day, update_at: day, has_done_child: true }]
-    f.state.transcripts = { [day]: { session_ls: f.state.totalsSessions.map(s => ({ ...s, end_at: day + 1000 })), child_ls: [
-      { id: 'secret-child-id', session_id: 'secret-session-id', start_at: 0, duration: 1000, archive_size: 100, size: 20, has_asr: true,
-        asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 1000, spans: [[0, 1000]] } },
-    ] } }
-    try {
-      const index = await f.service.recordingTotalsIndex('test:42', Date.now(), 0)
-      expect(index).toMatchObject({ items: [{ dateStamp: day, pending: false }], nextOffset: null })
-      expect(JSON.stringify(index)).not.toContain('secret-session-id')
-      const result = await f.service.recordingTotalsBucket('test:42', day)
-      expect(result).toMatchObject({ sessionCount: 1, metrics: { storage: { bytes: 120 }, asrInput: { durationMillis: 1000 } } })
-      expect(JSON.stringify(result)).not.toContain('secret-child-id')
-      expect(f.calls).toEqual(['/api/v1/audio/get-session-ls', '/api/v1/audio/one-day-trans'])
-      await expect(f.service.recordingTotalsBucket('test:7', day)).rejects.toThrow('账号已切换')
-      await expect(f.service.recordingTotalsIndex('test:42', Date.now(), -1)).rejects.toThrow()
-    } finally { await f.close() }
-  })
-
-  it('reads account-wide totals through the existing monthly request without loading historical transcripts', async () => {
-    const fixture = await speakerCacheFixture()
-    const from = new Date(2026, 9, 1).getTime(), to = new Date(2026, 10, 1).getTime()
-    const totals = { version: 2, scope: 'all_uploaded_recordings', as_of_ms: from,
-      storage: { state: 'ready', bytes: 123456, archive_bytes: 23456, clip_bytes: 100000 }, asr_input: { state: 'partial', duration_ms: 987654, basis: 'observed' } }
-    fixture.state.calendar = { duration_ls: [5000], un_click_session_ids_per_day: [[]], recording_totals: totals }
-    try {
-      expect(await fixture.service.recordingCalendar(from, to)).toMatchObject({ days: [{ durationMillis: 5000 }],
-        totals: { storage: { bytes: 123456 }, asrInput: { state: 'partial', durationMillis: 987654 } } })
-      expect(fixture.calls.filter(path => path.startsWith('/api/v1/audio/'))).toEqual(['/api/v1/audio/get-calender-summary'])
-      fixture.state.calendar = { duration_ls: [6000], un_click_session_ids_per_day: [[]] }
-      const next = await fixture.service.recordingCalendar(new Date(2026, 8, 1).getTime(), from)
-      expect(next.days[0]?.durationMillis).toBe(6000)
-      expect(next.totals).toBeUndefined()
-    } finally { await fixture.close() }
-  })
-
-  it('resolves entity evidence from full owned sessions without speaker/profile requests or dropping midnight continuation', async () => {
+  it('resolves complete entity evidence through the paged owner without speaker or profile requests', async () => {
     const profiles = vi.fn(async () => new Map())
     const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'unused' } })
     const date = new Date(2026, 7, 12).getTime()
-    fixture.state.presenceMissing = true
-    fixture.state.recentDayStart = date
-    fixture.state.recentTranscript = {
-      session_ls: [{ id: 's', belong_usr: 42, start_at: date, end_at: date + 86_401_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
-        asr: [{ s: 1000, e: 2000, n: 1, b: 1, t: '  (背景音) 🙂武汉  ' }, { s: 86_400_000, e: 86_401_000, t: '次日' }],
-        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '豆包原文' }] }],
-    }
+    const text = `  (背景音) 🙂${'汉🎙'.repeat(15_000)}武汉  `
+    fixture.state.ownerRecordings = [{ startAt: date, items: [{ text, start: 1000, end: 2000 }], enhanced: [{ text: '豆包原文', start: 1000, end: 2000 }] }]
     try {
       const session = await fixture.runtime.requireSession()
       expect(await fixture.service.entityTranscriptRows(date, 'system', session)).toMatchObject([
-        { sessionId: 's', childId: 'c', asrItemIndex: 0, transcriptSource: 'system', text: '🙂武汉', rawTranscriptText: '  (背景音) 🙂武汉  ' },
-        { sessionId: 's', childId: 'c', asrItemIndex: 1, transcriptSource: 'system', text: '次日' },
+        { sessionId: recordingId, childId, asrItemIndex: 0, transcriptSource: 'system', text },
       ])
       expect(await fixture.service.entityTranscriptRows(date, 'doubao', session)).toMatchObject([
         { transcriptSource: 'doubao', text: '豆包原文', asrItemIndex: 0 },
       ])
-      expect(fixture.calls).toEqual(['/api/v1/audio/one-day-trans', '/api/v1/audio/one-day-trans'])
+      expect(fixture.calls.every(path => path.endsWith('/recordings/query') || path.endsWith('/recordings/transcript/query'))).toBe(true)
+      expect(fixture.calls.filter(path => path.endsWith('/transcript/query')).length).toBeGreaterThan(4)
       expect(profiles).not.toHaveBeenCalled()
     } finally { await fixture.close() }
   })
@@ -169,13 +293,8 @@ describe('RecordingService', () => {
   it('opens Explore evidence on the original ASR source and rejects mismatched anchors', async () => {
     const fixture = await speakerCacheFixture()
     const date = new Date(2026, 7, 12).getTime(), start = date + 9 * 3600000
-    fixture.state.transcripts = { [date]: {
-      session_ls: [{ id: 's', belong_usr: 42, start_at: start, end_at: start + 3000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-      child_ls: [{ id: 'c', session_id: 's', start_at: 0,
-        asr: [{ s: 1000, e: 2000, n: 1, t: '系统原文' }],
-        doubao_asr: [{ s: 1000, e: 2000, n: 1, t: '生日是十月二十八日' }] }],
-    } }
-    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
+    fixture.state.ownerRecordings = [{startAt: start, items: [{text: '系统原文', start: 1000, end: 2000}], enhanced: [{text:'生日是十月二十八日', start:1000, end:2000}]}]
+    const owner = { container_id: recordingId, child_id: childId, item_ordinal: 0, start_at: start + 1000, transcript_source: 'doubao' }
     try {
       const source = await fixture.service.exploreRecordingEvidence(owner, '十月二十八日')
       expect(source.dateStamp).toBe(date)
@@ -196,11 +315,33 @@ describe('RecordingService', () => {
       const day = await fixture.service.recordingDay(browserDate, undefined, window)
       expect(day.dateStamp).toBe(browserDate)
       const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
-      expect(requests.find(call => call.path.endsWith('/one-day-trans'))?.body).toEqual({ start_at: window.dateStamp, end_at: window.endStamp, tz_offset: -5 * 3600_000 })
+      expect(requests.find(call => call.path.endsWith('/recordings/query'))?.body).toMatchObject({ start_at: window.dateStamp, end_at: window.endStamp })
       expect(requests.filter(call => call.path.endsWith('/list-timeline-by-range')).map(call => call.body)).toEqual([1, 2].map(kind => ({ from_stamp: window.dateStamp, to_stamp: window.endStamp, date_stamp: window.dateStamp, kind })).reverse())
       for (const invalid of [{ ...window, timeZone: 'invalid-zone' }, { ...window, endStamp: window.dateStamp + 86400_000 }]) {
         await expect(fixture.service.recordingDay(window.dateStamp, undefined, invalid)).rejects.toMatchObject({ code: 'recording-window-invalid' })
       }
+    } finally { await fixture.close() }
+  })
+
+  it('carries the original DST window across sealed continuations and refreshes', async () => {
+    const fixture = await speakerCacheFixture()
+    const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
+    const browserDate = Date.parse('2026-03-08T00:00:00+09:00')
+    const items = Array.from({ length: 250 }, (_, i) => ({ start: i * 1000, end: (i + 1) * 1000, text: `通知晚间 ${i}` }))
+    fixture.state.ownerRecordings = [{ startAt: window.endStamp - 3600_000, items }]
+    try {
+      const first = await fixture.service.recordingTranscriptPage(browserDate, { window })
+      expect(first.nextCursor).not.toBe('')
+      expect(first.window).toEqual(window)
+      const complete = await readCompleteRecordingTranscript(first, cursor => fixture.service.recordingTranscriptPage(browserDate, { cursor }))
+      expect(complete.items.map(item => item.text)).toEqual(items.map(item => item.text))
+      const refreshed = await fixture.service.recordingTranscriptPage(browserDate, { window: complete.window })
+      expect(refreshed.viewRef).toBe(first.viewRef)
+      const differentWindow = { date: '2026-03-08', timeZone: 'Asia/Tokyo', dateStamp: browserDate, endStamp: browserDate + 86400_000 }
+      await expect(fixture.service.recordingTranscriptPage(browserDate, { cursor: first.nextCursor, window: differentWindow })).rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+      const reads = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) => String(url).endsWith('/recordings/query')).map(([, init]) => JSON.parse(String(init?.body)))
+      expect(reads.length).toBeGreaterThan(1)
+      expect(reads.every(body => body.start_at === window.dateStamp && body.end_at === window.endStamp)).toBe(true)
     } finally { await fixture.close() }
   })
 
@@ -209,23 +350,20 @@ describe('RecordingService', () => {
     const window = { date: '2026-03-08', timeZone: 'America/New_York', dateStamp: Date.parse('2026-03-08T00:00:00-05:00'), endStamp: Date.parse('2026-03-09T00:00:00-04:00') }
     const browserDate = differentBrowserZone ? Date.parse('2026-03-08T00:00:00+09:00') : new Date(2026, 2, 8).getTime()
     const start = window.endStamp - 3600_000 // Outside the browser's March 8, inside the original DST day.
-    fixture.state.transcripts = { [window.dateStamp]: {
-      session_ls: [{ id: 'session', belong_usr: 42, start_at: start, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-      child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 1000, e: 2000, n: 1, t: '通知日的晚间录音' }] }],
-    } }
+    fixture.state.ownerRecordings = [{startAt:start,items:[{start:1000,end:2000,text:'通知日的晚间录音'}]}]
     try {
       const day = await fixture.service.recordingDay(browserDate, undefined, window)
       expect(day.transcript.items).toHaveLength(1)
       const options = await fixture.service.recordingSpeakerOptions()
       const result = await fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })
-      expect(result).toMatchObject({ scope, affectedCount: 1, day: { dateStamp: browserDate, transcript: { items: [expect.objectContaining({ text: '通知日的晚间录音' })] } } })
+      expect(result).toMatchObject({ scope, changedItems: 1, day: { dateStamp: browserDate, transcript: { items: [expect.objectContaining({ text: '通知日的晚间录音' })] } } })
       const requests = (fixture.fetchImpl as ReturnType<typeof vi.fn>).mock.calls.map(([url, init]) => ({ path: new URL(String(url)).pathname, body: JSON.parse(String(init?.body ?? '{}')) }))
-      const reads = requests.filter(call => call.path.endsWith('/one-day-trans'))
+      const reads = requests.filter(call => call.path.endsWith('/recordings/query'))
       expect(reads.length).toBeGreaterThan(0)
-      expect(reads.every(call => call.body.start_at === window.dateStamp && call.body.end_at === window.endStamp && call.body.tz_offset === -5 * 3600_000)).toBe(true)
-      expect(requests.some(call => call.path.endsWith(scope === 'item' ? '/assign-asr-item-to-spk' : '/batch-assign-session-num-to-spk'))).toBe(true)
+      expect(reads.every(call => call.body.start_at === window.dateStamp && call.body.end_at === window.endStamp)).toBe(true)
+      expect(requests.some(call => call.path.endsWith(scope === 'item' ? '/recordings/transcript/speaker/assign' : '/recordings/speakers/bind'))).toBe(true)
       // Refreshed items retain the same scope for a subsequent edit too.
-      await expect(fixture.service.assignRecordingSpeaker({ itemRef: result.day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })).resolves.toMatchObject({ affectedCount: 1 })
+      await expect(fixture.service.assignRecordingSpeaker({ itemRef: result.day.transcript.items[0]!.itemRef, speakerRef: options[0]!.speakerRef, scope })).resolves.toMatchObject({ changedItems: 1 })
     } finally { await fixture.close() }
   })
 
@@ -359,6 +497,29 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
+  it('keeps one stable candidate for linked identities without merging namesakes', async () => {
+    const fixture = await speakerCacheFixture()
+    try {
+      fixture.state.rows = [
+        { speaker_id: 'z', reference: speakerReference, nick_name: '甲' },
+        { speaker_id: 'b', reference: 'speaker:cccccccccccccccc', nick_name: '甲' },
+        { speaker_id: 'a', reference: speakerReference, nick_name: '甲' },
+      ]
+      fixture.state.ownerRecordings = [{startAt:3600000, items:[{text:'内容', start:1000, end:2000, edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}}]}]
+      const first = await fixture.service.recordingSpeakerOptions()
+      expect(first).toHaveLength(2)
+      expect(first[0]!.optionKey).not.toBe(first[1]!.optionKey)
+      fixture.state.rows.reverse()
+      const reordered = await fixture.service.recordingSpeakerOptions()
+      expect(reordered.map(candidate => candidate.optionKey)).toEqual(first.map(candidate => candidate.optionKey))
+      const day = await fixture.service.recordingDay(new Date(1970, 0, 1).getTime())
+      expect(day.transcript.items[0]!.assignedSpeakerOptionKey).toBe(first[0]!.optionKey)
+      await fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef, speakerRef: first[0]!.speakerRef, scope: 'item' })
+      const write = fixture.fetchImpl.mock.calls.find(([, init]) => String(init?.body).includes('target_speaker_uid'))
+      expect(JSON.parse(String(write?.[1]?.body)).target_speaker_uid).toBe('a')
+    } finally { await fixture.close() }
+  })
+
   it('replaces persistent candidates with the fresh owner result including an empty directory', async () => {
     const fixture = await speakerCacheFixture()
     try {
@@ -404,7 +565,7 @@ describe('RecordingService', () => {
       fixture.state.rows = []
       await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
         speakerRef: candidate!.speakerRef, scope: 'item' })).rejects.toMatchObject({ code: 'recording-speaker-target-missing' })
-      expect(fixture.calls.some(path => path.endsWith('/assign-asr-item-to-spk'))).toBe(false)
+      expect(fixture.calls.some(path => path.endsWith('/recordings/transcript/speaker/assign'))).toBe(false)
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
     } finally { await fixture.close() }
   })
@@ -418,7 +579,7 @@ describe('RecordingService', () => {
       await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
         newSpeakerName: '新说话人', scope: 'item' })).rejects.toThrow()
       expect(fixture.calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
-      expect(fixture.calls.filter(path => path.endsWith('/assign-asr-item-to-spk'))).toHaveLength(1)
+      expect(fixture.calls.filter(path => path.endsWith('/recordings/transcript/speaker/assign'))).toHaveLength(1)
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
     } finally { await fixture.close() }
   })
@@ -435,6 +596,7 @@ describe('RecordingService', () => {
       await expect(pending).rejects.toMatchObject({ code: 'recording-speaker-context-changed' })
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
     } finally { await fixture.close() }
+
   })
 
   function oneSecondMonoWav(): Buffer {
@@ -462,18 +624,11 @@ describe('RecordingService', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ path, body })
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{
-          id: 'session-secret', user_id: 42, belong_usr: 42, start_at: dayStart + 14 * 3_600_000,
-          end_at: dayStart + 14 * 3_600_000 + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker-secret' }],
-        }],
-        child_ls: [{
-          id: 'child-secret', session_id: 'session-secret', start_at: 0,
-          asr: [{ s: 0, e: 5_000, n: 1, t: '完成方案评审', p: '工作' }],
-        }],
-      }
+      data = recordingOwnerResponse(path, body, [{ startAt: dayStart + 14 * 3_600_000, duration: 5_000,
+        items: [{ text: '完成方案评审', start: 0, end: 5_000, event: '工作' }],
+      }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = {
-        spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '我', ref_usr_id: 42 }],
+        spk_ls: [{ speaker_id: 'speaker-secret', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }],
       }
       if (path.endsWith('/summary/create')) data = { summary_id: 'summary-opaque', flag: 1 }
       if (path.endsWith('/list-timeline-by-range')) data = {
@@ -522,10 +677,11 @@ describe('RecordingService', () => {
     }
     const dayStart = new Date(2026, 7, 31).getTime()
     const paths: string[] = []
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       paths.push(path)
-      const data = path.endsWith('/one-day-trans') ? { session_ls: [], child_ls: [] } : { spk_ls: [] }
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      const data = recordingOwnerResponse(path, {}, []) ?? { spk_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
         status: 200, headers: { 'content-type': 'application/json' },
       })
@@ -548,22 +704,16 @@ describe('RecordingService', () => {
     }
     const dayStart = new Date(2026, 7, 31).getTime()
     const paths: string[] = []
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       paths.push(path)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{
-          id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 120_000,
-          spk_ls: [{ num: 1, spk_id: 'speaker' }],
-        }],
-        child_ls: [
-          { id: 'completed', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '已经完成的转写' }] },
-          { id: 'pending', session_id: 'session', start_at: 60_000, duration: 60_000, has_asr: false, asr: [] },
-        ],
-      }
+      data = recordingOwnerResponse(path, body, [{ startAt: dayStart, duration: 120_000,
+        items: [{ text: '已经完成的转写', start: 0, end: 5_000 }], coverage: { processing_count: 1 },
+      }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = {
-        spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }],
+        spk_ls: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }],
       }
       if (path.endsWith('/summary/create')) data = { summary_id: 'summary-partial', flag: 1 }
       if (path.endsWith('/list-timeline-by-range')) data = {
@@ -650,15 +800,14 @@ describe('RecordingService', () => {
       async write() {}, async delete() {},
     }
     const dayStart = new Date(2026, 7, 31).getTime()
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       if (path.endsWith('/list-timeline-by-range')) return new Response('upstream unavailable', { status: 503 })
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: 'session', belong_usr: 42, start_at: dayStart, end_at: dayStart + 5_000, spk_ls: [{ num: 1, spk_id: 'speaker' }] }],
-        child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 5_000, n: 1, t: '完成评审' }] }],
-      }
-      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', nick_name: '我', ref_usr_id: 42 }] }
+      data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStart, duration: 5_000,
+        items: [{ text: '完成评审', start: 0, end: 5_000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'speaker', reference: speakerReference, nick_name: '我', ref_usr_id: 42 }] }
       if (path.endsWith('/summary/create')) data = { summary_id: 'accepted-summary', flag: 1 }
       return new Response(JSON.stringify({ code: 200, data }), {
         status: 200, headers: { 'content-type': 'application/json' },
@@ -680,12 +829,11 @@ describe('RecordingService', () => {
       async write() {}, async delete() {},
     }
     const dayStart = new Date(2026, 7, 31).getTime()
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-      const data = path.endsWith('/one-day-trans') ? {
-        session_ls: [{ id: 'session-pending', start_at: dayStart, end_at: dayStart + 60_000, duration: 60_000 }],
-        child_ls: [{ id: 'child-pending', session_id: 'session-pending', start_at: 0, duration: 60_000, has_asr: false, asr: [] }],
-      } : { spk_ls: [] }
+      const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{ startAt: dayStart, duration: 60_000,
+        items: [], coverage: { processing_count: 1 },
+      }]) ?? { spk_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
         status: 200, headers: { 'content-type': 'application/json' },
       })
@@ -709,13 +857,10 @@ describe('RecordingService', () => {
     const fixture = await speakerCacheFixture()
     const dayStart = new Date(2026, 8, 18).getTime()
     try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
         const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        const data = path.endsWith('/one-day-trans') ? {
-          session_ls: [{ id: 'silent-secret', user_id: 42, belong_usr: 42, start_at: dayStart + 8 * 3600000, end_at: dayStart + 20 * 3600000, duration: 12 * 3600000 }],
-          child_ls: [{ session_id: 'silent-secret', start_at: dayStart + 8 * 3600000, duration: 12 * 3600000, has_asr: true, asr: [] }],
-        } : { spk_ls: [] }
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+        const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{startAt: dayStart + 8 * 3600000, duration: 12 * 3600000, items: []}]) ?? {spk_ls: []}
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day = await fixture.service.recordingDay(dayStart)
       expect(day.transcript).toMatchObject({ state: 'empty', items: [], message: '已有录音，暂无转写内容' })
@@ -724,149 +869,102 @@ describe('RecordingService', () => {
     } finally { await fixture.close() }
   })
 
-  it('returns daily metrics through the existing day read without extra remote requests or private IDs',async()=>{
+  it('returns owner storage on the bounded day read without old full-day payloads or private IDs',async()=>{
     const fixture=await speakerCacheFixture(), dayStart=new Date(2026,8,30).getTime()
     try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async input=>{
+      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init)=>{
         const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
-        const data=path.endsWith('/one-day-trans')?{
-          session_ls:[{id:'session-secret',user_id:42,belong_usr:42,start_at:dayStart,end_at:dayStart+60000,spk_ls:[{num:1,spk_id:'speaker-secret'}]}],
-          child_ls:[{id:'child-secret',session_id:'session-secret',start_at:0,duration:60000,has_asr:true,archive_size:123456,size:1000,source_size:999999,asr_input_metrics:{state:'ready',basis:'observed',duration_ms:5000,spans:[[0,5000]]},asr:[{s:0,e:1000,n:1,t:'你好 🙂'}]}],
-        }:{spk_ls:[]}
+        const data=recordingOwnerResponse(path,JSON.parse(String(init?.body ?? '{}')),[{startAt:dayStart,items:[{text:'你好 🙂'}],
+          storage:{bytes:124456,archive_bytes:123456,clip_bytes:1000,confirmed_count:1,pending_count:0,unknown_count:0}, asrInput:{duration_ms:5000,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}}]) ?? {spk_ls:[]}
         return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day=await fixture.service.recordingDay(dayStart)
-      expect(day.transcript.dailyMetrics).toMatchObject({storage:{bytes:124456,archiveBytes:123456,clipBytes:1000,state:'ready'},archiveBytes:123456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
+      expect(day.transcript.dailyMetrics).toMatchObject({storage:{bytes:124456,archiveBytes:123456,clipBytes:1000,state:'ready'},archiveBytes:124456,archiveState:'ready',confirmedCount:1,pendingCount:0,unknownCount:0,textCount:3,asrInputEstimatedCount:0,asrInputDurationMillis:5000,asrInputState:'ready',asrInputConfirmedCount:1,asrInputPendingCount:0,asrInputUnknownCount:0})
       expect(JSON.stringify(day.transcript.dailyMetrics)).not.toContain('secret')
-      expect(fixture.fetchImpl).toHaveBeenCalledTimes(4)
+      expect(fixture.fetchImpl.mock.calls.some(([input])=>String(input).includes('/one-day-trans'))).toBe(false)
     }finally{await fixture.close()}
   })
 
   it.each([
-    ['2026-03-08T00:00:00-05:00', '2026-03-09T00:00:00-04:00', 23, -5],
-    ['2026-11-01T00:00:00-04:00', '2026-11-02T00:00:00-05:00', 25, -4],
-  ] as const)('requests the complete local day across DST: %s', async (start, end, hours, offsetHours) => {
-    vi.stubEnv('TZ', 'America/New_York')
-    const fixture = await speakerCacheFixture(), dayStart = Date.parse(start), dayEnd = Date.parse(end)
+    ['2026-03-08T00:00:00-05:00','2026-03-09T00:00:00-04:00',23],
+    ['2026-11-01T00:00:00-04:00','2026-11-02T00:00:00-05:00',25],
+  ] as const)('requests the complete local day across DST: %s',async(start,end,hours)=>{
+    vi.stubEnv('TZ','America/New_York')
+    const fixture=await speakerCacheFixture(), dayStart=Date.parse(start), dayEnd=Date.parse(end)
     try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
-        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        let data: Record<string, unknown> = { spk_ls: [] }
-        if (path.endsWith('/one-day-trans')) {
-          const request = JSON.parse(String(init?.body))
-          expect(request).toEqual({ start_at: dayStart, end_at: dayEnd, tz_offset: offsetHours * 3600000 })
-          expect(request.end_at - request.start_at).toBe(hours * 3600000)
-          data = {
-            session_ls: [{ id: 's', user_id: 42, belong_usr: 42, start_at: dayEnd - 60000, end_at: dayEnd }],
-            child_ls: [{ id: 'c', session_id: 's', start_at: dayEnd - 60000, duration: 60000,
-              has_asr: true, asr: [], asr_input_metrics: {
-                state: 'ready', basis: 'observed', duration_ms: 60000, spans: [[0, 60000]],
-              } }],
-          }
-        }
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      let observed=false
+      fixture.fetchImpl.mockImplementation(async(input,init)=>{
+        const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
+        const body=JSON.parse(String(init?.body ?? '{}'))
+        if(path.endsWith('/recordings/query')) {observed=true;expect(body).toMatchObject({start_at:dayStart,end_at:dayEnd});expect(body.end_at-body.start_at).toBe(hours*3600000)}
+        const data=recordingOwnerResponse(path,body,[{startAt:dayEnd-60000,duration:60000,items:[],asrInput:{duration_ms:60000,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}}])??{spk_ls:[]}
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
-      expect((await fixture.service.recordingTranscript(dayStart)).dailyMetrics)
-        .toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 60000 })
-    } finally {
-      await fixture.close()
-      vi.unstubAllEnvs()
-    }
+      expect((await fixture.service.recordingTranscript(dayStart)).dailyMetrics).toMatchObject({asrInputState:'ready',asrInputDurationMillis:60000})
+      expect(observed).toBe(true)
+    } finally {await fixture.close();vi.unstubAllEnvs()}
   })
 
-  it('keeps system input metrics identical when switching to Doubao text', async () => {
-    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
-    const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+  it('keeps system input metrics identical when switching to Doubao text',async()=>{
+    const fixture=await speakerCacheFixture(),dayStart=new Date(2026,9,8).getTime()
     try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
-        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        let data: Record<string, unknown> = { spk_ls: [] }
-        if (path.endsWith('/one-day-trans')) {
-          expect(JSON.parse(String(init?.body))).toEqual({
-            start_at: dayStart, end_at: dayEnd.getTime(), tz_offset: -new Date(dayStart).getTimezoneOffset() * 60_000 || 0,
-          })
-          const child = {
-            id: 'child-secret', session_id: 'session-secret', start_at: dayStart, duration: 60000,
-            has_asr: true, archive_size: 1234, asr: [],
-            doubao_asr: [{ s: 0, e: 1000, n: 1, t: '豆包文字' }],
-            asr_input_metrics: { state: 'ready', basis: 'observed', duration_ms: 8000, spans: [[1000, 5000], [3000, 7000]] },
-          }
-          data = {
-            session_ls: [{ id: 'session-secret', user_id: 42, belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
-            child_ls: [child, child],
-          }
-        }
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+      fixture.fetchImpl.mockImplementation(async(input,init)=>{
+        const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
+        const data=recordingOwnerResponse(path,JSON.parse(String(init?.body ?? '{}')),[{startAt:dayStart,items:[],enhanced:[{text:'豆包文字'}],storage:{bytes:1234,confirmed_count:1,pending_count:0,unknown_count:0},asrInput:{duration_ms:8000,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}}])??{spk_ls:[]}
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
-      const comparison = await fixture.service.recordingComparison(dayStart)
+      const comparison=await fixture.service.recordingComparison(dayStart)
       expect(comparison.system.items).toEqual([])
-      expect(comparison.doubao.items.map(item => item.text)).toEqual(['豆包文字'])
-      expect(comparison.system.dailyMetrics).toMatchObject({
-        asrInputState: 'ready', asrInputDurationMillis: 8000, asrInputConfirmedCount: 1, textCount: 0,
-      })
-      expect(comparison.doubao.dailyMetrics).toEqual({ ...comparison.system.dailyMetrics, textCount: 4 })
-      expect(JSON.stringify(comparison.system.dailyMetrics)).not.toContain('secret')
-      expect(fixture.fetchImpl).toHaveBeenCalledTimes(2)
-    } finally { await fixture.close() }
+      expect(comparison.doubao.items.map(item=>item.text)).toEqual(['豆包文字'])
+      expect(comparison.system.dailyMetrics).toMatchObject({asrInputState:'ready',asrInputDurationMillis:8000,asrInputConfirmedCount:1,textCount:0})
+      expect(comparison.doubao.dailyMetrics).toEqual({...comparison.system.dailyMetrics,textCount:4})
+      expect(fixture.fetchImpl.mock.calls.some(([input])=>String(input).includes('/one-day-trans'))).toBe(false)
+    }finally{await fixture.close()}
   })
 
-  it.each([undefined, { state: 'unavailable', duration_ms: null, spans: null },
-    { state: 'ready', basis: 'observed', duration_ms: 5000, spans: [[0, 60001]] },
-  ])('does not hide existing text or archive size when input telemetry is unavailable: %j', async asr_input_metrics => {
-    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
-    try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
-        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        const data = path.endsWith('/one-day-trans') ? {
-          session_ls: [{ id: 's', user_id: 42, belong_usr: 42, start_at: dayStart, end_at: dayStart + 60000 }],
-          child_ls: [{ id: 'c', session_id: 's', start_at: 0, duration: 60000, has_asr: true,
-            archive_size: 1234, asr: [{ s: 0, e: 1000, n: 1, t: '仍可读取' }], asr_input_metrics }],
-        } : { spk_ls: [] }
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+  it.each([undefined,null,{duration_ms:-1,confirmed_count:1,pending_count:0,unknown_count:0,estimated_count:0}])('does not hide existing text or archive size when input telemetry is unavailable: %j',async asrInput=>{
+    const fixture=await speakerCacheFixture(),dayStart=new Date(2026,9,8).getTime()
+    try{
+      fixture.fetchImpl.mockImplementation(async(input,init)=>{
+        const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
+        const data=recordingOwnerResponse(path,JSON.parse(String(init?.body??'{}')),[{startAt:dayStart,items:[{text:'仍可读取'}],storage:{bytes:1234,confirmed_count:1,pending_count:0,unknown_count:0}}])??{spk_ls:[]}
+        if(path.endsWith('/recordings/transcript/query'))data.asr_input=asrInput
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
-      const day = await fixture.service.recordingDay(dayStart)
+      const day=await fixture.service.recordingDay(dayStart)
       expect(day.transcript.state).toBe('ready')
-      expect(day.transcript.items.map(item => item.text)).toEqual(['仍可读取'])
-      expect(day.transcript.dailyMetrics).toMatchObject({
-        archiveState: 'ready', archiveBytes: 1234, textCount: 4,
-        asrInputState: 'unavailable', asrInputConfirmedCount: 0,
-      })
-    } finally { await fixture.close() }
+      expect(day.transcript.items.map(item=>item.text)).toEqual(['仍可读取'])
+      expect(day.transcript.dailyMetrics).toMatchObject({archiveState:'ready',archiveBytes:1234,textCount:4,asrInputState:'unavailable',asrInputConfirmedCount:0})
+    }finally{await fixture.close()}
   })
 
-  it.each(['empty', 'failed'] as const)('distinguishes a confirmed empty day from a failed read: %s', async outcome => {
-    const fixture = await speakerCacheFixture(), dayStart = new Date(2026, 9, 8).getTime()
-    try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
-        const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        if (path.endsWith('/one-day-trans') && outcome === 'failed') throw new Error('audio unavailable')
-        const data = path.endsWith('/one-day-trans') ? { session_ls: [], child_ls: [] } : { spk_ls: [] }
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+  it.each(['empty','failed'] as const)('distinguishes a confirmed empty day from a failed read: %s',async outcome=>{
+    const fixture=await speakerCacheFixture(),dayStart=new Date(2026,9,8).getTime()
+    try{
+      fixture.fetchImpl.mockImplementation(async(input,init)=>{
+        const path=new URL(typeof input==='string'||input instanceof URL?input:input.url).pathname
+        if(path.endsWith('/recordings/query')&&outcome==='failed')throw new Error('audio unavailable')
+        const data=recordingOwnerResponse(path,JSON.parse(String(init?.body??'{}')),[])??{spk_ls:[]}
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
-      const day = await fixture.service.recordingDay(dayStart)
-      if (outcome === 'empty') {
-        expect(day.transcript.dailyMetrics).toMatchObject({ asrInputState: 'ready', asrInputDurationMillis: 0 })
-      } else {
-        expect(day.transcript.state).toBe('error')
-        expect(day.transcript.dailyMetrics).toBeUndefined()
-      }
-    } finally { await fixture.close() }
+      const day=await fixture.service.recordingDay(dayStart)
+      if(outcome==='empty')expect(day.transcript.dailyMetrics).toMatchObject({asrInputState:'ready',asrInputDurationMillis:0})
+      else{expect(day.transcript.state).toBe('error');expect(day.transcript.dailyMetrics).toBeUndefined()}
+    }finally{await fixture.close()}
   })
 
   it('attributes timeline coverage and speech independently of who uploaded or spoke, retaining transcript access', async () => {
     const fixture = await speakerCacheFixture()
     const dayStart = new Date(2026, 8, 18).getTime(), hour = 3600000
     try {
-      vi.mocked(fixture.fetchImpl).mockImplementation(async input => {
+      vi.mocked(fixture.fetchImpl).mockImplementation(async (input, init) => {
         const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
-        const source = (id: string, belong_usr: number, at: number) => ({ id, user_id: 42, belong_usr, start_at: dayStart + at * hour, end_at: dayStart + (at + 1) * hour, duration: hour, spk_ls: [{ num: 1, spk_id: id === 'own-secret' ? 'partner' : 'self' }] })
-        const audio = (session_id: string, at: number) => ({ id: `${session_id}-child`, session_id, start_at: dayStart + at * hour, duration: hour, has_asr: true, asr: [{ s: 0, e: 1000, n: 1, t: `${session_id} content` }] })
-        const data = path.endsWith('/one-day-trans') ? {
-          session_ls: [source('own-secret', 42, 8), source('other-secret', 99, 10), source('unmarked-secret', 0, 12)],
-          child_ls: [audio('own-secret', 8), audio('other-secret', 10), audio('unmarked-secret', 12)],
-        } : path.endsWith('/get-speaker-ls') ? { spk_ls: [{ id: 'self', ref_usr_id: 42 }, { id: 'partner', ref_usr_id: 77 }] } : {}
-        return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+        const data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [
+          {id:'111111111111111111111111',memoryOwnerUserId:42,startAt:dayStart+8*hour,duration:hour,items:[{text:'own',speaker:{user_id:77}}]},
+          {id:'222222222222222222222222',memoryOwnerUserId:99,startAt:dayStart+10*hour,duration:hour,items:[{text:'other',speaker:{user_id:42}}]},
+          {id:'333333333333333333333333',memoryOwnerUserId:0,startAt:dayStart+12*hour,duration:hour,items:[{text:'unmarked',speaker:{user_id:42}}]},
+        ]) ?? {spk_ls: []}
+        return new Response(JSON.stringify({code:200,data}),{status:200})
       })
       const day = await fixture.service.recordingDay(dayStart)
       expect(day.coverage).toMatchObject({ state: 'ready', intervals: [{ startAtMillis: dayStart + 8 * hour, endAtMillis: dayStart + 9 * hour }] })
@@ -1951,32 +2049,26 @@ describe('RecordingService', () => {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const recordingDate = new Date(1970, 0, 1).getTime()
+    const recordingDate = new Date(2024, 0, 1).getTime()
     const calls: Array<{ path: string; body: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ path: url.pathname, body })
       let data: Record<string, unknown> = {}
-      if (url.pathname.endsWith('/one-day-trans')) data = {
-        session_ls: [{
-          id: 'session-secret', belong_usr: 42, start_at: Math.max(0, recordingDate) + 3_600_000,
-          spk_ls: [{ num: 1, spk_id: 'speaker-secret' }, { num: -1, spk_id: 'speaker-secret' }],
-        }],
-        child_ls: [{
-          id: 'child-secret', session_id: 'session-secret', start_at: 0,
-          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
-          asr: [
-            { s: 1_000, e: 2_000, n: 1, t: '项目复盘' },
-            { s: 3_000, e: 4_000, n: 1, t: '继续讨论' },
-            { s: 5_000, e: 6_000, n: 1, q: 'speaker-secret', t: '单片段标记' },
-          ],
-        }],
-      }
+      data = recordingOwnerResponse(url.pathname, body, [{ startAt: recordingDate + 3_600_000,
+        items: [
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000, speaker: { label: '小林', user_id: 88 } },
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '继续讨论', start: 3000, end: 4000, speaker: { label: '小林', user_id: 88 } },
+          { edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '单片段标记', start: 5000, end: 6000, speaker: { label: '小林', user_id: 88 } },
+        ],
+      }]) ?? data
       if (url.pathname.endsWith('/get-speaker-ls')) data = {
-        spk_ls: [{ speaker_id: 'speaker-secret', nick_name: '小林', ref_usr_id: 88 }],
+        spk_ls: [{ speaker_id: 'speaker-secret', reference: speakerReference, nick_name: '小林', ref_usr_id: 88 }],
       }
-      if (url.pathname.endsWith('/similar-session-speaker')) data = { speaker_id: 'speaker-secret' }
+      if (url.pathname.endsWith('/speaker/suggestion')) data = { speaker_uid: 'speaker-secret', speaker_reference: speakerReference }
+      if (url.pathname.endsWith('/speaker/assign')) data = { changed_clusters: 0, changed_items: 1 }
+      if (url.pathname.endsWith('/speakers/bind')) data = { changed_clusters: 1, changed_items: 1 }
       if (url.pathname.endsWith('/create-speaker')) data = { speaker_id: 'speaker-user' }
       if (url.pathname.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
@@ -2008,18 +2100,13 @@ describe('RecordingService', () => {
     expect(JSON.stringify(day)).not.toContain('session-secret')
     expect(item?.speakerKey).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(item?.speakerKey).not.toContain('speaker-secret')
-    expect(item?.sameSpeakerItemCount).toBe(3)
+    expect(item?.canBindSpeaker).toBe(true)
 
     await expect(service.recordingPlayback(item!.itemRef)).resolves.toMatchObject({
-      playbackRef: 'playback-opaque', mimeType: 'audio/flac', startOffsetMillis: 0, endOffsetMillis: 1_000,
+      playbackRef: 'playback-opaque', mimeType: 'application/octet-stream', startOffsetMillis: 0, endOffsetMillis: 1_000,
     })
     expect(media.issueRecordingPlaybackMediaRef).toHaveBeenCalledWith({
-      viewerUserId: 42,
-      sessionId: 'session-secret',
-      childId: 'child-secret',
-      asrItemStartAt: 1_000,
-      asrItemEndAt: 2_000,
-      speakerNumber: 1,
+      viewerUserId: 42, locator: { child_id: childId, source: 'primary', ordinal: 0 },
     }, undefined)
     const options = await service.recordingSpeakerOptions()
     candidateLabel = '小林'
@@ -2027,7 +2114,7 @@ describe('RecordingService', () => {
     expect(options[0]).not.toHaveProperty('currentAssignment')
     expect(options[0]).not.toHaveProperty('recommended')
     expect(calls.some(call => call.path.endsWith('/similar-session-speaker'))).toBe(false)
-    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey })
+    await expect(service.recordingSpeakerRecommendation(item!.itemRef)).resolves.toEqual({ optionKey: options[0]!.optionKey, groupItemCount: 3 })
     const renewedOptions = await service.recordingSpeakerOptions()
     expect(renewedOptions.map(option => option.label)).toEqual(['小林', '小林'])
     candidateLabel = '小王'
@@ -2036,8 +2123,9 @@ describe('RecordingService', () => {
     expect(renewedOptions[0]!.speakerRef).not.toBe(options[0]!.speakerRef)
     expect(options[0]!.optionKey).not.toBe(options[1]!.optionKey)
     expect(calls).toContainEqual({
-      path: '/api/v1/audio/similar-session-speaker',
-      body: { session_id: 'session-secret', num: 1 },
+      path: '/api/v1/audio/recordings/transcript/speaker/suggestion',
+      body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
+        clip_locator: { child_id: childId, source: 'primary', ordinal: 0 }, speaker_reference: speakerReference },
     })
     expect(options).toEqual([
       {
@@ -2052,57 +2140,52 @@ describe('RecordingService', () => {
         isCurrentUser: false,
       },
     ])
-    const individuallyAssignedItem = day.transcript.items.find(candidate => candidate.speakerNumber < 0)!
+    // A manually assigned sentence has the same semantic identity; its physical
+    // locator remains ordinal 2 rather than an invented negative speaker number.
+    const individuallyAssignedItem = day.transcript.items[2]!
     await service.recordingPlayback(individuallyAssignedItem.itemRef)
     expect(media.issueRecordingPlaybackMediaRef).toHaveBeenLastCalledWith({
-      viewerUserId: 42,
-      sessionId: 'session-secret',
-      childId: 'child-secret',
-      asrItemStartAt: 5_000,
-      asrItemEndAt: 6_000,
-      speakerNumber: 1,
+      viewerUserId: 42, locator: { child_id: childId, source: 'primary', ordinal: 2 },
     }, undefined)
     await service.recordingSpeakerRecommendation(individuallyAssignedItem.itemRef)
     expect(calls).toContainEqual({
-      path: '/api/v1/audio/similar-session-speaker',
-      body: { session_id: 'session-secret', num: -1 },
+      path: '/api/v1/audio/recordings/transcript/speaker/suggestion',
+      body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
+        clip_locator: { child_id: childId, source: 'primary', ordinal: 2 }, speaker_reference: speakerReference },
     })
     await expect(service.assignRecordingSpeaker({
       itemRef: item!.itemRef, speakerRef: options[0]!.speakerRef, scope: 'item',
-    })).resolves.toMatchObject({ scope: 'item', affectedCount: 1, day: { dateStamp: expect.any(Number) } })
+    })).resolves.toMatchObject({ scope: 'item', changedClusters: 0, changedItems: 1, day: { dateStamp: expect.any(Number) } })
     expect(calls).toContainEqual({
-      path: '/api/v1/audio/assign-asr-item-to-spk',
-      body: { child_id: 'child-secret', spk_id: 'speaker-secret', item_index_ls: [0], transcript_source: 'system' },
+      path: '/api/v1/audio/recordings/transcript/speaker/assign',
+      body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
+        clip_locator: { child_id: childId, source: 'primary', ordinal: 0 }, speaker_reference: speakerReference, target_speaker_uid: 'speaker-secret' },
     })
     candidateLabel = '王新名'
     await expect(service.assignRecordingSpeaker({
       itemRef: item!.itemRef, speakerRef: options[1]!.speakerRef, scope: 'item',
-    })).resolves.toMatchObject({ scope: 'item', affectedCount: 1 })
+    })).resolves.toMatchObject({ scope: 'item', changedClusters: 0, changedItems: 1 })
     expect(calls).toContainEqual({
       path: '/api/v1/audio/create-speaker',
       body: { nick_name: '王新名', ref_usr_id: 77 },
     })
     expect(calls).toContainEqual({
-      path: '/api/v1/audio/assign-asr-item-to-spk',
-      body: { child_id: 'child-secret', spk_id: 'speaker-user', item_index_ls: [0], transcript_source: 'system' },
+      path: '/api/v1/audio/recordings/transcript/speaker/assign',
+      body: { recording_uid: recordingId, revision: recordingRevision, source: 'primary',
+        clip_locator: { child_id: childId, source: 'primary', ordinal: 0 }, speaker_reference: speakerReference, target_speaker_uid: 'speaker-user' },
     })
     await expect(service.assignRecordingSpeaker({
       itemRef: item!.itemRef, speakerRef: options[0]!.speakerRef, scope: 'speaker',
-    })).resolves.toMatchObject({ scope: 'speaker', affectedCount: 3 })
+    })).resolves.toMatchObject({ scope: 'speaker', changedClusters: 1, changedItems: 1 })
     expect(calls).toContainEqual({
-      path: '/api/v1/audio/batch-assign-session-num-to-spk',
-      body: { session_num_ls: [{ session_id: 'session-secret', num: 1 }], spk_id: 'speaker-secret' },
+      path: '/api/v1/audio/recordings/speakers/bind',
+      body: { recordings: [{ recording_uid: recordingId, revision: recordingRevision, source: 'primary' }],
+        speaker_reference: speakerReference, target_speaker_uid: 'speaker-secret' },
     })
-    expect(calls).toContainEqual({
-      path: '/api/v1/audio/batch-change-flag-session-spk',
-      body: {
-        session_ids: ['session-secret'], new_spk_id: 'speaker-secret', old_spk_id: 'speaker-secret',
-        transcript_source: 'system',
-      },
-    })
-    expect(calls.filter(call => call.path.endsWith('/batch-assign-session-num-to-spk'))).toHaveLength(1)
-    expect(calls.filter(call => call.path.endsWith('/batch-change-flag-session-spk'))).toHaveLength(1)
-    expect(calls.filter(call => call.path.endsWith('/one-day-trans'))).toHaveLength(7)
+    expect(calls.filter(call => call.path.endsWith('/speakers/bind'))).toHaveLength(1)
+    expect(calls.filter(call => call.path.endsWith('/speaker/assign'))).toHaveLength(2)
+    expect(calls.some(call => /one-day-trans|batch-change-flag|batch-assign-session|assign-asr-item/.test(call.path))).toBe(false)
+    expect(calls.at(-1)?.path).not.toMatch(/speaker\/assign|speakers\/bind/)
   }, 10_000)
 
   it('checks the owner snapshot before creating a new speaker', async () => {
@@ -2113,22 +2196,16 @@ describe('RecordingService', () => {
     }
     let transcriptReads = 0
     const calls: string[] = []
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
       calls.push(path)
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) {
-        transcriptReads += 1
-        const speakerNumber = transcriptReads === 1 ? 1 : 2
-        data = {
-          session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: new Date(2024, 7, 29).setHours(1, 0, 0, 0), spk_ls: [{ num: speakerNumber }] }],
-          child_ls: [{
-            id: 'child-secret', session_id: 'session-secret', start_at: 0,
-            file_name: 'device_0.m4a', mime_type: 'audio/mp4',
-            asr: [{ s: 1_000, e: 2_000, n: speakerNumber, t: '项目复盘' }],
-          }],
-        }
-      }
+      if (path.endsWith('/transcript/query')) transcriptReads += 1
+      data = recordingOwnerResponse(path, JSON.parse(String(init?.body ?? '{}')), [{
+        startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        revision: transcriptReads <= 1 ? recordingRevision : 'b'.repeat(64),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [] }
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
@@ -2145,7 +2222,7 @@ describe('RecordingService', () => {
       itemRef: day.transcript.items[0]!.itemRef,
       newSpeakerName: '不应创建',
       scope: 'item',
-    })).rejects.toMatchObject({ code: 'recording-speaker-conflict' })
+    })).rejects.toMatchObject({ code: 'recording-view-changed' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
   })
 
@@ -2161,14 +2238,9 @@ describe('RecordingService', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push(path)
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: Number(body.start_at) + 3_600_000, spk_ls: [{ num: 1, spk_id: 'speaker-existing' }] }],
-        child_ls: [{
-          id: 'child-secret', session_id: 'session-secret', start_at: 0,
-          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
-          asr: [{ s: 1_000, e: 2_000, n: 1, t: '项目复盘' }],
-        }],
-      }
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
       if (path.endsWith('/create-speaker')) data = { speaker_id: 'speaker-created' }
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
@@ -2188,7 +2260,7 @@ describe('RecordingService', () => {
       scope: 'item',
     })).rejects.toMatchObject({ code: 'recording-speaker-name-conflict' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
-    expect(calls.some(path => path.endsWith('/assign-asr-item-to-spk'))).toBe(false)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(false)
   })
 
   it('validates batch eligibility before creating a speaker that could not be assigned', async () => {
@@ -2203,14 +2275,10 @@ describe('RecordingService', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push(path)
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: 'session-secret', belong_usr: 42, start_at: Number(body.start_at) + 3_600_000, spk_ls: [] }],
-        child_ls: [{
-          id: 'child-secret', session_id: 'session-secret', start_at: 0,
-          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
-          asr: [{ s: 1_000, e: 2_000, n: -1, t: '未归属片段' }],
-        }],
-      }
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ text: '未归属片段', start: 1000, end: 2000,
+          speaker: { reference: '', kind: 'unknown', label: '未知说话人', user_id: 0 } }],
+      }]) ?? data
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [] }
       if (path.endsWith('/create-speaker')) data = { speaker_id: 'speaker-orphan' }
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
@@ -2230,7 +2298,7 @@ describe('RecordingService', () => {
       scope: 'speaker',
     })).rejects.toMatchObject({ code: 'recording-speaker-batch-empty' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
-    expect(calls.some(path => path.endsWith('/batch-assign-session-num-to-spk'))).toBe(false)
+    expect(calls.some(path => path.endsWith('/speakers/bind'))).toBe(false)
     expect(calls.some(path => path.endsWith('/batch-change-flag-session-spk'))).toBe(false)
   })
 
@@ -2247,15 +2315,11 @@ describe('RecordingService', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push(path)
       let data: Record<string, unknown> = {}
-      if (path.endsWith('/one-day-trans')) data = {
-        session_ls: [{ id: `session-${String(userId)}`, belong_usr: userId, start_at: Number(body.start_at) + 3_600_000, spk_ls: [{ num: 1, spk_id: 'shared-speaker-id' }] }],
-        child_ls: [{
-          id: `child-${String(userId)}`, session_id: `session-${String(userId)}`, start_at: 0,
-          file_name: 'device_0.m4a', mime_type: 'audio/mp4',
-          asr: [{ s: 1_000, e: 2_000, n: 1, t: '项目复盘' }],
-        }],
-      }
-      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'shared-speaker-id', nick_name: `用户${String(userId)}` }] }
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, userId === 42 ? 29 : 30).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ speaker_id: 'shared-speaker-id', reference: speakerReference, nick_name: `用户${String(userId)}` }] }
+
       if (path.endsWith('/similar-session-speaker')) data = {}
       if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
       return new Response(JSON.stringify({ code: 200, data }), {
@@ -2287,7 +2351,7 @@ describe('RecordingService', () => {
       speakerRef: account42Option.speakerRef,
       scope: 'item',
     })).rejects.toMatchObject({ code: 'recording-ref-account-mismatch' })
-    expect(calls.some(path => path.endsWith('/assign-asr-item-to-spk'))).toBe(false)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(false)
   })
 
   it('keeps the existing read-only recordings contract while the workbench kill switch blocks mutations and playback', async () => {

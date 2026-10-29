@@ -724,42 +724,7 @@ describe('AudioRecordingImportGateway', () => {
     expect(page.tasks.map(task => task.progress?.displayStatus)).toEqual(['completed', 'failed', 'partial'])
   })
 
-  it.each([false, true])('stops upload on reservation renewal failure with signal=%s', async withSignal => {
-    vi.useFakeTimers()
-    try {
-      const failure = new Error('reservation expired')
-      let renewals = 0
-      const runtime = {
-        config: { environment: 'test' },
-        async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-        async authenticatedAudioPost(path: string) {
-          if (path.endsWith('renew-upload') && ++renewals > 1) throw failure
-          if (path.endsWith('get-sts-token')) return {
-            access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
-            expiration: '2099-01-01T00:00:00.000Z',
-          }
-          return { err_flag: 0 }
-        },
-      } as unknown as ServiceRuntime
-      const cancel = vi.fn()
-      const multipartUpload = vi.fn(() => new Promise<void>(() => {}))
-      const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
-      const upload = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), vi.fn(async () => {}), withSignal ? new AbortController().signal : undefined)
-      const rejected = expect(upload).rejects.toBe(failure)
-      await vi.advanceTimersByTimeAsync(0)
-      expect(multipartUpload).toHaveBeenCalledOnce()
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
-      await rejected
-      expect(cancel).toHaveBeenCalledOnce()
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
-      expect(renewals).toBe(2)
-      expect(multipartUpload).toHaveBeenCalledOnce()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('uses the desktop Audio owner contract and keeps STS inside the Host', async () => {
+  it('uses the desktop Audio owner contract and delegates cloud-neutral upload inside the Host', async () => {
     const posts: Array<{ path: string; body: Record<string, unknown> }> = []
     const runtime = {
       config: { environment: 'test' },
@@ -773,19 +738,16 @@ describe('AudioRecordingImportGateway', () => {
         if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
         if (path.endsWith('new-session')) return { session_id: 'session-1' }
         if (path.endsWith('new-child')) return { child_id: 'child-1', err_flag: 0 }
-        if (path.endsWith('get-sts-token')) return {
-          access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
-          expiration: '2099-01-01T00:00:00.000Z',
-        }
         return { err_flag: 0 }
       },
     } as unknown as ServiceRuntime
-    const cancel = vi.fn()
-    const multipartUpload = vi.fn(async (_path: string, _file: string, options: { progress: Function }) => {
-      await options.progress(0.5, { uploadId: 'upload-1' })
-      await options.progress(1, { uploadId: 'upload-1' })
+    const uploadFile = vi.fn(async (_job, post, progress, assertAccount) => {
+      await assertAccount()
+      await post('/api/v1/audio/uploads/begin', { child_id: _job.childId })
+      await progress(512, { upload_id: 'upload-1' })
+      await progress(1024, { upload_id: 'upload-1' })
     })
-    const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
+    const gateway = new AudioRecordingImportGateway(runtime, uploadFile)
     const current = job({ sessionId: 'session-1', childId: 'child-1' })
 
     await expect(gateway.ensureSession(current)).resolves.toBe('session-1')
@@ -799,20 +761,16 @@ describe('AudioRecordingImportGateway', () => {
       '/api/v1/audio/get-session-by-id',
       '/api/v1/audio/new-child',
       '/api/v1/audio/renew-upload',
-      '/api/v1/audio/get-sts-token',
+      '/api/v1/audio/uploads/begin',
       '/api/v1/audio/child-upload-finish',
       '/api/v1/audio/finish-session',
     ])
     expect(posts[1]?.body).toMatchObject({
       session_id: 'session-1', start_at: 0, duration: 60_000,
-      file_name: 'arkme_job-1_0.m4a', source_size: 1024,
+      file_name: 'arkme_job-1_0.m4a', expected_size: 1024,
     })
-    expect(multipartUpload).toHaveBeenCalledWith(
-      'pc_upload/42/session-1/arkme_job-1_0.m4a',
-      '/private/job-1.upload',
-      expect.objectContaining({ parallel: 1, checkpoint: undefined, mime: 'audio/mp4' }),
-    )
-    expect(progress).toHaveBeenLastCalledWith(1024, { uploadId: 'upload-1' })
+    expect(uploadFile).toHaveBeenCalledWith(current, expect.any(Function), progress, expect.any(Function), expect.any(AbortSignal), undefined)
+    expect(progress).toHaveBeenLastCalledWith(1024, { upload_id: 'upload-1' })
     expect(JSON.stringify(posts)).not.toContain('access_key_secret')
   })
 
@@ -1160,27 +1118,20 @@ describe('AudioRecordingImportGateway', () => {
     })
   })
 
-  it('cancels the OSS multipart operation immediately when the job is aborted', async () => {
-    const runtime = {
-      config: { environment: 'test' },
-      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedAudioPost(path: string) {
-        if (path.endsWith('get-sts-token')) return {
-          access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
-          expiration: '2099-01-01T00:00:00.000Z',
-        }
-        return {}
-      },
-    } as unknown as ServiceRuntime
-    const cancel = vi.fn()
-    const multipartUpload = vi.fn(async () => await new Promise<never>(() => undefined))
-    const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
+  it('carries cancellation to the cloud-neutral transport without exposing cloud state', async () => {
+    const runtime = {config:{environment:'test'},async requireSession(){return {userId:42,accessToken:'access',refreshToken:'refresh'}},async authenticatedAudioPost(){return {}}} as unknown as ServiceRuntime
     const controller = new AbortController()
+    const uploadFile = vi.fn(async (_job, _post, _progress, _account, signal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')), { once: true })
+      })
+    })
+    const gateway = new AudioRecordingImportGateway(runtime, uploadFile)
     const uploading = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), async () => undefined, controller.signal)
-
+    await vi.waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1))
     controller.abort()
     await expect(uploading).rejects.toMatchObject({ code: 'recording-import-cancelled' })
-    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(uploadFile).toHaveBeenCalledTimes(1)
   })
 })
 it('replays new batch creation without a filename scan after an unknown result', async () => {
@@ -1188,18 +1139,19 @@ it('replays new batch creation without a filename scan after an unknown result',
   const runtime = {
     async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
     async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+      if (path.endsWith('/strategies')) return [{id:'baseline-sd-asr/20261026'}]
       posts.push({ path, body })
       if (path.endsWith('/new-session')) return { session_id: 'session-1' }
       throw new Error(`unexpected request ${path}`)
     },
   } as unknown as ServiceRuntime
-  const input = job({ createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
+  const input = job({ strategy: 'baseline-sd-asr/20261026', createRequestUID: '0199f000-1234-7123-8123-0123456789ab', batch: { batchId: testBatchID, itemIndex: 0, itemCount: 1, timeZone: 'America/New_York' } })
   const gateway = new AudioRecordingImportGateway(runtime)
   await gateway.ensureSession(input); await gateway.ensureSession(input)
   expect(posts).toHaveLength(2)
   expect(posts[0]).toEqual(posts[1])
   expect(posts[0]!.path).toBe('/api/v1/audio/import-batches/new-session')
-  expect(posts[0]!.body).toMatchObject({ create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
+  expect(posts[0]!.body).toMatchObject({ strategy: input.strategy, create_request_uid: input.createRequestUID, import_batch: { contract_version: 2, file_sha256: input.sha256, file_size: input.fileSize } })
 })
 
 it('never retries a batch admission as an ordinary upload when the backend route disappears', async () => {
@@ -1264,4 +1216,12 @@ describe('owner scan continuation', () => {
     await expect(f.read(100)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
     expect(f.offsets()).toEqual([0, 100])
   })
+})
+
+it('does not silently create the default when an older Audio lacks the selected strategy',async()=>{
+ const post=vi.fn(async()=>[])
+ const runtime={requireSession:async()=>({userId:42}),authenticatedAudioPost:post} as unknown as ServiceRuntime
+ const input=job({strategy:'baseline-sd-asr/20261026',createRequestUID:'0199f000-1234-7123-8123-0123456789ab'})
+ await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toMatchObject({code:'recording-strategy-unavailable'})
+ expect(post.mock.calls).toHaveLength(1)
 })

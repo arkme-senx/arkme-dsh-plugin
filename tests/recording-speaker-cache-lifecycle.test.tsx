@@ -16,7 +16,7 @@ function deferred<T>() {
 }
 const item: ArkmeRecordingWorkbenchItem = {
   itemId: 'item-a', itemRef: 'item-ref-a', speakerLabel: '说话人 1', speakerColorIndex: 1,
-  speakerNumber: 1, speakerKey: 'transcript-speaker', sameSpeakerItemCount: 1,
+  speakerNumber: 1, speakerKey: 'transcript-speaker', canBindSpeaker: false, transcriptSource: 'system', sessionKey: 'session', textStartOffset: 0, textEndOffset: 2, textTotalLength: 2,
   text: '内容', startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
 }
 const options: ArkmeRecordingSpeakerOption[] = [
@@ -208,7 +208,7 @@ describe('speaker cache interaction and lifecycle', () => {
     { initialBatch: true, choice: '仅此片段', scope: 'item' },
   ])('submits the intended assignment scope: %j', async scenario => {
     await act(async () => {
-      renderer = create(<ArkmeRecordingSpeakerEditor item={{ ...item, sameSpeakerItemCount: 3 }} initialBatchUpdate={scenario.initialBatch} onUpdated={onUpdated} onClose={onClose} />)
+      renderer = create(<ArkmeRecordingSpeakerEditor item={{ ...item, sameSpeakerItemCount: 3, canBindSpeaker: true }} initialBatchUpdate={scenario.initialBatch} onUpdated={onUpdated} onClose={onClose} />)
       await tick()
     })
     await chooseUser()
@@ -236,7 +236,7 @@ describe('speaker cache interaction and lifecycle', () => {
   })
 
   it('freezes scope and person selection while a save is pending, retaining them on failure', async () => {
-    await open({ ...item, sameSpeakerItemCount: 3 })
+    await open({ ...item, sameSpeakerItemCount: 3, canBindSpeaker: true })
     await chooseUser()
     const write = deferred<unknown>()
     mocks.callArkme.mockImplementation(operation => operation === 'recordings.speaker.assign-item' ? write.promise : Promise.resolve(options))

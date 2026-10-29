@@ -10,7 +10,9 @@ const transientCodes = new Set(['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'E
 
 export function isRetryableRecordingUploadError(error: unknown): boolean {
   if (error === null || typeof error !== 'object' || error instanceof RecordingImportContractError) return false
-  const { status, name, code } = error as { status?: unknown; name?: unknown; code?: unknown }
+  const { status, name, code, cause } = error as { status?: unknown; name?: unknown; code?: unknown; cause?: unknown }
+  if (name === "TypeError" && cause !== error && cause !== undefined) return isRetryableRecordingUploadError(cause)
+  if (name === "TimeoutError") return true
   if (name === 'cancel' || name === 'abort' || name === 'AbortError') return false
   // An OSS application error (credentials, missing upload, etc.) must not be
   // mistaken for a transport failure merely because the SDK reports status -1.

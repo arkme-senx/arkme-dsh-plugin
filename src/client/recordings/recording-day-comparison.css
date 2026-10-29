@@ -1,0 +1,51 @@
+.recording-day-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, .1));
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 12px;
+}
+.recording-day-overview p { margin: 0; }
+.recording-day-notice { overflow-wrap: anywhere; }
+.recording-day-notice button { margin-inline-start: 8px; }
+.recording-day-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin: 0 20px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, .1));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1, #f8f9fa);
+  color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 12px;
+}
+.recording-day-progress-summary { display: flex; flex: 1; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.recording-day-progress-summary > span:first-child { font-variant-numeric: tabular-nums; }
+.recording-day-status-badge { border-radius: 4px; padding: 1px 6px; background: var(--dsw-alias-bg-layer-2, #eef0f3); }
+.recording-day-status-badge[data-status="processing"] { color: var(--dsw-alias-label-primary, #17191c); }
+.recording-day-status-badge[data-status="failed"], .recording-day-file-status:is([data-status="failed"], [data-status="error"]) { color: var(--dsw-alias-state-error-primary, #c2413b); }
+.recording-day-progress-details { margin-inline-start: auto; }
+.recording-day-progress-details[open] { width: 100%; }
+.recording-day-progress-details > summary { cursor: pointer; width: fit-content; }
+.recording-day-progress-list { max-height: 180px; overflow-y: auto; margin-top: 8px; }
+.recording-day-progress-file { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(80px, 42%); align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, .04)); }
+.recording-day-file-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recording-day-file-status { text-align: end; overflow-wrap: anywhere; }
+.recording-day-source { margin-bottom: 24px; }
+.recording-day-source-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: var(--dsw-alias-label-secondary, #68707c); font-size: 11px; }
+.recording-day-source-heading::after { content: ''; height: 1px; flex: 1; background: var(--dsw-alias-border-l2, rgba(0, 0, 0, .1)); }
+.recording-day-source-heading > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recording-day-empty { display: grid; justify-items: center; align-content: center; gap: 10px; min-height: 200px; padding: 24px; color: var(--dsw-alias-label-secondary, #68707c); text-align: center; }
+.recording-day-empty strong { color: var(--dsw-alias-label-primary, #17191c); font-size: 14px; font-weight: 500; }
+.recording-day-empty p { font-size: 12px; line-height: 1.7; margin: 0; }
+@media (max-width: 760px) {
+  .recording-day-progress { margin-inline: 12px; padding: 8px; }
+  .recording-day-progress-file { grid-template-columns: auto minmax(0, 1fr); }
+  .recording-day-file-status { grid-column: 2; text-align: start; }
+}

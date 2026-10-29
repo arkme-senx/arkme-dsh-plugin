@@ -1,3 +1,4 @@
+import {recordOwnerId,type RecordOwnerId} from '../record-owner-id.js'
 import type { TeamAppService } from './team-app-service.js'
 import { randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -27,7 +28,7 @@ interface ContactCandidate {
   expiresAtMillis: number
   normalized: NormalizedIdentifier
   result: ArkmeContactSearchResult
-  targetUserId?: number
+  targetUserId?: RecordOwnerId
   phone?: string
 }
 
@@ -134,7 +135,7 @@ export class ContactService {
         { key: `contact:add:${requestUid}` },
       )
     let source = await this.source.chatSourceFromBundle(bundle, session, undefined, [])
-    if (registered && candidate.targetUserId !== undefined) {
+    if (registered && typeof candidate.targetUserId === 'number') {
       source = { ...source, avatarRef: await this.profile.sealProfileImageRef(session.userId, candidate.targetUserId) }
     }
     const returnedUid = stringValue(objectValue(bundle.session).chat_session_uid).trim()
@@ -154,7 +155,7 @@ export class ContactService {
     contactRef: string,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<number> {
+  ): Promise<RecordOwnerId> {
     this.prune()
     const normalizedContactRef = contactRef.trim()
     if (!CONTACT_REF_PATTERN.test(normalizedContactRef)) {
@@ -186,8 +187,8 @@ export class ContactService {
       signal,
       { key: `contact:search:${normalized.identifierType}:${normalized.identifier}`, bypassCache: true },
     )
-    const targetUserId = Math.trunc(numberValue(data.user_id))
-    const registered = booleanValue(data.is_registered) && targetUserId > 0
+    const targetUserId = recordOwnerId(data.user_id)
+    const registered = booleanValue(data.is_registered) && !!targetUserId
     const isSelf = booleanValue(data.is_self)
     // The pending-contact endpoint is phone-only. Match the mobile client by
     // never presenting an unregistered Arkme ID as addable, even if an
@@ -201,7 +202,7 @@ export class ContactService {
       identifierKind: normalized.kind,
       displayName,
       ...(stringValue(data.jotmo_id).trim() === '' ? {} : { arkmeId: stringValue(data.jotmo_id).trim() }),
-      ...(registered ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, targetUserId) } : {}),
+      ...(registered && typeof targetUserId === 'number' ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, targetUserId) } : {}),
       registered,
       inviteBySms: booleanValue(data.invite_by_sms),
       canAdd,
@@ -212,7 +213,7 @@ export class ContactService {
       expiresAtMillis: Date.now() + CONTACT_REF_TTL_MS,
       normalized,
       result,
-      ...(targetUserId > 0 ? { targetUserId } : {}),
+      ...(targetUserId ? { targetUserId } : {}),
       ...(normalized.kind === 'phone' ? { phone: stringValue(data.phone).trim() || normalized.identifier } : {}),
     }
   }

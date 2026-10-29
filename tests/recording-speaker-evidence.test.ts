@@ -1,3 +1,4 @@
+import { correctionOwnerResponse } from './fixtures/recording-correction-owner.js'
 import { describe, expect, it, vi } from 'vitest'
 import { parseRecordingSpeakerConsistency, parseRecordingSpeakerEvidence } from '../src/recording-speaker-evidence.js'
 import { RecordingService, type RecordingServiceDependencies } from '../src/services/recording-service.js'
@@ -68,9 +69,9 @@ function fixture() {
   const session = { userId: 42, accessToken: 'test', refreshToken: 'test' }
   const state = { unavailable: false, fail: false, invalid: false, switchAccount: false }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
-    if (path.endsWith('/one-day-trans')) return { session_ls: [{ id: 'session', belong_usr: 42, start_at: date, end_at: date + 86400000, spk_ls: [{ num: 1, spk_id: 'person' }] }],
-      child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 4000, n: 1, t: '甲' }, { s: 5000, e: 9000, n: 1, t: '乙' }] }] }
-    if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: 'person', nick_name: '周鹏' }] }
+    if (path.includes('/recordings/')) return correctionOwnerResponse(path, body, { session_ls: [{ id: '123456789012345678901234', belong_usr: 42, start_at: date, end_at: date + 86400000, spk_ls: [{ num: 1, spk_id: '345678901234567890123456' }] }],
+      child_ls: [{ id: '234567890123456789012345', session_id: '123456789012345678901234', start_at: 0, asr: [{ s: 0, e: 4000, n: 1, t: '甲' }, { s: 5000, e: 9000, n: 1, t: '乙' }] }] })
+    if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: '345678901234567890123456', nick_name: '周鹏' }] }
     if (path.includes('/speaker-evidence/')) {
       if (state.unavailable) throw new ArkmePluginError('missing', 'missing', false, 404)
       if (state.fail) throw new ArkmePluginError('network', 'offline', true, 503)
@@ -86,7 +87,7 @@ function fixture() {
   })
   const runtime = { subscribeAccountScope: () => () => {}, config: { environment: 'test', maxTextLength: 20000 }, requireSession: async () => ({ ...session }),
     authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
-  return { service: new RecordingService(runtime, {} as RecordingServiceDependencies), state, post, date, session }
+  return { service: new RecordingService(runtime, {} as RecordingServiceDependencies), runtime, state, post, date, session }
 }
 
 describe('interval evidence adapter', () => {
@@ -95,7 +96,7 @@ describe('interval evidence adapter', () => {
     const request = { itemRefs: [rows[1]!.itemRef], referenceA: [rows[0]!.itemRef], referenceB: [rows[1]!.itemRef] }
     const result = await f.service.recordingSpeakerEvidence(request)
     const call = f.post.mock.calls.find(([path]) => path.endsWith('/speaker-evidence/compare'))!
-    expect(call[1]).toMatchObject({ items: [{ client_index: 0, session_id: 'session', child_id: 'child', item_index: 1, start_at: 5000, end_at: 9000 }], reference_a: [{ item_index: 0, start_at: 0, end_at: 4000 }] })
+    expect(call[1]).toMatchObject({ items: [{ client_index: 0, session_id: '123456789012345678901234', child_id: '234567890123456789012345', item_index: 1, start_at: 5000, end_at: 9000 }], reference_a: [{ item_index: 0, start_at: 0, end_at: 4000 }] })
     expect(result.supported && result.items[0]!.itemRef).toBe(rows[1]!.itemRef)
   })
   it.each(['unavailable', 'fail', 'invalid', 'switchAccount'] as const)('handles %s without fabricating evidence', async kind => {
@@ -118,7 +119,7 @@ describe('group consistency adapter', () => {
     const f = fixture(), rows = (await f.service.recordingDay(f.date)).transcript.items
     const result = await f.service.recordingSpeakerConsistency({ anchorRefs: [rows[0]!.itemRef], itemRefs: [rows[1]!.itemRef] })
     const call = f.post.mock.calls.find(([path]) => path.endsWith('/speaker-evidence/consistency'))!
-    expect(call[1]).toMatchObject({ groups: [{ client_index: 0, session_id: 'session', child_id: 'child', item_index: 0, start_at: 0, end_at: 4000 }], items: [{ client_index: 0, item_index: 1, start_at: 5000, end_at: 9000 }] })
+    expect(call[1]).toMatchObject({ groups: [{ client_index: 0, session_id: '123456789012345678901234', child_id: '234567890123456789012345', item_index: 0, start_at: 0, end_at: 4000 }], items: [{ client_index: 0, item_index: 1, start_at: 5000, end_at: 9000 }] })
     expect(result).toMatchObject({ groups: [{ anchorRef: rows[0]!.itemRef, totalCount: 10, items: [{ itemRef: rows[1]!.itemRef }] }] })
   })
   it.each(['unavailable', 'fail', 'invalid', 'switchAccount'] as const)('handles %s without turning missing data into a low score', async kind => {
@@ -133,5 +134,31 @@ describe('group consistency adapter', () => {
     await expect(f.service.recordingSpeakerConsistency({ anchorRefs: rows.map(row => row.itemRef), itemRefs: [rows[0]!.itemRef] })).rejects.toThrow()
     await expect(f.service.recordingSpeakerConsistency({ anchorRefs: Array(101).fill(rows[0]!.itemRef), itemRefs: [] })).rejects.toThrow()
     expect(f.post.mock.calls.filter(([path]) => path.endsWith('/speaker-evidence/consistency'))).toHaveLength(0)
+  })
+})
+
+describe('evidence member publication fence', () => {
+  it.each(['unchanged', 'account', 'revision', 'abort'] as const)('checks %s after asynchronously deriving member reference keys', async kind => {
+    const f = fixture(), row = (await f.service.recordingDay(f.date)).transcript.items[0]!
+    const controller = new AbortController()
+    let responseReceived = false
+    vi.spyOn(f.runtime.stateStore, 'uniqueCode').mockImplementation(async () => {
+      if (responseReceived) {
+        if (kind === 'account') f.session.userId = 43
+        if (kind === 'revision') f.service.dispose()
+        if (kind === 'abort') controller.abort()
+      }
+      return 'test-key'
+    })
+    f.post.mockImplementationOnce(async () => {
+      responseReceived = true
+      return { version: 'page-v1', total_count: 1, has_more: false, next_cursor: '', items: [{
+        locator: { session_id: '1'.repeat(24), child_id: '2'.repeat(24), transcript_source: 'system', item_index: 0, start_at: 0, end_at: 4000, revision: 'revision-1' },
+        group: 'person-1', start_at: f.date, source_number: 1, assignment_number: 1, text: '甲', deviation: null,
+      }] }
+    })
+    const pending = f.service.recordingSpeakerEvidenceQuery({ action: 'members', groupRefs: [row.itemRef] }, controller.signal)
+    if (kind === 'unchanged') expect(await pending).toMatchObject({ totalCount: 1, items: [{ text: '甲' }] })
+    else await expect(pending).rejects.toThrow()
   })
 })

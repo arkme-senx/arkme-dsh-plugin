@@ -19,7 +19,7 @@ const sdk: TeamMessagePort = createArkmeSdk({fetchImpl: async (_url, init) => {
   const request = JSON.parse(String(init?.body)) as (typeof calls)[number]
   calls.push(request)
   const {operation, params} = request
-  const value = operation === 'provider.capabilities' ? {contractVersion: 1, features: {teamMessageInteractions: supported ? 1 : 0, teamMessageExtensions: supported ? 1 : 0}}
+  const value = operation === 'provider.capabilities' ? {contractVersion: 1, features: {teamMessageInteractions: supported ? 1 : 0, teamPersonMentions: supported ? 1 : 0, teamMessageExtensions: supported ? 1 : 0}}
     : operation === 'team.messages.forward' ? {sourceRef: 'target', itemUid: 'accepted-card', localState: 'synced'}
     : operation === 'team.messages.copy-link' ? {url: 'https://example.invalid/s/frozen-sid'}
     : operation === 'team.messages.report' ? {reportUid: 'evidence'}
@@ -43,9 +43,10 @@ await sdk.preflightTeamMessages('source-team', selections, lifecycle.signal)
 await sdk.readTeamMarks('source-team', 'team', ['mark-ref'], lifecycle.signal)
 await sdk.changeTeamMark('source-team', 'conversation', 'mark-ref', {kind: 'remove', annotationId: 'own-mark', operationId: 'stable-remove'}, lifecycle.signal)
 await sdk.listTeamConversations('external', {limit: 20}, lifecycle.signal)
+await sdk.readTeamMessages('source-team', {personRef:'opaque-person',personMode:'mentioned',limit:20}, lifecycle.signal)
 await sdk.readTeamMessages('source-team', {messageRef: selections[0]!.messageRef}, lifecycle.signal)
 assert.equal((await sdk.readTeamExtensions('source-team', selections[0]!.messageRef, {limit: 20}, lifecycle.signal)).totalCount, 0)
-const send: TeamSendInput = {conversationRef: 'source-team', clientUid: 'stable-client', expectedReplySeq: 0, content: {text_content: '引用回复', template_kind: 1}, fileRefs: [], reply: {messageRef: selections[0]!.messageRef, messageKey: 'opaque-key', version: 3, text: '', senderName: ''}}
+const send: TeamSendInput = {conversationRef: 'source-team', clientUid: 'stable-client', expectedReplySeq: 0, content: {text_content: '@人 引用回复', template_kind: 1, mentions:[{personRef:'opaque-person',displayName:'人',startIndex:0,length:2}]}, fileRefs: [], reply: {messageRef: selections[0]!.messageRef, messageKey: 'opaque-key', version: 3, text: '', senderName: ''}}
 assert.equal((await sdk.sendTeamMessage(send, lifecycle.signal)).state, 'queued')
 await sdk.teamMessageTasks('source-team', lifecycle.signal)
 assert.equal((await sdk.updateTeamSend('source-team', 'stable-task', 'cancel', lifecycle.signal)).state, 'cancelled')

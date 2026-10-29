@@ -6,12 +6,15 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 
 /** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort extends RecordingEntityPort {
+  recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
+  previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<import('../../types.js').ArkmeRecordingSpeakerCorrectionPreview>
   recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../../types.js').ArkmeRecordingWorkbenchItem[] }>
   recordingSpeakerCorrectionResult(query: ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult | null>
   recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionContext>
   applyRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult>
   undoRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionUndoInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionResult>
   offlineContext: import('../../offline-context-contract.js').OfflineContextPort['offlineContext']
+  recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]>
   recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence>

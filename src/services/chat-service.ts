@@ -1,3 +1,6 @@
+import {requireFrozenTeamSendTime} from './group-representation.js'
+import {GroupRepresentationCodec} from './group-representation.js'
+import type {TeamRepresentationSelection} from '../team-group-contract.js'
 import { commonGroupChanges } from './common-group-service.js'
 import { sealPersonSourcesCursor, openPersonSourcesCursor, type PersonRecordSourcesPage, type PersonSourcesCursor } from '../person-records.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
@@ -1329,7 +1332,7 @@ export async function projectArkmeConversationMemberJoinEvents(
   return projected
 }
 
-function isAgentAuthoredChatSend(options: { agentAuthored?: boolean }): boolean {
+function isAgentAuthoredChatSend(options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean }): boolean {
   return options.agentAuthored === true
 }
 
@@ -2219,20 +2222,21 @@ export class ChatService {
   }
 
   async openPrivateChatFromUser(
-    peerUserId: number,
+    peerUserId: RecordOwnerId,
     options: { presentationDisplayName?: string; expectedViewerUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
+    peerUserId=recordOwnerId(peerUserId)
     const session = await this.runtime.requireSession()
     if (options.expectedViewerUserId !== undefined && options.expectedViewerUserId !== session.userId) {
       throw new ArkmePluginError('member-events-unavailable', '账号已切换，请重新打开用户卡片', false, 403)
     }
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
     }
-    if (peerUserId === session.userId) {
+    if (String(peerUserId) === String(session.userId)) {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
-    const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
+    const profile = typeof peerUserId === 'number' ? (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId) : undefined
     const displayName = options.presentationDisplayName?.trim() || profile?.displayName.trim() || '群成员'
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/create-private',
@@ -2260,12 +2264,12 @@ export class ChatService {
         ?? await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
       sourceKey: existingPrivateSource?.sourceKey
         ?? await this.source.chatDirectorySourceKey(session.userId, uid),
-      peerUserId,
+      ...(typeof peerUserId === 'number' ? {peerUserId} : {}),
       kind: 'private_chat',
       displayName: existingPrivateSource?.displayName ?? displayName,
       ...(existingPrivateSource?.avatarRef !== undefined
         ? { avatarRef: existingPrivateSource.avatarRef }
-        : profile?.avatarUrl === undefined
+        : profile?.avatarUrl === undefined || typeof peerUserId !== 'number'
           ? {}
           : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
       activeAtMillis: numberValue(chatSession.last_active_at) || existingPrivateSource?.activeAtMillis || Date.now(),
@@ -2315,7 +2319,7 @@ export class ChatService {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者私聊资料缺失，请稍后重试', true, 502)
     }
     const peerUserId = Math.trunc(numberValue(partner.user_id))
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者账号资料缺失，请稍后重试', true, 502)
     }
     const displayName = stringValue(partner.mark).trim()
@@ -3893,8 +3897,9 @@ export class ChatService {
     textContent: string,
     recordUid: string,
     assets: readonly ArkmeUploadedAsset[] = [],
-    options: { relationUid?: string; parentRecordUid?: string; quote?: ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions'> = {},
+    options: { relationUid?: string; parentRecordUid?: string; quote?: ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions' | 'representation' | 'sendAtMillis'> = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    requireFrozenTeamSendTime(options)
     if (options.textFormat === 'markdown' && this.runtime.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
     const normalizedUid = recordUid.trim()
     const normalizedText = options.textFormat === 'markdown' ? textContent : textContent.trim()
@@ -3951,7 +3956,7 @@ export class ChatService {
       const profileSnapshot = await this.profile.refreshProfile()
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
-      const sendAtMillis = Date.now()
+      const sendAtMillis = options.sendAtMillis ?? Date.now()
       const hashTags = options.textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
       const contentPayload = options.textFormat === undefined && assets.length === 0 && hashTags.length === 0 && !(options.humanMentions?.length || options.botMentions?.length) ? undefined : {
         payload_kind: assets.length === 0 ? 1 : 2,
@@ -3983,6 +3988,7 @@ export class ChatService {
           parent_record_owner_user_id: reference.recordOwnerUserId,
           parent_record_uid: reference.recordUid,
           ...(options.quote === undefined ? {} : { quote_reply: options.quote, quote_reply_source: { relation_uid: reference.relationUid, sequence: reference.sourceSequence } }),
+          ...(options.representation===undefined?{}:{representation:await new GroupRepresentationCodec(this.runtime).selection(options.representation,session.userId)}),
           child_record_uid: normalizedUid,
           child_rel_uid: relationUid,
           template_kind: assets.length === 0 ? 1 : 2,
@@ -3993,12 +3999,12 @@ export class ChatService {
         },
         session,
         options.signal,
-        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
+        ...(options.quote === undefined && options.representation === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
       this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
-      if (options.quote !== undefined && data.accepted !== true) {
+      if ((options.quote !== undefined || options.representation !== undefined) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const extension = await this.hydrateUploadedExtension({
@@ -4070,9 +4076,9 @@ export class ChatService {
         },
         session,
         options.signal,
-        ...(options.quote === undefined ? [] : [{ trackWriteOutcome: true }]),
+        ...(options.quote === undefined && options.representation === undefined ? [] : [{ trackWriteOutcome: true }]),
       )
-      if (options.quote !== undefined && data.accepted !== true) {
+      if ((options.quote !== undefined || options.representation !== undefined) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const createdRecordUid = stringValue(data.record_uid).trim()
@@ -4390,14 +4396,16 @@ export class ChatService {
   async forwardSourceMessages(
       sourceRef: string,
       actionRefs: readonly string[],
-      options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {},
+      options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
+    requireFrozenTeamSendTime(options)
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       if (options.sendAtMillis !== undefined && (!Number.isSafeInteger(options.sendAtMillis) || options.sendAtMillis <= 0)) throw new ArkmePluginError('message-actions-time-invalid', '发送时间无效', false)
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       const targetSourceRef = options.targetSourceRef?.trim() || sourceRef
       const targetSource = targetSourceRef === sourceRef ? source : await this.source.openSourceRef(targetSourceRef, session.userId)
+      if(options.representation&&targetSource.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)
       const commentText = options.commentText?.trim() ?? ''
       if (commentText.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容超过长度限制', false)
@@ -4451,6 +4459,7 @@ export class ChatService {
           '/api/v1/chats/records/forward',
           {
             chat_session_uid: targetSource.ownerRef,
+            ...(options.representation?{representation:await new GroupRepresentationCodec(this.runtime).selection(options.representation,session.userId)}:{}),
             client_request_id: clientRequestId,
             ...(sourceRecordUids.length === 0 ? {} : { source_record_uids: sourceRecordUids }),
             source_items: references.map(reference => this.forwardSourceItemBody(reference)),
@@ -4547,14 +4556,16 @@ export class ChatService {
         botMentions?: readonly ArkmeBotMentionInput[]
         expectedUserId?: number
         signal?: AbortSignal
-        agentAuthored?: boolean
+        representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
       } = {},
     ): Promise<ArkmeSourceSendResult> {
+    requireFrozenTeamSendTime(options)
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次发送已取消', false, 409)
       }
       const source = await this.source.openSourceRef(sourceRef, session.userId)
+      if(options.representation!==undefined&&source.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)
       const text = textContent.trim()
       if (text === '' || text.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容为空或超过长度限制', false)
@@ -4642,6 +4653,7 @@ export class ChatService {
           sent = await this.groupBotMentionSend(
             sourceRef, source, text, options.botRefs, recordUid, relationUid, session, options.signal,
             {
+              ...options,
               agentAuthored,
               ...(options.recordDurationMillis === undefined ? {} : { recordDurationMillis: options.recordDurationMillis }),
               ...(options.captureContext === undefined ? {} : { captureContext: options.captureContext }),
@@ -4654,6 +4666,7 @@ export class ChatService {
           sent = await this.sendChatSourceTextRaw(
             sourceRef, source.ownerRef, text, recordUid, relationUid, session, undefined, contentPayload,
             options.signal, {
+              ...options,
               agentAuthored,
               ...(options.recordDurationMillis === undefined ? {} : { recordDurationMillis: options.recordDurationMillis }),
               ...(options.captureContext === undefined ? {} : { captureContext: options.captureContext }),
@@ -4668,6 +4681,7 @@ export class ChatService {
             relationUid,
             session,
             {
+              ...options,
               agentAuthored,
               ...(options.recordDurationMillis === undefined ? {} : { recordDurationMillis: options.recordDurationMillis }),
               ...(options.captureContext === undefined ? {} : { captureContext: options.captureContext }),
@@ -4915,7 +4929,7 @@ export class ChatService {
       relationUid: string,
       session: ArkmeSessionCredentials,
       signal?: AbortSignal,
-      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+      options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
     ): Promise<ArkmeSourceSendResult> {
       const normalizedRefs = botRefs.map(ref => {
         const normalized = ref.trim()
@@ -4998,9 +5012,9 @@ export class ChatService {
       initialAiPolish?: Record<string, unknown>,
       contentPayload?: Record<string, unknown>,
       signal?: AbortSignal,
-      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+      options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
     ): Promise<ArkmeSourceSendResult> {
-      const sendAtMillis = Date.now()
+      const sendAtMillis = options.sendAtMillis ?? Date.now()
       const result = await this.postChatTextRecord(
         chatSessionUid,
         text,
@@ -5045,7 +5059,7 @@ export class ChatService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
     options: {
-      agentAuthored?: boolean
+      representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
       recordDurationMillis?: number
       captureContext?: ArkmeRecordCaptureContext
       initialAiPolish?: Record<string, unknown>
@@ -5056,6 +5070,7 @@ export class ChatService {
       '/api/v1/chats/records/send',
       {
         chat_session_uid: chatSessionUid,
+        ...(options.representation===undefined?{}:{representation:await new GroupRepresentationCodec(this.runtime).selection(options.representation,session.userId)}),
         record_uid: recordUid,
         rel_uid: relationUid,
         template_kind: 1,
@@ -5077,6 +5092,7 @@ export class ChatService {
       input: ArkmeRichSendInput,
       options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number } = {},
     ): Promise<ArkmeSourceSendResult> {
+    requireFrozenTeamSendTime(input)
       if (this.runtime.config.richMediaSendEnabled === false) {
         throw new ArkmePluginError('rich-content-disabled', '富内容发送已被插件配置关闭', false, 403)
       }
@@ -5085,6 +5101,7 @@ export class ChatService {
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       options.signal?.throwIfAborted()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
+      if(input.representation!==undefined&&source.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)
       const title = input.title?.trim() ?? ''
       const textContent = input.textFormat === 'markdown' ? (input.textContent ?? '') : (input.textContent?.trim() ?? '')
       const assets = input.assets ?? []
@@ -5139,7 +5156,7 @@ export class ChatService {
         textContent,
         mentionPayload,
       )
-      const sendAtMillis = options.sendAtMillis ?? Date.now()
+      const sendAtMillis = options.sendAtMillis ?? input.sendAtMillis ?? Date.now()
       const senderSnapshot = source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic'
         ? await this.profile.recordSenderSnapshot?.(session) : undefined
       const commonBody = {
@@ -5213,7 +5230,7 @@ export class ChatService {
       }
       const result = await postChatMessageCreation<Record<string, unknown>>(this.runtime,
         '/api/v1/chats/records/send',
-        { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody },
+        { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody, ...(input.representation===undefined?{}:{representation:await new GroupRepresentationCodec(this.runtime).selection(input.representation,session.userId)}) },
         session,
         options.signal,
         { trackWriteOutcome: true },
@@ -5342,13 +5359,15 @@ export class ChatService {
   async sendFavoriteSticker(
     sourceRef: string,
     fileAssetUid: string,
-    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } & import('./../team-group-contract.js').TeamRepresentationSendOptions = {},
   ): Promise<ArkmeSourceSendResult> {
+    requireFrozenTeamSendTime(options)
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
       throw new ArkmePluginError('favorite-sticker-chat-required', '收藏表情只能发送到聊天', false, 400)
     }
+    if(options.representation && source.kind!=='group_chat')throw new ArkmePluginError('team-identity-chat-required','请在普通群内选择代表身份',false,400)
     const { items } = await this.favoriteStickerDocument(session, options.signal)
     const sticker = items.find(item => stringValue(item.file_asset_uid).trim() === fileAssetUid.trim())
     if (sticker === undefined || sticker.is_available === false) {
@@ -5379,7 +5398,8 @@ export class ChatService {
             file_name: stringValue(sticker.file_name).trim(),
           }],
         },
-        send_at: Date.now(),
+        ...(options.representation===undefined?{}:{representation:await new GroupRepresentationCodec(this.runtime).selection(options.representation,session.userId)}),
+        send_at: options.sendAtMillis ?? Date.now(),
       }, session, options.signal,
     )
     return {
@@ -5391,6 +5411,16 @@ export class ChatService {
     }
   }
   
+  async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null>{
+    const session=await this.runtime.requireSession(),source=await this.source.openSourceRef(input.sourceRef,session.userId)
+    if(source.kind!=='group_chat'&&source.kind!=='private_chat')return null
+    const result=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/records/receipt/get',{chat_session_uid:source.ownerRef,record_uid:input.recordUid,rel_uid:input.relationUid},session,signal,{lane:'interactive-read',bypassCache:true})
+    if(result.accepted!==true)return undefined
+    const expected=await new GroupRepresentationCodec(this.runtime).selection(input.content.representation,session.userId)
+    const actual=objectValue(result.representation)
+    if(expected?Object.entries(expected).some(([key,value])=>actual[key]!==value):result.representation!==undefined&&result.representation!==null)throw new ArkmePluginError('team-identity-receipt-conflict','该发送标识已接受另一身份，请核对原消息',false,409)
+    return {sourceRef:input.sourceRef,itemUid:input.recordUid,status:numberValue(result.audit_status),sequence:numberValue(result.seq),localState:'synced'}
+  }
   async confirmLongArticlePublication(sourceRef: string, input: import('../types.js').ArkmeLongArticlePublishInput, userId: number, signal?: AbortSignal): Promise<ArkmeSourceSendResult> {
     const session = await this.runtime.requireSession()
     if (session.userId !== userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
@@ -5499,16 +5529,16 @@ export class ChatService {
       return await this.withLongArticleActions(await this.record.updateLongArticle(sourceRef, itemUid, input))
     }
   
-  async getLongArticleDraft(sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
-      return await this.record.getLongArticleDraft(sourceRef, itemUid)
+  async getLongArticleDraft(sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined> {
+      return await this.record.getLongArticleDraft(sourceRef, itemUid, draftScope)
     }
   
   async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
       return await this.record.putLongArticleDraft(draft)
     }
   
-  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
-      return await this.record.removeLongArticleDraft(sourceRef, itemUid, expectedRecordUid)
+  async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void> {
+      return await this.record.removeLongArticleDraft(sourceRef, itemUid, expectedRecordUid, draftScope)
     }
   
   async uploadLocalFile(
@@ -5523,8 +5553,9 @@ export class ChatService {
       mediaRef: string,
       range?: string,
       signal?: AbortSignal,
+      method: 'GET' | 'HEAD' = 'GET',
     ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-      return await this.media.fetchMedia(mediaRef, range, signal)
+      return await this.media.fetchMedia(mediaRef, range, signal, false, method)
     }
   
   async sendDirectText(
@@ -6733,7 +6764,10 @@ export class ChatService {
       const callRecord = await this.callHistory.timelineCallRecord(item, session.userId)
       const conversationPreview = arkmeChatConversationPreview(item, session.userId)
       const localSelfQuote = isMe && recordStatus === 1 ? this.runtime.stateStore.selfNoteQuotes?.project(`${this.runtime.config.environment}:${session.userId}`, uid, stringValue(payload.text_content)) : undefined
+      const representation=await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation,session.userId)
+      const originRepresentation=await new GroupRepresentationCodec(this.runtime).snapshot(payload.origin_representation,session.userId)
       const itemIndex = items.push({
+        ...(representation?{representation}:{}),...(originRepresentation?{originRepresentation}:{}),
         ...recordDeletionCapability({ userId: session.userId, sourceKind: source.kind, sourceOwnerRef: source.ownerRef,
           recordUid: uid, recordVersion: numberValue(payload.version), recordOwnerUserId: numberValue(payload.owner_user_id),
           isMe: senderUserId === session.userId, status: numberValue(payload.status) }, signingKey),

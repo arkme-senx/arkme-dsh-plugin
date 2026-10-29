@@ -1,3 +1,6 @@
+import { GroupRepresentationCodec } from './group-representation.js'
+import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
@@ -42,6 +45,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
   invalid_external_chat: '对外私聊请求无效，请重新打开',
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
@@ -86,7 +90,8 @@ export class TeamAppService {
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'>>,
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
-    private readonly memberCandidates?: TeamMemberCandidatePort) {
+    private readonly memberCandidates?: TeamMemberCandidatePort,
+ private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
 
   }
@@ -135,15 +140,37 @@ export class TeamAppService {
     if (message.conversation_uid !== context.conversation_uid || message.side !== context.side || !str(message.message_uid)) throw invalid()
     return await this.key(str(message.message_uid), actor)
   }
+  private async mentionContent(raw: unknown, actor: number, context: Record<string, unknown>) {
+    const content = {...obj(raw)}, payload = {...obj(content.content_payload)}, text = str(content.text_content)
+    if (payload.mention_metadata || payload.mentionMetadata) throw invalid()
+    const inputs = content.mentions
+    delete content.mentions
+    if (inputs === undefined) return content
+    if (!Array.isArray(inputs) || inputs.length > 100 || inputs.length && context.side !== 'team') throw invalid()
+    const humans = []
+    let end = 0
+    for (const input of inputs) {
+      const m = obj(input), start = m.startIndex, length = m.length
+      if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < end || typeof length !== 'number' || !Number.isSafeInteger(length) || length <= 1 || start + length > text.length) throw invalid()
+      const person = await this.open('person', m.personRef, actor), id = recordOwnerId(person.user_id)
+      if (person.conversation_uid !== context.conversation_uid || person.side !== 'team' || typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw invalid()
+      const token = text.slice(start, start + length)
+      if (token !== `@${str(m.displayName)}`) throw invalid()
+      humans.push({user_id:id,display_name_snapshot:str(m.displayName),start_index:start,length})
+      end = start + length
+    }
+    if (humans.length) content.content_payload = {...payload,payload_kind:payload.payload_kind ?? 1,schema_version:1,text_state:1,mention_metadata:encodeMentionMetadata(text,{humans,bots:[]})}
+    return content
+  }
   private async key(value: string, actor: number): Promise<string> {
     return createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(`team:${actor}:${value}`).digest('hex')
   }
   private async identity(raw: unknown, actor: number, person?: { id: unknown; context: Record<string, unknown> }): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
     const id = recordOwnerId(person?.id)
-    const actionable = person?.context.side === 'team' && typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+    const actionable = person?.context.side === 'team' && !!id && (typeof id === 'number' || v.kind === 'person') && (v.kind === undefined || v.kind === 'person') && v.account_state !== 'cancelled'
     return { nickname: str(v.nickname) || '用户', memberType: arkmePeerMemberType(v.member_type),
-      ...(actionable ? { personKey: await this.key(`person:${id}`, actor), isMe: id === actor,
+      ...(actionable ? { personKey: await this.key(`person:${id}`, actor), isMe: String(id) === String(actor),
         personRef: await this.ref('person', { conversation_uid: person!.context.conversation_uid, side: 'team', user_id: id }, actor) } : {}),
       ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
@@ -210,7 +237,14 @@ export class TeamAppService {
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
     const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
-    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id) }
+    const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id), ...(obj(content.content_payload).mention_metadata ? { has_mentions: true } : {}) }
+    const mentions = []
+    if (context.side === 'team') {
+      for (const m of list(obj(obj(content.content_payload).mention_metadata).human_mentions).slice(0, 100)) {
+        const identity = await this.identity({}, actor, {id:m.user_id,context})
+        if (identity.personRef) mentions.push({personRef:identity.personRef,displayName:str(m.display_name_snapshot) || str(content.text_content).slice(num(m.start_index)+1,num(m.start_index)+num(m.length)),startIndex:num(m.start_index),length:num(m.length)})
+      }
+    }
     const reply = obj(v.reply)
     const replyPreview = str(reply.message_uid) ? {
       ref: await this.ref('message', {conversation_uid:context.conversation_uid,side:context.side,message_uid:reply.message_uid},actor),
@@ -234,8 +268,8 @@ export class TeamAppService {
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       ...(replyPreview ? {reply:replyPreview} : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
-        text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
-        ...(content.content_payload ? { content_payload: obj(content.content_payload) } : {}),
+        ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
+        ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
       media: projectedMedia,
@@ -581,22 +615,17 @@ export class TeamAppService {
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.public-card': {
         const jotmoId = str(p.jotmoId).trim()
-        if (!jotmoId || jotmoId.length > 128) throw invalid()
-        const mine = list((await post('list-mine', {}, true)).teams).find(team => str(team.jotmo_id) === jotmoId)
-        if (mine) {
-          // Current channel lookup is a member-only API. Do not use it for strangers.
-          const channel = await this.channel(await post('message-channel/get', { team_id: recordOwnerId(mine.team_id) }, true), actor)
-          if (channel.jotmoId !== jotmoId) throw invalid()
-          return { name: channel.name, jotmoId, avatar: channel.avatar,
-            contact: !channel.enabled ? { state: 'disabled' }
-              : channel.publicRef ? { state: 'available', publicRef: channel.publicRef } : { state: 'backend_pending' },
-          } satisfies TeamPublicCard
-        }
-        const profile = await this.searchContactTeam(jotmoId, session, signal)
-        if (!profile || profile.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
-        // Public discovery currently has no channel locator or description. Do
-        // not guess a link or expose member APIs to external viewers.
-        return { name: profile.name, jotmoId, avatar: profile.avatar, contact: { state: 'backend_pending' } } satisfies TeamPublicCard
+        if (!jotmoId || jotmoId.length > 64) throw invalid()
+        const raw = await post('public-card/get', {jotmo_id:jotmoId}, true)
+        const contact=obj(raw.contact), navigation=obj(raw.navigation)
+        if(contact.state==='unavailable')return {name:'',jotmoId,contact:{state:'unavailable'},navigation:{kind:'none'}} satisfies TeamPublicCard
+        if(raw.jotmo_id!==jotmoId||!str(raw.name)||!['available','disabled'].includes(str(contact.state))||!['contact','inbox','none'].includes(str(navigation.kind))||contact.state==='available'&&!str(contact.public_ref))throw invalid()
+        const teamRef=await this.ref('team',{team_id:str(raw.team_id)},actor)
+        const avatar=await this.avatar({...raw,avatar:{...obj(raw.avatar),mode:'default'}},actor)
+        if(obj(raw.avatar).mode==='custom')Object.assign(avatar,{mode:'custom',key:`team_avatar_asset://${avatar.key}`,imageRef:await this.ref('profile-image',{jotmo_id:jotmoId,public_card:true,key:obj(raw.avatar).key},actor)})
+        return {name:str(raw.name),jotmoId,avatar,description:str(raw.description),
+          contact:contact.state==='available'?{state:'available',publicRef:str(contact.public_ref)}:{state:'disabled'},
+          navigation:{kind:navigation.kind as 'contact'|'inbox'|'none',...(navigation.kind==='inbox'?{teamRef}:{})}} satisfies TeamPublicCard
       }
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
@@ -608,7 +637,22 @@ export class TeamAppService {
         // Compare provider-owned IDs here, never names or rotating encrypted refs.
         return { jotmoId, isMember: mine.teams.some(raw => String(recordOwnerId(obj(raw).team_id)) === String(officialId)) }
       }
-      case 'team.app.group.context': case 'team.app.group.join': case 'team.app.group.directory': {
+      case 'team.app.group.context': {
+        if(!this.contacts?.openSourceRef||!str(p.sourceRef))throw invalid()
+        const source=await this.contacts.openSourceRef(str(p.sourceRef),actor)
+        if(source.kind!=='group_chat')throw invalid()
+        const raw=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/group-identity/context',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true})
+        if(raw.state!=='ready'||raw.membership_policy!=='independent'||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        const codec=new GroupRepresentationCodec(this.runtime)
+        const teams=await Promise.all(list(raw.teams).map(async candidate=>{
+          const snapshot=await codec.snapshot({...candidate,group_join_at:raw.group_join_at},actor)
+          const team=await this.team(candidate,actor)
+          if(!snapshot)throw invalid()
+          return {...team,representation:{teamRef:snapshot.teamRef,membershipKind:snapshot.membershipKind,membershipRevision:snapshot.membershipRevision,groupJoinAt:snapshot.groupJoinAt}}
+        }))
+        return {state:'ready',membershipPolicy:'independent',groupJoinAt:num(raw.group_join_at),teams} satisfies TeamGroupContext
+      }
+      case 'team.app.group.join': case 'team.app.group.directory': {
         // Real team membership is sufficient to offer an identity candidate.
         // Neither the candidate nor its pending write grants teammates group access.
         if (operation !== 'team.app.group.directory') {
@@ -617,14 +661,11 @@ export class TeamAppService {
           if (source.kind !== 'group_chat') throw invalid()
         }
         if (operation === 'team.app.group.join' && !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
-        const id = operation === 'team.app.group.context' ? undefined : await teamID()
+        const id = await teamID()
         const mine = list((await post('list-mine', {}, true)).teams)
         if (id !== undefined && !mine.some(team => String(team.team_id) === String(id))) {
           throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         }
-        if (operation === 'team.app.group.context') return {
-          state: 'backend_pending', membershipPolicy: 'unknown', teams: await Promise.all(mine.map(team => this.team(team, actor))),
-        } satisfies TeamGroupContext
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
       case 'team.app.member-candidates': case 'team.app.members.add': {
@@ -705,15 +746,24 @@ export class TeamAppService {
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
       case 'team.app.outbound.open': {
-        // Frontend handoff boundary. Do not guess an upstream creation endpoint,
-        // create a personal Chat session, or manufacture a shared conversation.
-        if (!validTeamOutboundRecipient(p.recipient) || !str(p.requestUid).trim()) throw invalid()
-        const id = await teamID()
-        const mine = await post('list-mine', {}, true)
-        if (!list(mine.teams).some(team => String(team.team_id) === String(id))) {
-          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        if (!validTeamOutboundRecipient(p.recipient) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        const id=await teamID(), mine=list((await post('list-mine',{},true)).teams)
+        if(!mine.some(team=>String(team.team_id)===String(id)))throw new ArkmePluginError('team-not_accessible',reasons.not_accessible!,false,403)
+        const scope=`${this.runtime.config.environment}:${actor}`, requestUid=str(p.requestUid)
+        const selection=createHash('sha256').update(JSON.stringify(p.recipient)).digest('hex')
+        const saved=await this.runtime.stateStore.teamOutboundTarget(scope,requestUid)
+        if(saved && (saved.teamId!==String(id)||saved.selection!==selection))throw invalid()
+        let target=recordOwnerId(saved?.targetId)
+        if(!target){
+          if(!this.outboundTargets)throw new ArkmePluginError('team-recipient-unavailable','无法解析联系用户，请重新选择',true,503)
+          target=recordOwnerId(await this.outboundTargets.resolve(p.recipient,session,signal))
+          if(!target || String(target)===String(actor))throw invalid()
+          await this.runtime.stateStore.retainTeamOutboundTarget(scope,requestUid,{teamId:String(id),targetId:String(target),selection})
         }
-        return { state: 'backend_pending' as const }
+        const data=await post('conversations/open-by-member',{team_id:id,external_user_id:String(target)})
+        const current=obj(data.conversation)
+        if(current.side!=='team'||String(obj(current.channel).team_id)!==String(id)||String(current.external_user_id)!==String(target))throw invalid()
+        return {state:'ready' as const,conversation:await this.conversation(current,actor)}
       }
       case 'team.app.open': {
         const data = await post('conversations/open', { public_ref: str(p.publicRef) })
@@ -789,13 +839,21 @@ export class TeamAppService {
         const context = await conversation()
         const target = operation === 'team.app.locate' ? await this.open('message', p.messageRef, actor) : undefined
         if (target && (target.conversation_uid !== context.conversation_uid || target.side !== context.side)) throw invalid()
-        const data = await post(operation === 'team.app.locate' ? 'conversations/timeline/locate' : 'conversations/timeline/page', { ...context, ...(target ? {message_uid:target.message_uid} : {before_seq:num(p.beforeSeq)}), limit:num(p.limit)||50 }, true)
+        const data = await post(operation === 'team.app.locate' ? 'conversations/timeline/locate' : 'conversations/timeline/page', { ...context, ...(target ? {message_uid:target.message_uid} : {before_seq:num(p.beforeSeq)}), limit:Math.max(1,Math.min(100,num(p.limit)||50)) }, true)
+        let rows = list(data.messages)
+        if (p.personRef !== undefined) {
+          const person = await this.open('person',p.personRef,actor)
+          if (context.side !== 'team' || person.side !== 'team' || person.conversation_uid !== context.conversation_uid || !['owner','mentioned'].includes(str(p.personMode))) throw invalid()
+          rows = rows.filter(row => row.state === 'published' && obj(row.record).status === 'available' && (p.personMode === 'owner'
+            ? String(row.actor_user_id) === String(person.user_id)
+            : list(obj(obj(obj(row.record).content_payload).mention_metadata).human_mentions).some(m => String(m.user_id) === String(person.user_id))))
+        }
         const current = await this.conversation(data.conversation, actor)
         const external = list(data.messages).find(v => v.side === 'external')
         if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
           current.visitor = await this.identity(obj(data.conversation).visitor, actor, { id: external.actor_user_id, context })
         }
-        return { conversation: current, messages: await Promise.all(list(data.messages).map(v => this.message(v, actor, context))),
+        return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
       case 'team.app.person.private.open':
@@ -807,13 +865,13 @@ export class TeamAppService {
         const people = await Promise.all(refs.map(async ref => {
           const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
           if (person.conversation_uid !== context.conversation_uid || person.side !== 'team'
-            || typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw invalid()
+            || !id) throw invalid()
           return id
         }))
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
         if (operation === 'team.app.person.private.open') {
-          if (!this.privateChat || people[0] === actor) throw invalid()
+          if (!this.privateChat || String(people[0]) === String(actor)) throw invalid()
           return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
         }
         if (!this.contacts) throw new ArkmePluginError('team-remarks-unavailable', '备注暂时无法读取', true, 503)
@@ -826,20 +884,9 @@ export class TeamAppService {
         // Resolve from a fresh authorized conversation, never a client-supplied name/id.
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         const current = obj(data.conversation)
-        let peer = recordOwnerId(current.external_user_id)
+        const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        // Production omits external_user_id but identifies the canonical latest
-        // external message. Resolve that exact server-selected row, not a name,
-        // arbitrary recent sender, or a client-supplied message/account id.
-        if (!peer && num(current.latest_external_seq) > 0) {
-          const sequence = num(current.latest_external_seq)
-          const page = await post('conversations/timeline/page', { ...context, before_seq: sequence + 1, limit: 1 }, true)
-          const verified = obj(page.conversation)
-          if (verified.conversation_uid !== context.conversation_uid || verified.side !== 'team') throw invalid()
-          const external = list(page.messages).find(m => num(m.seq) === sequence && m.side === 'external')
-          peer = recordOwnerId(external?.actor_user_id)
-        }
-        if (typeof peer !== 'number' || peer <= 0 || peer === actor || !this.privateChat) {
+        if (!peer || String(peer) === String(actor) || !this.privateChat || (typeof peer === 'string' && obj(current.visitor).kind !== 'person') || (obj(current.visitor).kind !== undefined && obj(current.visitor).kind !== 'person') || obj(current.visitor).account_state === 'cancelled') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
         return await this.privateChat.openPrivateChatFromUser(peer, {
@@ -854,7 +901,7 @@ export class TeamAppService {
         const quote = p.quote === undefined ? undefined : readMessageQuote(p.quote)
         if (p.quote !== undefined && (!quote || !reply || quote.recordVersion !== num(p.replyRecordVersion))) throw invalid()
         try {
-          const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: obj(p.content),
+          const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: await this.mentionContent(p.content,actor,context),
             ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
           return { message: await this.message(data, actor, context) }
         } catch (error) {
@@ -869,7 +916,18 @@ export class TeamAppService {
         const data = await post('conversations/messages/send-status', { message_uid: m.message_uid, side: m.side })
         return { message: await this.message(data, actor, m) }
       }
-      case 'team.app.edit': { const m = await message(); return await post('conversations/messages/update', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version), content: obj(p.content) }) }
+      case 'team.app.edit': {
+        const m = await this.open('message', p.messageRef, actor), explicitMentions = obj(p.content).mentions !== undefined, content = await this.mentionContent(p.content,actor,m), payload = {...obj(content.content_payload)}
+        if (m.has_mentions === true && !explicitMentions) {
+          const data = await post('conversations/messages/batch-get', {conversation_uid:m.conversation_uid,side:m.side,items:[{message_uid:m.message_uid,expected_record_version:num(p.version)}]}, true)
+          const rows = list(data.messages), row = rows[0], original = obj(row?.record)
+          if (rows.length !== 1 || row?.message_uid !== m.message_uid || original.version !== num(p.version) || original.status !== 'available') throw invalid()
+          const mentions = await retainedRecordMentionMetadata(obj(original.content_payload), str(original.text_content), str(content.text_content))
+          if (mentions) payload.mention_metadata = mentions
+          if (Object.keys(payload).length) content.content_payload = {...payload, payload_kind:payload.payload_kind ?? 1, schema_version:1, text_state:1}
+        }
+        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content})
+      }
       case 'team.app.cancel': {
         if (p.conversationRef !== undefined) {
           const context = await conversation()
@@ -1030,9 +1088,9 @@ export class TeamAppService {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
       const ref=await this.open('profile-image',p.imageRef,session.userId)
       const result=obj(await this.runtime.authenticatedTeamPost(
-        ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
+        ref.public_card ? '/api/v1/team/public-card/get' : ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
         ref.jotmo_id ? {jotmo_id:ref.jotmo_id} : ref.public_ref?{public_ref:ref.public_ref}:{team_id:ref.team_id},session,signal,true))
-      const avatar=obj((ref.public_ref?result:obj(result.team)).avatar)
+      const avatar=obj((ref.public_card||ref.public_ref?result:obj(result.team)).avatar)
       if(avatar.mode!=='custom'||str(avatar.key)!==str(ref.key))throw invalid()
       const cacheKey=`team_avatar_asset://${await this.key(`avatar:${str(ref.key)}`,session.userId)}`
       const cached=await this.runtime.stateStore.readAvatarCache?.(session.userId,cacheKey).catch(()=>undefined)

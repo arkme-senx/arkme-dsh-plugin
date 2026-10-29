@@ -236,7 +236,8 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => {
       renderer = create(<ArkmeRecordingSpeakerEditor item={{
         itemId: 'item-1', itemRef: 'sealed-item', assignedSpeakerOptionKey: 'key-speaker-1', speakerLabel: '说话人 1', speakerColorIndex: 1,
-        speakerNumber: 1, speakerKey: 'speaker-opaque', sameSpeakerItemCount: 3,
+        speakerNumber: 1, speakerKey: 'speaker-opaque', canBindSpeaker: true,
+
         text: '内容', startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
       }} onUpdated={() => {}} onClose={() => {}} />)
       await tick()
@@ -276,7 +277,8 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => {
       renderer = create(<ArkmeRecordingSpeakerEditor item={{
         itemId: 'item-1', itemRef: 'sealed-item', assignedSpeakerOptionKey: 'key-speaker-1', speakerLabel: '说话人 1', speakerColorIndex: 1,
-        speakerNumber: 1, speakerKey: 'speaker-opaque', sameSpeakerItemCount: 3,
+        speakerNumber: 1, speakerKey: 'speaker-opaque', canBindSpeaker: true,
+
         text: '内容', startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
       }} onUpdated={() => {}} onClose={() => {}} />)
       await tick()
@@ -304,7 +306,8 @@ describe('recording speaker editor failure recovery', () => {
     await act(async () => {
       renderer = create(<ArkmeRecordingSpeakerEditor item={{
         itemId: 'item-1', itemRef: 'sealed-item', assignedSpeakerOptionKey: 'key-speaker-1', speakerLabel: '说话人 1', speakerColorIndex: 1,
-        speakerNumber: 1, speakerKey: 'speaker-opaque', sameSpeakerItemCount: 1,
+        speakerNumber: 1, speakerKey: 'speaker-opaque', canBindSpeaker: true,
+
         text: '内容', startAtMillis: 1_000, endAtMillis: 2_000, isBackground: false, isSelf: false,
       }} onUpdated={() => {}} onClose={() => {}} />)
       await tick()

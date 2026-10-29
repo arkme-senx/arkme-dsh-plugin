@@ -118,3 +118,61 @@ it('keeps loaded records on network error and retries the same page, clears them
   expect(call.mock.calls.at(-1)![1].beforeSeq).toBe(5)
   expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(0)
 })
+
+it('offers mention and mentioned-record actions only for sealed people, never self mention',async()=>{
+ const onMention=vi.fn()
+ function MentionHarness({self=false}:{self?:boolean}){const a=useTeamVisitorActions({conversation:{...conversation,visitor:{nickname:'同名',personRef:'person-ref',personKey:'person-key',isMe:self}},accountKey:'test:90',onRecords,onOpen,onMention});return <>{a.avatar(<span>头像</span>)}{a.layer}</>}
+ await act(async()=>root.render(<MentionHarness/>))
+ await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
+ await act(async()=>[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(n=>n.textContent==='@同名')!.click())
+ expect(onMention).toHaveBeenCalledWith(expect.objectContaining({personRef:'person-ref'}))
+ await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
+ await act(async()=>[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(n=>n.textContent==='@TA的快记')!.click())
+ expect(onRecords).toHaveBeenCalledWith(expect.objectContaining({personRef:'person-ref'}),'mentioned')
+ await act(async()=>root.render(<MentionHarness self/>))
+ await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
+ expect(document.querySelector('[role="menu"]')?.textContent).toContain('@我的快记')
+ expect([...document.querySelectorAll('[role="menuitem"]')].some(n=>n.textContent==='@同名')).toBe(false)
+})
+it('reads exactly one sparse mention page, continues explicitly and aborts after unmount',async()=>{
+ const person={nickname:'同名',personRef:'sealed',personKey:'key'}
+ call.mockResolvedValue({conversation,messages:[],hasMore:true,beforeSeq:50})
+ await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="test:90" mode="mentioned" person={person} onClose={onClose} onLocate={onLocate}/>);await tick()})
+ expect(call).toHaveBeenCalledOnce();expect(call.mock.calls[0]![1]).toMatchObject({personRef:'sealed',personMode:'mentioned'})
+ expect(host.textContent).not.toContain('暂无快记')
+ call.mockResolvedValue({conversation,messages:[message(40,'team')],hasMore:false,beforeSeq:40})
+ await act(async()=>{findButton('加载更早消息').click();await tick()})
+ expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
+})
+it('bounds loaded people rows at 200 while keeping an explicit path back to latest',async()=>{
+ let seq=300
+ const person={nickname:'访客',personRef:'sealed',personKey:'key'}
+ call.mockImplementation(async()=>{const messages=Array.from({length:50},()=>({...message(seq--),sender:{nickname:'访客',personKey:'key'}}));return {conversation,messages,hasMore:true,beforeSeq:seq+1}})
+ await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="test:90" person={person} onClose={onClose} onLocate={onLocate}/>);await tick()})
+ for(let i=0;i<4;i++)await act(async()=>{findButton('加载更早消息').click();await tick()})
+ expect(call).toHaveBeenCalledTimes(5)
+ expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(200)
+ expect(findButton('返回最新快记')).toBeDefined()
+})
+it('aborts old person pages and never mixes late results into a replacement identity',async()=>{
+ let finish!:(value:unknown)=>void
+ call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValue({conversation,messages:[{...message(2),sender:{nickname:'second',personKey:'second'}}],hasMore:false,beforeSeq:2})
+ const render=(ref:string)=><TeamVisitorRecords conversation={conversation} accountKey="test:90" person={{nickname:ref,personRef:ref,personKey:ref}} onClose={onClose} onLocate={onLocate}/>
+ await act(async()=>{root.render(render('first'));await tick()})
+ const firstSignal=call.mock.calls[0]![2]
+ await act(async()=>{root.render(render('second'));await tick()})
+ expect(firstSignal.aborted).toBe(true)
+ await act(async()=>{finish({conversation,messages:[message(99)],hasMore:false,beforeSeq:99});await tick()})
+ expect([...host.querySelectorAll('[data-team-visitor-record]')].map(n=>n.getAttribute('data-team-visitor-record'))).toEqual(['m2'])
+})
+it('retains a loaded person window when fresh signed references rotate for the same identities',async()=>{
+ call.mockResolvedValue({conversation,messages:[{...message(9),sender:{nickname:'同名',personKey:'same'}}],hasMore:true,beforeSeq:9})
+ const render=(generation:number)=><TeamVisitorRecords conversation={{...conversation,ref:`conversation-${generation}`}} accountKey="test:90" person={{nickname:'同名',personKey:'same',personRef:`person-${generation}`}} onClose={onClose} onLocate={onLocate}/>
+ await act(async()=>{root.render(render(1));await tick()})
+ for(let i=2;i<=10;i++)await act(async()=>{root.render(render(i));await tick()})
+ expect(call).toHaveBeenCalledOnce()
+ expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
+ call.mockResolvedValue({conversation,messages:[],hasMore:false,beforeSeq:8})
+ await act(async()=>{findButton('加载更早消息').click();await tick()})
+ expect(call.mock.calls.at(-1)![1]).toMatchObject({conversationRef:'conversation-10',personRef:'person-10',beforeSeq:9})
+})

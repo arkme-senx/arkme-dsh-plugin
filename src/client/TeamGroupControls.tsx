@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import type { ArkmeSourceItem, ArkmeTeam } from '../types.js'
-import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending } from '../team-group-contract.js'
+import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending, type TeamGroupIdentity } from '../team-group-contract.js'
 import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
 import { callArkme } from './api.js'
@@ -26,7 +26,7 @@ function useTeamGroupContext(accountKey: string, sourceRef: string, active = tru
     void callArkme<TeamGroupContext>('team.app.group.context', { expectedAccountKey: accountKey, sourceRef }, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return
-        if (value.state !== 'backend_pending' || !Array.isArray(value.teams)) throw new Error(tr('团队状态返回异常，请重试'))
+        if (!['ready','backend_pending'].includes(value.state) || !Array.isArray(value.teams)) throw new Error(tr('团队状态返回异常，请重试'))
         setState({ scope, value })
       }).catch(error => { if (!controller.signal.aborted) setState({ scope, error: errorText(error) }) })
     return () => controller.abort()
@@ -92,72 +92,37 @@ export function TeamGroupJoinPanel({ accountKey, source }: { accountKey: string;
 /** A real team member may represent that team without adding the team to the group.
  * Writes remain pending until messages carry server-verified team attribution. */
 type IdentityPickerProps = {
-  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean
+  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean; value?: TeamGroupIdentity | undefined; onSelect?(value:TeamGroupIdentity | undefined):void
 }
 export function TeamGroupIdentityPicker(props: IdentityPickerProps) {
   return <ScopedIdentityPicker key={JSON.stringify([props.accountKey, props.sourceRef])} {...props} />
 }
 
-function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, selfName = '我', disabled = false }: IdentityPickerProps) {
+function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, selfName = '我', disabled = false, value, onSelect }: IdentityPickerProps) {
   useArkmeLocale()
-  const [open, setOpen] = useState(false), [requested, setRequested] = useState<ArkmeTeam>()
-  const [viewTeam, setViewTeam] = useState<string>()
-  const context = useTeamGroupContext(accountKey, sourceRef)
-  const close = useCallback(() => setOpen(false), [])
-  // No timer: entering the conversation, opening the menu and returning to the
-  // window recheck membership. Keep an existing trigger stable during refresh.
-  useEffect(() => {
-    const refresh = () => context.retry()
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
-  }, [context.retry])
-  useEffect(() => { if (disabled) { close(); setRequested(undefined); setViewTeam(undefined) } }, [disabled, close])
-  useEffect(() => {
-    if (!context.refreshing && (!canChooseTeamGroupIdentity(context.value) || context.error)) {
-      close(); setRequested(undefined); setViewTeam(undefined)
-    } else if (!context.refreshing && context.value) {
-      const ids = new Set(context.value.teams.map(team => team.jotmoId))
-      setRequested(current => current && ids.has(current.jotmoId) ? current : undefined)
-      setViewTeam(current => current && ids.has(current) ? current : undefined)
-    }
-  }, [context.value, context.refreshing, context.error, close])
-  if (context.error) return <span role="status" style={styles.hint}>{tr('团队身份暂不可用')}
-    <button type="button" style={styles.link} title={context.error} onClick={context.retry}>{tr('重试')}</button></span>
-  if (!canChooseTeamGroupIdentity(context.value)) return null
-  const actions: SelfRoleMenuAction[] = [
-    { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: close },
-    { type: 'separator', id: 'separator' },
-    ...[...new Map(context.value!.teams.map(team => [team.jotmoId, team])).values()].map(team => ({
-      id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'), disabled: context.refreshing === true,
-      icon: <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: 28, height: 28 }}>
-        <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />
-        <span aria-label={tr('{v0}团队身份', { v0: team.name })} style={styles.teamBadge}><Users size={10} weight="fill" /></span>
-      </span>,
-      onSelect: () => { if (!context.refreshing) { setRequested(team); close() } },
+  const [open,setOpen]=useState(false)
+  const context=useTeamGroupContext(accountKey,sourceRef)
+  const close=useCallback(()=>setOpen(false),[])
+  useEffect(()=>{const refresh=()=>context.retry();window.addEventListener('focus',refresh);return()=>window.removeEventListener('focus',refresh)},[context.retry])
+  useEffect(()=>{if(disabled)close()},[disabled,close])
+  if(!value&&!canChooseTeamGroupIdentity(context.value)&&!context.error)return null
+  const actions:SelfRoleMenuAction[]=[
+    {id:'personal',label:tr('我'),description:tr('个人身份'),icon:<ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')}/>,onSelect:()=>{onSelect?.(undefined);close()}},
+    {type:'separator',id:'separator'},
+    ...(context.value?.teams??[]).filter(team=>team.representation!==undefined).map(team=>({
+      id:`team:${team.jotmoId}`,label:`${selfName} · ${team.name}`,description:tr('代表团队发言'),disabled:context.refreshing===true,
+      icon:<span style={{position:'relative',display:'inline-flex'}}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')}/><span aria-label={`${team.name}团队身份`} style={styles.teamBadge}><Users size={10} weight="fill"/></span></span>,
+      onSelect:()=>{if(!context.refreshing&&team.representation){onSelect?.({team,selection:team.representation});close()}},
     })),
-    ...(context.refreshing ? [{ type: 'label' as const, id: 'refreshing', text: tr('正在核验团队身份…') }] : []),
+    ...(context.error?[{type:'label' as const,id:'error',text:tr('团队身份暂不可用，草稿已保留')}]:[]),
   ]
-  return <>
-    <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={['personal']} showSelectionIndicator actions={actions} anchor={
-      <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：我')} title={tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
-        style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { if (!open) context.retry(); setOpen(value => !value) }}>
-        <ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} /><span>{tr('我')}</span><CaretDown size={10} />
-      </button>
-    } />
-    {requested && <TeamFeatureDialog title={tr('代表团队发言')} teamName={requested.name} onClose={() => setRequested(undefined)}>
-      <div style={{ padding: 20 }}>
-        <p style={styles.hint}>{tr('消息身份预览')}</p>
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <ArkmeUserAvatar avatarRef={selfAvatarRef} size={32} label={tr('我的头像')} /><strong>{selfName}</strong>
-          <button type="button" style={{ ...styles.link, background: arkmeTheme.accentSoft, borderRadius: 6 }}
-            onClick={() => { setViewTeam(requested.jotmoId); setRequested(undefined) }}>{requested.name} ↗</button>
-        </div>
-        <p style={styles.hint}>{tr('群成员可通过团队标识查看资料、联系团队。代表团队发言不会自动让其他同事看到这个群的内容。')}</p>
-        <TeamGroupPendingNotice>{tr('尚未切换，仍以个人身份发送；草稿已保留。')}</TeamGroupPendingNotice>
-      </div>
-    </TeamFeatureDialog>}
-    {viewTeam && <TeamPublicCardDialog accountKey={accountKey} jotmoId={viewTeam} onClose={() => setViewTeam(undefined)} />}
-  </>
+  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={[value?`team:${value.team.jotmoId}`:'personal']} showSelectionIndicator actions={actions} anchor={
+    <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={value?`${selfName} · ${value.team.name}`:tr('群聊发言身份：我')}
+      aria-haspopup="dialog" aria-expanded={open} style={styles.trigger} onPointerDown={event=>event.stopPropagation()} onClick={()=>{if(!open)context.retry();setOpen(v=>!v)}}>
+      <span style={{position:'relative',display:'inline-flex'}}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')}/>{value&&<span style={styles.teamBadge}><Users size={10} weight="fill"/></span>}</span>
+      <span>{value?value.team.name:tr('我')}</span><CaretDown size={10}/>
+    </button>
+  }/>
 }
 
 const styles: Record<string, CSSProperties> = {

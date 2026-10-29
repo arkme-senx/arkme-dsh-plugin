@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RecordingEntityService } from '../src/services/recording-entity-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../src/services/service.js'
 import type { ArkmeSessionStore } from '../src/keychain-store.js'
-import type { ArkmeRecordingPrivateTranscriptItem } from '../src/recording-presentation.js'
+import type { RecordingEntityTranscriptRow } from '../src/services/recording-entity-service.js'
 
 const date = new Date(2026, 9, 13).getTime()
 const day = () => ({ day_stamp: date, transcript_source: 'system', status: 'succeeded', view_mode: 'official',
@@ -14,7 +14,7 @@ const day = () => ({ day_stamp: date, transcript_source: 'system', status: 'succ
 const occurrence = () => ({ occurrence_id: 'private-mention', row_id: 'session:child:0:system', session_id: 'session', child_id: 'child',
   item_index: 0, transcript_source: 'system', start_ms: date + 1000, end_ms: date + 2000, rune_start: 9, rune_end: 11, observed_text: '武汉' })
 const row = { sessionId: 'session', childId: 'child', asrItemIndex: 0, transcriptSource: 'system', startAtMillis: date + 1000, endAtMillis: date + 2000,
-  rawTranscriptText: '  (背景音) 🙂武汉  ', text: '🙂武汉' } as ArkmeRecordingPrivateTranscriptItem
+  rawTranscriptText: '  (背景音) 🙂武汉  ', text: '🙂武汉' } as RecordingEntityTranscriptRow
 const cleanup: Array<() => void> = []
 afterEach(() => { cleanup.splice(0).forEach(fn => fn()) })
 function fixture() {

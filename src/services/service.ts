@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
 import { createHash } from 'node:crypto'
+import { setTimeout as waitForCapacity } from 'node:timers/promises'
 import { retryAfterMillis } from '../http-retry-after.js'
 import {
   ArkmeRequestQueueOverflowError,
@@ -31,6 +32,9 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+ teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
+ retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
+
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
@@ -89,9 +93,9 @@ arkoFileRefs(userId:number):Promise<string[]>
     error?: string,
   ): Promise<void>
   removeExtensionReviewOperation(userId: number, clientMutationId: string): Promise<void>
-  getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
+  getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined>
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
-  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void>
+  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void>
   getRecordReeditDraft(
     userId: number,
     sourceIdentityKey: string,
@@ -115,7 +119,7 @@ arkoFileRefs(userId:number):Promise<string[]>
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
-  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
+  planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('../recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
@@ -1277,8 +1281,181 @@ export class ServiceRuntime {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
-      session = await this.refreshAccessToken(session)
+      session = await this.refreshAccessToken(session, signal)
       return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  /** Binary service reads keep account scope and credentials in the Host. */
+  async authenticatedAudioStream(path: string, options: {
+    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
+  }): Promise<Response> {
+    const session = await this.requireSession()
+    const opening = new AbortController()
+    const timer = setTimeout(() => opening.abort(new DOMException('Media opening timed out', 'TimeoutError')), 35_000)
+    const signal = AbortSignal.any([opening.signal, ...(options.signal ? [options.signal] : [])])
+    try {
+      // Admission, token recovery and first headers are bounded independently
+      // of media duration. The opened body owns its progress/idle lifetime.
+      return await this.requestCoordinator.runStream({
+        scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'audio', signal,
+        operation: signal => this.openAudioStream(path, { ...options, signal }, session),
+      })
+    } finally { clearTimeout(timer) }
+  }
+
+  private async openAudioStream(path: string, options: {
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'
+  }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
+    const base = new URL(this.config.audioBaseUrl)
+    const url = new URL(path, base)
+    if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
+      || url.username !== '' || url.password !== '' || url.hash !== ''
+      || (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0))) {
+      throw new ArkmePluginError('media-path-invalid', '媒体请求路径无效', false, 400)
+    }
+    const rangeMatch = options.range === undefined ? undefined : /^bytes=(\d*)-(\d*)$/.exec(options.range)
+    if (options.range !== undefined && (!rangeMatch || (!rangeMatch[1] && !rangeMatch[2])
+      || [rangeMatch[1], rangeMatch[2]].some(part => part !== '' && (!Number.isSafeInteger(Number(part)) || Number(part) < 0))
+      || (rangeMatch[1] && rangeMatch[2] && Number(rangeMatch[1]) > Number(rangeMatch[2])))) {
+      throw new ArkmePluginError('media-range-invalid', '媒体读取范围无效', false, 416)
+    }
+    let session = initialSession
+    const identity = { userId: session.userId, refreshToken: session.refreshToken }
+    const lifetime = new AbortController()
+    const signal = AbortSignal.any([lifetime.signal, options.signal])
+    const assertAccount = async (): Promise<void> => {
+      signal.throwIfAborted()
+      const current = await this.accountScopedSession()
+      if (identity.userId !== options.expectedUserId || current?.userId !== identity.userId || current.refreshToken !== identity.refreshToken) {
+        throw new ArkmePluginError('media-account-changed', '账号已变化，请重新读取音频', false, 409)
+      }
+      signal.throwIfAborted()
+    }
+    const send = async (): Promise<Response> => {
+      await assertAccount()
+      return await this.fetchImpl(url, {
+        method: options.method ?? 'GET',
+        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }) },
+        redirect: 'error', signal,
+      })
+    }
+    let response: Response | undefined
+    const invalid = (): ArkmePluginError => new ArkmePluginError('media-response-invalid', '媒体响应不完整或格式无效', true, 502)
+    try {
+      let refreshed = false
+      for (;;) {
+        response = await send()
+        if (response.status === 401 && !refreshed) {
+          await response.body?.cancel()
+          session = await this.refreshAccessToken(session, signal)
+          refreshed = true
+          continue
+        }
+        await assertAccount()
+        const delay = response.status === 503 ? retryAfterMillis(response.headers.get('retry-after')) : undefined
+        if (delay === undefined) break
+        await response.body?.cancel()
+        // Shares the opening-stage budget and account cancellation.
+        // No byte has been published yet; never replay a partly consumed stream.
+        await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
+      }
+      if (response.status !== 200 && response.status !== 206) {
+        throw new ArkmePluginError('media-fetch-failed', '录音媒体当前不可用', response.status >= 500,
+          [401, 403, 404, 416].includes(response.status) ? response.status : 502, { upstreamStatus: response.status })
+      }
+      const lengthText = response.headers.get('content-length') ?? ''
+      const length = Number(lengthText)
+      const mime = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
+      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
+        || (options.maxBytes !== undefined && length > options.maxBytes)
+        || !['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'].includes(mime)
+        || (options.method !== 'HEAD' && response.body === null)) throw invalid()
+      if (response.status === 206) {
+        const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
+        if (!returned || !rangeMatch) throw invalid()
+        const [start, end, total] = returned.slice(1).map(Number) as [number, number, number]
+        const wantedStart = rangeMatch[1] === '' ? Math.max(0, total - Number(rangeMatch[2])) : Number(rangeMatch[1])
+        const wantedEnd = rangeMatch[1] === '' || rangeMatch[2] === '' ? total - 1 : Math.min(total - 1, Number(rangeMatch[2]))
+        if (![start, end, total].every(Number.isSafeInteger) || total <= 0
+          || (options.maxBytes !== undefined && total > options.maxBytes)
+          || start !== wantedStart || end !== wantedEnd || end < start || end >= total || length !== end - start + 1) throw invalid()
+      }
+      const headers = new Headers({ 'content-type': mime, 'content-length': String(length), 'cache-control': 'private, no-store', 'accept-ranges': 'bytes' })
+      for (const name of ['content-range', 'etag']) {
+        const value = response.headers.get(name)
+        if (value !== null) headers.set(name, value)
+      }
+      if (options.method === 'HEAD') {
+        await response.body?.cancel()
+        await assertAccount()
+        return { value: new Response(null, { status: response.status, headers }), finished: Promise.resolve() }
+      }
+      const reader = response.body!.getReader()
+      const finished = Promise.withResolvers<void>()
+      let received = 0
+      let ended = false
+      let streamController: ReadableStreamDefaultController<Uint8Array>
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      const startReadTimer = (): void => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => lifetime.abort(new DOMException('Media read stalled', 'TimeoutError')), 35_000)
+        idleTimer.unref?.()
+      }
+      const settle = async (reason?: unknown, cancel = false): Promise<void> => {
+        if (ended) return
+        ended = true
+        clearTimeout(idleTimer)
+        signal.removeEventListener('abort', aborted)
+        try {
+          if (cancel) await reader.cancel(reason).catch(() => undefined)
+          reader.releaseLock()
+        } finally { finished.resolve() }
+      }
+      const aborted = (): void => {
+        if (ended) return
+        streamController.error(signal.reason)
+        void settle(signal.reason, true)
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller
+          signal.addEventListener('abort', aborted, { once: true })
+          if (signal.aborted) aborted()
+        },
+        async pull(controller) {
+          try {
+            await assertAccount()
+            // Only an outstanding upstream read can stall. A paused browser
+            // applies backpressure and must not spend the network idle budget.
+            startReadTimer()
+            let next: ReadableStreamReadResult<Uint8Array>
+            try { next = await reader.read() } finally { clearTimeout(idleTimer) }
+            await assertAccount()
+            if (ended) return
+            if (next.done) {
+              if (received !== length) throw invalid()
+              controller.close()
+              await settle()
+              return
+            }
+            received += next.value.byteLength
+            if (received > length) throw invalid()
+            controller.enqueue(next.value)
+          } catch (error) {
+            if (!ended) {
+              controller.error(error)
+              await settle(error, true)
+            }
+          }
+        },
+        async cancel(reason) { await settle(reason, true); lifetime.abort(reason) },
+      }, { highWaterMark: 0 })
+      return { value: new Response(body, { status: response.status, headers }), finished: finished.promise }
+    } catch (error) {
+      lifetime.abort(error)
+      await response?.body?.cancel().catch(() => undefined)
+      throw error
     }
   }
 

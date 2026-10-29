@@ -1,3 +1,4 @@
+import { RECORDING_STRATEGIES, type RecordingStrategy } from './recording-strategy-contract.js'
 import { sameArkoTurnIntent, isValidArkoPendingTurn, validArkoStoredTurn, type ArkmeArkoPendingTurn, type ArkmeArkoStoredTurn } from './arko-turn-contract.js'
 import type { OfflineContextJournalEntry } from "./offline-context-contract.js"
 import { sameRecordingImportBatch, validRecordingCreateRequestUID } from './recording-import-identity.js'
@@ -32,6 +33,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+ teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   recordingToolBatches?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
@@ -108,6 +110,9 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
   if (typeof source.phase !== 'string' || !RECORDING_IMPORT_PHASES.has(source.phase as RecordingImportPhase)) return undefined
   const recordingKind = source.recordingKind === undefined ? 0 : source.recordingKind
   if (recordingKind !== 0 && recordingKind !== 1 && recordingKind !== 3) return undefined
+  if (source.strategy !== undefined && !RECORDING_STRATEGIES.some(strategy => strategy.id === source.strategy)) {
+    throw new Error('本地录音处理策略损坏，已保留恢复信息')
+  }
   return {
     jobId: source.jobId as string,
     ...(typeof source.clientTaskId === 'string' ? { clientTaskId: source.clientTaskId } : {}),
@@ -124,6 +129,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     startAtMillis: source.startAtMillis as number,
     belongUserId: source.belongUserId as number,
     recordingKind,
+    ...(source.strategy === undefined ? {} : { strategy: source.strategy as RecordingStrategy }),
     sourceHandle: source.sourceHandle as string,
     uploadedBytes: source.uploadedBytes as number,
     createdAtMillis: source.createdAtMillis as number,
@@ -158,6 +164,8 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
   return {
     sourceRef: source.sourceRef,
+    ...(typeof source.sendAtMillis==='number'&&Number.isSafeInteger(source.sendAtMillis)&&source.sendAtMillis>0?{sendAtMillis:source.sendAtMillis}:{}),
+    ...(typeof source.draftScope==='string'&&source.draftScope.length<=256?{draftScope:source.draftScope}:{}),
     ...(source.autoPublish === true ? { autoPublish: true } : {}),
     ...(itemUid === undefined ? {} : { itemUid }),
     ...(typeof source.baseVersion === 'number' && Number.isSafeInteger(source.baseVersion) && source.baseVersion > 0 ? { baseVersion: source.baseVersion } : {}),
@@ -177,8 +185,8 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   }
 }
 
-function longArticleDraftKey(sourceRef: string, itemUid?: string): string {
-  return `${sourceRef}\u0000${itemUid ?? ''}`
+function longArticleDraftKey(sourceRef: string, itemUid?: string, draftScope?:string): string {
+  return `${sourceRef}\u0000${itemUid ?? ''}${draftScope?`\u0000${draftScope}`:''}`
 }
 
 function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | undefined {
@@ -369,6 +377,7 @@ function parseState(raw: string): PersistedState {
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     offlineContextJournal:source.offlineContextJournal,
+ ...(source.teamOutboundByAccount === undefined ? {} : {teamOutboundByAccount:source.teamOutboundByAccount as NonNullable<PersistedState['teamOutboundByAccount']>}),
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -594,9 +603,9 @@ export class ArkmeStateStore {
     })
   }
 
-  async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
+  async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined> {
     return await this.read(state => {
-      const draft = state.longArticleDraftsByUser[String(userId)]?.[longArticleDraftKey(sourceRef, itemUid)]
+      const draft = state.longArticleDraftsByUser[String(userId)]?.[longArticleDraftKey(sourceRef, itemUid, draftScope)]
       return draft === undefined ? undefined : { ...draft }
     })
   }
@@ -605,7 +614,7 @@ export class ArkmeStateStore {
     await this.update(state => {
       const userKey = String(userId)
       const drafts = state.longArticleDraftsByUser[userKey] ?? {}
-      drafts[longArticleDraftKey(draft.sourceRef, draft.itemUid)] = { ...draft }
+      drafts[longArticleDraftKey(draft.sourceRef, draft.itemUid, draft.draftScope)] = { ...draft }
       state.longArticleDraftsByUser[userKey] = drafts
     })
   }
@@ -742,7 +751,7 @@ export class ArkmeStateStore {
       .map(cloneRecordingImportJob))
   }
 
-  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean }>, timeZone: string, signal?: AbortSignal) {
+  async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal) {
     const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
     let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
     await this.update(state => {
@@ -841,13 +850,13 @@ export class ArkmeStateStore {
     })
   }
 
-  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string): Promise<void> {
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void> {
     await this.update(state => {
       const userKey = String(userId)
       const drafts = state.longArticleDraftsByUser[userKey]
       if (drafts === undefined) return
-      if (expectedRecordUid !== undefined && drafts[longArticleDraftKey(sourceRef, itemUid)]?.recordUid !== expectedRecordUid) return
-      delete drafts[longArticleDraftKey(sourceRef, itemUid)]
+      if (expectedRecordUid !== undefined && drafts[longArticleDraftKey(sourceRef, itemUid, draftScope)]?.recordUid !== expectedRecordUid) return
+      delete drafts[longArticleDraftKey(sourceRef, itemUid, draftScope)]
       if (Object.keys(drafts).length === 0) delete state.longArticleDraftsByUser[userKey]
     })
   }
@@ -871,6 +880,19 @@ export class ArkmeStateStore {
       } else {
         state.pendingByUser[key] = next
       }
+    })
+  }
+
+  async teamOutboundTarget(scope: string, requestUid: string): Promise<import('./team-outbound-contract.js').TeamOutboundRecovery | undefined> {
+    return this.read(state => { const entries=state.teamOutboundByAccount?.[scope]; const value=entries && Object.hasOwn(entries,requestUid) ? entries[requestUid] : undefined; return value ? structuredClone(value) : undefined })
+  }
+  async retainTeamOutboundTarget(scope: string, requestUid: string, value: import('./team-outbound-contract.js').TeamOutboundRecovery): Promise<void> {
+    await this.update(state => {
+      const entries=(state.teamOutboundByAccount??={})[scope]??={}
+      const old=Object.hasOwn(entries,requestUid)?entries[requestUid]:undefined
+      if(old && (old.teamId!==value.teamId || old.targetId!==value.targetId || old.selection!==value.selection))throw new Error('同一打开请求不能更换客户')
+      Object.defineProperty(entries,requestUid,{value:structuredClone(value),writable:true,enumerable:true,configurable:true})
+      while(Object.keys(entries).length>64)delete entries[Object.keys(entries)[0]!]
     })
   }
 

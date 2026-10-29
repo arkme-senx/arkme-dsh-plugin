@@ -1,3 +1,5 @@
+import {teamOutboundToolModule} from './conversation/team-outbound.js'
+import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
@@ -69,6 +71,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
+  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,
   realtimeDictationTool,
   ...nativeAnnotationTools,
   ...messageSyncToolModules,

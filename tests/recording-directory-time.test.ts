@@ -28,7 +28,7 @@ describe('directory recording wall-clock ambiguity', () => {
     vi.stubEnv('TZ', 'America/New_York')
     const directoryPath = await mkdtemp(join(tmpdir(), 'recording-time-review-'))
     const fileName = 'R20251102-013000.WAV'
-    const owner = { recordingImportUserId: async () => 42,
+    const owner = { recordingStrategies: async () => ({ userId: 42, strategy: 'system-sd-asr/v1' }), recordingImportUserId: async () => 42,
       recordingDirectorySnapshot: vi.fn(async () => ({ local: [], existingFileNames: [], owner: [] })) }
     try {
       await writeFile(join(directoryPath, fileName), new Uint8Array(100))

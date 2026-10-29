@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { recordingOwnerResponse, recordingId, childId } from '../fixtures/recording-owner.ts'
 
 const dshRoot = process.env.ARKME_DSH_CHECKOUT && await realpath(process.env.ARKME_DSH_CHECKOUT), profile = process.env.ARKME_PACKED_PROFILE
 if (!dshRoot || !profile || !process.env.ARKME_E2E_TLS_KEY || !process.env.NODE_EXTRA_CA_CERTS) throw new Error('isolated Harness, packed profile and local TLS required')
@@ -60,15 +61,22 @@ describe('packaged recording entities', () => {
         else if (req.url.endsWith('/audio-day/list')) data = { ...result, day_stamp: body.day_stamp, ...(body.day_stamp !== stamp ? { status: startedDays.has(body.day_stamp) ? 'processing' : 'not_started', can_start: !startedDays.has(body.day_stamp), pollable: startedDays.has(body.day_stamp), recognition_progress: { stage: startedDays.has(body.day_stamp) ? 'queued' : 'not_started' }, entities: [] } : {}) }
         else if (req.url.endsWith('/audio-day/start')) { startedDays.add(body.day_stamp); data = { status: 'accepted', job_id: 'internal-job' } }
         else if (req.url.endsWith('/audio-day/occurrences')) data = { job_id: body.job_id, view_mode: 'official', result_version: body.result_version, official_entity_id: body.official_entity_id,
-          occurrences: [{ occurrence_id: 'mention', row_id: 'session:child:0:system', session_id: 'session', child_id: 'child', item_index: 0,
-            transcript_source: 'system', start_ms: speechStart, end_ms: speechStart + 10000, rune_start: 9, rune_end: 11, observed_text: '武汉' },
-            { occurrence_id: 'midnight', row_id: 'session:child:1:system', session_id: 'session', child_id: 'child', item_index: 1,
-              transcript_source: 'system', start_ms: midnightStart, end_ms: midnightStart + 1000, rune_start: 2, rune_end: 4, observed_text: '武汉' }] }
-        else if (req.url.endsWith('/one-day-trans')) data = { session_ls: [{ id: 'session', belong_usr: userID, start_at: speechStart, end_at: midnightStart + 1000, duration: midnightStart + 1000 - speechStart }],
-          child_ls: [{ id: 'child', session_id: 'session', start_at: 0, asr: [{ s: 0, e: 10000, n: 1, b: 1, t: rawText },
-            { s: midnightStart - speechStart, e: midnightStart - speechStart + 1000, n: 1, t: '抵达武汉，跨日原文仍可查看。' }] }] }
+          occurrences: [{ occurrence_id: 'mention', row_id: `${recordingId}:${childId}:250:system`, session_id: recordingId, child_id: childId, item_index: 250,
+            transcript_source: 'system', start_ms: speechStart + 250000, end_ms: speechStart + 260000, rune_start: 9, rune_end: 11, observed_text: '武汉' }] }
         else if (req.url.endsWith('/get-calender-summary')) data = { duration_ls: Array.from({ length: Math.round((body.to_stamp - body.from_stamp) / 86400000) }, (_, i) => body.from_stamp + i * 86400000 === stamp ? 10000 : 0), un_click_session_ids_per_day: [] }
         else if (req.url.endsWith('/get-speaker-ls')) data = { spk_ls: [] }
+        const previousStamp = new Date(stamp); previousStamp.setDate(previousStamp.getDate() - 1)
+        const recordings = [
+          { startAt: speechStart, duration: 300000, memoryOwnerUserId: userID, items: [
+            ...Array.from({length:250},(_,i)=>({text:`前文 ${i}`, start:i*1000, end:i*1000+1000})),
+            {text:rawText,start:250000,end:260000,background:true},
+          ] },
+          { id:'345678901234567890123456', startAt:previousStamp.getTime()+9*3600000, duration:10000,
+            memoryOwnerUserId:userID, items:[{text:'前一天录音',start:0,end:10000}] },
+        ]
+        const selected = req.url.endsWith('/recordings/query') || req.url.endsWith('/coverage/query')
+          ? recordings.filter(row=>row.startAt < body.end_at && row.startAt+row.duration > body.start_at) : recordings
+        data = recordingOwnerResponse(req.url, body, selected) ?? data
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ code: 200, data }))
       } catch { res.statusCode = 500; res.end('{}') }
     })
@@ -89,8 +97,7 @@ describe('packaged recording entities', () => {
       phase('sdk-start-ready')
       const list = await sdk.recordingEntities({ dateStamp: stamp }); expect(list.entities.map(item => item.name)).toEqual(['武汉', '张三'])
       const mentions = await sdk.recordingEntityOccurrences({ entityRef: list.entities[0].entityRef })
-      expect(mentions.items[0]).toMatchObject({ observedText: '武汉', target: { start: 1, length: 2 } })
-      expect(mentions.items[1]).toMatchObject({ observedText: '武汉', target: { start: 2, length: 2, sourceText: '抵达武汉，跨日原文仍可查看。' } })
+      expect(mentions.items[0]).toMatchObject({ observedText: '武汉', target: { start: 9, length: 2 } })
       expect(JSON.stringify([list, mentions])).not.toMatch(/65000000000000000000000|session:child|fixture-version/)
       const handle = await scaffold.ctx.agents.create({ sessionId: `entities-${randomUUID()}`, meta: { cwd: scaffold.workspaceCwd }, agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } })
       expect(scaffold.ctx.tools.get('arkme_recording_entities', handle.agent)).toBeDefined()
@@ -111,6 +118,7 @@ describe('packaged recording entities', () => {
       const panel = page.getByRole('dialog', { name: /^实体 ·/ })
       await expect.poll(() => panel.innerText(), { timeout: 15000 }).toContain('武汉')
       expect(await panel.locator('.arkme-entity-status').count()).toBe(0)
+      expect(calls.some(path => path.endsWith('/one-day-trans'))).toBe(false)
       phase('ui-ready')
       expect(await panel.evaluate(node => getComputedStyle(node).width)).toBe('405px')
       await panel.getByRole('button', { name: '人物', exact: true }).click()

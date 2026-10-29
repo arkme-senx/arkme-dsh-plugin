@@ -1,3 +1,4 @@
+import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
@@ -78,7 +79,7 @@ import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
-import { loadTeamDraft, persistTeamDraft, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
+import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { TeamConversationTools } from './TeamConversationTools.js'
@@ -108,7 +109,7 @@ import { useResizableComposer } from './use-resizable-composer.js'
 import { focusArkmeComposerFromClick } from './composer-focus.js'
 import { useComposerPasteFocus } from './composer-paste-focus.js'
 import type { ArkmeComposerSelectionRequest } from './composer-selection-request.js'
-import { arkmeAttachmentsPending, arkmeAttachmentId, releaseArkmeComposerAttachment, type ArkmeComposerAttachment, arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeAttachmentsPending, arkmeAttachmentId, releaseArkmeComposerAttachment, type ArkmeComposerAttachment, arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
 
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
@@ -129,10 +130,6 @@ function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media:
       name: asset.fileName, mimeType: asset.mimeType, size: asset.size, kind: asset.fileKind,
     })), ...(draft.localFiles ?? []).map(file => ({ ref: file.fileRef, key: file.fileRef, url: createArkmeSdk().localFileUrl(file.fileRef), name: file.fileName, mimeType: file.mimeType, size: file.size, kind: file.fileKind }))],
   }
-}
-
-function restoreTeamDraftText(original: string, next: string): string {
-  return !original ? next : !next || next === original ? original : `${original}\n\n${next}`
 }
 
 export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: number }) {
@@ -264,8 +261,8 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   </section>
 }
 
-export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets'>): TeamContent {
-  return { text_content: draft.text, template_kind: draft.assets.length ? 2 : 1,
+export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets' | 'mentions'>): TeamContent {
+  return { ...(draft.mentions?.length ? {mentions:draft.mentions} : {}), text_content: draft.text, template_kind: draft.assets.length ? 2 : 1,
     ...(draft.assets.length ? { content_payload: { payload_kind: 2, schema_version: 1, text_state: draft.text.trim() ? 1 : 3,
       media_refs: draft.assets.map((f, index) => ({ file_asset_uid: f.fileAssetUid, render_role: 1, sort_order: index, file_name: f.fileName })) } } : {}) }
 }
@@ -281,6 +278,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   useEffect(() => { setTeamCardOpen(false) }, [accountKey, conversation.key])
   const closeSnapshot = useCallback(() => setSnapshotKey(undefined), [])
   const [showsInputTime, setShowsInputTime] = useArkmeComposerInputTimePreference()
+  const [recordMode, setRecordMode] = useState<'owner'|'mentioned'>('owner')
   const [visitorRecords, setVisitorRecords] = useState(false), [recordPerson, setRecordPerson] = useState<TeamIdentity>(), [locatedKey, setLocatedKey] = useState<string>()
   const paneHost = useRef<HTMLElement>(null)
   const historyWindow = useRef(0)
@@ -329,7 +327,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     document.addEventListener('visibilitychange', update)
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update) }
   }, [receiptStore])
-  const [editing, setEditing] = useState<{ message: TeamMessage; text: string; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
+  const [editing, setEditing] = useState<{ message: TeamMessage; text: string; mentions?: import('../team-app-contract.js').TeamMention[]; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
   const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
   const recordsRef = useRef<HTMLDivElement>(null)
   const bottomVisibility = useScrollBottomVisibility(scroller, recordsRef, timeline !== undefined, timeline)
@@ -342,10 +340,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const currentScope = useRef(composerScope); currentScope.current = composerScope
   const resize = useResizableComposer(composer, `${storageKey}:${editing?.message.key ?? ''}:${detailKey ?? ''}`, scroller)
   const beginPasteFocus = useComposerPasteFocus({ scope: composerScope, active: !editing, editor, container: composer, onReady: setSelectionRequest })
-  const richDraft = arkmeComposerDraftFromText(editing?.text ?? draft.text)
-  const updateText = (text: string) => {
-    if (editing) setEditing({ ...editing, text, startedAtMillis: editing.startedAtMillis ?? Date.now() })
-    else { const next = updateTeamDraftText(draftRef.current, text); draftRef.current = next; setDraft(next) }
+  const richDraft = teamComposerDraft(editing?.text ?? draft.text,editing ? editing.mentions : draft.mentions)
+  const updateText = (text: string, mentions?: import('../team-app-contract.js').TeamMention[]) => {
+    if (editing) setEditing({ ...editing, text, mentions:mentions ?? rebaseTeamMentions(editing.text,text,editing.mentions), startedAtMillis: editing.startedAtMillis ?? Date.now() })
+    else { const next = updateTeamDraftText(draftRef.current, text); if (mentions) next.mentions=mentions; draftRef.current = next; setDraft(next) }
   }
   const editorSelection = useRef({start:0,end:0})
   const captureSelection = () => { if (editor.current) editorSelection.current = {start:editor.current.selectionStart,end:editor.current.selectionEnd} }
@@ -410,7 +408,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       receiptStore.refreshVisible(true)
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
   }, [conversation.ref, receiptStore])
   const returnToLatest = async () => {
     if (historyWindow.current) {
@@ -559,6 +557,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     const acceptedDraft = { ...draft, startedAtMillis: draft.attempt ? draft.startedAtMillis : undefined, text: draft.attempt ? draft.text : '', attempt }
     // The frozen attempt owns this reply now; the live composer is the next draft.
     delete acceptedDraft.reply
+    if(!draft.attempt) delete acceptedDraft.mentions
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
     setOutgoing(outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender))
@@ -567,7 +566,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (ctrl.current.signal.aborted) return
       if (task?.clientUid !== attempt.uid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送状态暂时无法确认，请重试'))
       delivery.accept(task)
-      const next = { text: draftRef.current.text, startedAtMillis: draftRef.current.startedAtMillis, assets: [] }
+      const next = { text: draftRef.current.text, ...(draftRef.current.mentions?.length ? {mentions:draftRef.current.mentions} : {}), startedAtMillis: draftRef.current.startedAtMillis, assets: [] }
       // Host admission is durable even if browser draft cleanup fails. The old
       // on-disk attempt keeps its UID so a remount can only replay the same send.
       try { persistTeamDraft(localStorage, storageKey, next) }
@@ -582,8 +581,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         try { persistTeamDraft(localStorage, storageKey, failed); draftRef.current = failed; setDraft(failed) }
         catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')); return }
         // Lost local acceptance is retried with the same identity. Do not turn it into a second send.
-        if (['social-phone-binding-required', 'team-invalid_request', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
-          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, text: restoreTeamDraftText(attempt.content.text_content, draftRef.current.text), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
+        if (['social-phone-binding-required', 'team-invalid_request', 'team-invalid_recipient', 'team-queue-full', 'file-local-missing', 'team-channel_paused', 'team-conversation_blocked'].includes(code ?? '')) {
+          const kept = { ...(attempt.reply ? {reply:attempt.reply} : {}), startedAtMillis: attempt.startedAtMillis ?? draftRef.current.startedAtMillis, ...restoreTeamDraftContent(attempt.content,draftRef.current), assets: draft.assets, ...(draft.localFiles ? {localFiles:draft.localFiles} : {}) }
           try { persistTeamDraft(localStorage, storageKey, kept); draftRef.current = kept; setDraft(kept); setOutgoing(undefined) }
           catch { setError(tr('草稿未能保存到本机，请勿关闭窗口')) }
         }
@@ -648,7 +647,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     if (busy || editing?.needsReload || (editing && (!latest.current?.conversation.channel.enabled || latest.current.conversation.blocked || (!editing.text.trim() && !editing.message.media.length)))) return
     setBusy(true)
     try {
-      if (editing?.message.content) await callArkme('team.app.edit', { messageRef: editing.message.ref, version: editing.message.version, content: { ...editing.message.content, text_content: editing.text } }, ctrl.current.signal)
+      if (editing?.message.content) await callArkme('team.app.edit', { messageRef: editing.message.ref, version: editing.message.version, content: { ...editing.message.content, text_content: editing.text, mentions:editing.mentions ?? [] } }, ctrl.current.signal)
       setEditing(undefined); await refresh(); onChanged()
     } catch (e) {
       if (!ctrl.current.signal.aborted) {
@@ -681,16 +680,27 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     })
   }
   if (outgoing && !taskRows.some(task => task.clientUid === outgoing.key)) visibleMessages.push(outgoing)
-  const rawCurrent = timeline?.conversation ?? conversation
+  const availableCurrent = timeline?.conversation ?? conversation
+  const rawCurrent = loadError && availableCurrent.visitor ? {...availableCurrent,visitor:{...availableCurrent.visitor,memberType:'unknown' as const}} : availableCurrent
   const rawVisitor = rawCurrent.visitor
-  const visitorIdentity = visibleMessages.find(m => m.side === 'external' && m.sender.personKey)?.sender
-  const withVisitorIdentity = rawVisitor && visitorIdentity && !rawVisitor.personKey ? { ...visitorIdentity, ...rawVisitor } : rawVisitor
+  const withVisitorIdentity = rawVisitor
   const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
   const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
+  const personRecordsRevision = useMemo(() => JSON.stringify([timeline?.conversation.revision ?? conversation.revision,
+    (timeline?.messages ?? []).map(message => [message.key,message.version,message.contentStatus,message.state])]), [timeline,conversation.revision])
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
     onOpen: () => { setVisitorRecords(false); receiptRef.current = undefined; setReceiptMessage(undefined) },
     resolveIdentity: personName,
-    onRecords: person => { setDetailKey(undefined); setRecordPerson(person); setVisitorRecords(true) },
+    onRecords: (person,mode='owner') => { setDetailKey(undefined); setRecordMode(mode); setRecordPerson(person); setVisitorRecords(true) },
+    onMention: person => {
+      if (!person.personRef || editing && busy || !current.channel.enabled || current.blocked) return
+      const inserted=insertArkmeComposerMentionToken(richDraft,{mentionRef:person.personRef},person.nickname,editorSelection.current.start,editorSelection.current.end)
+      if (!inserted) return
+      const serialized=serializeArkmeComposerDraft({...richDraft,...inserted})
+      if (serialized.text.length>20_000) return
+      updateText(serialized.text,teamMentions(serialized.mentions)); editor.current?.focus()
+      setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
+    },
   })
   const locateVisitorRecord = async (message: TeamMessage, signal: AbortSignal) => {
     let page = latest.current
@@ -789,7 +799,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           style={{ ...composerLayout.textarea, ...resize.editorStyle, background: 'transparent', color: arkmeTheme.text }}
           selectionRequest={selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
           onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
-          onTextChange={(text, emojis) => updateText(serializeArkmeComposerDraft({...richDraft,text,emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)}).text)}
+          onTextChange={(text, emojis) => {const value=serializeArkmeComposerDraft({...richDraft,text,mentions:reconcileArkmeComposerMentions(richDraft.text,text,richDraft.mentions),emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)});updateText(value.text,teamMentions(value.mentions))}}
           onKeyDown={event => { if (detailReady && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send(defaultReply) } }}
           onPaste={event => {
             if (!detailReady || editing || busy || draft.attempt || !current.channel.enabled || current.blocked) return
@@ -816,7 +826,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
               const {start,end} = editorSelection.current
               const inserted = insertArkmeComposerEmoji(richDraft,emoji,start,end)
               if (!inserted) return false
-              updateText(serializeArkmeComposerDraft(inserted.snapshot).text)
+              const value=serializeArkmeComposerDraft(inserted.snapshot);updateText(value.text,teamMentions(value.mentions))
               const capturedScope = composerScope
               setSelectionRequest({text:inserted.snapshot.text,start:inserted.caretIndex,end:inserted.caretIndex,canApply:()=>currentScope.current === capturedScope})
               return true
@@ -932,7 +942,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           onCopyLink={()=>{void copyTeamLink([m])}} onForward={()=>openTeamForward([m])}
           onAsk={canAskDshTeamMessage(m)?()=>{void askMessages([m])}:undefined} askBusy={askDsh.busy}
           onReply={()=>chooseReply(m)} onOpenReply={()=>{void locateReply(m)}}
-          onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '' }) }}
+          onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '', mentions:m.content?.mentions ?? [] }) }}
           onReceipts={anchor => { if (receiptRef.current?.key === m.key) { receiptRef.current = undefined; setReceiptMessage(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
           {tr(task.cancelRequested ? '正在取消…' : task.state === 'failed' ? task.error ?? '发送失败' : task.state === 'retrying' || task.state === 'queued' ? '等待发送' : task.state === 'uploading' ? '正在上传…' : '正在发送…')}
@@ -979,7 +989,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         renderVisitorAvatar={identity => visitorActions.avatar(<TeamAvatar identity={identity} size={20} />)} />
     </ArkmeReadReceiptPanel>}
     {visitorActions.layer}
-    {visitorRecords && current.side === 'team' && <TeamVisitorRecords key={`${accountKey}:${conversation.key}:${recordPerson?.personKey ?? "external"}`} person={recordPerson ? personName(recordPerson) : undefined} conversation={current}
+    {visitorRecords && current.side === 'team' && <TeamVisitorRecords key={`${accountKey}:${conversation.key}:${recordPerson?.personKey ?? "external"}:${recordMode}:${personRecordsRevision}`} mode={recordMode} person={recordPerson ? personName(recordPerson) : undefined} conversation={current}
       accountKey={accountKey} onClose={() => setVisitorRecords(false)} onLocate={locateVisitorRecord} />}
 
 

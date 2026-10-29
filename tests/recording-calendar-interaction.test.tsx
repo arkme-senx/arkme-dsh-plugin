@@ -23,12 +23,12 @@ function inputMetrics(state: 'processing' | 'ready' | 'unavailable' | 'partial',
 function recordingDay(dateStamp: number, text: string): ArkmeRecordingDay {
   return {
     dateStamp, totalDurationMillis: 5_000,
-    transcript: {
+    transcript: { viewRef: 'fixture-view', nextCursor: '', transcriptSource: 'system',
       state: 'ready', message: '', totalDurationMillis: 5_000, processingCount: 0,
       items: [{
         itemId: text, itemRef: text, startAtMillis: dateStamp + 1_000, endAtMillis: dateStamp + 6_000,
         speakerNumber: 1, speakerKey: 'speaker', speakerColorIndex: 0, speakerLabel: '说话人',
-        sameSpeakerItemCount: 1, isSelf: false, isBackground: false, text,
+        canBindSpeaker: true, isSelf: false, isBackground: false, text,
       }],
     },
     summary: { state: 'empty', message: '', items: [] },
@@ -177,7 +177,7 @@ describe('recording calendar selection', () => {
       day.transcript.dailyMetrics = scenario === 'mixed-history'
         ? inputMetrics(awaiting ? 'unavailable' : 'partial', awaiting ? 1 : 0)
         : inputMetrics(awaiting ? 'processing' : 'ready')
-      if (scenario === 'transcript-finishes' && reads === 1) day.transcript.state = 'processing'
+      if (scenario === 'transcript-finishes' && reads === 1) { day.transcript.state = 'processing'; day.transcript.processingCount = 1 }
       return day
     })
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })

@@ -105,3 +105,22 @@ export async function recordReeditMentionMetadata(
   }
   return mentions.humans.length || mentions.bots.length ? encodeMentionMetadata(text, mentions) : undefined
 }
+
+/** shortcut: Without editor ranges, retain only provably unchanged spans; use exact edit ranges for multi-part edits. */
+export async function retainedRecordMentionMetadata(payload: Record<string, unknown>, original: string, text: string) {
+  let prefix = 0, suffix = 0
+  while (prefix < Math.min(original.length, text.length) && original[prefix] === text[prefix]) prefix++
+  while (suffix < Math.min(original.length - prefix, text.length - prefix)
+    && original[original.length - suffix - 1] === text[text.length - suffix - 1]) suffix++
+  const end = original.length - suffix, delta = text.length - original.length
+  const retainedWhole = original ? text.indexOf(original) : -1
+  const wholeOffset = retainedWhole >= 0 && text.indexOf(original, retainedWhole + 1) === -1 ? retainedWhole : undefined
+  const format = payload.text_format === 'markdown' ? 'markdown' : 'plain'
+  const mentions = recordReeditMentionProjection(payload, original, format).flatMap(mention => {
+    if (wholeOffset !== undefined) return [{...mention, startIndex: mention.startIndex + wholeOffset}]
+    if (original === text || prefix >= mention.startIndex + mention.length) return [mention]
+    if (end <= mention.startIndex) return [{...mention, startIndex: mention.startIndex + delta}]
+    return []
+  })
+  return recordReeditMentionMetadata(text, prepareRecordReeditMentions(payload, original, text, mentions, false, format))
+}
