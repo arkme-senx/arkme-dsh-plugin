@@ -3,6 +3,7 @@ import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_S
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
+import { harnessSlotBoundary } from './harness-slot-layout.js'
 
 const PREFIX = 'data-arkme-session-'
 const HEADER = '[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])'
@@ -63,11 +64,12 @@ function compactTools(value: Shell): Array<[HTMLElement, string]> {
 function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, string]> {
   if (!header || header.getAttribute('aria-hidden') === 'true') return []
   const actionsSlot = header.querySelector<HTMLElement>('[data-slot="conversation.session.header.actions"]')
-  const actions = actionsSlot?.parentElement
+  const actions = actionsSlot && harnessSlotBoundary(actionsSlot).parentElement
   const cluster = actions?.parentElement
   const row = cluster?.parentElement
   const nav = cluster?.querySelector<HTMLElement>(':scope > nav')
-  if (!actions || !cluster || !row || !nav || (row.parentElement !== header && row.parentElement?.parentElement !== header) || cluster.children.length !== 2
+  const rowParent = row?.parentElement
+  if (!actions || !cluster || !row || !nav || !rowParent || (rowParent !== header && harnessSlotBoundary(rowParent).parentElement !== header) || cluster.children.length !== 2
     || cluster.firstElementChild !== nav || cluster.lastElementChild !== actions) return []
   const utilities = [...row.children].filter(node => node !== cluster && !node.hasAttribute(PREFIX + 'identity')) as HTMLElement[]
   return [[header, 'header'], [row, 'title-row'], [cluster, 'title-cluster'], [actions, 'summary'], [nav, 'title-nav'],
