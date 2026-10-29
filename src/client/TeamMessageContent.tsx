@@ -1,3 +1,4 @@
+import { subscribeTeamMessageChanges } from './team-messaging-events.js'
 import { useRef, type ReactNode } from 'react'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import type { TeamMessage } from '../team-app-contract.js'
@@ -20,7 +21,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 }
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
-export function TeamMessageContent({ message, conversationRef, presentation }: { message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail' }) {
+export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle }: { message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
   // Keep mounted media and its URL across equivalent authorized snapshots.
   // Keys include viewer, message, Record version and asset. Changed content or
   // lost access replaces/unmounts this scope; byte reads still reauthorize.
@@ -29,8 +30,8 @@ export function TeamMessageContent({ message, conversationRef, presentation }: {
   if (snapshot.current.identity !== identity) snapshot.current = { identity, media: message.media, localMarkRef: message.localMarkRef }
   const urls = new Map(snapshot.current.media.map(media => [media.ref, media.url]))
   const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
-  return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '' }}>
-    <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(presentation ? { presentation } : {})}
+  return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '', subscribeInvalidation: listener=>subscribeTeamMessageChanges((_account,receiptOnly)=>{if(!receiptOnly)listener()}) }}>
+    <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
       selectionTarget={conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
         ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref } : undefined} />
   </ArkmeMediaAccessContext.Provider>

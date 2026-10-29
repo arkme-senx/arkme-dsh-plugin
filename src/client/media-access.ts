@@ -6,6 +6,7 @@ import type { ArkmeContentBlock } from '../types.js'
  */
 export interface ArkmeMediaAccess {
   url(block: ArkmeContentBlock): string
+  subscribeInvalidation?(listener: () => void): () => void
 }
 export const ArkmeMediaAccessContext = createContext<ArkmeMediaAccess | undefined>(undefined)
 export function useArkmeMediaUrl(): (block: ArkmeContentBlock) => string | undefined {

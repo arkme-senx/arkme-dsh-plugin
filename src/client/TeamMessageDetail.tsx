@@ -62,14 +62,14 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
     {readable && current.reply && <TeamMessageMediaScope message={{ ...current, media: current.reply.media ?? [] }}>
       <ArkmeExtensionParentPreview inline parent={teamReplyPresentation(current)!} isMe={current.own} onSelect={openParent} />
     </TeamMessageMediaScope>}
-    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} presentation="detail" /> : <p>{tr('内容当前不可用')}</p>}
+    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} presentation="detail" /> : <p>{tr(current.state==='recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : '内容当前不可用')}</p>}
     <button type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }} aria-label={tr('所在对话：{v0}', { v0: source })} onClick={() => onLocate(current)}>
       <span aria-hidden>↗</span><span>{source}</span>
     </button>
     {readable && onExtend && <div style={{ marginTop: 24 }}><button type="button" onClick={() => onExtend(current)} style={styles.extensionContextRetry}>{tr('延展回复')}</button></div>}
     {extensions.loading && <div role="status" style={styles.extensionContextStatus}>{tr('正在加载延展…')}</div>}
     {extensions.error && <div role="alert" style={styles.extensionContextStatus}>{extensions.error}<button type="button" style={styles.extensionContextRetry} onClick={extensions.retry}>{tr('重试')}</button></div>}
-    {extensions.page && readable && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
+    {extensions.page && !extensions.invalidated && (readable || current.state==='recalled') && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
       <div data-arkme-note-extension-count="true" style={styles.extensionContextTitle}>{tr('共')}{extensions.page.totalCount}{tr('条延展')}</div>
       <div style={styles.extensionContextList}>{extensions.page.items.map(rawReply => {
         const reply = displayIdentity ? { ...rawReply, sender: displayIdentity(rawReply.sender) } : rawReply

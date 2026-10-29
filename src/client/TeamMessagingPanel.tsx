@@ -1,3 +1,4 @@
+import { mergeTeamMessages, teamMessageProjection, withoutTeamMessageMaterial } from '../team-message-projection.js'
 import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
@@ -274,6 +275,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const [composerFocused, setComposerFocused] = useState(false)
   const [detailKey, setDetailKey] = useState<string>()
   const [snapshotKey, setSnapshotKey] = useState<string>()
+  const [recallTarget,setRecallTarget]=useState<TeamMessage>()
   const [teamCardOpen, setTeamCardOpen] = useState(false)
   useEffect(() => { setTeamCardOpen(false) }, [accountKey, conversation.key])
   const closeSnapshot = useCallback(() => setSnapshotKey(undefined), [])
@@ -311,10 +313,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     maxItems: 64,
     ttlMillis: ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4,
     key: message => message.key,
-    canRetain: message => message.own && message.state === 'published',
-    isAuthoritative: message => message.version > 0 || message.contentStatus === 'deleted',
-    merge: (local, remote) => [...new Map([...local, ...remote].map(message => [message.key, message])).values()]
-      .sort((a, b) => a.seq - b.seq),
+    canRetain: message => message.own && ['published','recalled'].includes(message.state),
+    isTerminal: message => message.state === 'recalled',
+    isAuthoritative: message => message.state === 'recalled' || message.version > 0 || message.contentStatus === 'deleted',
+    merge: mergeTeamMessages,
   }))
   const receiptStore = useMemo(() => new TeamReceiptStore(accountKey), [accountKey, conversation.key])
   const [receiptMessage, setReceiptMessage] = useState<TeamMessage>()
@@ -361,11 +363,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort(); attachmentQueue.current?.dispose(); for (const item of draftRef.current.attachments ?? []) releaseArkmeComposerAttachment(item) }, [])
-  useEffect(() => receiptStore.subscribeAccessLost(() => {
+  const revokeAccess = useCallback(() => {
     accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined);
     latest.current = undefined; setTimeline(undefined); receiptRef.current = undefined;
     setReceiptMessage(undefined); setEditing(undefined);
-  }), [receiptStore])
+  }, [])
+  useEffect(() => receiptStore.subscribeAccessLost(revokeAccess), [receiptStore, revokeAccess])
   useEffect(() => receiptStore.subscribeReadState(state => {
     const old = latest.current
     // A receipt read started before a new message cannot clear its unread count.
@@ -396,7 +399,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         for (const message of data.messages) messages.set(message.key, message)
       }
       if (ctrl.current.signal.aborted || token !== generation.current) return
-      data = { ...data, conversation: {...head,notificationPolicy:mergeTeamNotificationPolicy(latest.current?.conversation.notificationPolicy,head.notificationPolicy)}, messages: confirmed.current.merge(conversation.key, [...messages.values()].sort((a,b) => a.seq-b.seq)) }
+      data = { ...data, conversation: {...head,notificationPolicy:mergeTeamNotificationPolicy(latest.current?.conversation.notificationPolicy,head.notificationPolicy)}, messages: confirmed.current.merge(conversation.key, mergeTeamMessages(latest.current?.messages ?? [], [...messages.values()]).filter(message=>messages.has(message.key))) }
       if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
       setTimeline(data)
@@ -408,8 +411,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       receiptStore.refreshVisible(true)
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined); setTimeline(undefined); receiptStore.dispose(); receiptRef.current = undefined; setReceiptMessage(undefined); setEditing(undefined) } } }
-  }, [conversation.ref, receiptStore])
+    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { revokeAccess(); receiptStore.dispose() } } }
+  }, [conversation.ref, receiptStore, revokeAccess])
   const returnToLatest = async () => {
     if (historyWindow.current) {
       const previousWindow = historyWindow.current
@@ -448,7 +451,15 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else void recover() } }) }, [recover, accountKey, receiptStore])
+  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
+      generation.current++
+      const old=latest.current
+      if(old){
+        for(const row of old.messages) if(row.own) confirmed.current.retain(conversation.key,withoutTeamMessageMaterial(row))
+        const next={...old,messages:old.messages.map(withoutTeamMessageMaterial)};latest.current=next;setTimeline(next)
+      }
+      void recover()
+    } } }) }, [recover, accountKey, receiptStore])
   useEffect(() => {
     const recoverOnline = () => { void recover() }
     window.addEventListener('focus', recoverOnline)
@@ -522,6 +533,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       observedCompletions.current.add(task.taskRef)
       changed = true
       if (Date.now() - (task.completedAtMillis ?? task.createdAtMillis) > ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4) continue
+      if (task.message.state === 'recalled') { confirmed.current.retain(conversation.key,teamMessageProjection(task.message)); continue }
       // A minimal send ACK omits parent details. Keep the accepted reply until
       // an authorized timeline snapshot replaces this local presentation.
       const reply = task.message.reply ?? teamPendingReply(task.reply)
@@ -539,6 +551,20 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       void refresh(); onChanged()
     }
   }, [delivery.tasks, conversation.key, refresh, onChanged])
+  const recall = async () => {
+    if (!recallTarget || busy) return
+    const scope=currentScope.current, target=recallTarget
+    setBusy(true);setError('')
+    try {
+      const result=await callArkme<import('../team-message-contract.js').TeamRecallResult>('team.app.recall',{conversationRef:conversation.ref,messageRef:target.ref,expectedAccountKey:accountKey},ctrl.current.signal)
+      if (scope!==currentScope.current || ctrl.current.signal.aborted) return
+      confirmed.current.retain(conversation.key,result.message)
+      const old=latest.current
+      if (old) { const next={...old,messages:mergeTeamMessages(old.messages,[result.message])};latest.current=next;setTimeline(next) }
+      setRecallTarget(undefined);onChanged();void refresh()
+    } catch(error) { if(scope===currentScope.current&&!ctrl.current.signal.aborted) { if(inaccessible(error)) revokeAccess(); setError(errorText(error)) } }
+    finally {if(scope===currentScope.current)setBusy(false)}
+  }
   const send = async (defaultReply?: TeamMessage) => {
     if (dictationBusy) return
     const timeline = latest.current, draft = draftRef.current
@@ -735,7 +761,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     displayedMessages.findLast(message => message.own)?.sender)
   const snapshot = displayedMessages.find(message => message.key === snapshotKey && message.own && message.state === 'published' && message.contentStatus === 'available')
   useEffect(() => { if (snapshotKey && !snapshot) setSnapshotKey(undefined) }, [snapshotKey, !!snapshot])
-  const detail = displayedMessages.find(message => message.key === detailKey && message.state === 'published' && message.contentStatus === 'available')
+  const detail = displayedMessages.find(message => message.key === detailKey && (message.state === 'recalled' || message.state === 'published' && message.contentStatus === 'available'))
   useEffect(() => { if (detailKey && !detail) setDetailKey(undefined) }, [detailKey, !!detail])
   const [forwardAttempt,setForwardAttempt]=useState<{attempt:TeamForwardAttempt;messages:TeamMessage[]}>()
   const openTeamForward=(messages:TeamMessage[])=>{
@@ -758,7 +784,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     finally{copyLinkInFlight.current=false;if(!requestSignal.aborted)setCopyLinkBusy(false)}
   }
   const copySelected = async () => {
-    if (selection.selected.length !== 1 || selection.busy) return
+    if (!selection.ready || selection.selected.length !== 1 || selection.busy) return
     try { await copyText(arkmeMessageCopyText(teamMessagePresentation(selection.selected[0]!))) }
     catch { if (!ctrl.current.signal.aborted) setError(tr('复制失败，请重试')) }
   }
@@ -942,6 +968,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           onCopyLink={()=>{void copyTeamLink([m])}} onForward={()=>openTeamForward([m])}
           onAsk={canAskDshTeamMessage(m)?()=>{void askMessages([m])}:undefined} askBusy={askDsh.busy}
           onReply={()=>chooseReply(m)} onOpenReply={()=>{void locateReply(m)}}
+          onRecall={()=>setRecallTarget(m)}
           onEdit={() => { setError(''); setEditing({ message: m, text: m.content?.text_content ?? '', mentions:m.content?.mentions ?? [] }) }}
           onReceipts={anchor => { if (receiptRef.current?.key === m.key) { receiptRef.current = undefined; setReceiptMessage(undefined) } else { receiptAnchor.current = anchor; void readReceipts(m) } }} onError={setError} />
         {taskRows.filter(task => (task.message?.key ?? task.clientUid) === m.key && teamTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('发送状态')} key={task.taskRef} own state={task.state}>
@@ -959,14 +986,15 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       getItems={() => [...scroller.current?.querySelectorAll<HTMLElement>('[data-team-selectable]') ?? []].map(element => ({ key: element.dataset.teamSelectable!, element }))}
       onCommit={selection.enter} style={{ border: `1px solid ${arkmeTheme.accent}`, background: arkmeTheme.active }} />
     </div>
-    {selection.ids && <ArkmeMessageSelectionBar count={selection.selected.length} actions={[
-      { id: 'copy', label: tr('复制文本'), icon: <ArkmeSelectActionIcon kind="copy" />, disabled: selection.selected.length !== 1 || selection.busy, reason: selection.selected.length !== 1 ? tr('请选择一条消息复制文本') : undefined, onSelect: () => { void copySelected() } },
-      { id: 'link', label: tr('复制链接'), icon: <ArkmeSelectActionIcon kind="link" />, disabled: !selection.selected.length || selection.busy || copyLinkBusy, onSelect(){void copyTeamLink(selection.selected)} },
-      { id: 'forward', label: tr('转发'), icon: <ArkmeSelectActionIcon kind="forward" />, disabled: !selection.selected.length || selection.busy, onSelect(){openTeamForward(selection.selected)} },
-      { id: 'ask-dsh', label: '问 DSH', icon: <AskDshIcon size={22} />, disabled: askDsh.busy || selection.busy || !selection.selected.length || selection.selected.some(message=>!canAskDshTeamMessage(message)), onSelect:()=>{void askMessages(selection.selected)} },
+    {selection.ids && <ArkmeMessageSelectionBar count={selection.ids.size} actions={[
+      { id: 'copy', label: tr('复制文本'), icon: <ArkmeSelectActionIcon kind="copy" />, disabled: !selection.ready || selection.selected.length !== 1 || selection.busy, reason: selection.selected.length !== 1 ? tr('请选择一条消息复制文本') : undefined, onSelect: () => { void copySelected() } },
+      { id: 'link', label: tr('复制链接'), icon: <ArkmeSelectActionIcon kind="link" />, disabled: !selection.ready || selection.busy || copyLinkBusy, onSelect(){void copyTeamLink(selection.selected)} },
+      { id: 'forward', label: tr('转发'), icon: <ArkmeSelectActionIcon kind="forward" />, disabled: !selection.ready || selection.busy, onSelect(){openTeamForward(selection.selected)} },
+      { id: 'ask-dsh', label: '问 DSH', icon: <AskDshIcon size={22} />, disabled: askDsh.busy || selection.busy || !selection.ready || selection.selected.some(message=>!canAskDshTeamMessage(message)), onSelect:()=>{void askMessages(selection.selected)} },
       { id: 'delete', label: tr('删除'), icon: <Trash size={22} />, disabled: !selection.canDelete || selection.busy || busy, reason: !selection.canDelete ? tr('请选择 1 至 100 条有权删除的消息') : undefined, danger: true, onSelect: selection.requestDelete },
       { id: 'close', label: tr('退出多选'), icon: <ArkmeSelectActionIcon kind="close" size={18} />, disabled: selection.busy, onSelect: selection.exit },
     ]} />}
+    {recallTarget && <ArkmeConfirmDialog titleId="team-recall-title" title={tr('撤回消息')} description={tr('撤回后，此对话中将无法查看这条消息；你的原始快记会保留。')} confirmLabel={tr('确认撤回')} busyLabel={tr('正在撤回…')} confirmTone="danger" busy={busy} onConfirm={()=>{void recall()}} onClose={()=>{if(!busy)setRecallTarget(undefined)}} />}
     {selection.confirm && <ArkmeConfirmDialog titleId="team-selected-delete-title" title={tr('删除快记')}
       description={`确认删除所选 ${selection.confirm.length} 条快记？删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。`}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={selection.busy}

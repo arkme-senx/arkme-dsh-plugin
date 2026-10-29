@@ -1273,6 +1273,7 @@ export async function dispatchArkmeHostOperation(
     case 'team.external': return await service.externalChats(stringParam(params, 'operation') as import('./team-external-chat-contract.js').ExternalChatOperation, (params.params ?? {}) as Record<string,unknown>, requestSignal)
     case 'team.messages.forward':return await service.forwardTeamMessages(params.input as import('./team-message-contract.js').TeamForwardInput,requestSignal)
     case 'team.messages.copy-link':return await service.createTeamMessageCopyLink(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
+    case 'team.messages.recall':return await service.recallTeamMessage(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),requestSignal)
     case 'team.messages.report':return await service.reportTeamMessage(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),numberParam(params,'version',0),params.reason as import('./team-message-contract.js').TeamReportReason,optionalTeamStringParam(params,'description'),requestSignal)
     case 'team.messages.preflight':return await service.preflightTeamMessages(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
     case 'team.messages.marks-read':return await service.readTeamMarks(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,params.markRefs as string[],requestSignal)

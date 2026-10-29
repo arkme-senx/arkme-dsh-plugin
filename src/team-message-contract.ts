@@ -16,7 +16,9 @@ export interface TeamForwardInput {
  requestId:string;recordUid:string;sendAtMillis:number
  commentText?:string;commentRecordUid?:string
 }
+export interface TeamRecallResult {message: import('./team-app-contract.js').TeamMessage; changed: boolean}
 export interface TeamMessagePort {
+ recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<TeamRecallResult>
  readTeamExtensions(conversationRef:string,messageRef:string,options?:TeamExtensionOptions,signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage>
  forwardTeamMessages(input:TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>
  createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>

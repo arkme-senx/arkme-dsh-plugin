@@ -491,6 +491,9 @@ export class ArkmeService {
   async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>{
     return await this.executeTeamApp('team.app.copy-link',{conversationRef,selections},signal) as import('./types.js').ArkmeMessageCopyLinkResult
   }
+  async recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamRecallResult>{
+    return await this.executeTeamApp('team.app.recall',{conversationRef,messageRef},signal) as import('./team-message-contract.js').TeamRecallResult
+  }
   async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('./team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamReportResult>{
     return await this.executeTeamApp('team.app.report',{conversationRef,messageRef,version,reason,description},signal) as import('./team-message-contract.js').TeamReportResult
   }
@@ -1255,6 +1258,7 @@ arkoImagesV1:true,
         teamExternalChats: true,
         teamMessageExtensions: 1,
         teamMessageInteractions: 1,
+        teamMessageRecall: 1,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,

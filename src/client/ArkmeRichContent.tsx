@@ -4,7 +4,7 @@ import { selectedTextNotePresentation } from '../selected-text-note.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
-import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview } from './attachment-preview-window.js'
+import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview, closeAttachmentPreviewSource } from './attachment-preview-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useArkmeLivePhotoPlayback } from './live-photo-playback.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
@@ -1285,6 +1285,7 @@ export function openSessionAttachmentPreview(blocks: ArkmeContentBlock[], select
 }
 function SessionAttachmentPreview({blocks, initial: selected, source, forceDownload}: {blocks: ArkmeContentBlock[]; initial: ArkmeContentBlock; source: string; forceDownload: boolean}) {
   const mediaAccess = useContext(ArkmeMediaAccessContext)
+  useEffect(()=>mediaAccess?.subscribeInvalidation?.(()=>closeAttachmentPreviewSource(source)),[mediaAccess,source])
   const select = (block: ArkmeContentBlock) => openSessionAttachmentPreview(blocks, block, source, forceDownload, mediaAccess)
   const index = blocks.findIndex(block => (block.fileAssetUid ?? block.mediaRef) === (selected.fileAssetUid ?? selected.mediaRef))
   return <div onKeyDownCapture={event => {

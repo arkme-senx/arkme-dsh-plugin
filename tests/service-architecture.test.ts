@@ -42,7 +42,7 @@ const expectedPublicMethods = [
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
   'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
-  'preflightTeamMessages','readTeamMarks','changeTeamMark','reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
+  'preflightTeamMessages','readTeamMarks','changeTeamMark','recallTeamMessage', 'reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
   'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'localTranscriptEntries', 'publishLongArticle', 'stageLongArticleImage',

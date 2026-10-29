@@ -75,3 +75,14 @@ it('requires mention capability and passes safe identity spans and filters uncha
  supported=false
  await expect(new ArkmeSdk({fetchImpl}).readTeamMessages('opaque-conversation',options)).rejects.toThrow('不支持')
 })
+
+it('discovers recall separately and shares the exact Host command',async()=>{
+ const result={message:{state:'recalled'},changed:false},recall=vi.fn(async()=>result)
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageRecall:1}}),recallTeamMessage:recall}
+ const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}) as typeof fetch
+ const sdk=new ArkmeSdk({fetchImpl})
+ expect(await sdk.recallTeamMessage('conversation','message')).toEqual(result)
+ expect(recall).toHaveBeenCalledWith('conversation','message',undefined)
+ const unsupported=new ArkmeSdk({fetchImpl:vi.fn(async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{teamMessageInteractions:1}}}))) as typeof fetch})
+ await expect(unsupported.recallTeamMessage('conversation','message')).rejects.toMatchObject({body:{code:'CAPABILITY_UNSUPPORTED'}})
+})

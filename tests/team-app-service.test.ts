@@ -1206,6 +1206,22 @@ it('projects only sealed mentions, filters a bounded page by person, and encodes
  await expect(f.service.execute('team.app.send',{conversationRef:ref,content:{text_content:'changed',template_kind:1,mentions}})).rejects.toThrow()
 })
 
+it.each([false,true])('recalls one opaque occurrence and reconciles a lost response: %s',async(lost)=>{
+ const terminal={...message,own:true,state:'recalled',revision:8,recalled_at:123,can_recall:false}
+ const f=fixture(path=>{
+  if(path.endsWith('/messages/recall')){if(lost)throw new Error('lost response');return {message:terminal,changed:true}}
+  if(path.endsWith('/messages/send-status'))return terminal
+  return {channel,conversation,messages:[{...message,own:true,can_recall:true}]}
+ })
+ const conversationRef=(await open(f)).conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const result=await f.service.execute('team.app.recall',{conversationRef,messageRef:page.messages[0]!.ref}) as import('../src/team-message-contract.js').TeamRecallResult
+ expect(result.message).toMatchObject({state:'recalled',recalledAt:123,revision:8,canRecall:false,media:[],contentStatus:'recalled'})
+ expect(result.message.content).toBeUndefined()
+ expect(f.requests.filter(r=>r.path.endsWith('/messages/recall'))[0]!.body).toEqual({conversation_uid:conversation.conversation_uid,side:conversation.side,message_uid:message.message_uid})
+ expect(f.requests.some(r=>r.path.endsWith('/delete')||r.path.endsWith('/cancel'))).toBe(false)
+})
+
 it('preserves an explicitly classified large visitor across person refs, remarks and actual private-open target',async()=>{
  const peer='9007199254740993';const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:peer,visitor:{nickname:'客户',kind:'person',account_state:'active',member_type:'svip'}},messages:[]}))
  const opened=(await open(f)).conversation!

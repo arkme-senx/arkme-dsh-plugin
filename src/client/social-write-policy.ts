@@ -11,6 +11,7 @@ export function socialWriteAction(operation: string, params?: Record<string, unk
     case 'group.members.add': return '邀请群成员'
     case 'team.create': case 'team.app.create': return '创建团队'
     case 'team.join-by-jotmo-id': case 'team.app.join': case 'dsh-beta-community.join': return '加入团队或社群'
+    case 'team.app.recall': return '撤回消息'
     case 'team.app.send': case 'team.app.send.enqueue': case 'team.app.send.retry-task': case 'team.app.edit': return '发送消息'
     case 'calls.outgoing.prepare': case 'calls.invite.create': return '发起通话'
     case 'voiceprint.invite': case 'voiceprint.person.invite': case 'world.voiceprint.invite': return '发送声纹邀请'
