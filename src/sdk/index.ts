@@ -1,5 +1,7 @@
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
 export type * from '../data-management.js'
+export type { ArkmeRecordingPlayback } from '../types.js'
+export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -44,8 +46,8 @@ import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage,
 export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
-import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
-export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
 import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
@@ -770,6 +772,18 @@ export class ArkmeSdk {
   async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
     await this.requireSpeakerPresence(signal)
     return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingPlayback> {
+    return this.call('recordings.playback.open', { itemRef }, signal)
+  }
+
+  async recordingSpeakerEvidenceQuery(query: import('../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../recording-evidence-contract.js').RecordingEvidenceResult> {
+    return this.call('recordings.speaker.evidence.query', { ...query }, signal)
+  }
+
+  async previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionPreview> {
+    return this.call('recordings.speaker.correction.preview', { ...input }, signal)
   }
 
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
@@ -2851,7 +2865,8 @@ export class ArkmeSdk {
     url.searchParams.set('dayReviewConfirmation', id)
     url.searchParams.set('intent', JSON.stringify(input))
     url.searchParams.set('action', action)
-    if (!window.open(url.href, '_blank')) throw new Error('请允许打开宿主确认页后重试')
+    if (typeof document !== 'undefined') url.searchParams.set('theme', document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light')
+    if (!window.open(url.href, '_blank')) throw new ArkmeClientError({ code: 'day-review-human-required', message: '确认页未打开，本次操作尚未提交。请允许弹窗，或更新桌面客户端后重试。', retryable: false })
     if ((await this.capabilities(signal)).features.calendarDayReviewHumanConfirmation !== true) throw new Error('当前 Provider 不支持日回顾宿主确认，请升级；仍可读取已有结果')
     const deadline = Date.now() + 5 * 60_000, initialDeadline = Date.now() + 15_000
     while (Date.now() < deadline) {
