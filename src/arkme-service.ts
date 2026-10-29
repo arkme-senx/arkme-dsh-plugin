@@ -1,3 +1,4 @@
+import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
 import type {TeamRepresentationSelection} from './team-group-contract.js'
 import type { ArkmeRecordingTranscriptPageOptions } from './types.js'
 import { RealtimeDictationService } from './services/realtime-dictation-service.js'
@@ -436,6 +437,7 @@ export class ArkmeService {
   private readonly botConversation: BotConversationService
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
+  private readonly recordExport: RecordExportService
   private readonly arko: ArkoService
   private readonly group: GroupService
   private readonly commonGroups: CommonGroupService
@@ -731,6 +733,7 @@ export class ArkmeService {
       this.record,
       this.source,
     )
+    this.recordExport = new RecordExportService(this.runtime)
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
       read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
 withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
@@ -902,7 +905,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
   async fileStage(path: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>, expectedUserId?: number, retention?: 'references') { return await this.filesOwner().stage(path, metadata, expectedUserId, retention) }
   async fileList() { return await this.filesOwner().files() }
-  async fileReadLocal(ref: string) { return ref.startsWith(`${GENERATED_ARTIFACT_PREFIX}.`) ? await this.arko.readGeneratedFile(ref) : await this.filesOwner().readLocal(ref) }
+  async fileReadLocal(ref: string) { return ref.startsWith(`${RECORD_EXPORT_PREFIX}.`) ? await this.recordExport.read(ref) : ref.startsWith(`${GENERATED_ARTIFACT_PREFIX}.`) ? await this.arko.readGeneratedFile(ref) : await this.filesOwner().readLocal(ref) }
   attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
   async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
   async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
@@ -932,6 +935,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async accountTokenUsageOperations(scope: string, query: ArkmeTokenUsageQuery, signal?: AbortSignal) { return await new AccountUsageDetailsService(this.runtime).operations(scope, query, signal) }
   async accountTokenUsageCalls(scope: string, query: ArkmeTokenUsageQuery, signal?: AbortSignal) { return await new AccountUsageDetailsService(this.runtime).calls(scope, query, signal) }
   async dataDeletedRecords(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).deleted(scope, signal) }
+  async dataExport(options: import('./data-management.js').ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: import('./data-management.js').ArkmeRecordExportProgress) => void) { return this.recordExport.run(options, signal, progress) }
   async dataExportPreflight(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).exportPreflight(scope, signal) }
   async dataRecoverRecord(scope: string, recordUid: string, version: number) { return await new DataManagementService(this.runtime).recover(scope, recordUid, version) }
   async backgroundSoundPreference(signal?: AbortSignal) { return await this.backgroundSoundPreferenceOwner.preference(signal) }
@@ -940,6 +944,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.recordExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.reset()
@@ -1241,6 +1246,7 @@ arkoImagesV1:true,
         topicHomeVisibility: true,
         arkoLifecycleV1: true,
         arkoHistoryReadsV1: true,
+        recordExportV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
         teamOutboundReception: 1,
@@ -1390,6 +1396,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.recordExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.dispose()

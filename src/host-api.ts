@@ -1010,6 +1010,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
+      if (request.operation === 'data.export' && origin === undefined) throw new ArkmePluginError('origin-required', '导出必须从当前页面确认后发起', false, 403)
       if (['arko.ask', 'arko.pending.prepare', 'arko.pending.acknowledge'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'Arko 输入必须由当前 DSH 页面发起', false, 403)
       }
@@ -1018,7 +1019,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       // Content negotiation adds request-scoped progress to the same export
       // owner. No task/status registry, polling, replay or background job exists.
-      if (request.operation === 'arko.export' && req.headers.accept === 'application/x-ndjson') {
+      if (['arko.export', 'data.export'].includes(request.operation) && req.headers.accept === 'application/x-ndjson') {
         const send = (frame: unknown) => {
           if (controller.signal.aborted || res.destroyed) return
           if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
@@ -1027,7 +1028,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           }
         }
         try {
-          const value = await service.arkoExport(controller.signal, progress => send({ kind: 'progress', ...progress }))
+          const value = request.operation === 'data.export'
+            ? await service.dataExport(recordExportOptions(params), controller.signal, progress => send({ kind: 'progress', ...progress }))
+            : await service.arkoExport(controller.signal, progress => send({ kind: 'progress', ...progress }))
           send({ kind: 'result', value })
         } catch (error) {
           const known = error instanceof ArkmePluginError ? error : undefined
@@ -1392,6 +1395,7 @@ export async function dispatchArkmeHostOperation(
       operationUid: stringParam(params, 'operationUid'), bizCode: numberParam(params, 'bizCode', -1),
     }, requestSignal)
     case 'data.deleted': return await service.dataDeletedRecords(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'data.export': return await service.dataExport(recordExportOptions(params), requestSignal)
     case 'data.export.preflight': return await service.dataExportPreflight(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'data.recover': return await service.dataRecoverRecord(stringParam(params, 'expectedAccountScope'), stringParam(params, 'recordUid'), numberParam(params, 'version', 0))
     case 'billing.order.create': return await service.createBillingOrder({
@@ -3329,4 +3333,9 @@ function arkoHistoryQueryParams(params: Record<string, unknown> | undefined): Ar
     result[key] = value
   }
   return result
+}
+
+function recordExportOptions(params: Record<string, unknown>): import('./data-management.js').ArkmeRecordExportOptions {
+  if (params.confirmed !== true || ![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-confirmation-required', '请确认后再导出', false, 400)
+  return { expectedAccountScope: stringParam(params, 'expectedAccountScope'), confirmed: true, orderKind: params.orderKind as 1 | 2 }
 }
