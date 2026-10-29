@@ -1,3 +1,4 @@
+import type { TeamRepresentationSendOptions, TeamRepresentationSnapshot } from './team-group-contract.js'
 import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
 import type { RecordOwnerId } from './record-owner-id.js'
@@ -1524,6 +1525,8 @@ arkoImagesV1?:true
     teamMessageInteractions?: 1
     teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
+    teamOutboundReception?: 1
+    teamGroupRepresentation?: 1
     teamProfiles?: true
     teamExternalChats?: true
     groupSelfNickname?: true
@@ -2048,6 +2051,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  representation?: TeamRepresentationSnapshot
+  originRepresentation?: TeamRepresentationSnapshot
   /** Local presentation of an explicitly saved personal quotation; cloud text remains complete. */
   localSelfQuote?: import('./selected-text-note.js').SelectedTextNotePresentation
   offlineContextMessageRef?: string
@@ -2280,6 +2285,8 @@ export interface ArkmeForwardTranscriptSegment {
 }
 
 export interface ArkmeForwardRecordPreviewItem {
+  sourceTeam?:{name:string;jotmoId:string}
+  originTeam?:{name:string;jotmoId:string}
   /** Built-in AI presentation asset; never a user identity. */
   avatarKind?: 'deepseek'
   templateKind?: number
@@ -2475,7 +2482,7 @@ export interface ArkmeFavoriteStickerAddInput {
 
 export type ArkmeFavoriteStickerManageAction = 'move-to-front' | 'delete'
 
-export interface ArkmeRichSendInput {
+export interface ArkmeRichSendInput extends TeamRepresentationSendOptions {
   title?: string
   textContent?: string
   textFormat?: 'plain' | 'markdown'
@@ -2507,7 +2514,7 @@ export interface ArkmeBotMentionInput {
 }
 
 export interface ArkmeLongArticleImage { fileRef?: string; fileAssetUid?: string }
-export interface ArkmeLongArticlePublishInput {
+export interface ArkmeLongArticlePublishInput extends TeamRepresentationSendOptions {
   expectedUserId?: number
   title: string
   textContent: string
@@ -2547,6 +2554,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  sendAtMillis?:number
+  draftScope?:string
   /** Pending automatic publication; composer attachment drafts never set this. */
   autoPublish?: boolean
   baseVersion?: number
@@ -4196,6 +4205,9 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'team.app.outbound.open'
+  | 'team.app.group.context'
+  | 'team.app.public-card'
   | 'recordings.strategies'
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'

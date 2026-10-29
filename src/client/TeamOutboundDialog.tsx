@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeContactSearchResult, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeTeam } from '../types.js'
-import { TEAM_OUTBOUND_PENDING_TEXT, type TeamOutboundOpenResult } from '../team-outbound-contract.js'
+import { type TeamOutboundOpenResult } from '../team-outbound-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
@@ -21,6 +21,9 @@ export function TeamOutboundMount({ accountKey, active }: { accountKey: string; 
   useEffect(() => {
     setRequest(undefined)
     if (!active) return
+    try { const value=JSON.parse(localStorage.getItem(`arkme.team.outbound:${accountKey}`)??'null') as TeamOutboundIntent|null
+      if(value?.accountKey===accountKey && value.person && value.requestUid && value.teamJotmoId)setRequest({intent:value,revision:++sequence.current})
+    } catch { /* Invalid local presentation cannot authorize an opening. */ }
     return subscribeTeamOutbound(intent => {
       if (intent.accountKey === accountKey) setRequest({ intent, revision: ++sequence.current })
     })
@@ -38,9 +41,10 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
   const [contacts, setContacts] = useState<Contact[]>([]), [cursor, setCursor] = useState<string>()
   const [hasMore, setHasMore] = useState(false), [contactsLoading, setContactsLoading] = useState(false), [contactsError, setContactsError] = useState('')
   const [query, setQuery] = useState(''), [lookup, setLookup] = useState(false), [lookupError, setLookupError] = useState('')
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [pending, setPending] = useState(false)
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const requests = useRef(new Set<AbortController>()), contactRequest = useRef<AbortController>(), lookupRequest = useRef<AbortController>()
-  const opening = useRef(false), requestUid = useRef(''), dialog = useRef<HTMLDivElement>(null)
+  const attemptKey=`arkme.team.outbound:${intent.accountKey}`
+  const opening = useRef(false), requestUid = useRef(intent.requestUid ?? ''), dialog = useRef<HTMLDivElement>(null)
   const mounted = useRef(true)
   const team = teams.find(value => value.jotmoId === teamId)
   const controller = () => { const c = new AbortController(); requests.current.add(c); return c }
@@ -79,7 +83,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
   useEffect(() => { if (!intent.person) void loadContacts() }, [])
   const selectPerson = (next: TeamOutboundPerson) => {
     lookupRequest.current?.abort(); lookupRequest.current = undefined; setLookup(false)
-    setPerson(next); setPending(false); setError(''); setLookupError(''); requestUid.current = ''
+    setPerson(next); setError(''); setLookupError(''); requestUid.current = ''
   }
   const findUser = async () => {
     const identifier = query.trim()
@@ -98,17 +102,18 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
   }
   const open = async () => {
     if (!team || !person || teamLoading || !!teamError || opening.current) return
-    opening.current = true; setBusy(true); setError(''); setPending(false)
+    opening.current = true; setBusy(true); setError('')
     const c = controller()
     requestUid.current ||= crypto.randomUUID()
     try {
+      localStorage.setItem(attemptKey,JSON.stringify({...intent,teamJotmoId:team.jotmoId,person,requestUid:requestUid.current}))
       const result = await callArkme<TeamOutboundOpenResult>('team.app.outbound.open', {
         expectedAccountKey: intent.accountKey, teamRef: team.teamRef, recipient: person.recipient, requestUid: requestUid.current,
       }, c.signal)
       if (c.signal.aborted || !mounted.current) return
-      if (result.state === 'backend_pending') { setPending(true); return }
       if (result.state !== 'ready' || !result.conversation?.ref || result.conversation.side !== 'team'
         || result.conversation.channel.jotmoId !== team.jotmoId) throw new Error(tr('团队会话返回异常，请重试'))
+      localStorage.removeItem(attemptKey)
       invalidateTeamMessages(intent.accountKey)
       onClose()
       openTeamMessages({ kind: 'conversation', conversation: result.conversation })
@@ -132,7 +137,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
         <label style={styles.label}>{tr('发送身份')}</label>
         {teamLoading ? <p role="status">{tr('正在加载团队…')}</p> : <>
           <div style={styles.row}>{team && <ArkmeTeamAvatar name={team.name} avatar={team.avatar} size={30} />}
-            <select aria-label={tr('选择团队')} value={teamId} disabled={busy || teams.length === 0} style={styles.input} onChange={e => { setTeamId(e.currentTarget.value); setTeamError(''); setPending(false); setError(''); requestUid.current = '' }}>
+            <select aria-label={tr('选择团队')} value={teamId} disabled={busy || teams.length === 0} style={styles.input} onChange={e => { setTeamId(e.currentTarget.value); setTeamError(''); setError(''); requestUid.current = '' }}>
               <option value="">{tr(teams.length ? '选择团队' : '尚未加入团队')}</option>
               {teams.map(value => <option key={value.jotmoId} value={value.jotmoId}>{value.name} · @{value.jotmoId}</option>)}
             </select></div>
@@ -143,7 +148,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
         {person ? <div style={styles.person}>
           <ArkmeUserAvatar avatarRef={person.avatarRef} size={36} label={person.displayName} />
           <strong style={styles.name}>{person.displayName}</strong>
-          <button type="button" style={styles.link} disabled={busy} onClick={() => { setPerson(undefined); setPending(false); setError(''); setQuery(''); requestUid.current = ''; if (!contacts.length) void loadContacts() }}>{tr('更换')}</button>
+          <button type="button" style={styles.link} disabled={busy} onClick={() => { setPerson(undefined); setError(''); setQuery(''); requestUid.current = ''; if (!contacts.length) void loadContacts() }}>{tr('更换')}</button>
         </div> : <>
           <form style={styles.row} onSubmit={e => { e.preventDefault(); void findUser() }}>
             <input aria-label={tr('查找联系用户')} placeholder={tr('联系人名称 / 即我号 / 手机号')} style={styles.input} value={query} onChange={e => { lookupRequest.current?.abort(); lookupRequest.current = undefined; setLookup(false); setLookupError(''); setQuery(e.currentTarget.value) }} />
@@ -161,10 +166,9 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
           {(hasMore || contactsError) && <button style={styles.link} disabled={contactsLoading} onClick={() => { void loadContacts(cursor) }}>{tr(contactsError ? '重试加载联系人' : '加载更多联系人')}</button>}
         </>}
         <p style={styles.notice}>{team && person ? tr('以 {v0} 身份发给 {v1}', { v0: team.name, v1: person.displayName }) : tr('选择团队和用户，开始团队私信')}<br /><span style={styles.hint}>{tr('本团队有权限的成员可共同查看和回复；个人私聊历史不会自动共享。')}</span></p>
-        {pending && <div role="status" style={styles.notice}><strong>{tr(TEAM_OUTBOUND_PENDING_TEXT)}</strong><p style={{ ...styles.hint, marginBottom: 0 }}>{tr('已保留当前选择，尚未创建会话或发送消息。')}</p></div>}
         {error && <p role="alert" style={styles.error}>{error}</p>}
       </div>
-      <footer style={styles.footer}><button type="button" style={styles.button} onClick={onClose}>{tr('关闭')}</button><button type="button" disabled={!team || !person || teamLoading || !!teamError || busy || pending} style={{ ...styles.button, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, opacity: !team || !person || busy || pending ? .5 : 1 }} onClick={() => { void open() }}>{tr(busy ? '正在打开…' : '开始团队私信')}</button></footer>
+      <footer style={styles.footer}><button type="button" style={styles.button} onClick={onClose}>{tr('关闭')}</button><button type="button" disabled={!team || !person || teamLoading || !!teamError || busy} style={{ ...styles.button, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, opacity: !team || !person || busy ? .5 : 1 }} onClick={() => { void open() }}>{tr(busy ? '正在打开…' : '开始团队私信')}</button></footer>
     </div>
   </div>, document.body)
 }

@@ -19,9 +19,9 @@ export class DayReviewConfirmation {
   constructor(private readonly service: Pick<ArkmeService, 'createDayReview' | 'resumeDayReview' | 'reconcileDayReview' | 'dayReviewConfirmationAccount'>) {}
   async prepare(input: Prepared, action: Action, signal: AbortSignal, id: string) {
     for (const [id, p] of this.pending) if (p.expires < Date.now()) this.pending.delete(id)
-    if (this.pending.size >= 32) throw new Error('待确认请求过多，请稍后重试')
     if (!['create', 'resume', 'reconcile'].includes(action)) throw denied()
     const account = await this.service.dayReviewConfirmationAccount(input, signal)
+    if (this.pending.size >= 32) throw new Error('待确认请求过多，请稍后重试')
     if (!/^[a-f0-9-]{36}$/.test(id) || this.pending.has(id)) throw denied()
     this.pending.set(id, { input: structuredClone(input), action, account, nonce: randomBytes(32).toString('hex'), expires: Date.now() + TTL, status: 'pending', displayed: false })
 

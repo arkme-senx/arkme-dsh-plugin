@@ -135,8 +135,11 @@ export function projectForwardRecordsPreview(
         : voiceCount > 0 ? '[语音]'
           : fileCount > 0 ? fileName === undefined ? '[文件]' : `[文件] ${fileName}`
             : stringValue(item.availability).trim() !== '' ? '原快记暂不可查看' : undefined
+      const sourceTeam=objectValue(item.source_representation),originTeam=objectValue(item.origin_representation)
       projectedItems.push({
         senderName,
+        ...(stringValue(sourceTeam.name)&&stringValue(sourceTeam.jotmo_id)?{sourceTeam:{name:stringValue(sourceTeam.name),jotmoId:stringValue(sourceTeam.jotmo_id)}}:{}),
+        ...(stringValue(originTeam.name)&&stringValue(originTeam.jotmo_id)?{originTeam:{name:stringValue(originTeam.name),jotmoId:stringValue(originTeam.jotmo_id)}}:{}),
         ...(isDeepSeekReply ? { avatarKind: 'deepseek' as const } : {}),
         // Only a resolved other account gets an actionable identity; the
         // viewer's own id and unresolved senders stay off the wire.

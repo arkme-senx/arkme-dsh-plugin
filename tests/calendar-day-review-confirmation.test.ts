@@ -51,3 +51,16 @@ async function nativeRequest(url: string, method: string, headers: Record<string
     req.on('error', reject);req.end(body)
   })
 }
+
+it('enforces the pending capacity after concurrent account checks settle', async () => {
+ const { DayReviewConfirmation } = await import('../src/calendar-day-review-confirmation.js')
+ let release!: (value:string)=>void
+ const account = new Promise<string>(resolve => { release=resolve })
+ const owner = new DayReviewConfirmation({ dayReviewConfirmationAccount:()=>account } as never)
+ const requests=Array.from({length:40},(_,i)=>owner.prepare(prepared,'create',new AbortController().signal,`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`))
+ const settled=Promise.allSettled(requests)
+ release('test:1')
+ const results=await settled
+ expect(results.filter(x=>x.status==='fulfilled')).toHaveLength(32)
+ expect(results.filter(x=>x.status==='rejected')).toHaveLength(8)
+})

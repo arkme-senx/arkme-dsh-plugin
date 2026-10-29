@@ -30,7 +30,7 @@ function DayReview({ accountScope }: { accountScope: string }) {
       setState(value); setError('')
       setSelected(current => (value.result ? projectDayReviewRecordingSection(value.result, query).items.flatMap(x => x.timelineEvents) : []).find(x => x.eventId === current?.eventId))
     }, {
-      onError: reason => { setState(undefined); setSelected(undefined); setError(String(reason)) }, intervalMs: 5000,
+      onError: reason => { setState(undefined); setSelected(undefined); setError(String(reason)) },
     })
     return () => { epoch.current++; pending.current?.abort(); dispose() }
   }, [query])

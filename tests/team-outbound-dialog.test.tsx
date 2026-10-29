@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamOutboundDialog, TeamOutboundMount } from '../src/client/TeamOutboundDialog.js'
 import { openTeamOutbound, type TeamOutboundIntent } from '../src/client/team-outbound.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
-import { TEAM_OUTBOUND_PENDING_TEXT } from '../src/team-outbound-contract.js'
 
 const { call, navigate, invalidate } = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), invalidate: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
@@ -30,22 +29,23 @@ async function query(value: string) {
 }
 function deferred() { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 beforeEach(() => {
+  localStorage.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.clearAllMocks(); call.mockReset()
   call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'directory.list' ? { items: [], hasMore: false } : { state: 'backend_pending' })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-it('keeps the selected person and real team, with an explicit pending result and no personal chat or message write', async () => {
+it('keeps the selected person and team on an unavailable response without manufacturing a conversation', async () => {
   await render(); expect(document.body.textContent).toContain('以 即我 身份发给 客户备注')
   expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams'])
   await click('开始团队私信')
   expect(call.mock.calls.at(-1)).toEqual(['team.app.outbound.open', {
     expectedAccountKey: 'prod:90', teamRef: 'sealed-team-a', recipient: intent.person!.recipient, requestUid: expect.any(String),
   }, expect.any(AbortSignal)])
-  expect(document.body.textContent).toContain(TEAM_OUTBOUND_PENDING_TEXT)
+  expect(document.body.textContent).toContain('团队会话返回异常')
   expect(document.body.textContent).toContain('客户备注')
-  expect(button('开始团队私信').disabled).toBe(true)
+  expect(button('开始团队私信').disabled).toBe(false)
   expect(navigate).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled()
   expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams', 'team.app.outbound.open'])
 })

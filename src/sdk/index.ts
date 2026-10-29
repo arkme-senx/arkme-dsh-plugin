@@ -1,3 +1,4 @@
+import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
 export type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -2299,13 +2300,25 @@ export class ArkmeSdk {
     )
   }
 
+  async groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamGroupContext>{
+    if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持群内团队身份')
+    return await this.call('team.app.group.context',{sourceRef},signal)
+  }
+  async teamOutboundOpen(teamRef:string,recipient:import('../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../team-outbound-contract.js').TeamOutboundOpenResult>{
+    if((await this.capabilities(signal)).features.teamOutboundReception!==1)throw new Error('当前 Provider 不支持主动团队接待，请升级')
+    return await this.call('team.app.outbound.open',{teamRef,recipient,requestUid},signal)
+  }
+  async teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamPublicCard>{
+    if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持公开团队名片')
+    return await this.call('team.app.public-card',{jotmoId},signal)
+  }
   async sendText(
     sourceRef: string,
     textContent: string,
     options: {
       recordUid?: string
       relationUid?: string
-      agentAuthored?: boolean
+      representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
       humanMentions?: readonly ArkmeHumanMentionInput[]
       botMentions?: readonly ArkmeBotMentionInput[]
       botRefs?: readonly string[]
@@ -2321,6 +2334,8 @@ export class ArkmeSdk {
       textContent,
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
+      ...(options.representation===undefined?{}:{representation:options.representation}),
+      ...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis}),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
       ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
@@ -2485,7 +2500,7 @@ export class ArkmeSdk {
   async forwardMessages(
     sourceRef: string,
     actionRefs: readonly string[],
-    options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {},
+    options: { representation?:TeamRepresentationSelection; sendAtMillis?:number; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     const refs = actionRefs.map(value => value.trim()).filter(value => value !== '')
     if (sourceRef.trim() === '' || refs.length === 0 || refs.length > 100 || new Set(refs).size !== refs.length) {
@@ -2493,6 +2508,8 @@ export class ArkmeSdk {
     }
     return await this.call<ArkmeSourceSendResult>('source.forward-messages', {
       sourceRef,
+      ...(options.representation?{representation:options.representation}:{}),
+      ...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis}),
       ...(options.targetSourceRef === undefined || options.targetSourceRef.trim() === '' ? {} : { targetSourceRef: options.targetSourceRef.trim() }),
       actionRefs: refs,
       recordUid: options.recordUid ?? crypto.randomUUID(),
@@ -2606,11 +2623,13 @@ export class ArkmeSdk {
   async sendFavoriteSticker(
     sourceRef: string,
     fileAssetUid: string,
-    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } & import('./../team-group-contract.js').TeamRepresentationSendOptions = {},
   ): Promise<ArkmeSourceSendResult> {
     if (sourceRef.trim() === '' || fileAssetUid.trim() === '') throw new TypeError('Arkme sticker destination and asset must not be empty')
     return await this.call<ArkmeSourceSendResult>('favorite-stickers.send', {
       sourceRef,
+      ...(options.representation===undefined?{}:{representation:options.representation}),
+      ...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis}),
       fileAssetUid,
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
@@ -2649,9 +2668,10 @@ export class ArkmeSdk {
     sourceRef: string,
     itemUid?: string,
     signal?: AbortSignal,
+    draftScope?: string,
   ): Promise<ArkmeLongArticleDraft | undefined> {
     return await this.call<ArkmeLongArticleDraft | undefined>('source.long-article.draft.get', {
-      sourceRef, ...(itemUid === undefined ? {} : { itemUid }),
+      sourceRef, ...(itemUid === undefined ? {} : { itemUid }), ...(draftScope === undefined ? {} : { draftScope }),
     }, signal)
   }
 
@@ -2660,10 +2680,10 @@ export class ArkmeSdk {
     await this.call<void>('source.long-article.draft.put', draft, signal)
   }
 
-  async deleteLongArticleDraft(sourceRef: string, itemUid?: string, signal?: AbortSignal): Promise<void> {
+  async deleteLongArticleDraft(sourceRef: string, itemUid?: string, signal?: AbortSignal, draftScope?: string): Promise<void> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
     await this.call<void>('source.long-article.draft.delete', {
-      sourceRef, ...(itemUid === undefined ? {} : { itemUid }),
+      sourceRef, ...(itemUid === undefined ? {} : { itemUid }), ...(draftScope === undefined ? {} : { draftScope }),
     }, signal)
   }
 
@@ -2845,7 +2865,7 @@ export class ArkmeSdk {
         nextRead = interval ?? (state.job && state.job.status !== 'failed' ? 5000 : 60000)
         if (!controller.signal.aborted) listener(state)
       }
-      catch (error) { if (!controller.signal.aborted) options.onError?.(error) }
+      catch (error) { nextRead = Math.min(60000, nextRead * 2); if (!controller.signal.aborted) options.onError?.(error) }
       finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, nextRead) }
     }
     if (options.immediate === false) timer = setTimeout(() => { void poll() }, nextRead)
@@ -3104,3 +3124,7 @@ export type {TeamForwardInput,TeamForwardDestination} from '../team-message-cont
 export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contract.js'
 
 export type {TeamMention} from '../team-app-contract.js'
+
+export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
+
+export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'

@@ -26,7 +26,8 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
     return new Response(stringifyOwnerJson({ code: 200, data }), { headers: { 'content-type': 'application/json' } })
   })
   const config = { environment: 'test', teamBaseUrl: 'https://team.test', authBaseUrl: 'https://auth.test', chatBaseUrl: 'https://chat.test', recordBaseUrl: 'https://record.test', subjectBaseUrl: 'https://subject.test', routePath: '/custom/api', requestTimeoutMs: 500, shareWebsite: 'https://share.test', maxTextLength: 20000 } as ArkmeServiceConfig
-  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key' } as StateStore, fetchImpl as typeof fetch)
+  const recovery=new Map<string,import('../src/team-outbound-contract.js').TeamOutboundRecovery>()
+  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key',teamOutboundTarget:vi.fn(async(scope:string,uid:string)=>recovery.get(scope+uid)),retainTeamOutboundTarget:vi.fn(async(scope:string,uid:string,value:import('../src/team-outbound-contract.js').TeamOutboundRecovery)=>{recovery.set(scope+uid,value)}) } as StateStore, fetchImpl as typeof fetch)
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
@@ -38,8 +39,9 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
       : { kind: 'group_chat', ownerRef: 'group-id' }) as never),
   }
   const candidates = { list: vi.fn<import('../src/team-member-add-contract.js').TeamMemberCandidatePort['list']>(async () => ({ items: [], hasMore: false })) }
-  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts, candidates)
-  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, candidates, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
+  const outboundTargets={resolve:vi.fn(async()=>123)}
+  const service = new TeamAppService(runtime, avatars, privateChat as never, contacts as never, candidates, outboundTargets)
+  return { service, runtime, requests, fetchImpl, avatars, privateChat, contacts, candidates, outboundTargets, changeAccount() { session = { userId: 91, accessToken: 'other', refreshToken: 'other-refresh' } } }
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
@@ -65,14 +67,14 @@ it('opens private matching references for maximum-size Team text without cloud I
 describe('team group frontend handoff boundary', () => {
   const member = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 3 }
   it('checks a viewer-scoped group source and returns real teams without granting delegated group access', async () => {
-    const f = fixture(() => ({ teams: [member] }))
+    const f = fixture(path => path.endsWith('/group-identity/context')?{state:'ready',membership_policy:'independent',group_join_at:9,teams:[{...member,team_id:'17',membership_kind:'member',membership_revision:3}]}:({ teams: [member] }))
     const result = await f.service.execute('team.app.group.context', { sourceRef: 'sealed-group', expectedAccountKey: 'test:90' }) as { state: string; teams: Array<{ teamRef: string }> }
-    expect(result.state).toBe('backend_pending'); expect(result.teams).toHaveLength(1)
+    expect(result.state).toBe('ready'); expect(result.teams).toHaveLength(1)
     expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine'])
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/chats/group-identity/context'])
     await expect(f.service.execute('team.app.group.join', { sourceRef: 'sealed-group', teamRef: result.teams[0]!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
     await expect(f.service.execute('team.app.group.directory', { teamRef: result.teams[0]!.teamRef })).resolves.toEqual({ state: 'backend_pending' })
-    expect(f.requests.every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.requests.slice(1).every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
   it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
@@ -125,28 +127,22 @@ describe('team World frontend boundary', () => {
   })
 })
 
-describe('team public card projection', () => {
-  it('reads a real member channel but exposes only public presentation and never opens a conversation', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id, role: 3 }] } : channel)
-    const value = await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })
-    expect(value).toMatchObject({ name: channel.name, jotmoId: channel.jotmo_id, contact: { state: 'available', publicRef: channel.public_ref } })
-    expect(Object.keys(value as object).sort()).toEqual(['avatar', 'contact', 'jotmoId', 'name'])
-    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/message-channel/get'])
-  })
-  it('uses public discovery for external viewers without calling member-only channel APIs or inventing a contact link', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { name: '公开团队', jotmo_id: 'public_team', requires_approval: true, state: 'not_member', avatar: { mode: 'default' } } })
-    expect(await f.service.execute('team.app.public-card', { jotmoId: 'public_team' })).toMatchObject({ name: '公开团队', contact: { state: 'backend_pending' } })
-    expect(f.requests.map(value => value.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
-  })
-  it('preserves disabled channel state and rejects wrong identity or account', async () => {
-    let value = { ...channel, enabled: false }
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ team_id: channel.team_id, jotmo_id: channel.jotmo_id }] } : value)
-    expect(await f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).toMatchObject({ contact: { state: 'disabled' } })
-    value = { ...value, jotmo_id: 'wrong' }
-    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id })).rejects.toThrow()
-    f.changeAccount()
-    await expect(f.service.execute('team.app.public-card', { jotmoId: channel.jotmo_id, expectedAccountKey: 'test:90' })).rejects.toThrow()
-  })
+describe('team public card projection',()=>{
+ const publicCard={...channel,contact:{state:'available',public_ref:channel.public_ref},navigation:{kind:'contact'},description:''}
+ it('uses the pure public read and never repairs or opens a channel',async()=>{
+  const f=fixture(()=>publicCard),value=await f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id,expectedAccountKey:'test:90'})
+  expect(value).toMatchObject({name:channel.name,contact:{state:'available',publicRef:channel.public_ref},navigation:{kind:'contact'}})
+  expect(JSON.stringify(value)).not.toContain(channel.team_id)
+  expect(f.requests.map(v=>v.path)).toEqual(['/api/v1/team/public-card/get'])
+ })
+ it('lets a member enter inbox when public contact is disabled',async()=>{
+  let value={...publicCard,contact:{state:'disabled'},navigation:{kind:'inbox'}}
+  const f=fixture(()=>value)
+  expect(await f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id})).toMatchObject({contact:{state:'disabled'},navigation:{kind:'inbox',teamRef:expect.any(String)}})
+  value={...value,jotmo_id:'wrong'};await expect(f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id})).rejects.toThrow()
+  f.changeAccount();await expect(f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id,expectedAccountKey:'test:90'})).rejects.toThrow()
+ })
+ it('reports an unavailable team without inventing a link',async()=>{const f=fixture(()=>({contact:{state:'unavailable'},navigation:{kind:'none'}}));await expect(f.service.execute('team.app.public-card',{jotmoId:'missing'})).resolves.toEqual({name:'',jotmoId:'missing',contact:{state:'unavailable'},navigation:{kind:'none'}})})
 })
 
 describe('internal group preparation boundary', () => {
@@ -190,12 +186,13 @@ describe('internal group preparation boundary', () => {
 describe('member initiated team conversation handoff boundary', () => {
   const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }
   const recipient = { kind: 'chat-member', sourceRef: 'source-ref', memberRef: 'member-ref' }
-  it('requires authenticated membership and returns a pending state without calling a nonexistent creation API', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {})
+  it('requires authenticated membership, freezes the target and opens the original team reception', async () => {
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {conversation:{...conversation,channel:{...channel,...memberTeam},team_id:17,external_user_id:'123',side:'team',visitor:{kind:'person',account_state:'active',member_type:'free'}}})
     const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
     const result = await f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })
-    expect(result).toEqual({ state: 'backend_pending' })
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
+    expect(result).toMatchObject({state:'ready',conversation:{side:'team',visitor:{personRef:expect.any(String)}}})
+    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine','/api/v1/team/conversations/open-by-member'])
+    expect(f.requests[2]!.body).toEqual({team_id:17,external_user_id:'123'})
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
   it('rejects a removed member and never substitutes another team', async () => {
@@ -875,15 +872,15 @@ describe('Team visitor private chat authority', () => {
 })
 
 
-it('opens production visitor through the server-selected latest external message, ignoring team senders', async () => {
+it('requires stable conversation identity even when a valid external sender exists in history', async () => {
   const current = { ...conversation, side: 'team', external_user_id: undefined, latest_external_seq: 7, visitor: { nickname: '访客' } }
   const f = fixture((_path, body) => ({ channel, conversation: current, messages: body.before_seq === 8
     ? [{ ...message, side: 'external', actor_user_id: 200, seq: 7 }]
     : [{ ...message, side: 'team', actor_user_id: 11, seq: 9 }] }))
   const opened = await open(f)
-  await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })
-  expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledExactlyOnceWith(200, { presentationDisplayName: '访客', expectedViewerUserId: 90 })
-  expect(f.requests.at(-1)!.body).toMatchObject({ before_seq: 8, limit: 1 })
+  await expect(f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref })).rejects.toThrow()
+  expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  expect(f.requests.at(-1)!.body).toMatchObject({ before_seq: 0, limit: 1 })
 })
 it.each([
   { side: 'team', actor_user_id: 200, seq: 7 },
@@ -1207,4 +1204,27 @@ it('projects only sealed mentions, filters a bounded page by person, and encodes
  expect(body.mentions).toBeUndefined()
  expect((body.content_payload as any).mention_metadata.human_mentions[0].user_id).toBe(91)
  await expect(f.service.execute('team.app.send',{conversationRef:ref,content:{text_content:'changed',template_kind:1,mentions}})).rejects.toThrow()
+})
+
+it('preserves an explicitly classified large visitor across person refs, remarks and actual private-open target',async()=>{
+ const peer='9007199254740993';const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:peer,visitor:{nickname:'客户',kind:'person',account_state:'active',member_type:'svip'}},messages:[]}))
+ const opened=(await open(f)).conversation!
+ expect(opened.visitor?.personRef).toBeTruthy()
+ await f.service.execute('team.app.person.private.open',{conversationRef:opened.ref,personRef:opened.visitor!.personRef})
+ expect(f.privateChat.openPrivateChatFromUser).toHaveBeenCalledWith(peer,expect.objectContaining({expectedViewerUserId:90}))
+ await f.service.execute('team.app.people.remarks',{conversationRef:opened.ref,personRefs:[opened.visitor!.personRef]})
+ expect(f.contacts.privateRemarksByUserIds).toHaveBeenCalledWith([peer],{})
+})
+
+it('recovers an uncertain open from the frozen target after Host recreation without reinterpreting expired source refs',async()=>{
+ let fail=true;const f=fixture(path=>path.endsWith('/list-mine')?{teams:[{team_id:17,jotmo_id:'our_team',name:'团队',role:3}]}:fail?new Response(JSON.stringify({code:500,data:{reason:'dependency_unavailable'}})):{conversation:{...conversation,channel:{...channel,team_id:17},side:'team',external_user_id:'123',visitor:{kind:'unknown',member_type:'unknown'}}})
+ const teams=await f.service.execute('team.app.teams',{}) as Array<{teamRef:string}>
+ const params={teamRef:teams[0]!.teamRef,recipient:{kind:'contact-lookup',contactRef:'expired-after-first-attempt'},requestUid:'frozen-attempt'}
+ await expect(f.service.execute('team.app.outbound.open',params)).rejects.toThrow()
+ f.outboundTargets.resolve.mockRejectedValue(new Error('source ref expired'));fail=false
+ const reopened=new TeamAppService(f.runtime,f.avatars,f.privateChat as never,f.contacts as never,f.candidates,f.outboundTargets)
+ expect(await reopened.execute('team.app.outbound.open',params)).toMatchObject({state:'ready',conversation:{side:'team',visitor:{memberType:'unknown'}}})
+ expect(f.outboundTargets.resolve).toHaveBeenCalledOnce()
+ expect(f.requests.filter(v=>v.path.endsWith('/open-by-member')).map(v=>v.body.external_user_id)).toEqual(['123','123'])
+ await expect(reopened.execute('team.app.outbound.open',{...params,recipient:{kind:'contact-lookup',contactRef:'different'}})).rejects.toThrow()
 })

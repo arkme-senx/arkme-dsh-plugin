@@ -388,6 +388,7 @@ export class FileTransfers {
       || !validLocation(input.location)) {
       throw fail('file-send-invalid', '发送标识、正文或附件数量无效')
     }
+    if(input.content.representation!==undefined&&(!Number.isSafeInteger(input.content.sendAtMillis)||Number(input.content.sendAtMillis)<=0))throw fail('team-identity-time-invalid','团队发送必须保留原发送时间')
     const backgroundSound = arkmeFileBackgroundSound(input.backgroundSound, input.fileRefs)
     if (backgroundSound !== undefined) {
       const backgroundRefs = new Set(backgroundSound.fileRefs)

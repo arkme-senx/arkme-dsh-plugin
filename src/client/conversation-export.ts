@@ -137,7 +137,7 @@ export function arkmeConversationExportFileName(
 }
 
 function markdownForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceItem[]): string {
-  const lines: string[] = [`### ${localTime(new Date(item.sendAtMillis))} · ${escapePlainMarkdown(item.senderName || '未知发送者')}`, '']
+  const lines: string[] = [`### ${localTime(new Date(item.sendAtMillis))} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
   const title = item.title.trim()
   if (title !== '' && title !== item.textContent.trim()) lines.push(`**标题：** ${escapePlainMarkdown(title)}`, '')
   const blocks = [...(item.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
