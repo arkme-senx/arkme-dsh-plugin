@@ -1,5 +1,3 @@
-import { harnessSlotBoundary } from './harness-slot-layout.js'
-
 const HEADER_SLOT = '[data-slot="conversation.session.header"]'
 const UTILITIES_SLOT = '[data-slot="conversation.session.header.utilities"]'
 const OWNED = '[data-arkme-harness-return], [data-arkme-harness-trajectory-item]'
@@ -28,7 +26,7 @@ interface Mount extends Navigation {
 
 function nativeHeaders(doc: Document): HTMLElement[] {
   return [...doc.querySelectorAll<HTMLElement>(HEADER_SLOT)].flatMap(slot => {
-    const parent = harnessSlotBoundary(slot).parentElement
+    const parent = slot.parentElement
     const header = parent?.tagName === 'HEADER' && parent.querySelector(':scope > [data-conversation-header-leading]')
       ? parent
       : slot.querySelector<HTMLElement>(':scope > header')
@@ -40,8 +38,7 @@ function nativeHeaders(doc: Document): HTMLElement[] {
 function navigation(header: HTMLElement): Navigation | undefined {
   // 0.1.x puts the header inside the session slot. 0.2.x keeps the header
   // resident and renders the session title/tabs inside a display:contents slot.
-  const candidate = header.querySelector<HTMLElement>(HEADER_SLOT)
-  const session = candidate && harnessSlotBoundary(candidate).parentElement === header ? candidate : null
+  const session = header.querySelector<HTMLElement>(`:scope > ${HEADER_SLOT}`)
   const tablists = session === null
     ? header.querySelectorAll<HTMLElement>(':scope > [role="tablist"]')
     : session.querySelectorAll<HTMLElement>(':scope > [role="tablist"][data-conversation-tabs]')

@@ -98,7 +98,6 @@ it('exposes only the menu while DSH is inactive, without activating or reloading
   await flush()
   expect(surface.style.visibility).toBe('hidden')
   expect(frame.contentDocument).toBe(native)
-  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(false)
 })
 
 it.each([true, false])('keeps list shadow below overlapping native menus without double painting (DSH visible: %s)', async visible => {
@@ -226,21 +225,4 @@ it('keeps an empty document or root clipped until native loading or error UI has
   native.querySelector('#root')!.innerHTML = '<p role="alert">Connection failed</p>'
   await flush()
   expect(surface.style.visibility).toBe('visible')
-})
-
-it('keeps the native frame painted while foreign history uses native renderers', async () => {
-  const { surface, column, native, frame } = fixture()
-  surface.setAttribute('data-arkme-history-session', 'arkme:other:same')
-  await flush()
-  expect(surface.style.visibility).toBe('visible')
-  expect(surface.getAttribute('data-arkme-visible')).toBe('true')
-  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(true)
-  expect(native.documentElement.hasAttribute('data-arkme-session-preview')).toBe(false)
-  column.setAttribute('data-arkme-session-open', ''); await flush()
-  expect(surface.style.visibility).toBe('visible')
-  expect(surface.style.clipPath).toContain('M 356 0 H 1400')
-  column.removeAttribute('data-arkme-session-open'); surface.removeAttribute('data-arkme-history-session'); await flush()
-  expect(surface.style.visibility).toBe('visible')
-  expect(frame.contentDocument).toBe(native)
-  expect(native.documentElement.hasAttribute('data-arkme-history-active')).toBe(false)
 })

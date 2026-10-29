@@ -57,7 +57,7 @@ interface ConversationMenuHoverAdapter {
 const activeHovers = new WeakMap<Document, () => void>()
 
 /** Timing, dismissal, keyboard entry and mutual exclusion are identical for both lists. */
-export function watchConversationMenuHover(anchor: HTMLElement, adapter: ConversationMenuHoverAdapter, clickToOpen = false): () => void {
+export function watchConversationMenuHover(anchor: HTMLElement, adapter: ConversationMenuHoverAdapter): () => void {
   const doc = anchor.ownerDocument, win = doc.defaultView
   if (!win) return () => {}
   let open = false, openTimer = 0
@@ -75,7 +75,7 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
   const inside = (target: EventTarget | null) => target != null && typeof (target as Node).nodeType === 'number'
     && (anchor.contains(target as Node) || adapter.contains(target))
   const checkPointer = (target: EventTarget | null, point?: ConversationMenuPoint) => {
-    if (clickToOpen || !open || inside(target)) return
+    if (!open || inside(target)) return
     if (point) {
       const card = anchor.getBoundingClientRect(), menus = adapter.bounds()
       const bridge = menus[0] && conversationMenuHoverBridge(card, menus[0])
@@ -94,14 +94,13 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
     anchor.setAttribute('aria-expanded', 'true')
   }
   const enter = (event: PointerEvent) => {
-    if (clickToOpen || event.pointerType === 'touch') return
+    if (event.pointerType === 'touch') return
     if (!open && !openTimer) openTimer = win.setTimeout(() => openMenu(), 200)
   }
   const key = (event: KeyboardEvent) => {
-    if (event.key !== 'ArrowRight' && !(clickToOpen && ['ArrowDown', 'Enter', ' '].includes(event.key))) return
+    if (event.key !== 'ArrowRight') return
     event.preventDefault(); openMenu(true)
   }
-  const click = () => { if (open) close(); else openMenu() }
   const move = (event: PointerEvent) => checkPointer(event.target, { x: event.clientX, y: event.clientY })
   const leave = (event: PointerEvent) => {
     clearTimers()
@@ -120,8 +119,7 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
   anchor.setAttribute('aria-expanded', 'false')
   anchor.addEventListener('pointerenter', enter)
   anchor.addEventListener('pointerleave', leave)
-  if (clickToOpen) anchor.addEventListener('click', click)
-  else anchor.addEventListener('pointerdown', close)
+  anchor.addEventListener('pointerdown', close)
   anchor.addEventListener('keydown', key)
   doc.addEventListener('pointermove', move, true)
   doc.addEventListener('pointerover', move, true)
@@ -137,7 +135,6 @@ export function watchConversationMenuHover(anchor: HTMLElement, adapter: Convers
     anchor.removeEventListener('pointerenter', enter)
     anchor.removeEventListener('pointerleave', leave)
     anchor.removeEventListener('pointerdown', close)
-    anchor.removeEventListener('click', click)
     anchor.removeEventListener('keydown', key)
     doc.removeEventListener('pointermove', move, true)
     doc.removeEventListener('pointerover', move, true)

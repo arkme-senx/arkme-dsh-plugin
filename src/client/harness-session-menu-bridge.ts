@@ -6,7 +6,6 @@ export const HARNESS_MENU_POSITION = 'arkme:harness-menu-position'
 
 export interface HarnessSessionMenuRequest {
   accepted: boolean
-  placement?: 'below'
   anchor(): { left: number; right: number; top: number; bottom: number }
   onLayout(): void
   onClose(focus: boolean): void
