@@ -525,6 +525,8 @@ export class ArkmeService {
   async readTeamExtensions(conversationRef:string,messageRef:string,options:import('./team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage> {
     return await this.executeTeamApp('team.app.extensions',{conversationRef,messageRef,...options},signal) as import('./team-app-contract.js').TeamExtensionPage
   }
+  async teamHistory(conversationRef:string,action:import('./team-history-contract.js').TeamHistoryAction,options:import('./team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryResponse>{return await this.executeTeamApp('team.app.history',{conversationRef,action,options},signal) as import('./team-history-contract.js').TeamHistoryResponse}
+  async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryExportChunk>{return await this.executeTeamApp('team.app.history.chunk',{resultRef,...(cursor?{cursor}:{})},signal) as import('./team-history-contract.js').TeamHistoryExportChunk}
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -1275,6 +1277,7 @@ arkoImagesV1:true,
         teamMessageInteractions: 1,
         teamMessageRecall: 1,
         teamMessageSnapshot: 1,
+        teamHistoryV1: true,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,

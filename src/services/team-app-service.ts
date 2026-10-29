@@ -1,4 +1,6 @@
 import {TeamMemberAddition} from './team-member-addition.js'
+import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
+import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-contract.js'
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
@@ -48,6 +50,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  snapshot_expired: '历史内容已变化或结果已过期，请重新查询', cursor_invalid: '历史分页已失效，请重新查询', cancelled: '导出已取消',
   invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
   invalid_external_chat: '对外私聊请求无效，请重新打开',
@@ -433,6 +436,31 @@ export class TeamAppService {
     const message = async () => {
       const v = await this.open('message', p.messageRef, actor)
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
+    }
+    if (operation === 'team.app.history' || operation === 'team.app.history.chunk') {
+      let context: {conversation_uid:string;side:TeamSide}
+      if (operation === 'team.app.history.chunk') {
+        const value = await this.open('history-result', p.resultRef, actor)
+        if (!str(value.conversation_uid) || !['team','external'].includes(str(value.side))) throw invalid()
+        context = {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+      } else context = await this.resolveConversation(str(p.conversationRef), actor)
+      const adapter: TeamHistoryAdapter = {
+        viewer:actor,context,routePath:this.runtime.config.routePath,post,
+        seal:(kind,value)=>this.ref(kind,value,actor),open:(kind,ref)=>this.open(kind,ref,actor),
+        identity:(value,id)=>this.identity(value,actor,{id,context}),
+        preview:async raw=>{
+          if (!str(raw.message_uid) || num(raw.seq)<=0 || !['team','external'].includes(str(raw.side))) throw invalid()
+          return {historyPreview:true,historyMedia:list(raw.media).map(v=>({name:str(v.name),kind:str(v.kind)})),
+            ref:await this.ref('message',{...context,message_uid:raw.message_uid},actor),key:await this.key(str(raw.message_uid),actor),
+            seq:num(raw.seq),revision:num(raw.revision),version:num(raw.version),side:raw.side as TeamSide,
+            sender:await this.identity(raw.sender,actor,{id:raw.actor_user_id,context}),own:raw.own===true,
+            state:'published',createdAt:num(raw.created_at),canEdit:false,canDelete:false,contentStatus:'available',media:[],
+            content:{text_content:str(raw.text),title:str(raw.title),template_kind:1,content_payload:{text_format:'plain'}}}
+        },
+      }
+      return operation === 'team.app.history.chunk'
+        ? await teamHistoryChunk(adapter,str(p.resultRef),str(p.cursor)||undefined)
+        : await teamHistoryOperation(adapter,p.action as TeamHistoryAction,(p.options ?? {}) as TeamHistoryOptions)
     }
     switch (operation) {
       case 'team.app.snapshot.capabilities': {

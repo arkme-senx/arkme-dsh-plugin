@@ -1523,6 +1523,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
+    teamHistoryV1?: true
     teamMessageInteractions?: 1
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
@@ -4332,6 +4333,7 @@ export type ArkmePluginOperation =
   | 'team.messages.marks-read' | 'team.messages.marks-change'
   | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
+  | 'team.history' | 'team.history.export-chunk'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'

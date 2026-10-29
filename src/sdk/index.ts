@@ -4,6 +4,7 @@ export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 export type { TeamRecallResult } from '../team-message-contract.js'
 export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
+export type { TeamHistoryAction, TeamHistoryOptions, TeamHistoryResponse, TeamHistoryExportChunk, TeamHistoryPort, TeamHistoryWord, TeamHistoryDay } from '../team-history-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -895,6 +896,9 @@ export class ArkmeSdk {
     if((await this.capabilities(signal)).features.teamMessageExtensions!==1)throw new Error('当前 Provider 不支持团队延展浏览，请升级')
     return await this.call('team.messages.extensions',{conversationRef,messageRef,options},signal)
   }
+  private async requireTeamHistory(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamHistoryV1!==true)throw new Error('当前 Provider 不支持团队历史检索，请升级')}
+  async teamHistory(conversationRef:string,action:import('../team-history-contract.js').TeamHistoryAction,options:import('../team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryResponse>{await this.requireTeamHistory(signal);return await this.call('team.history',{conversationRef,action,options},signal)}
+  async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryExportChunk>{await this.requireTeamHistory(signal);return await this.call('team.history.export-chunk',{resultRef,...(cursor?{cursor}:{})},signal)}
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline>{await this.requireTeamMessages(signal);if(options.personRef)await this.requireTeamMentions(signal);return await this.call('team.messages.read',{conversationRef,options},signal)}
   async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);if(command.content.mentions?.length)await this.requireTeamMentions(signal);return await this.call('team.messages.send',{command},signal)}
   async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}

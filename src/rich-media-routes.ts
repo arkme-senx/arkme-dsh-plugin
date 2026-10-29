@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, open, unlink } from 'node:fs/promises'
@@ -270,5 +271,36 @@ export function createArkmeTeamMediaHandler(service: ArkmeService, options: Arkm
       if (!res.headersSent) writeJson(res, known.httpStatus, { ok: false, error: { code: known.code, message: known.message, retryable: known.retryable } })
       else res.destroy(error instanceof Error ? error : undefined)
     } finally { clearTimeout(timeout); res.off('close', disconnect) }
+  }
+}
+
+/** Stream bounded authorized chunks. The final byte is released only after the
+ * backend's final dependency check and the complete-file hash both succeed. */
+export function createArkmeTeamHistoryExportHandler(service: Pick<ArkmeService,'readTeamHistoryExportChunk'>, options: ArkmeRichMediaRouteOptions) {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller=new AbortController(), disconnect=()=>controller.abort()
+    res.once('close',disconnect)
+    try {
+      assertLocalRequest(req,options)
+      if(req.method!=='GET'&&req.method!=='HEAD')throw new ArkmePluginError('method-not-allowed','只允许 GET 或 HEAD 请求',false,405)
+      if(req.headers.range)throw new ArkmePluginError('range-not-supported','请重新下载完整导出文件',false,416)
+      const ref=new URL(req.url??'/',`http://127.0.0.1:${options.expectedPort}`).searchParams.get('ref')||''
+      const digest=createHash('sha256');let offset=0,cursor:string|undefined,total:number|undefined,hash:string|undefined
+      for(;;){
+        const part=await service.readTeamHistoryExportChunk(ref,cursor,controller.signal),data=Buffer.from(part.chunkBase64,'base64')
+        if(data.length>1048576||createHash('sha256').update(data).digest('hex')!==part.chunkSha256||part.offset!==offset+data.length||(total!==undefined&&(total!==part.bytes||hash!==part.sha256))||part.offset>part.bytes||(!part.complete&&(!part.cursor||part.cursor===cursor)))throw new Error('Invalid Team export chunk')
+        total=part.bytes;hash=part.sha256;offset=part.offset;digest.update(data)
+        if(part.complete&&(offset!==total||digest.digest('hex')!==hash))throw new Error('Invalid Team export digest')
+        if(!res.headersSent)res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Length':total,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(part.fileName)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"})
+        if(req.method==='HEAD'){res.end();return}
+        if(part.complete){res.end(data);return}
+        if(!res.write(data))await once(res,'drain',{signal:controller.signal})
+        cursor=part.cursor
+      }
+    } catch(error){
+      const known=error instanceof ArkmePluginError?error:new ArkmePluginError('team-history-download-failed','导出下载失败，请重新查询后重试',true,502)
+      if(!res.headersSent)writeJson(res,known.httpStatus,{ok:false,error:{code:known.code,message:known.message,retryable:known.retryable}})
+      else res.destroy(error instanceof Error?error:undefined)
+    } finally {res.off('close',disconnect);controller.abort()}
   }
 }

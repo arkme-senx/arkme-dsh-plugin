@@ -41,7 +41,7 @@ import {
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
+import { createArkmeTeamHistoryExportHandler, createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -810,6 +810,7 @@ export function apply(ctx: Context, config: Config): void {
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
+  const teamHistoryExportHandler = createArkmeTeamHistoryExportHandler(service, richMediaOptions)
   const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
@@ -1005,6 +1006,7 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/self-role-avatar`,
     handler: selfRoleAvatarHandler,
   }), 'dsh-arkme: local self-role avatar route')
+  ctx.effect(() => ctx.webServer.register({kind:'exact',path:`${config.routePath}/team/history/export`,handler:teamHistoryExportHandler}),'dsh-arkme: authorized Team history export')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/team/media`, handler: teamMediaHandler }), 'dsh-arkme: authorized team media')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
