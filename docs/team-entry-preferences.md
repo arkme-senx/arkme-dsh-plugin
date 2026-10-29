@@ -23,3 +23,11 @@ Owner 为 Team；仅团队文件夹与带访问侧会话。PC 保留现有菜单
 - Node 24 全量通过，插件版本保持 3.0.35。最终安装使用按 SHA-256 固定命名的 tgz，包含空格路径；根 README、版本/lock 元数据和 DSH 源码未改。
 
 复现入口需要显式提供本地隔离环境：`ARKME_TEAM_ENTRY_READY` 为 runner 的 ready.json，另提供 DSH_HOME、ARKME_DSH_RUNTIME、ARKME_PLAYWRIGHT_ANCHOR、ARKME_E2E_TLS_KEY、NODE_EXTRA_CA_CERTS、ARKME_FLUTTER_BIN、ARKME_FRONTEND_REPO。先通过官方 `dsh plugin --profile web add -w <immutable.tgz>` 安装，再运行上述 mjs。只使用自己创建的依赖及 Profile，结束由 runner 清理其容器与服务。
+
+## 最终打开链路复核（2026-10-29）
+
+团队卡片、通过链接发消息和联系作者复用 `team-entry-navigation`，与原 Panel 共享一次 `team.app.open`。只有明确打开且获准返回已有发布历史，才恢复本人入口；成员链接仍进入原收件箱，访客链接仍进入原对话。原布局、菜单、加载、错误与重试按钮保持原样。单纯挂载、预览和空窗口不产生恢复意图。
+
+可选恢复在现有账号命令队列中先预留顺序，再等待打开/历史核对；用户后续移除不会被慢打开覆盖。离开账号范围（包括 A→B→A）或在打开完成前取消时不恢复；同账号 token 刷新保留有效操作。打开错误沿用 Panel 反馈，原重试按钮重新表达明确打开意图。没有新增持久状态、后台队列、接口、配置或数据结构。
+
+新增 `team-entry-opening-lifecycle.test.tsx` 通过真实 UI、导航与偏好 owner（仅 HTTP 替身）验证卡片→成员/访客、官方入口失败→重试、重新挂载不恢复；队列与导航单测验证慢打开/后移除、取消、空窗口及账号范围变化。

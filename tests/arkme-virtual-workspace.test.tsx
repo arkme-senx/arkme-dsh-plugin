@@ -122,7 +122,7 @@ describe('Arkme conversation directory load state', () => {
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
     expect(workspaceSource).toContain('authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow')
     expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
-    expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
+    expect(workspaceSource).toContain("openTeamEntryMessages({ kind: 'official' }, currentAccountKey)")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
   })
 

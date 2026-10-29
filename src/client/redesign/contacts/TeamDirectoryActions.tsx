@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from '../../team-entry-navigation.js'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { UsersThree } from '@phosphor-icons/react/dist/icons/UsersThree'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
@@ -9,7 +10,7 @@ import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { callArkme } from '../../api.js'
 import { useArkmeLocale } from '../../locale.js'
 import { teamText as tr } from '../../team-messaging-i18n.js'
-import { openTeamMessages, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { subscribeTeamMessageChanges } from '../../team-messaging-events.js'
 import { ArkmeActionMenu } from '../../ArkmeDshMenu.js'
 import { DirectoryActionDialog } from './ContactDirectoryAddDialog.js'
 import { teamJoinLabel, teamJoinState, teamMembershipErrorText, teamMessageLinkRef, type TeamJoinState } from './team-membership-feedback.js'
@@ -132,7 +133,7 @@ export function TeamMembershipForm({ mode, accountKey, onClose, onChanged, onSel
     if (mode === 'link') {
       const publicRef = teamMessageLinkRef(id)
       if (!publicRef) { setError(tr('请粘贴完整的团队消息链接')); return }
-      openTeamMessages({ kind: 'link', publicRef }); onClose(); return
+      openTeamEntryMessages({ kind: 'link', publicRef }, accountKey); onClose(); return
     }
     const signal = controller.current.signal
     cancelStatus()
