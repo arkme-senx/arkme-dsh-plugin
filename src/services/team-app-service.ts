@@ -614,7 +614,6 @@ export class TeamAppService {
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
             identityState: v.identity_state === 'ready' ? 'ready' as const : v.identity_state === 'unavailable' ? 'unavailable' as const : 'incomplete' as const,
-            ...(v.join_source === 3 && str(v.added_by_display_name) ? {addedByName:str(v.added_by_display_name)} : {}),
             role: role(v.role), joinedAtMillis: num(v.joined_at), canRemove: v.can_remove === true,
             codexSync: readTeamMemberCodexSync(v.codex_sync),
           }))),

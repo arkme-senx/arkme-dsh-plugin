@@ -361,7 +361,6 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-member-copy">
               <strong>{member.displayName}</strong>
               <small>{memberIdentity(member)}</small>
-              {member.addedByName && <small>{tr('由 {v0} 添加', {v0:member.addedByName})}</small>}
             </span>
             <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}

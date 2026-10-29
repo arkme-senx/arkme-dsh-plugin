@@ -32,7 +32,11 @@ try{
  for(const width of [1200,800,480]) { await page.setViewportSize({width,height:900}); if(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth))throw new Error('Dialog overflow') }
  await page.screenshot({path:join(fixtureDir,'member-results.png')})
  await dialog.getByRole('button',{name:'关闭',exact:true}).click()
- await page.waitForFunction(()=>document.querySelector('.arkme-team-detail')?.textContent.includes('由 同事99001001 添加'))
- await writeFile(join(fixtureDir,'acceptance.json'),JSON.stringify({...result,uiPartialResult:true,uiRejectedSelection:true,publicAdderAttribution:true,currentCandidateAuthority:true,installedArtifact:true,actualMongo:true}))
+ await page.locator('.arkme-team-member-row').filter({hasText:'同事99001002'}).waitFor({state:'visible'})
+ const count=await page.locator('.arkme-team-detail-count strong').textContent()
+ const snapshot=await page.request.post(fixture.url+'/api/v1/team/members/snapshot',{headers:{Authorization:'Bearer '+fixture.owner_token},data:{team_id:'42',limit:50}})
+ const roster=await snapshot.json()
+ if(roster.code!==200||Number(count)!==roster.data.member_count)throw new Error('current member count was not refreshed')
+ await writeFile(join(fixtureDir,'acceptance.json'),JSON.stringify({...result,uiPartialResult:true,uiRejectedSelection:true,memberListRefreshed:true,currentCandidateAuthority:true,installedArtifact:true,actualMongo:true}))
  console.log('PASS: installed official DSH, external SDK, session Tool grant and UI actual Mongo receipt')
 }catch(error){await writeFile(join(fixtureDir,'browser-failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(fixtureDir,'browser-failure.png')});throw error}finally{await browser.close()}

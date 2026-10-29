@@ -649,11 +649,10 @@ describe('Team App owner adapter', () => {
     await expect(broken.service.execute('team.app.join',{jotmoId:'protected_team',requestUid:'broken'})).rejects.toThrow()
   })
   it('returns only current members and opaque removal handles', async () => {
-    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true, join_source:3,added_by_display_name:'公开发起人' }], member_count: 1, membership_revision: 2, can_add_members: true, has_more: false } : { teams: [{ ...channel, role: 1 }] })
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true }], member_count: 1, membership_revision: 2, can_add_members: true, has_more: false } : { teams: [{ ...channel, role: 1 }] })
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(members.items[0]?.canRemove).toBe(true)
-    expect(members.items[0]?.addedByName).toBe('公开发起人')
     expect(members).toMatchObject({totalCount:1,membershipRevision:2,canAddMembers:true})
     expect(members.items[0]?.codexSync).toEqual({state:'unavailable',reason:'unsupported'})
     const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
