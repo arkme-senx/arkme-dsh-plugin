@@ -37,6 +37,7 @@ try{
  const snapshot=await page.request.post(fixture.url+'/api/v1/team/members/snapshot',{headers:{Authorization:'Bearer '+fixture.owner_token},data:{team_id:'42',limit:50}})
  const roster=await snapshot.json()
  if(roster.code!==200||Number(count)!==roster.data.member_count)throw new Error('current member count was not refreshed')
+ await page.screenshot({path:join(fixtureDir,'member-list.png')})
  await writeFile(join(fixtureDir,'acceptance.json'),JSON.stringify({...result,uiPartialResult:true,uiRejectedSelection:true,memberListRefreshed:true,currentCandidateAuthority:true,installedArtifact:true,actualMongo:true}))
  console.log('PASS: installed official DSH, external SDK, session Tool grant and UI actual Mongo receipt')
 }catch(error){await writeFile(join(fixtureDir,'browser-failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(fixtureDir,'browser-failure.png')});throw error}finally{await browser.close()}
