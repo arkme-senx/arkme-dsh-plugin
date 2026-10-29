@@ -3,7 +3,6 @@ import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_S
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
-import { harnessSlotBoundary } from './harness-slot-layout.js'
 
 const PREFIX = 'data-arkme-session-'
 const HEADER = '[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])'
@@ -64,12 +63,11 @@ function compactTools(value: Shell): Array<[HTMLElement, string]> {
 function summaryLayout(header: HTMLElement | undefined): Array<[HTMLElement, string]> {
   if (!header || header.getAttribute('aria-hidden') === 'true') return []
   const actionsSlot = header.querySelector<HTMLElement>('[data-slot="conversation.session.header.actions"]')
-  const actions = actionsSlot && harnessSlotBoundary(actionsSlot).parentElement
+  const actions = actionsSlot?.parentElement
   const cluster = actions?.parentElement
   const row = cluster?.parentElement
   const nav = cluster?.querySelector<HTMLElement>(':scope > nav')
-  const rowParent = row?.parentElement
-  if (!actions || !cluster || !row || !nav || !rowParent || (rowParent !== header && harnessSlotBoundary(rowParent).parentElement !== header) || cluster.children.length !== 2
+  if (!actions || !cluster || !row || !nav || (row.parentElement !== header && row.parentElement?.parentElement !== header) || cluster.children.length !== 2
     || cluster.firstElementChild !== nav || cluster.lastElementChild !== actions) return []
   const utilities = [...row.children].filter(node => node !== cluster && !node.hasAttribute(PREFIX + 'identity')) as HTMLElement[]
   return [[header, 'header'], [row, 'title-row'], [cluster, 'title-cluster'], [actions, 'summary'], [nav, 'title-nav'],
@@ -317,9 +315,9 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const rect = trigger.getBoundingClientRect()
     const width = Math.min(CONVERSATION_MENU_LAYOUT.width, win!.innerWidth - 24)
     const anchor = external?.anchor()
-    const hoverPosition = anchor && external?.placement !== 'below' ? conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight }) : undefined
-    const top = hoverPosition?.top ?? Math.max(8, Math.min((anchor?.bottom ?? rect.bottom) + 7, win!.innerHeight - 100))
-    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(anchor?.left ?? rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
+    const hoverPosition = anchor && conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight })
+    const top = hoverPosition?.top ?? Math.max(8, Math.min(rect.bottom + 7, win!.innerHeight - 100))
+    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
     variable(current.column, '--arkme-session-top', `${top}px`)
     variable(current.column, '--arkme-session-width', `${width}px`)
     variable(current.column, '--arkme-session-height', `${Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - top - CONVERSATION_MENU_LAYOUT.viewportInset)}px`)
