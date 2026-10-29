@@ -1,6 +1,6 @@
 # 完整记录导出接入（2026-10-29）
 
-插件基线：e828510d704c398b8e695880506809689f6d0c67，分支 codex/c20261029-record-export。开发期间 official/dev 新增 039e2130（说话人证据），收口时 ahead/behind=0/1；本任务未自动重放未提交改动，提交 PR 前需同步并复验。
+开发基线：e828510d704c398b8e695880506809689f6d0c67，分支 codex/c20261029-record-export。提交 PR 时已合入 official/dev fc6f890d；SDK 顶部导出冲突保留双方声明，源码提交为 1eee1f04。版本 3.0.36 完全继承上游，本 PR 无版本字段差异。
 客户端只读参考：origin/master 2b7d97998e53650584b1a1bc9a999733dd94d893；使用现有同源文件下载，无新增原生 bridge。
 DSH 机制参考：dsh-v0.2.1-rc.2；参考仓初始 tracked clean，已有未跟踪 arkme-id.json 保留。
 
@@ -35,11 +35,11 @@ DSH 机制参考：dsh-v0.2.1-rc.2；参考仓初始 tracked clean，已有未�
 
 证据保存在任务制品目录 `record-export-20261029`：`official-redesign/result.json`、浅色/深色/窄窗口/成功截图，`redesign/senguoyun-dsh-arkme-3.0.35.tgz`；`desktop-redesign-2` 保留桌面启动失败诊断。
 
-尚未提交、推送或创建 PR，未发布运行环境制品或修改常驻客户端。
+以上为提交前的开发验证记录。没有发布运行环境制品或修改其他常驻客户端。
 
-## 全量测试最终结果
+## 早期全量测试记录（已由后续全绿结果覆盖）
 
-最终源码使用 Node 24.22.1 完整执行 `pnpm test --maxWorkers=4`，耗时 620.41 秒：1289 文件通过、1 文件失败、18 文件跳过；14515 用例通过、1 用例失败、24 用例跳过。未过滤或提前停止。失败为未改动的 `tests/realtime-dictation-service.test.ts:119`，真实计时等待后仍处于 finishing 而非 finished；该测试及 owner 与基线逐字节相同，单独完整复跑该文件 13/13 通过。此前补旧附件兼容前全量 14515/14515 通过。最终全量门禁如实记为非全绿，不能以单文件重跑替代。
+早期导出源码使用 Node 24.22.1 完整执行 `pnpm test --maxWorkers=4`，耗时 620.41 秒：1289 文件通过、1 文件失败、18 文件跳过；14515 用例通过、1 用例失败、24 用例跳过。未过滤或提前停止。失败为未改动的 `tests/realtime-dictation-service.test.ts:119`，真实计时等待后仍处于 finishing 而非 finished；该测试及 owner 与基线逐字节相同，单独完整复跑该文件 13/13 通过。此前补旧附件兼容前全量 14515/14515 通过。该次全量记录为非全绿；后续完整重跑结果见后文，不以单文件重跑替代。
 
 最终全量日志：任务制品目录 `full-tests-final.log`；单文件复验：`dictation-recheck.log`。没有为此次偶发失败修改无关听写源码或测试。
 
@@ -83,4 +83,16 @@ DSH 机制参考：dsh-v0.2.1-rc.2；参考仓初始 tracked clean，已有未�
 - 新不可变包 privacy-ui/senguoyun-dsh-arkme-3.0.35.tgz，SHA256：cea79a0c856b7c721dcd1433497e22231f63c190546f56b8a9caf8f545053eab。旧导出验收包未覆盖。
 - 新包安装到官方 DSH 全新隔离 Profile，实际 UI 查询、锁定、解锁通过；请求 expected_revision 分别为 0、1，最终 revision=2。浅色/深色/680px 窄窗口截图已检查。证据 privacy-ui/official-profile-2/result.json。
 - 已登录的正式服独立客户端刷新到本轮构建，实际 policy 读取成功，开关可用并保持原 false。只读查看，未写入正式隐私值；页面停留在隐私设置供用户查看。证据 privacy-ui/production-general.json 与 production-general.png。真实生产锁定/解锁未执行。
-- 客户端与 DSH tracked 源码未修改；未提交、推送或发布。
+- 客户端与 DSH tracked 源码未修改；此次 UI 验收阶段未发布。
+
+## 隐私锁有效性与边界
+
+静态核对 Record history-policy query/set、Mongo 单文档 CAS、History 读取前后两次检查，以及 UI/SDK/Tools 共用 Host 链路；定向复验插件 20 项、Record 3 项测试通过。锁定限制本人操作历史的新读取，不取消消息表态、不清除 AI 先前已有的上下文。UI 本页修改会即时清空历史；跨设备或由 SDK/Tools 修改没有向其他已打开页面推送专用 policy 通知，旧展示需后续刷新清理。正式账号只读查询通过，未进行锁定/解锁写入。
+
+## PR 基线同步后的验收
+
+源码提交 1eee1f04 合入 fc6f890d 后，Node 24.22.1 下 typecheck、build 通过。全量初次与独立 build 并行，package-contents 测试自身重建 lib 导致一次文件缺失（14576 通过、1 失败、24 跳过）；保留 pr-full-tests.log，随后无业务源码修改，单独执行完整全量测试，最终 `pnpm test --maxWorkers=4` 全量通过：1293 文件通过、18 跳过；14577 用例通过、24 跳过，耗时 268.47 秒，日志 pr-full-tests-serial.log。测试针对源码提交 1eee1f04，后续仅补交付文档。
+
+新版 3.0.36 本地包 SHA256 为 9af6c82573c13677ac7d4deecbe4afe1193c5b2829397ea1e6b7c4b259f2f7b3；2971 个 lib 文件与构建逐字节一致，JS/JSON/map/声明扫描无本机路径。版本来自上游，未发布或覆盖线上包。
+
+pr-profile 在全新官方 DSH Profile 安装新版包后，真实 Agent 发现工具并执行预检、UI 隐私锁锁定/解锁、深浅色/窄屏、导出确认/生成/下载均通过。新 ZIP 含 2 条样例正文，独立 CRC/正文检查通过；附件与 Electron 原生下载证据仍为前述 desktop-complete-8，合入后未重复声称完整原生桌面验收。公开 SDK Consumer 在新安装 Profile 的带空格目录中通过类型编译、能力探测、文件引用和 dispose。
