@@ -10,6 +10,6 @@ export function teamHistoryDate(at: number): string {
 
 /** Keep the existing three-line history summary; preview metadata is not media authorization. */
 export function teamHistoryText(message: TeamMessage): string {
-  if (message.historyPreview) return [message.content?.title, message.content?.text_content, ...(message.historyMedia ?? []).map(media => media.name)].filter(Boolean).join('\n')
+  if (message.historyPreview) return message.content?.text_content?.trim() ?? ''
   return [quoteCanonicalText(teamMessagePresentation(message)), ...message.media.map(media => media.name)].filter(Boolean).join('\n')
 }
