@@ -2845,7 +2845,8 @@ export class ArkmeSdk {
     url.searchParams.set('dayReviewConfirmation', id)
     url.searchParams.set('intent', JSON.stringify(input))
     url.searchParams.set('action', action)
-    if (!window.open(url.href, '_blank')) throw new Error('请允许打开宿主确认页后重试')
+    if (typeof document !== 'undefined') url.searchParams.set('theme', document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light')
+    if (!window.open(url.href, '_blank')) throw new ArkmeClientError({ code: 'day-review-human-required', message: '确认页未打开，本次操作尚未提交。请允许弹窗，或更新桌面客户端后重试。', retryable: false })
     if ((await this.capabilities(signal)).features.calendarDayReviewHumanConfirmation !== true) throw new Error('当前 Provider 不支持日回顾宿主确认，请升级；仍可读取已有结果')
     const deadline = Date.now() + 5 * 60_000, initialDeadline = Date.now() + 15_000
     while (Date.now() < deadline) {

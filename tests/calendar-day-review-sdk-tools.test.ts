@@ -4,6 +4,16 @@ import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { createArkmeCoreToolDefinitions, arkmeToolCatalog } from '../src/tools/index.js'
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 const query = { accountScope: 'prod:7', bucketDate: '2026-10-15', timezone: 'Asia/Shanghai' }
+it.each(['create', 'resume', 'reconcile'] as const)('blocked %s confirmation is a pre-submit failure with no Host calls', async action => {
+ vi.stubGlobal('navigator', { userActivation: { isActive: true } })
+ vi.stubGlobal('window', { location: { href: 'http://localhost/' }, open: vi.fn(() => null) })
+ const fetchImpl = vi.fn()
+ const sdk = createArkmeSdk({ fetchImpl })
+ const pending = action === 'create' ? sdk.createDayReview({ ...query, sourceKinds: ['self'], requestId: 'request' })
+  : action === 'resume' ? sdk.resumeDayReview({ ...query, jobId: 'original' }) : sdk.reconcileDayReview(query)
+ await expect(pending).rejects.toMatchObject({ body: { code: 'day-review-human-required' } })
+ expect(fetchImpl).not.toHaveBeenCalled()
+})
 it('SDK and Tools route through the same Host owner and preserve cancellation', async () => {
  const result = { supported: true, job: null, result: null, freshness: 'unknown', versions: [] }
  const owner = { dayReviewState: vi.fn(async () => result), resumeDayReview: vi.fn(async () => result) }
