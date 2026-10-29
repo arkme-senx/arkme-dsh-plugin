@@ -12,3 +12,6 @@ T09在现Team Host owner中撤回本人当前会话的一次发布；不限时�
 recalled是不可恢复终态。投递任务已完成，不能重发或补全文；消息revision单调，已知终态不被旧ACK覆盖。收到changed时沿原generation刷新读取与详情/媒体绑定。单条message_recalled不等同not_accessible。
 
 复用team.message.changed；没有新配置、队列状态、缓存owner或worker。原cancel只待发，delete仍是Record全局删除。旧Provider不支持时SDK显式失败，不回退这两个动作。
+
+
+读取失效先撤下材料再回源：目录和消息保留身份、未读、偏好；本地revalidating保留多选身份但禁用材料动作。命令补全的零Record版本ACK不能恢复已存在的读取事实。草稿及发送中引用预览复用Host preflight按当前账号/会话/精确源版本复验，不改immutable command或用户输入；失败/迟到旧授权不能恢复摘要。详情正文必须来自当前extensions读取，不能在读取完成前用传入快照回显。

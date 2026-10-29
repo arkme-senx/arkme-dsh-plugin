@@ -45,7 +45,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
       side:current.side,sender:parent.sender,own:false,state:'published',createdAt:0,
       canEdit:false,canDelete:false,contentStatus:'unavailable',media:[]})
   }
-  const readable = !extensions.invalidated && current.contentStatus === 'available'
+  const readable = !!extensions.page && !extensions.invalidated && current.contentStatus === 'available'
   const source = conversation.side === 'team'
     ? `${conversation.channel.name} · ${conversation.visitor?.nickname ?? tr('外部联系人')}`
     : conversation.channel.name

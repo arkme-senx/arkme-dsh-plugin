@@ -64,3 +64,11 @@ it('opens an available parent in the detail trail and can return to the reply',a
  expect(host.textContent).toContain('完整父消息正文')
  await click('返回延展列表');expect(host.textContent).toContain('原消息正文')
 })
+it('does not display a passed snapshot while its fresh detail read is still pending',async()=>{
+ let complete!:(value:unknown)=>void
+ read.mockImplementation(()=>new Promise(resolve=>{complete=resolve}))
+ await mount()
+ expect(host.textContent).not.toContain('原消息正文')
+ await act(async()=>complete({message:source,items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:20}))
+ expect(host.textContent).toContain('原消息正文')
+})
