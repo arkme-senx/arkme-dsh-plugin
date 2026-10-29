@@ -1,3 +1,4 @@
+import { TeamSourceReadScope } from './TeamSourceReadScope.js'
 import { mergeTeamMessages, teamMessageProjection, withoutTeamMessageMaterial } from '../team-message-projection.js'
 import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
@@ -811,9 +812,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           textLength={Array.from(richDraft.text).length} startedAtMillis={validTeamDraftStart(editing ? editing.startedAtMillis : draft.startedAtMillis)}
           showsInputTime={showsInputTime} onToggle={() => setShowsInputTime(!showsInputTime)} />
       </ArkmeComposerInfoRow>
-      {!editing && detailReady && draft.reply && <ArkmeComposerTargetPreview mode="extension" quote={!!draft.reply.quote} {...(draft.reply.quote ? {label:`回复 ${draft.reply.senderName}`} : {})} text={draft.reply.text || draft.reply.title || ''} closeLabel={tr(draft.reply.quote?'取消引用':'取消延展')} disabled={!detailReady || busy || !!draft.attempt} onClose={()=>{const next={...draftRef.current};delete next.reply;draftRef.current=next;setDraft(next)}} >
-        {!draft.reply.quote && <ArkmeComposerTargetAttachments blocks={(draft.reply.media ?? []).map((media,sortOrder)=>({kind:media.mimeType.startsWith('image/')?'image' as const:media.mimeType.startsWith('video/')?'video' as const:'file' as const,mediaRef:media.ref,fileName:media.name,mimeType:media.mimeType,size:media.size,sortOrder}))} url={block => draft.reply?.media?.find(media=>media.ref===block.mediaRef)?.url ?? ''} />}
-      </ArkmeComposerTargetPreview>}
+      {!editing && detailReady && draft.reply && <TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={draft.reply.messageRef} version={draft.reply.version}>{sourceReadable=><ArkmeComposerTargetPreview mode="extension" quote={!!draft.reply!.quote} {...(draft.reply!.quote ? {label:`回复 ${draft.reply!.senderName}`} : {})} text={sourceReadable ? draft.reply!.text || draft.reply!.title || '' : tr('引用内容当前不可用')} closeLabel={tr(draft.reply!.quote?'取消引用':'取消延展')} disabled={!detailReady || busy || !!draft.attempt} onClose={()=>{const next={...draftRef.current};delete next.reply;draftRef.current=next;setDraft(next)}} >
+        {sourceReadable && !draft.reply!.quote && <ArkmeComposerTargetAttachments blocks={(draft.reply!.media ?? []).map((media,sortOrder)=>({kind:media.mimeType.startsWith('image/')?'image' as const:media.mimeType.startsWith('video/')?'video' as const:'file' as const,mediaRef:media.ref,fileName:media.name,mimeType:media.mimeType,size:media.size,sortOrder}))} url={block => draft.reply?.media?.find(media=>media.ref===block.mediaRef)?.url ?? ''} />}
+      </ArkmeComposerTargetPreview>}</TeamSourceReadScope>}
       {editing && <ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={editing.latestText ?? editing.message.content?.text_content ?? ''} closeLabel={tr('关闭重新编辑')} disabled={!detailReady || busy} onClose={() => {setEditing(undefined);setError('')}} />}
       <ArkmeComposerCard ref={composer} className="arkme-conversation-composer-inner"
         focused={composerFocused} hasTarget={!!editing || detailReady && !!draft.reply} highlighted={resize.highlighted}>

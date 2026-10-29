@@ -1,3 +1,4 @@
+import { TeamSourceReadScope } from './TeamSourceReadScope.js'
 import {Toast,IconCheckOutlineMedium} from '@deepseek-ai/dsh-client-ui-primitives'
 import {ArkmeMessageReportDialog} from './ArkmeMessageReportDialog.js'
 import {createArkmeSdk} from '../sdk/index.js'
@@ -69,7 +70,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     {selecting && <ArkmeMessageSelectionControl anchor="avatar" checked={selected} disabled={busy || !teamMessageSelectable(message)} onToggle={() => onToggle?.()} />}
     <div data-arkme-extension-message-cluster={available && message.reply ? 'true' : undefined} style={{minWidth:0,maxWidth:'100%',display:'flex',flexDirection:'column',alignItems:message.own?'flex-end':'flex-start'}}>
       {available && message.reply && <TeamMessageMediaScope message={{...message,key:message.reply.key,media:message.reply.media ?? []}}>
-        <ArkmeExtensionParentPreview parent={teamReplyPresentation(message)!} isMe={message.own} onSelect={selecting ? undefined : onOpenReply} />
+        {message.state === 'sending' || message.version === 0 ? <TeamSourceReadScope accountKey={accountKey} conversationRef={conversationRef} messageRef={message.reply.ref} version={message.reply.version}>{authorized=><ArkmeExtensionParentPreview parent={authorized ? teamReplyPresentation(message)! : {itemUid:message.reply!.key,senderName:'',title:'',textContent:'',quoteState:'unavailable'}} isMe={message.own} onSelect={authorized && !selecting ? onOpenReply : undefined} />}</TeamSourceReadScope> : <ArkmeExtensionParentPreview parent={teamReplyPresentation(message)!} isMe={message.own} onSelect={selecting ? undefined : onOpenReply} />}
       </TeamMessageMediaScope>}
     <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}) }}>
       <div style={layout.messageAvatar}>{avatar}</div>
