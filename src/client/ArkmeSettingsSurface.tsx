@@ -3,6 +3,7 @@ import { appMigrationStore, localMigrationDesktop } from './app-migration-store.
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
+import { ArkmeSettingsToggleRow } from './ArkmeSettingsToggleRow.js'
 import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
@@ -131,49 +132,8 @@ export function BackgroundSoundSettingsRow({
   description: string
   onChange: (checked: boolean) => void
 }) {
-  const switchDisabled = busy || disabled
-  return <div className="arkme-redesign-setting-row">
-    <strong>{tr("文字背景音")}</strong>
-    <span style={{ minWidth: 0, maxWidth: 430, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
-      <span className="arkme-redesign-setting-summary" style={{ minWidth: 0 }}>{description}</span>
-      <button data-arkme-feedback="neutral"
-        type="button"
-        role="switch"
-        aria-label={tr("文字背景音")}
-        aria-checked={checked}
-        aria-busy={busy}
-        disabled={switchDisabled}
-        onClick={() => { onChange(!checked) }}
-        style={{
-          position: 'relative',
-          width: 40,
-          height: 23,
-          flex: '0 0 40px',
-          padding: 0,
-          border: 0,
-          borderRadius: 999,
-          background: checked ? '#00b96b' : '#d7d9dd',
-          cursor: switchDisabled ? 'default' : 'pointer',
-          opacity: switchDisabled ? .55 : 1,
-          transition: 'background .16s ease',
-        }}
-      >
-        <span aria-hidden style={{
-          position: 'absolute',
-          top: 3,
-          left: 3,
-          width: 17,
-          height: 17,
-          borderRadius: '50%',
-          background: '#fff',
-          boxShadow: '0 1px 3px rgba(20, 24, 32, .22)',
-          transform: checked ? 'translateX(17px)' : 'translateX(0)',
-          transition: 'transform .16s ease',
-        }} />
-      </button>
-    </span>
-    <span className="arkme-redesign-trailing-slot" aria-hidden />
-  </div>
+  return <ArkmeSettingsToggleRow title={tr("文字背景音")} description={description}
+    checked={checked} busy={busy} disabled={disabled} onChange={onChange} />
 }
 
 interface VersionSettingsRowProps {

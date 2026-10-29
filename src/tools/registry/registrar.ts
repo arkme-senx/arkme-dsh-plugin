@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_records_export',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
   'arkme_recording_strategy_preference',
@@ -97,6 +98,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_records_export') return '是否导出当前账号的全部非隐私锁定快记及图片、语音为 ZIP？这会使用一次导出额度。'
   if (name === 'arkme_realtime_dictation') return '是否对刚才提供的音频执行实时听写操作？这会使用当前账号的语音权益，不获取麦克风或发送消息。'
   if (name === 'arkme_recording_strategy_preference') return `是否将当前账号的统一录音处理策略设为${args.strategy === 'baseline-sd-asr/20261026' ? '默认版' : '测试版v1'}？新录音和新提交的导入使用此设置，已提交任务保持原方案。`
   if (name === 'arkme_recording_strategy_start') return `是否使用${args.strategy === 'baseline-sd-asr/20261026' ? '默认版' : '测试版v1'}处理刚才指定的录音，生成独立对比结果？这会增加处理与存储用量，不会替换正式正文或说话人绑定。`

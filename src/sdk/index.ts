@@ -1,3 +1,5 @@
+import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
+export type * from '../data-management.js'
 export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
@@ -598,6 +600,21 @@ export class ArkmeSdk {
     await this.requireArkoLifecycle(signal)
     return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
   }
+  private readonly exportLifetime = new AbortController()
+  /** Releases exports started by this SDK instance. Other subscriptions return their own disposers. */
+  dispose(): void { this.exportLifetime.abort() }
+  async recordExportPreflight(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
+    signal = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    if ((await this.capabilities(signal)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
+    return this.call('data.export.preflight', { expectedAccountScope }, signal)
+  }
+  async exportRecords(options: ArkmeRecordExportOptions, signal?: AbortSignal, onProgress?: (value: ArkmeRecordExportProgress) => void): Promise<ArkmeRecordExport> {
+    const scoped = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    if ((await this.capabilities(scoped)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
+    const result = await this.exportWithProgress<ArkmeRecordExport>('data.export', { ...options }, scoped, onProgress)
+    if (result.accountScope !== options.expectedAccountScope || typeof result.quotaFinalized !== 'boolean') throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应无效', retryable: false })
+    return result
+  }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }
@@ -615,9 +632,12 @@ export class ArkmeSdk {
   }
   async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
     await this.requireArkoHistory(signal)
-    if (!onProgress) return this.call('arko.export', {}, signal)
+    return this.exportWithProgress<ArkmeArkoExport>('arko.export', {}, signal, onProgress)
+  }
+  private async exportWithProgress<T extends ArkmeArkoExport>(operation: 'arko.export' | 'data.export', params: Record<string, unknown>, signal?: AbortSignal, onProgress?: (value: ArkmeArkoExportProgress) => void): Promise<T> {
+    if (!onProgress) return this.call(operation, params, signal)
     const response = await this.fetchImpl(this.route, { method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation: 'arko.export', params: {} }), ...(signal ? { signal } : {}) })
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation, params }), ...(signal ? { signal } : {}) })
     const invalid = () => new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应不完整，请重试', retryable: true })
     if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
       let failure: ArkmePluginResponse<unknown>
@@ -653,7 +673,7 @@ export class ArkmeSdk {
         if (pending.length > 16 * 1024) throw invalid()
       }
       if (decoder.decode() !== '' || pending !== '' || !result) throw invalid()
-      return result
+      return result as T
     } catch (error) {
       if (error instanceof ArkmeClientError || signal?.aborted) throw error
       throw invalid()
@@ -2743,7 +2763,7 @@ export class ArkmeSdk {
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
   localFileUrl(fileRef: string, download = false): string {
-    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-generated-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-(?:generated|record-export)-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 

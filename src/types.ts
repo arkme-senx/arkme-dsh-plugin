@@ -1517,6 +1517,7 @@ arkoImagesV1?:true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     arkoLifecycleV1?: true
+    recordExportV1?: true
     arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
@@ -4360,6 +4361,7 @@ export type ArkmePluginOperation =
   | 'account.usage.token.calls'
   | 'data.deleted'
   | 'data.export.preflight'
+  | 'data.export'
   | 'data.recover'
   | 'billing.order.create'
   | 'billing.order.status'

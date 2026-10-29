@@ -24,3 +24,25 @@ export interface ArkmeExportPreflight {
   message: string
   latestAtMillis: number
 }
+
+export interface ArkmeRecordExportOptions {
+  expectedAccountScope: string
+  orderKind: 1 | 2
+  /** Creating an export consumes the server's export allowance. */
+  confirmed: true
+}
+export interface ArkmeRecordExportProgress { count: number }
+export interface ArkmeRecordExport {
+  accountScope: string
+  fileRef: string
+  fileName: string
+  size: number
+  expiresAtMillis: number
+  count: number
+  /** A usable archive is retained even when the final quota acknowledgement is unknown. */
+  quotaFinalized: boolean
+}
+export interface ArkmeRecordExportPort {
+  dataExportPreflight(scope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight>
+  dataExport(options: ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: ArkmeRecordExportProgress) => void): Promise<ArkmeRecordExport>
+}
