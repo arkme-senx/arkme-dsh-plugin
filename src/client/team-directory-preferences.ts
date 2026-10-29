@@ -153,8 +153,16 @@ export class TeamDirectoryPreferenceStore {
     const rows = [...entries]
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100)
-      const page = await this.transport('team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
-      signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
+      // Authority denials have no preference version. Apply all reads and writes
+      // in request order so an older response cannot resurrect denied targets.
+      // Queue one batch at a time, allowing user commands between large pages.
+      const run = state.queue.catch(() => {}).then(async () => {
+        signal.throwIfAborted()
+        const page = await this.transport('team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
+        signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
+      })
+      state.queue = run
+      await run
     }
   }
   missingPins(account: string, conversations: TeamConversation[]): TeamEntryReference[] {
