@@ -37,8 +37,12 @@ const server = createServer(async (request, response) => {
       else if ((operation === 'source.send-rich' || operation === 'source.long-article.publish')) {
         sends.push(params)
         if (failSend) throw new Error('模拟发送失败')
-        value = { itemUid: 'native-team-record', status: 1, sequence: 9 }
-      } else if (operation === 'source.long-article.detail') value = { itemUid: 'native-team-record', textContent: sends.at(-1)?.textContent, textFormat: 'markdown' }
+        value = { itemUid: 'native-team-record', status: 1, sequence: 9, messageActionRef: 'accepted-native-action' }
+      } else if (operation === 'source.long-article.detail') {
+        assert.equal(params.messageActionRef, 'accepted-native-action')
+        value = { itemUid: 'native-team-record', title: sends.at(-1)?.title, textContent: sends.at(-1)?.textContent, textFormat: 'markdown',
+          actionItem: { itemUid: 'native-team-record', senderName: '真实作者', isMe: true, sendAtMillis: sends.at(-1)?.sendAtMillis, status: 1, representation: { ...sends.at(-1)?.representation, name: '接待团队', jotmoId: 'team_7' } } }
+      }
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ ok: true, value })); return
     }
     if (pathname === '/') {
@@ -97,6 +101,7 @@ try {
   assert.equal(sends[0].recordUid, sends[1].recordUid); assert.equal(sends[0].relationUid, sends[1].relationUid)
   const receipts = await js(main, 'window.smokeReceipts')
   assert.equal(receipts.length, 1); assert.equal(receipts[0].sourceKey, 'chat:A'); assert.equal(receipts[0].sourceRef, 'source-A'); assert.deepEqual(receipts[0].composition, team7)
+  assert.equal(receipts[0].item.representation.jotmoId, 'team_7'); assert.equal(receipts[0].item.senderName, '真实作者'); assert.equal(receipts[0].item.sequence, 9); checks.push('authoritative relation attribution, actor and sequence survive the native receipt')
   assert(!drafts.has(JSON.stringify(['source-A', team7.draftScope]))); assert(drafts.has(JSON.stringify(['source-A', team8.draftScope])))
   checks.push('failure retains identity and draft', 'retry keeps record/relation ids', 'canonical source and frozen identity reach send', 'decoded receipt reaches original main conversation', 'only sent team draft is removed')
   await js(main, 'window.arkmeLongArticle.account("prod:8")')
