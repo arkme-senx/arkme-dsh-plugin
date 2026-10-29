@@ -1116,6 +1116,7 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'explore.mutate') return service.exploreMutate(params as unknown as ExploreMutation, requestSignal)
   if (operation === 'explore.source') return service.exploreSource(stringParam(params, 'ref'), requestSignal)
   if (operation === 'team.app.group.context') return await service.executeTeamApp(operation, params, requestSignal)
+  if (operation === 'team.app.outbound.open') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation === 'team.app.public-card') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation.startsWith('team.app.')) return await service.executeTeamApp(operation as TeamAppOperation, params, requestSignal)
   if (operation === 'record.app.detail') return await service.personalRecordDetail(String(params.recordUid ?? ''), requestSignal)

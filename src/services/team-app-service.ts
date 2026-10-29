@@ -46,6 +46,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
   invalid_external_chat: '对外私聊请求无效，请重新打开',
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
@@ -92,7 +93,8 @@ export class TeamAppService {
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'>>,
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
-    private readonly memberCandidates?: TeamMemberCandidatePort) {
+    private readonly memberCandidates?: TeamMemberCandidatePort,
+ private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
     this.entryPreferences = new TeamEntryPreferenceService(runtime.stateStore, { open: (kind, ref, actor) => this.open(kind, ref, actor), seal: (kind, value, actor) => this.ref(kind, value, actor) })
 
@@ -170,9 +172,9 @@ export class TeamAppService {
   private async identity(raw: unknown, actor: number, person?: { id: unknown; context: Record<string, unknown> }): Promise<TeamIdentity> {
     const v = obj(raw), url = str(v.avatar_url)
     const id = recordOwnerId(person?.id)
-    const actionable = person?.context.side === 'team' && typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+    const actionable = person?.context.side === 'team' && !!id && (typeof id === 'number' || v.kind === 'person') && (v.kind === undefined || v.kind === 'person') && v.account_state !== 'cancelled'
     return { nickname: str(v.nickname) || '用户', memberType: arkmePeerMemberType(v.member_type),
-      ...(actionable ? { personKey: await this.key(`person:${id}`, actor), isMe: id === actor,
+      ...(actionable ? { personKey: await this.key(`person:${id}`, actor), isMe: String(id) === String(actor),
         personRef: await this.ref('person', { conversation_uid: person!.context.conversation_uid, side: 'team', user_id: id }, actor) } : {}),
       ...(url ? { imageRef: await this.ref('image', { url }, actor), imageKey: await this.key(`image:${imagePresentationIdentity(url)}`, actor) } : {}) }
   }
@@ -753,15 +755,24 @@ export class TeamAppService {
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
       case 'team.app.outbound.open': {
-        // Frontend handoff boundary. Do not guess an upstream creation endpoint,
-        // create a personal Chat session, or manufacture a shared conversation.
-        if (!validTeamOutboundRecipient(p.recipient) || !str(p.requestUid).trim()) throw invalid()
-        const id = await teamID()
-        const mine = await post('list-mine', {}, true)
-        if (!list(mine.teams).some(team => String(team.team_id) === String(id))) {
-          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
+        if (!validTeamOutboundRecipient(p.recipient) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+        const id=await teamID(), mine=list((await post('list-mine',{},true)).teams)
+        if(!mine.some(team=>String(team.team_id)===String(id)))throw new ArkmePluginError('team-not_accessible',reasons.not_accessible!,false,403)
+        const scope=`${this.runtime.config.environment}:${actor}`, requestUid=str(p.requestUid)
+        const selection=createHash('sha256').update(JSON.stringify(p.recipient)).digest('hex')
+        const saved=await this.runtime.stateStore.teamOutboundTarget(scope,requestUid)
+        if(saved && (saved.teamId!==String(id)||saved.selection!==selection))throw invalid()
+        let target=recordOwnerId(saved?.targetId)
+        if(!target){
+          if(!this.outboundTargets)throw new ArkmePluginError('team-recipient-unavailable','无法解析联系用户，请重新选择',true,503)
+          target=recordOwnerId(await this.outboundTargets.resolve(p.recipient,session,signal))
+          if(!target || String(target)===String(actor))throw invalid()
+          await this.runtime.stateStore.retainTeamOutboundTarget(scope,requestUid,{teamId:String(id),targetId:String(target),selection})
         }
-        return { state: 'backend_pending' as const }
+        const data=await post('conversations/open-by-member',{team_id:id,external_user_id:String(target)})
+        const current=obj(data.conversation)
+        if(current.side!=='team'||String(obj(current.channel).team_id)!==String(id)||String(current.external_user_id)!==String(target))throw invalid()
+        return {state:'ready' as const,conversation:await this.conversation(current,actor)}
       }
       case 'team.app.open': {
         const data = await post('conversations/open', { public_ref: str(p.publicRef) })
@@ -863,13 +874,13 @@ export class TeamAppService {
         const people = await Promise.all(refs.map(async ref => {
           const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
           if (person.conversation_uid !== context.conversation_uid || person.side !== 'team'
-            || typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw invalid()
+            || !id) throw invalid()
           return id
         }))
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
         if (operation === 'team.app.person.private.open') {
-          if (!this.privateChat || people[0] === actor) throw invalid()
+          if (!this.privateChat || String(people[0]) === String(actor)) throw invalid()
           return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
         }
         if (!this.contacts) throw new ArkmePluginError('team-remarks-unavailable', '备注暂时无法读取', true, 503)
@@ -882,20 +893,9 @@ export class TeamAppService {
         // Resolve from a fresh authorized conversation, never a client-supplied name/id.
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         const current = obj(data.conversation)
-        let peer = recordOwnerId(current.external_user_id)
+        const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        // Production omits external_user_id but identifies the canonical latest
-        // external message. Resolve that exact server-selected row, not a name,
-        // arbitrary recent sender, or a client-supplied message/account id.
-        if (!peer && num(current.latest_external_seq) > 0) {
-          const sequence = num(current.latest_external_seq)
-          const page = await post('conversations/timeline/page', { ...context, before_seq: sequence + 1, limit: 1 }, true)
-          const verified = obj(page.conversation)
-          if (verified.conversation_uid !== context.conversation_uid || verified.side !== 'team') throw invalid()
-          const external = list(page.messages).find(m => num(m.seq) === sequence && m.side === 'external')
-          peer = recordOwnerId(external?.actor_user_id)
-        }
-        if (typeof peer !== 'number' || peer <= 0 || peer === actor || !this.privateChat) {
+        if (!peer || String(peer) === String(actor) || !this.privateChat || (typeof peer === 'string' && obj(current.visitor).kind !== 'person') || (obj(current.visitor).kind !== undefined && obj(current.visitor).kind !== 'person') || obj(current.visitor).account_state === 'cancelled') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
         return await this.privateChat.openPrivateChatFromUser(peer, {

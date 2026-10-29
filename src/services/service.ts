@@ -33,6 +33,9 @@ import type { RecordingImportAdmission, RecordingImportJob } from '../recording-
 
 export interface StateStore extends RecentEmojiStore {
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
+ teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
+ retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
+
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>

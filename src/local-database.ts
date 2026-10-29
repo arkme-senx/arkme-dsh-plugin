@@ -333,6 +333,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.operationalState.deleteOfflineContextJournal(scope, id, fingerprint)
   }
 
+  async teamOutboundTarget(scope:string,requestUid:string) { return this.operationalState.teamOutboundTarget(scope,requestUid) }
+  async retainTeamOutboundTarget(scope:string,requestUid:string,value:import('./team-outbound-contract.js').TeamOutboundRecovery) { return this.operationalState.retainTeamOutboundTarget(scope,requestUid,value) }
   async uniqueCode(): Promise<string> {
     return await this.operationalState.uniqueCode()
   }

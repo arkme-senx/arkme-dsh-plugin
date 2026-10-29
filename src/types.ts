@@ -1525,6 +1525,7 @@ arkoImagesV1?:true
     teamPersonMentions?: 1
     teamEntryPreferencesV1?: true
     teamNotificationPoliciesV1?: true
+    teamOutboundReception?: 1
     teamGroupRepresentation?: 1
     teamProfiles?: true
     teamExternalChats?: true
@@ -4204,6 +4205,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'team.app.outbound.open'
   | 'team.app.group.context'
   | 'team.app.public-card'
   | 'recordings.strategies'

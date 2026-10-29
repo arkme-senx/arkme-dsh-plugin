@@ -244,6 +244,14 @@ export class ContactDirectoryService {
     return await this.world.listUserWorldFeed(entry.targetUserId, cloneWorldOptions(options))
   }
 
+  async resolveTeamRecipient(contactRef:string,signal?:AbortSignal):Promise<number> {
+    signal?.throwIfAborted()
+    const {entry}=await this.resolveContactRef(contactRef)
+    // The issued, viewer-bound selection pins this person. Contact membership
+    // and display assets do not authorize outreach; Team checks live account facts.
+    return entry.targetUserId
+  }
+
   async openContactChat(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     const { entry } = await this.resolveContactRef(contactRef)
     return await this.chat.openPrivateChatFromUser(entry.targetUserId, {

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
-  'groupIdentityContext', 'teamPublicCard',
+  'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',

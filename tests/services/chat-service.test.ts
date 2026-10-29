@@ -3393,6 +3393,17 @@ describe('ChatService', () => {
     expect(createBody).not.toHaveProperty('extra')
   })
 
+  it('keeps an authorized large person ID exact through the actual create-private wire adapter',async()=>{
+    const {stringifyOwnerJson}=await import('../../src/record-owner-id.js')
+    let wire=''
+    const runtime={stateStore:{},requireSession:vi.fn(async()=>({userId:42,accessToken:'access',refreshToken:'refresh'})),authenticatedChatPost:vi.fn(async(_path:string,body:Record<string,unknown>)=>{wire=stringifyOwnerJson(body);return {session:{chat_session_uid:'large-person',last_seq:0},unread_snapshot:{unread_count:0}}})}
+    const source={cachedChatSource:vi.fn(),sealSourceRef:vi.fn(async()=> 'large-source'),chatDirectorySourceKey:vi.fn(async()=> 'large-key'),setChatSourceByKey:vi.fn()}
+    const profile={publicProfileSummariesByUserIds:vi.fn()}
+    const chat=new ChatService(runtime as never,source as never,profile as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+    expect(await chat.openPrivateChatFromUser('9007199254740993',{presentationDisplayName:'客户'})).toMatchObject({source:{sourceRef:'large-source',displayName:'客户'}})
+    expect(wire).toContain('"peer_user_id":9007199254740993');expect(wire).not.toContain('9007199254740992');expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
+
   it('keeps the existing viewer-bound private-chat projection when create-private reuses a session', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const existingSource = {
