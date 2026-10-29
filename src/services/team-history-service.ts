@@ -35,7 +35,7 @@ function activity(raw: unknown, ref: string): import('../conversation-activity.j
 export async function teamHistoryOperation(adapter: TeamHistoryAdapter, action: TeamHistoryAction, options: TeamHistoryOptions): Promise<TeamHistoryResponse> {
   if(!(TEAM_HISTORY_ACTIONS as readonly string[]).includes(action))throw invalid()
   const context=adapter.context,body:Record<string,unknown>={...context}
-  const fields={keyword:'keyword',fromAt:'from_at',untilAt:'until_at',timezone:'timezone',mediaKind:'media_kind',cursor:'cursor',limit:'limit',requestId:'request_id',analysisKind:'analysis_kind',hour:'hour',weekday:'weekday'} as const
+  const fields={keyword:'keyword',fromAt:'from_at',untilAt:'until_at',timezone:'timezone',contentKind:'content_kind',cursor:'cursor',limit:'limit',requestId:'request_id',analysisKind:'analysis_kind',hour:'hour',weekday:'weekday'} as const
   for(const [key,field] of Object.entries(fields)) { const value=options[key as keyof typeof fields];if(value!==undefined)body[field]=value }
   if(options.sender==='self'){if(options.personRef)throw invalid();body.sender_user_id=adapter.viewer}
   if(options.personRef){

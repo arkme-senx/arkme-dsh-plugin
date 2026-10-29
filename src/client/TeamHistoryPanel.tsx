@@ -24,25 +24,26 @@ function PageStatus({owner}:{owner:ReturnType<typeof useTeamHistoryPage>}){
     {owner.page?.hasMore&&<button type="button" disabled={owner.loading} onClick={()=>void owner.more()}>{tr('加载更多')}</button>}</>
 }
 export function TeamHistoryPanel({conversation,accountKey,kind,initialKeyword,onLocate}:{conversation:TeamConversation;accountKey:string;kind:'search'|'analysis';initialKeyword:string;onLocate(message:TeamMessage):void}){
-  const [keyword,setKeyword]=useState(initialKeyword),[sender,setSender]=useState('all'),[from,setFrom]=useState(''),[until,setUntil]=useState(''),[media,setMedia]=useState<TeamHistoryOptions['mediaKind']>(),[tab,setTab]=useState<'words'|'activity'>('activity')
+  const [keyword,setKeyword]=useState(initialKeyword),[sender,setSender]=useState('all'),[from,setFrom]=useState(''),[until,setUntil]=useState(''),[media,setMedia]=useState<TeamHistoryOptions['contentKind']>(),[tab,setTab]=useState<'words'|'activity'>('activity')
   const [debounced,setDebounced]=useState(keyword),[people,setPeople]=useState<TeamHistoryResponse>(),[peopleBusy,setPeopleBusy]=useState(false),[peopleError,setPeopleError]=useState('')
   const lifetime=useRef<AbortController>(),peopleRequest=useRef<string>(),scope=JSON.stringify([accountKey,conversation.key,conversation.side])
   useEffect(()=>{lifetime.current=new AbortController();return()=>lifetime.current?.abort()},[scope])
   useEffect(()=>{setKeyword(initialKeyword)},[initialKeyword])
   useEffect(()=>{const timer=setTimeout(()=>setDebounced(keyword.trim()),300);return()=>clearTimeout(timer)},[keyword])
   const person=people?.participants.find(p=>p.personKey===sender)
-  const options:TeamHistoryOptions={...localDateWindow(from,until),...(kind==='search'&&debounced?{keyword:debounced}:{}),...(media?{mediaKind:media}:{}),...(sender==='self'?{sender:'self'}:person?.personRef?{personRef:person.personRef}:{})}
+  const options:TeamHistoryOptions={...localDateWindow(from,until),...(kind==='search'&&debounced?{keyword:debounced}:{}),...(media?{contentKind:media}:{}),...(sender==='self'?{sender:'self'}:person?.personRef?{personRef:person.personRef}:{})}
   const invalidRange=!!(from&&until&&from>until)
   const search=useTeamHistoryPage(conversation.ref,accountKey,'query',options,kind==='search'&&!invalidRange,scope)
-  const loadPeople=async()=>{
+  const loadPeople=async(reset=false)=>{
     if(peopleBusy)return
-    setPeopleBusy(true);setPeopleError('');peopleRequest.current??=crypto.randomUUID()
+    setPeopleBusy(true);setPeopleError('');if(reset){setPeople(undefined);peopleRequest.current=undefined}peopleRequest.current??=crypto.randomUUID()
     const signal=lifetime.current!.signal
     try{
-      let result=people
+      const previous=reset?undefined:people
+      let result=previous
       if(!result?.resultRef){result=await prepareHistory(conversation.ref,accountKey,'participants',{requestId:peopleRequest.current,timezone:historyTimezone()},signal)}
-      const page=await historyCall(conversation.ref,accountKey,'participants',{resultRef:result.resultRef!,...(people?.cursor?{cursor:people.cursor}:{}),limit:100},signal)
-      if(!signal.aborted)setPeople({...page,participants:[...(people?.participants??[]),...page.participants]})
+      const page=await historyCall(conversation.ref,accountKey,'participants',{resultRef:result.resultRef!,...(previous?.cursor?{cursor:previous.cursor}:{}),limit:100},signal)
+      if(!signal.aborted)setPeople({...page,participants:[...(previous?.participants??[]),...page.participants]})
     }catch(error){if(!signal.aborted)setPeopleError(error instanceof Error?error.message:'人员读取失败')}
     finally{if(!signal.aborted)setPeopleBusy(false)}
   }
@@ -54,9 +55,9 @@ export function TeamHistoryPanel({conversation,accountKey,kind,initialKeyword,on
       <select aria-label={tr('筛选发送者')} value={sender} onChange={e=>setSender(e.target.value)}><option value="all">{tr('全部发送者')}</option><option value="self">{tr('我')}</option>{people?.participants.filter(p=>p.personKey&&!p.isMe).map(p=><option key={p.personKey} value={p.personKey}>{p.nickname}</option>)}</select>
       {conversation.side==='team'&&(!people||people.hasMore)&&<button disabled={peopleBusy} onClick={()=>void loadPeople()}>{tr(peopleBusy?'正在读取…':people?'更多历史发送者':'选择历史发送者')}</button>}
       <input type="date" aria-label={tr('开始日期')} value={from} onChange={e=>setFrom(e.target.value)}/><input type="date" aria-label={tr('结束日期')} value={until} onChange={e=>setUntil(e.target.value)}/>
-      <select aria-label={tr('消息类型')} value={media??''} onChange={e=>setMedia((e.target.value||undefined) as TeamHistoryOptions['mediaKind'])}><option value="">{tr('全部类型')}</option>{(['text','image','video','audio','file'] as const).map((v,i)=><option key={v} value={v}>{tr(['文字','图片','视频','音频','文件'][i]!)}</option>)}</select>
+      <select aria-label={tr('消息类型')} value={media??''} onChange={e=>setMedia((e.target.value||undefined) as TeamHistoryOptions['contentKind'])}><option value="">{tr('全部类型')}</option>{(['text','image','video','audio','file'] as const).map((v,i)=><option key={v} value={v}>{tr(['文字','图片','视频','音频','文件'][i]!)}</option>)}</select>
     </div>
-    {peopleError&&<p role="alert">{peopleError}<button onClick={()=>{setPeople(undefined);peopleRequest.current=undefined;void loadPeople()}}>{tr('重试')}</button></p>}
+    {peopleError&&<p role="alert">{peopleError}<button onClick={()=>void loadPeople(true)}>{tr('重试')}</button></p>}
     <p className="cw-muted">{historyTimezone()} · {tr('按实际发送消息统计；点击摘要定位原消息')}</p>
     {invalidRange?<p role="alert">{tr('结束日期不能早于开始日期')}</p>:kind==='search'?<>
       <PageStatus owner={search}/>{search.page?.indexing&&<p role="status">{tr('新消息正在索引，当前显示已完成范围')}</p>}
