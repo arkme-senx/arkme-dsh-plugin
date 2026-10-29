@@ -69,8 +69,12 @@ try{
  assert.equal(sdkItem?.isMe,true,'real author stays current person')
  await page.getByText('隔离转发目标',{exact:true}).first().click()
  const trigger=page.getByRole('button',{name:'群聊发言身份：我',exact:true});await trigger.waitFor();await trigger.click()
- await page.getByRole('dialog',{name:'选择发言角色'}).getByRole('button',{name:/接待团队7/}).click()
- await page.getByRole('button',{name:/真人验收 · 接待团队7/}).waitFor()
+ await page.getByRole('dialog',{name:'选择发言角色'}).getByText('个人身份',{exact:true}).waitFor()
+ await page.screenshot({path:join(capture,'original-identity-menu.png')})
+ await page.getByRole('dialog',{name:'选择发言角色'}).getByRole('button',{name:/我 · 接待团队7团队/}).click()
+ const selectedIdentity=page.getByRole('button',{name:/群聊发言身份：我 · 接待团队7/});await selectedIdentity.waitFor()
+ assert.match(await selectedIdentity.getAttribute('title'),/代表团队发言/)
+ await page.screenshot({path:join(capture,'original-compact-composer.png')})
  const uiText=`UI真实团队发言 ${randomUUID()}`
  const editor=page.locator('.arkme-conversation-textarea[contenteditable="true"]');await editor.fill(uiText)
  await editor.press('Enter')
@@ -81,6 +85,22 @@ try{
  for(let attempt=0;attempt<100;attempt++){const receipt=await ownerPost('chat','/api/v1/chats/records/receipt/get',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid});if(receipt.accepted)break;if(attempt===99)throw new Error('UI acceptance missing');await new Promise(resolve=>setTimeout(resolve,100))}
  const detail=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid,record_owner_user_id:actor})
  assert.equal(detail.item.relation.representation.team_id,'7');assert.equal(detail.item.relation.sender_user_id,actor)
+ // Browser uses the colleague's existing picker/editor fallback and pending-article send.
+ await page.getByRole('button',{name:'添加内容',exact:true}).click()
+ await page.getByRole('menuitem',{name:'添加长文',exact:true}).click()
+ await page.getByRole('button',{name:'＋新建长文',exact:true}).click()
+ const articleTitle=`团队长文闭环 ${randomUUID()}`
+ await page.getByRole('textbox',{name:'长文标题',exact:true}).fill(articleTitle)
+ await page.locator('.tiptap[contenteditable="true"]').fill('沿用原有长文交互，发送时保留所选团队身份。')
+ await page.getByRole('button',{name:'添加到待发送',exact:true}).click()
+ await page.getByRole('button',{name:'发送长文',exact:true}).click()
+ let articleCall
+ for(let attempt=0;attempt<100&&!articleCall;attempt++){articleCall=calls.find(c=>c.path.endsWith('/records/send')&&c.input.title===articleTitle);if(!articleCall)await new Promise(resolve=>setTimeout(resolve,100))}
+ assert(articleCall?.input.representation,'original browser article flow must preserve team selection')
+ for(let attempt=0;attempt<100;attempt++){const receipt=await ownerPost('chat','/api/v1/chats/records/receipt/get',{chat_session_uid:group,record_uid:articleCall.input.record_uid,rel_uid:articleCall.input.rel_uid});if(receipt.accepted)break;if(attempt===99)throw new Error('article acceptance missing');await new Promise(resolve=>setTimeout(resolve,100))}
+ const articleDetail=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:articleCall.input.record_uid,rel_uid:articleCall.input.rel_uid,record_owner_user_id:actor})
+ assert.equal(articleDetail.item.relation.representation.team_id,'7');assert.equal(articleDetail.item.relation.sender_user_id,actor)
+ await page.screenshot({path:join(capture,'original-article-accepted.png')})
  await page.reload();await page.getByText('隔离转发目标',{exact:true}).first().click()
  await page.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).first().waitFor()
  const beforeCard=calls.length;await page.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).first().click()
@@ -88,7 +108,7 @@ try{
  assert(!calls.slice(beforeCard).some(c=>/conversations\/open|message-channel/.test(c.path)),'opening card is read only')
  await page.screenshot({path:join(capture,'real-owner-team-card.png')})
  await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2))
- await writeFile(join(capture,'result.json'),JSON.stringify({acceptance:'team-group-identity-real-stack',dsh:'official 0.2.1-rc.2',artifact:'immutable tgz',tools:'real-session read and forgery rejection',sdk:'compiled external consumer represented send',ui:'select, send, refresh, badge, pure card',backend:'real Team/Chat/Record HTTP owners + Mongo/Redis/RabbitMQ',uiRecord:uiCall.input.record_uid},null,2))
+ await writeFile(join(capture,'result.json'),JSON.stringify({acceptance:'team-group-identity-real-stack',dsh:'official 0.2.1-rc.2',artifact:'immutable tgz',tools:'real-session read and forgery rejection',sdk:'compiled external consumer represented send',ui:'original compact picker, represented text send, original browser article picker/editor/pending send, refresh, badge, pure card',backend:'real Team/Chat/Record HTTP owners + Mongo/Redis/RabbitMQ',uiRecord:uiCall.input.record_uid,articleRecord:articleCall.input.record_uid},null,2))
  console.log('Installed UI, external SDK Consumer and official Tools passed against real business owners.')
 
 }catch(error){console.error(error);if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}

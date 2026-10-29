@@ -137,7 +137,29 @@ it('hides the menu after membership is removed on refresh, without polling', asy
 it('retains an explicitly selected identity when membership refresh fails',async()=>{
  call.mockRejectedValue(new Error('temporarily unavailable'));const onSelect=vi.fn()
  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" value={{team:teams[0]!,selection}} onSelect={onSelect}/>)
- expect(document.body.textContent).toContain('即我');expect(onSelect).not.toHaveBeenCalled()
- await click('即我');await act(async()=>document.querySelector<HTMLButtonElement>('[data-role-action="personal"]')!.click())
+ expect(document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.title).toContain('即我');expect(onSelect).not.toHaveBeenCalled()
+ await click('我');await act(async()=>document.querySelector<HTMLButtonElement>('[data-role-action="personal"]')!.click())
  expect(onSelect).toHaveBeenCalledWith(undefined)
+})
+
+it('preserves the original compact self trigger and team menu wording after a real selection', async () => {
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" selfName="真实姓名" value={{team:teams[0]!,selection}} onSelect={vi.fn()} />)
+  const trigger=document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!
+  expect(trigger.textContent).toBe('我')
+  expect(trigger.title).toContain('即我')
+  expect(trigger.title).toContain('代表团队发言')
+  await act(async()=>trigger.click())
+  expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).toContain('我 · 即我团队')
+  expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).not.toContain('真实姓名')
+})
+it('preserves the explicit retry action without clearing a frozen selected identity', async () => {
+  call.mockRejectedValue(new Error('读取失败'))
+  const onSelect=vi.fn()
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" value={{team:teams[0]!,selection}} onSelect={onSelect}/>)
+  expect(button('重试')).toBeDefined()
+  call.mockResolvedValue(eligible)
+  await click('重试')
+  expect(onSelect).not.toHaveBeenCalled()
+  expect(document.querySelector('[role="status"]')).toBeNull()
+  expect(document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.textContent).toBe('我')
 })

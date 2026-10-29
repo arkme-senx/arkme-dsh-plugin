@@ -2076,6 +2076,10 @@ export function ArkmeSurface({
   const [teamIdentityState,setTeamIdentityState]=useState<{scope:string;value?:TeamGroupIdentity}>({scope:''})
   const selectedTeamIdentity=source?.kind==='group_chat'&&teamIdentityState.scope===teamIdentityScope?teamIdentityState.value:undefined
   const selectTeamIdentity=(value:TeamGroupIdentity|undefined)=>setTeamIdentityState({scope:teamIdentityScope,...(value?{value}:{})})
+  const selectedTeamComposition = selectedTeamIdentity ? {
+    draftScope: selectedTeamIdentity.team.key ?? selectedTeamIdentity.team.jotmoId,
+    representation: selectedTeamIdentity.selection,
+  } : undefined
   const baseComposerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   const composerDraftKey=baseComposerDraftKey===undefined?undefined:selectedTeamIdentity?`${baseComposerDraftKey}:team:${selectedTeamIdentity.team.key??selectedTeamIdentity.team.jotmoId}`:baseComposerDraftKey
   useConversationDraftPresence(activeConversation ? composerDraftKey : undefined)
@@ -2548,10 +2552,14 @@ export function ArkmeSurface({
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [timelineError, setTimelineError] = useState('')
   const conversationError = error || timelineError
+  const openComposerLongArticleWindow = () => source ? openLongArticleWindow({
+    ...source, sourceKey: conversationKey,
+    displayName: selectedTeamIdentity ? `${source.displayName} · ${tr('我 · {v0}团队', { v0: selectedTeamIdentity.team.name })}` : source.displayName,
+  }, undefined, false, selectedTeamComposition) : Promise.resolve(false)
   const createLongArticle = async () => {
     if (!source) return
     try {
-      if (selectedTeamIdentity || !await openLongArticleWindow({ ...source, sourceKey: conversationKey })) setLongArticleCreating(true)
+      if (!await openComposerLongArticleWindow()) setLongArticleCreating(true)
     } catch (caught) { setError(errorMessage(caught)) }
   }
   const [agreed, setAgreed] = useState(true)
@@ -7796,7 +7804,7 @@ export function ArkmeSurface({
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
-  )
+  ) + (selectedTeamIdentity ? ` · ${tr('我 · {v0}团队', { v0: selectedTeamIdentity.team.name })}` : '')
   const effectiveComposerPlaceholder = activeRecordReeditComposer !== undefined
     ? '重新编辑快记…'
     : directAdmission.blocked ? directAdmission.message
@@ -9747,6 +9755,7 @@ export function ArkmeSurface({
       {articlePickerOpen && source !== undefined && authenticatedUserId !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeArticlePicker key={`${articleDraftKey}:${articlePickerScope.generation}`} sourceRef={source.sourceRef} userId={authenticatedUserId}
           draftScope={`composer:${articleDraftKey}`}
+          composition={selectedTeamComposition}
           onClose={() => { setArticlePickerScope(undefined); if (sameComposerAsyncScope(articlePickerScope)) textareaRef.current?.focus() }}
           onSelect={article => { if (articleDraftKey && sameComposerAsyncScope(articlePickerScope)) composerArticleStore.set(articleDraftKey, article) }} />,
         document.body,
@@ -9755,8 +9764,8 @@ export function ArkmeSurface({
         <ArkmeLongArticleDialog
           key={composerDraftKey}
           sourceRef={source.sourceRef}
-          draftScope={selectedTeamIdentity?.team.key ?? selectedTeamIdentity?.team.jotmoId}
-          representation={selectedTeamIdentity?.selection}
+          draftScope={selectedTeamComposition?.draftScope}
+          representation={selectedTeamComposition?.representation}
           sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {

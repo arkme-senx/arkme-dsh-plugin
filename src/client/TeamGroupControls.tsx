@@ -3,13 +3,13 @@ import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import type { ArkmeSourceItem, ArkmeTeam } from '../types.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending, type TeamGroupIdentity } from '../team-group-contract.js'
-import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
 import { callArkme } from './api.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeSelfRoleMenu, type SelfRoleMenuAction } from './ArkmeSelfRoleMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { teamIdentityBadgeStyle, teamIdentityLinkStyle } from './team-identity-presentation.js'
 import { tr, useArkmeLocale } from './locale.js'
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : tr('加载失败，请重试')
@@ -89,49 +89,65 @@ export function TeamGroupJoinPanel({ accountKey, source }: { accountKey: string;
   </section>
 }
 
-/** A real team member may represent that team without adding the team to the group.
- * Writes remain pending until messages carry server-verified team attribution. */
+/** Selection changes only the next publication. Rechecks never clear its draft. */
 type IdentityPickerProps = {
-  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean; value?: TeamGroupIdentity | undefined; onSelect?(value:TeamGroupIdentity | undefined):void
+  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean
+  value?: TeamGroupIdentity | undefined; onSelect?(value: TeamGroupIdentity | undefined): void
 }
 export function TeamGroupIdentityPicker(props: IdentityPickerProps) {
   return <ScopedIdentityPicker key={JSON.stringify([props.accountKey, props.sourceRef])} {...props} />
 }
 
-function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, selfName = '我', disabled = false, value, onSelect }: IdentityPickerProps) {
+function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled = false, value, onSelect }: IdentityPickerProps) {
   useArkmeLocale()
-  const [open,setOpen]=useState(false)
-  const context=useTeamGroupContext(accountKey,sourceRef)
-  const close=useCallback(()=>setOpen(false),[])
-  useEffect(()=>{const refresh=()=>context.retry();window.addEventListener('focus',refresh);return()=>window.removeEventListener('focus',refresh)},[context.retry])
-  useEffect(()=>{if(disabled)close()},[disabled,close])
-  if(!value&&!canChooseTeamGroupIdentity(context.value)&&!context.error)return null
-  const actions:SelfRoleMenuAction[]=[
-    {id:'personal',label:tr('我'),description:tr('个人身份'),icon:<ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')}/>,onSelect:()=>{onSelect?.(undefined);close()}},
-    {type:'separator',id:'separator'},
-    ...(context.value?.teams??[]).filter(team=>team.representation!==undefined).map(team=>({
-      id:`team:${team.jotmoId}`,label:`${selfName} · ${team.name}`,description:tr('代表团队发言'),disabled:context.refreshing===true,
-      icon:<span style={{position:'relative',display:'inline-flex'}}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')}/><span aria-label={`${team.name}团队身份`} style={styles.teamBadge}><Users size={10} weight="fill"/></span></span>,
-      onSelect:()=>{if(!context.refreshing&&team.representation){onSelect?.({team,selection:team.representation});close()}},
+  const [open, setOpen] = useState(false)
+  const context = useTeamGroupContext(accountKey, sourceRef)
+  const close = useCallback(() => setOpen(false), [])
+  useEffect(() => {
+    const refresh = () => context.retry()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [context.retry])
+  useEffect(() => { if (disabled) close() }, [disabled, close])
+  if (!value && !canChooseTeamGroupIdentity(context.value) && !context.error) return null
+  const retry = context.error && <span role="status" style={styles.hint}>{tr('团队身份暂不可用')}
+    <button type="button" style={styles.link} title={context.error} onClick={context.retry}>{tr('重试')}</button></span>
+  if (!value && context.error) return retry
+  const actions: SelfRoleMenuAction[] = [
+    { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: () => { onSelect?.(undefined); close() } },
+    { type: 'separator', id: 'separator' },
+    ...[...new Map((context.value?.teams ?? []).filter(team => team.representation !== undefined).map(team => [team.jotmoId, team])).values()].map(team => ({
+      id: `team:${team.jotmoId}`, label: tr('我 · {v0}团队', { v0: team.name }), description: tr('代表团队发言'), disabled: context.refreshing === true,
+      icon: <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: 28, height: 28 }}>
+        <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />
+        <span aria-label={tr('{v0}团队身份', { v0: team.name })} style={styles.teamBadge}><Users size={10} weight="fill" /></span>
+      </span>,
+      onSelect: () => { if (!context.refreshing && team.representation) { onSelect?.({ team, selection: team.representation }); close() } },
     })),
-    ...(context.error?[{type:'label' as const,id:'error',text:tr('团队身份暂不可用，草稿已保留')}]:[]),
+    ...(context.refreshing ? [{ type: 'label' as const, id: 'refreshing', text: tr('正在核验团队身份…') }] : []),
   ]
-  return <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={[value?`team:${value.team.jotmoId}`:'personal']} showSelectionIndicator actions={actions} anchor={
-    <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={value?`${selfName} · ${value.team.name}`:tr('群聊发言身份：我')}
-      aria-haspopup="dialog" aria-expanded={open} style={styles.trigger} onPointerDown={event=>event.stopPropagation()} onClick={()=>{if(!open)context.retry();setOpen(v=>!v)}}>
-      <span style={{position:'relative',display:'inline-flex'}}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')}/>{value&&<span style={styles.teamBadge}><Users size={10} weight="fill"/></span>}</span>
-      <span>{value?value.team.name:tr('我')}</span><CaretDown size={10}/>
-    </button>
-  }/>
+  const selectedLabel = value ? tr('我 · {v0}团队', { v0: value.team.name }) : tr('我')
+  return <>
+    <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={[value ? `team:${value.team.jotmoId}` : 'personal']} showSelectionIndicator actions={actions} anchor={
+      <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：{v0}', { v0: selectedLabel })}
+        title={value ? `${selectedLabel} · ${tr('代表团队发言')}` : tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
+        style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { if (!open) context.retry(); setOpen(current => !current) }}>
+        <span style={{ position: 'relative', display: 'inline-flex' }}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} />
+          {value && <span style={styles.teamBadge}><Users size={10} weight="fill" /></span>}
+        </span><span>{tr('我')}</span><CaretDown size={10} />
+      </button>
+    } />
+    {retry}
+  </>
 }
 
 const styles: Record<string, CSSProperties> = {
-  teamBadge: { position: 'absolute', right: -2, bottom: -2, display: 'grid', placeItems: 'center', width: 14, height: 14, borderRadius: '50%', border: `2px solid ${arkmeTheme.base}`, background: arkmeTheme.accentSoft, color: arkmeTheme.accent },
+  teamBadge: teamIdentityBadgeStyle,
   hint: { fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary },
   notice: { borderRadius: 10, padding: 12, marginTop: 12, background: arkmeTheme.subtle, fontSize: 13, lineHeight: 1.7, overflowWrap: 'anywhere' },
   team: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 8px', border: 0, borderRadius: 8, color: arkmeTheme.text, cursor: 'pointer' },
   name: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 },
-  link: { border: 0, background: 'transparent', color: arkmeTheme.accent, padding: 6, cursor: 'pointer' },
+  link: teamIdentityLinkStyle,
   footer: { padding: '12px 16px', borderTop: `1px solid ${arkmeTheme.borderSoft}`, display: 'flex', justifyContent: 'flex-end' },
   button: { border: 0, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, borderRadius: 8, padding: '10px 14px', cursor: 'pointer', font: 'inherit' },
   trigger: { display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%', flexShrink: 0, background: 'transparent', border: 0, borderRadius: 8, padding: '5px 6px', color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 12 },
