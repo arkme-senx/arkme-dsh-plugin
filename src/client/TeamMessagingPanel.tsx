@@ -520,16 +520,23 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     try {persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);editor.current?.focus()}
     catch {setError(tr('草稿未能保存到本机，请勿关闭窗口'))}
   }
-  const locateMessage = async (ref:string,key:string) => {
-    const token=++generation.current
-    try {
-      const page=await callArkme<TeamTimeline>('team.app.locate',{conversationRef:conversation.ref,messageRef:ref},ctrl.current.signal)
-      if (ctrl.current.signal.aborted || token!==generation.current) return
-      historyWindow.current=(page.messages.at(-1)?.seq ?? 0)<page.conversation.lastSeq ? (page.messages.at(-1)?.seq ?? 0)+1 : 0
-      // Replace the timeline window. Merging a distant page with the live head
-      // would make the next refresh load every intervening history page.
-      pendingJump.current=key;latest.current=page;setTimeline(page)
-    } catch(e) {if(!ctrl.current.signal.aborted)setError(errorText(e))}
+  const readLocatedMessage = async (ref: string, key: string, signal: AbortSignal) => {
+    const token = ++generation.current
+    const requestSignal = AbortSignal.any([signal, ctrl.current.signal])
+    requestSignal.throwIfAborted()
+    const page = await callArkme<TeamTimeline>('team.app.locate', { conversationRef: conversation.ref, messageRef: ref }, requestSignal)
+    requestSignal.throwIfAborted()
+    if (token !== generation.current) throw new Error(tr('消息窗口已更新，请重新定位'))
+    const found = page.messages.find(message => message.key === key)
+    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
+    historyWindow.current = (page.messages.at(-1)?.seq ?? 0) < page.conversation.lastSeq ? (page.messages.at(-1)?.seq ?? 0) + 1 : 0
+    // One authorized window for every history entry; never scan intervening pages.
+    pendingJump.current = key; latest.current = page; setTimeline(page)
+    setDetailKey(undefined); setLocatedKey(key)
+  }
+  const locateMessage = async (ref: string, key: string) => {
+    try { await readLocatedMessage(ref, key, ctrl.current.signal) }
+    catch (error) { if (!ctrl.current.signal.aborted) setError(errorText(error)) }
   }
   const locateReply = async (message:TeamMessage) => {
     const parent=teamReplyPresentation(message)
@@ -830,21 +837,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
     },
   })
-  const locateVisitorRecord = async (message: TeamMessage, signal: AbortSignal) => {
-    let page = latest.current
-    for (let pass = 0; !page?.messages.some(m => m.key === message.key) && pass < 100; pass++) {
-      signal.throwIfAborted()
-      if (page && (!page.hasMore || page.beforeSeq <= message.seq)) break
-      const previous = page?.beforeSeq
-      page = await refresh(previous ?? 0)
-      if (ctrl.current.signal.aborted) return
-      if (!page || previous && page.hasMore && page.beforeSeq >= previous) throw new Error(tr('原消息暂时无法定位，请重试'))
-    }
-    signal.throwIfAborted()
-    const found = page?.messages.find(m => m.key === message.key)
-    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
-    setLocatedKey(message.key)
-  }
+  const locateVisitorRecord = (message: TeamMessage, signal: AbortSignal) => readLocatedMessage(message.ref, message.key, signal)
   useLayoutEffect(() => {
     if (!locatedKey) return
     const row = Array.from(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? []).find(node => node.dataset.teamMessageKey === locatedKey)
@@ -1044,19 +1037,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           const message = latest.current?.messages.find(m => m.key === row?.dataset.teamMessageKey)
           return message ? teamHistoryDate(message.createdAt) : undefined
         }}
-        onLocate={async (message, signal) => {
-          signal.throwIfAborted()
-          let page = latest.current
-          if (!page?.messages.some(m => m.key === message.key)) {
-            historyWindow.current = message.seq + 26
-            page = await refresh(0, true)
-          }
-          signal.throwIfAborted()
-          const found = page?.messages.find(m => m.key === message.key)
-          if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
-          setDetailKey(undefined); setLocatedKey(undefined)
-          requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
-        }}/>
+        onLocate={locateVisitorRecord}/>
+
     </header>
     {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}

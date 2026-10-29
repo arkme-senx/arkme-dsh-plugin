@@ -357,24 +357,50 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
   })
 
-  it('locates a bounded historical window and keeps background recovery in that window', async () => {
+  it('locates each history result in one authorized bounded window and recovers in that window', async () => {
     const old: TeamMessage = {ref:'old-ref',key:'old',seq:10,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
-    const head = {...old,key:'new',seq:100}, later = {...old,key:'later',seq:60}
-    mocks.call.mockImplementation(async (op,p) => op === 'team.app.timeline' ? {conversation:{...conversation,lastSeq:100},messages:p.beforeSeq===86?[later]:p.beforeSeq?[old]:[head],hasMore:p.beforeSeq===86||!p.beforeSeq,beforeSeq:p.beforeSeq===86?60:p.beforeSeq?10:100} : {})
+    const head = {...old,key:'new',seq:1000000}, later = {...old,ref:'later-ref',key:'later',seq:60}
+    mocks.call.mockImplementation(async (op,p) => op === 'team.app.locate'
+      ? {conversation:{...conversation,lastSeq:1000000},messages:p.messageRef==='later-ref'?[later]:[old],hasMore:true,beforeSeq:p.messageRef==='later-ref'?60:10}
+      : op === 'team.app.timeline' ? {conversation:{...conversation,lastSeq:1000000},messages:p.beforeSeq?[old]:[head],hasMore:!p.beforeSeq,beforeSeq:p.beforeSeq?10:1000000} : {})
     await mount()
-    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(old,new AbortController().signal))
+    const tools=()=>renderer!.root.findByType(TeamConversationTools)
+    const pages=mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').length
+    await act(async()=>tools().props.onLocate(old,new AbortController().signal))
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
-    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline')).toHaveLength(pages)
+    expect(mocks.call).toHaveBeenCalledWith('team.app.locate',{conversationRef:'conv',messageRef:'old-ref'},expect.any(AbortSignal))
     await act(async()=>{invalidateTeamMessages('test:11');await tick()})
-    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(36)
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').at(-1)?.[1].beforeSeq).toBe(11)
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('old')
-    const readsBefore=mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline').length
-    await act(async()=>renderer!.root.findByType(TeamConversationTools).props.onLocate(later,new AbortController().signal))
-    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.timeline')).toHaveLength(readsBefore+1)
+    await act(async()=>tools().props.onLocate(later,new AbortController().signal))
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('later')
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.locate')).toHaveLength(2)
     const latestButton=renderer!.root.findAllByType('button').find(node=>node.props['aria-label']==='回到最新')!
     await act(async()=>{latestButton.props.onClick();await tick()})
     expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('new')
+  })
+  it('does not replace the window after denied, unavailable or cancelled history location', async () => {
+    const head: TeamMessage = {ref:'head-ref',key:'head',seq:1000000,revision:1,side:'team',sender:{nickname:'同事'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
+    let mode='denied',finish!:(page:unknown)=>void
+    mocks.call.mockImplementation(async(op)=>{
+      if(op==='team.app.locate'){
+        if(mode==='denied')throw new Error('无权访问')
+        if(mode==='cancelled')return new Promise(resolve=>{finish=resolve})
+        return {conversation,messages:[{...head,key:'old',state:'withdrawn',contentStatus:'unavailable'}],hasMore:false,beforeSeq:0}
+      }
+      return op==='team.app.timeline'?{conversation,messages:[head],hasMore:false,beforeSeq:0}:{}
+    })
+    await mount()
+    const locate=(signal:AbortSignal)=>renderer!.root.findByType(TeamConversationTools).props.onLocate({...head,ref:'old-ref',key:'old'},signal)
+    await act(async()=>{await expect(locate(new AbortController().signal)).rejects.toThrow('无权访问')})
+    mode='unavailable'
+    await act(async()=>{await expect(locate(new AbortController().signal)).rejects.toThrow('原消息已删除')})
+    mode='cancelled';const controller=new AbortController();let pending!:Promise<unknown>
+    await act(async()=>{pending=locate(controller.signal);pending.catch(()=>{})})
+    controller.abort()
+    await act(async()=>{finish({conversation,messages:[{...head,key:'old'}],hasMore:false,beforeSeq:0});await expect(pending).rejects.toThrow()})
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.key).toBe('head')
   })
   it('does not render a zero cursor as message content in the live window', async () => {
     await mount()
@@ -955,7 +981,7 @@ describe('Team send UI recovery', () => {
     const incoming: TeamMessage = { key: 'visitor-m', ref: 'visitor-ref', seq: 2, revision: 1, side: 'external', sender: { nickname: '访客' }, own: false,
       state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [] }
     const sent = { ...incoming, key: 'sent', ref: 'sent-ref', side: 'team', own: true }
-    mocks.call.mockImplementation(async (op: string) => op === 'team.app.timeline'
+    mocks.call.mockImplementation(async (op: string) => (op === 'team.app.timeline' || op === 'team.app.locate')
       ? { conversation: { ...conversation, side: 'team', visitor: { nickname: '访客' } }, messages: [incoming, sent], hasMore: false, beforeSeq: 0 }
       : { visitorRead: true, members: [], hasMore: false, senderExcluded: true })
     await mount({ createNodeMock: element => element.type === 'button' ? document.createElement('button') : null })

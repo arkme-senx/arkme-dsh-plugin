@@ -32,3 +32,18 @@ it('rejects foreign origins, unsupported ranges and a corrupt initial chunk befo
   const response=await fetch(f.url);expect(response.status).toBe(502);expect(await response.text()).not.toContain('中文')
  }finally{await f.close()}
 })
+it('preserves the UI filename without changing the authorized reference or allowing header/path injection',async()=>{
+ const f=await fixture()
+ try{
+  const name="访客 O'Neil-团队对话-2026-10-29.md"
+  const response=await fetch(f.url+'&name='+encodeURIComponent(name).replaceAll("'",'%27'))
+  expect(response.headers.get('content-disposition')).toBe("attachment; filename*=UTF-8''"+encodeURIComponent(name).replaceAll("'",'%27'))
+  expect(await response.text()).toBe('中文\nsecond')
+  expect(f.read.mock.calls[0]![0]).toBe('opaque')
+  const unsafe=await fetch(f.url+'&name='+encodeURIComponent('../evil\r\n.html.md'))
+  expect(decodeURIComponent(unsafe.headers.get('content-disposition')!)).not.toMatch(/[/\r\n]/u)
+  await unsafe.text()
+  const wrong=await fetch(f.url+'&name='+encodeURIComponent('x.html'))
+  expect(wrong.headers.get('content-disposition')).toContain(encodeURIComponent('团队对话.md'));await wrong.text()
+ }finally{await f.close()}
+})

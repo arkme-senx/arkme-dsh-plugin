@@ -284,14 +284,18 @@ export function createArkmeTeamHistoryExportHandler(service: Pick<ArkmeService,'
       assertLocalRequest(req,options)
       if(req.method!=='GET'&&req.method!=='HEAD')throw new ArkmePluginError('method-not-allowed','只允许 GET 或 HEAD 请求',false,405)
       if(req.headers.range)throw new ArkmePluginError('range-not-supported','请重新下载完整导出文件',false,416)
-      const ref=new URL(req.url??'/',`http://127.0.0.1:${options.expectedPort}`).searchParams.get('ref')||''
+      const query=new URL(req.url??'/',`http://127.0.0.1:${options.expectedPort}`).searchParams
+      const ref=query.get('ref')||''
+      // UI supplies the existing human-readable filename; it never changes the export target.
+      const name=query.get('name')?.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/gu,'_').trim()
+      const downloadName=name?.endsWith('.md') && name.length<=200 ? name : undefined
       const digest=createHash('sha256');let offset=0,cursor:string|undefined,total:number|undefined,hash:string|undefined
       for(;;){
         const part=await service.readTeamHistoryExportChunk(ref,cursor,controller.signal),data=Buffer.from(part.chunkBase64,'base64')
         if(data.length>1048576||createHash('sha256').update(data).digest('hex')!==part.chunkSha256||part.offset!==offset+data.length||(total!==undefined&&(total!==part.bytes||hash!==part.sha256))||part.offset>part.bytes||(!part.complete&&(!part.cursor||part.cursor===cursor)))throw new Error('Invalid Team export chunk')
         total=part.bytes;hash=part.sha256;offset=part.offset;digest.update(data)
         if(part.complete&&(offset!==total||digest.digest('hex')!==hash))throw new Error('Invalid Team export digest')
-        if(!res.headersSent)res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Length':total,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(part.fileName)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"})
+        if(!res.headersSent)res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Length':total,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(downloadName ?? part.fileName).replace(/['()*]/gu,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase())}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"})
         if(req.method==='HEAD'){res.end();return}
         if(part.complete){res.end(data);return}
         if(!res.write(data))await once(res,'drain',{signal:controller.signal})
