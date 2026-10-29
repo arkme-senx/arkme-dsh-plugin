@@ -89,3 +89,21 @@ it('does not invert the setting after an unknown write failure',async()=>{
   await act(async()=>mount());await act(async()=>byLabel('更多团队对话操作').click());await act(async()=>byText('消息免打扰').click())
   expect(byText('消息免打扰').getAttribute('aria-pressed')).toBe('false');expect(host.textContent).toContain('设置未确认')
 })
+it('restarts historical sender recovery with a new result and no stale cursor',async()=>{
+  let accepts=0
+  call.mockImplementation(async(_op:string,p:any)=>{
+    if(p.action!=='participants')return page([])
+    if(!p.options.resultRef){accepts++;return {...page([]),resultRef:`people-${accepts}`}}
+    if(p.options.resultRef==='people-1'&&p.options.cursor)throw new Error('人员结果已过期')
+    return {...page([],accepts===1,accepts===1?'old-cursor':''),resultRef:`people-${accepts}`,participants:[]}
+  })
+  await act(async()=>mount());await act(async()=>byLabel('搜索团队消息').click())
+  await act(async()=>byText('选择历史发送者').click())
+  await act(async()=>byText('更多历史发送者').click())
+  expect(host.textContent).toContain('人员结果已过期')
+  await act(async()=>byText('重试').click())
+  expect(accepts).toBe(2)
+  const requests=call.mock.calls.filter(([,p])=>p.action==='participants')
+  expect(requests.at(-1)![1].options).toMatchObject({resultRef:'people-2'})
+  expect(requests.at(-1)![1].options.cursor).toBeUndefined()
+})

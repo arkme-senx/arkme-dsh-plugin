@@ -5,7 +5,7 @@ export const TEAM_HISTORY_ACTIONS = ['query','dates','participants','analysis/cr
 export type TeamHistoryAction = typeof TEAM_HISTORY_ACTIONS[number]
 export interface TeamHistoryOptions {
   keyword?: string; personRef?: string; sender?: 'all'|'self'; personMode?: 'owner'|'mentioned'
-  fromAt?: number; untilAt?: number; timezone?: string; mediaKind?: 'text'|'image'|'video'|'audio'|'file'
+  fromAt?: number; untilAt?: number; timezone?: string; contentKind?: 'text'|'visual'|'image'|'video'|'audio'|'voice'|'file'|'link'|'long_article'
   cursor?: string; limit?: number; requestId?: string; resultRef?: string; sourceRef?: string
   analysisKind?: 'words'|'activity'; hour?: number; weekday?: number
 }
