@@ -70,6 +70,7 @@ export function startTeamDirectory(key: string): () => void {
         if (!controller.signal.aborted && account === key && token === revision) pages.set(side, { ...page, items: [...items.values()] })
       } catch (e) {
         failure = e instanceof Error ? e.message : '团队对话暂时无法刷新'
+        if(!readStateOnly && token===revision && previous)pages.set(side,{...previous,items:previous.items.map(c=>c.visitor?{...c,visitor:{...c.visitor,memberType:'unknown'}}:c)})
         if (token === revision && /team-(not_accessible|account-changed)|login-/.test(String((e as { body?: { code?: string } })?.body?.code))) pages.delete(side)
       }
     }))

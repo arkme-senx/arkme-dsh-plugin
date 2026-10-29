@@ -29,15 +29,12 @@ it('only opens the existing team-link flow on explicit contact, without sending 
   expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card'])
 })
 
-it('distinguishes a closed channel from missing backend support', async () => {
-  call.mockResolvedValue({ ...card, contact: { state: 'disabled' } })
-  await mount(); expect(button('联系团队').disabled).toBe(true)
-  expect(document.body.textContent).toContain('暂未开放消息通道')
-  call.mockResolvedValue({ ...card, contact: { state: 'backend_pending' } })
-  await mount('prod:91'); await act(async () => button('联系团队').click())
-  expect(document.body.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
-  expect(document.body.textContent).toContain('尚未打开团队通道，也未发送消息')
-  expect(open).not.toHaveBeenCalled()
+it('keeps public contact disabled but allows current members to enter inbox',async()=>{
+ call.mockResolvedValue({...card,contact:{state:'disabled'},navigation:{kind:'none'}})
+ await mount();expect(button('联系团队').disabled).toBe(true)
+ call.mockResolvedValue({...card,contact:{state:'disabled'},navigation:{kind:'inbox',teamRef:'opaque'}})
+ await mount('prod:91');await act(async()=>button('进入团队收件箱').click())
+ expect(open).toHaveBeenCalledExactlyOnceWith({kind:'team',teamRef:'opaque'})
 })
 
 it.each([
