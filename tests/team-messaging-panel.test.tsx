@@ -445,7 +445,7 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
     await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
-    expect(invalidated).toHaveBeenCalledWith('test:11',false)
+    expect(invalidated).toHaveBeenCalledWith('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:[conversation.key]})
     stop()
     const shown = renderer!.root.findByType(TeamConversationMessage).props.message
     expect(shown.state).toBe('recalled')

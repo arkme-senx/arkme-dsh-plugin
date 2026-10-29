@@ -4100,6 +4100,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'team-invalidated'
   revision: number
+  change?: import('./team-app-contract.js').TeamMessageChangeHint
   receiptOnly?: boolean
 } | {
   type: 'directory-update'

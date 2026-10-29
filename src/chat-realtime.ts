@@ -103,6 +103,7 @@ export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
   teamPublication?: ArkmeTeamPublicationHint
   teamReceiptOnly?: boolean
+  teamChange?: ArkmeTeamChangeHint
   cause: 'team-message-published' | 'team-invalidation' | 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'conversation-list-preference-invalidation' | 'chat-policy-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   policyUpdated?: ArkmeChatPolicyUpdatedHint
@@ -184,8 +185,9 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
 }
 
 export const ARKME_TEAM_NOTIFICATION_BIZ_TYPE = 28
+export interface ArkmeTeamChangeHint { kind:string; messageUid?:string; conversationUid?:string }
 export interface ArkmeTeamPublicationHint { eventUid:string;conversationUid:string;messageUid:string;seq:number;publishedAt:number;expiresAt:number }
-export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number; receiptOnly: boolean; publication?:ArkmeTeamPublicationHint } | undefined {
+export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number; receiptOnly: boolean; publication?:ArkmeTeamPublicationHint; change?:ArkmeTeamChangeHint } | undefined {
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
   if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at'].includes(key))) return undefined
@@ -197,7 +199,8 @@ export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: s
     if(!conversationUid||!messageUid||!seq||v.published_at!==eventAtMillis||!expiresAt||expiresAt-eventAtMillis!==3600000)return undefined
     return {eventUid,eventAtMillis,receiptOnly:false,publication:{eventUid,conversationUid,messageUid,seq,publishedAt:eventAtMillis,expiresAt}}
   }
-  return {eventUid,eventAtMillis,receiptOnly:v.kind==='team.receipt.changed'}
+  const messageUid=nonEmptyString(v.message_uid),conversationUid=nonEmptyString(v.conversation_uid)
+  return {eventUid,eventAtMillis,receiptOnly:v.kind==='team.receipt.changed',change:{kind:String(v.kind),...(messageUid&&messageUid.length<=256?{messageUid}:{}),...(conversationUid&&conversationUid.length<=256?{conversationUid}:{})}}
 }
 
 export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
@@ -769,7 +772,7 @@ export class ArkmeChatRealtimeRuntime {
       ?? messagePreparing?.eventAtMillis
       ?? hint?.eventAtMillis
     if (teamNotification) {
-      this.advanceRevision(teamNotification.publication ? 'team-message-published' : 'team-invalidation', { connectionUserId, connectionSignal, ...(connectionStartedAtMillis===undefined?{}:{connectionStartedAtMillis}), ...(teamNotification.publication?{teamPublication:teamNotification.publication}:{}), teamReceiptOnly: teamNotification.receiptOnly })
+      this.advanceRevision(teamNotification.publication ? 'team-message-published' : 'team-invalidation', { connectionUserId, connectionSignal, ...(connectionStartedAtMillis===undefined?{}:{connectionStartedAtMillis}), ...(teamNotification.publication?{teamPublication:teamNotification.publication}:{}), teamReceiptOnly: teamNotification.receiptOnly, ...(teamNotification.change?{teamChange:teamNotification.change}:{}) })
     } else if (policyUpdated !== undefined) {
       this.advanceRevision('chat-policy-invalidation', { policyUpdated, connectionUserId, connectionSignal })
     } else if (memberJoined !== undefined) {
@@ -813,7 +816,8 @@ export class ArkmeChatRealtimeRuntime {
       timelineChanged?: ArkmeChatTimelineChangedHint
       messagePreparing?: ArkmeChatMessagePreparingHint
       teamPublication?: ArkmeTeamPublicationHint
-  teamReceiptOnly?: boolean
+      teamReceiptOnly?: boolean
+      teamChange?: ArkmeTeamChangeHint
       connectionUserId?: number
       connectionSignal?: AbortSignal
       connectionStartedAtMillis?: number
@@ -830,6 +834,7 @@ export class ArkmeChatRealtimeRuntime {
       timelineChanged,
       messagePreparing,
       teamReceiptOnly,
+      teamChange,
       teamPublication,
       connectionUserId,
       connectionSignal,
@@ -845,6 +850,7 @@ export class ArkmeChatRealtimeRuntime {
       cause,
       ...(teamPublication === undefined ? {} : {teamPublication}),
       ...(teamReceiptOnly === undefined ? {} : {teamReceiptOnly}),
+      ...(teamChange === undefined ? {} : {teamChange}),
       ...(memberJoined === undefined ? {} : { memberJoined }),
       ...(memberEvent === undefined ? {} : { memberEvent }),
       ...(timelineChanged === undefined ? {} : { timelineChanged }),

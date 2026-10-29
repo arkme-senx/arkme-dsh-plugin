@@ -463,7 +463,7 @@ export class ArkmeService {
   }
   async setTeamNotificationPolicy(conversationRef:string, muted:boolean, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     const value=await this.teamApp.execute('team.app.notification-policy.set',{conversationRef,muted},signal) as TeamNotificationPolicy
-    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision()})
+    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision(),change:{kind:'team.notification-policy.changed'}})
     return value
   }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
@@ -769,6 +769,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       },
     })
     this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
+    this.realtime.teamChange=(hint,actor)=>this.teamApp.changeHint(hint,actor)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),

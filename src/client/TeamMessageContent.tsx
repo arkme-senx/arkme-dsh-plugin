@@ -1,9 +1,10 @@
-import { subscribeTeamMessageChanges } from './team-messaging-events.js'
+import {watchTeamSourceRead} from './team-source-read.js'
+import {arkmeAuthStore} from './auth-store.js'
 import { useRef, type ReactNode } from 'react'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import type { TeamMessage } from '../team-app-contract.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
-import { ArkmeMediaAccessContext } from './media-access.js'
+import { ArkmeMediaAccessContext,type ArkmeMediaAccess } from './media-access.js'
 
 export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem {
   return {
@@ -21,7 +22,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 }
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
-export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle }: { message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
+export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle, conversationKey }: { conversationKey?:string | undefined; message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
   // Keep mounted media and its URL across equivalent authorized snapshots.
   // Keys include viewer, message, Record version and asset. Changed content or
   // lost access replaces/unmounts this scope; byte reads still reauthorize.
@@ -30,7 +31,7 @@ export function TeamMessageContent({ message, conversationRef, presentation, onO
   if (snapshot.current.identity !== identity) snapshot.current = { identity, media: message.media, localMarkRef: message.localMarkRef }
   const urls = new Map(snapshot.current.media.map(media => [media.ref, media.url]))
   const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
-  return <ArkmeMediaAccessContext.Provider value={{ url: block => urls.get(block.mediaRef) ?? '', subscribeInvalidation: listener=>subscribeTeamMessageChanges((_account,receiptOnly)=>{if(!receiptOnly)listener()}) }}>
+  return <ArkmeMediaAccessContext.Provider value={teamMessageMediaAccess(message,urls,conversationRef,conversationKey)}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
       selectionTarget={conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
         ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref } : undefined} />
@@ -44,9 +45,15 @@ export function teamReplyPresentation(message: TeamMessage) {
     sequence:reply.seq,quoteState:reply.state,...(reply.quote ? {quote:reply.quote} : {})} : undefined
 }
 
-export function TeamMessageMediaScope({message,children}:{message:TeamMessage;children:ReactNode}) {
+export function TeamMessageMediaScope({message,children,conversationRef,conversationKey}:{message:TeamMessage;children:ReactNode;conversationRef?:string|undefined;conversationKey?:string|undefined}) {
  const urls=new Map(message.media.map(media=>[media.ref,media.url]))
- return <ArkmeMediaAccessContext.Provider value={{url:block=>urls.get(block.mediaRef)??''}}>{children}</ArkmeMediaAccessContext.Provider>
+ return <ArkmeMediaAccessContext.Provider value={teamMessageMediaAccess(message,urls,conversationRef,conversationKey)}>{children}</ArkmeMediaAccessContext.Provider>
+}
+
+function teamMessageMediaAccess(message:TeamMessage,urls:Map<string,string>,conversationRef:string|undefined,conversationKey:string|undefined):ArkmeMediaAccess {
+ const auth=arkmeAuthStore.getSnapshot().auth
+ const accountKey=auth?.status==='authenticated'?`${auth.environment}:${auth.userId}`:undefined
+ return {url:block=>urls.get(block.mediaRef)??'',subscribeReadState:listener=>watchTeamSourceRead({accountKey,conversationRef,conversationKey,messageRef:message.ref,messageKey:message.key,version:message.version},listener)}
 }
 
 export function teamPendingReply(reply: import('../team-app-contract.js').TeamReplyTarget | undefined) {

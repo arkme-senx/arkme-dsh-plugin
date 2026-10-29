@@ -122,6 +122,11 @@ export class TeamAppService {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
   }
+  async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
+    return {kind:hint.kind,
+      ...(hint.messageUid?{messageKey:await this.key(hint.messageUid,actor)}:{}),
+      ...(hint.conversationUid?{conversationKeys:await Promise.all(['team','external'].map(side=>this.key(`${hint.conversationUid}:${side}`,actor)))}:{})}
+  }
   async reactionTarget(conversationRef:string,messageRef:string):Promise<import('./reaction-service.js').ReactionWireTarget>{
     const actor=(await this.runtime.requireSession()).userId
     const [context,message]=await Promise.all([this.open('conversation',conversationRef,actor),this.open('message',messageRef,actor)])

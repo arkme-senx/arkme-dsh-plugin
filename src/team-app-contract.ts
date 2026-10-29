@@ -103,3 +103,10 @@ export type TeamConversationReadState = {key: string; accessible: false}
   | {key: string; accessible: true; notificationPolicy?: TeamNotificationPolicy; lastSeq: number; myReadSeq: number; unread: number}
 
 export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[]; totalCount: number; hasMore: boolean; nextSeq: number; throughSeq: number }
+
+/** A scoped invalidation hint, never a read grant or raw backend locator. */
+export interface TeamMessageChangeHint {
+  kind: string
+  messageKey?: string
+  conversationKeys?: string[]
+}

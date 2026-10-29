@@ -29,14 +29,16 @@ for(const [key,text] of Object.entries(texts)){
  const page=await post('/api/v1/team/conversations/timeline/page',{conversation_uid:uid,side:'team'});
  messages[key]=await post('/api/v1/team/conversations/messages/send',{conversation_uid:uid,side:'team',client_message_uid:randomUUID(),expected_reply_seq:page.conversation.latest_team_reply_seq,content:{text_content:text,template_kind:1}});
 }
-const calls=[], sockets=new Set();
+const media=await post('/api/v1/team/conversations/messages/send',{conversation_uid:uid,side:'external',client_message_uid:randomUUID(),expected_reply_seq:0,content:{text_content:'T09 attachment source',template_kind:2,content_payload:{payload_kind:2,schema_version:1,text_state:1,media_refs:[{file_asset_uid:'22222222-2222-4222-8222-222222222222',render_role:1,sort_order:0,file_name:'source.png'}]}}},2);
+const calls=[], sockets=new Set(),streams=new Set();
+const emitTeamChange=(kind,locators={})=>{assert.ok(streams.size,'live upstream SSE required');for(const stream of streams)stream.write(`data: ${JSON.stringify({t:28,event_uid:randomUUID(),event_at:Date.now(),revision:2,kind,...locators})}\n\n`)};
 const server=createServer({key:await readFile(key),cert:await readFile(cert)},async(req,res)=>{
  try{
   const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString()||'{}'),path=new URL(req.url,'https://localhost').pathname;
   calls.push({path,body});
-  if(path.endsWith('/sse/chat/noty')){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated fixture\n\n');return;}
+  if(path.endsWith('/sse/chat/noty')){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated fixture\n\n');streams.add(res);res.on('close',()=>streams.delete(res));return;}
   const owner=path.startsWith('/api/v1/team/')?'team':path.startsWith('/api/v1/reactions/')?'record':undefined;
-  if(owner){const r=await fetch(owners[owner]+path,{method:req.method,headers:{'Content-Type':'application/json',Authorization:req.headers.authorization || 'Bearer '+token(4)},body:JSON.stringify(body)});res.writeHead(r.status,{'content-type':'application/json'});res.end(await r.text());return;}
+  if(owner){const r=await fetch(owners[owner]+path,{method:req.method,headers:{'Content-Type':'application/json',Authorization:req.headers.authorization || 'Bearer '+token(4)},body:JSON.stringify(body)});res.writeHead(r.status,{'content-type':r.headers.get('content-type')||'application/json'});res.end(Buffer.from(await r.arrayBuffer()));return;}
   let data={items:[],users:[],has_more:false,total:0};
   if(path.endsWith('/the-best-api-for-testing'))data={access_token:token(4),refresh_token:'isolated-recall'};
   if(path.endsWith('/get-user-info'))data={user_id:4,nick_name:'撤回验收',phone:'13800000000',phone_binding_policy:{mode:'none'}};
@@ -82,8 +84,22 @@ try{
  assert.ok((await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).innerText()).includes('撤回后保留的下一条草稿'));
  for(const text of Object.values(texts))await page.locator('.team-conversation-row').filter({hasText:text}).waitFor({state:'hidden'});
  await page.screenshot({path:join(capture,'recall-placeholder.png')});
- const final=await post('/api/v1/team/conversations/timeline/page',{conversation_uid:uid,side:'team'});for(const message of Object.values(messages))assert.equal(final.messages.find(m=>m.message_uid===message.message_uid).state,'recalled');
+ // Existing independent preview, actual Team/Record bytes, upstream SSE and Host preflight.
+ const mediaBubble=pane.locator('[data-team-message-key]').filter({hasText:'T09 attachment source'}).first();await mediaBubble.waitFor();
+ const popupReady=page.waitForEvent('popup');await mediaBubble.getByRole('button',{name:'预览图片 source.png',exact:true}).click();const preview=await popupReady;
+ await preview.locator('img').first().waitFor();await preview.waitForFunction(()=>Array.from(document.images).some(image=>image.naturalWidth>0));
+ await preview.locator('img').first().evaluate(image=>window.__t09OriginalPreviewImage=image);
+ const before=calls.filter(call=>call.path.endsWith('/batch-get')).length;
+ emitTeamChange('team.notification-policy.changed');emitTeamChange('team.receipt.changed');emitTeamChange('team.message.changed',{conversation_uid:uid,message_uid:messages.ui.message_uid});
+ await page.waitForTimeout(800);assert.equal(preview.isClosed(),false);
+ assert.equal(await preview.locator('img').first().evaluate(image=>image===window.__t09OriginalPreviewImage),true);
+ assert.equal(calls.filter(call=>call.path.endsWith('/batch-get')).length,before,'unrelated events must not revalidate this source');
+ await preview.screenshot({path:join(capture,'attachment-original-preview.png')});
+ await post('/api/v1/team/conversations/messages/recall',{conversation_uid:uid,message_uid:media.message_uid,side:'external'},2);
+ const closed=preview.waitForEvent('close');emitTeamChange('team.message.changed',{conversation_uid:uid,message_uid:media.message_uid});await closed;
+ assert.ok(calls.slice().some(call=>call.path.endsWith('/batch-get')&&call.body.items?.some(item=>item.message_uid===media.message_uid)));
+ const final=await post('/api/v1/team/conversations/timeline/page',{conversation_uid:uid,side:'team'});for(const message of [...Object.values(messages),media])assert.equal(final.messages.find(m=>m.message_uid===message.message_uid).state,'recalled');
  assert.ok(readFileSync(log,'utf8').includes('T09_REAL_TOOL_PASSED'));
- await writeFile(join(capture,'acceptance.json'),JSON.stringify({passed:true,realTeamAndRecord:true,officialDsh:true,installedArtifact:artifact,ui:true,uiDraftPreserved:true,publicSdk:true,externalTypedConsumer:true,officialSessionTool:true,confirmationRequired:true},null,2));
+ await writeFile(join(capture,'acceptance.json'),JSON.stringify({passed:true,realTeamAndRecord:true,officialDsh:true,installedArtifact:artifact,ui:true,uiDraftPreserved:true,publicSdk:true,externalTypedConsumer:true,officialSessionTool:true,confirmationRequired:true,originalAttachmentPreview:true,unrelatedEventsPreserveImage:true,matchingRecallRevalidatesAndCloses:true},null,2));
  console.log('PASS: T09 packaged UI, public SDK and real official-session Tool recall through real Team owner');
 }catch(error){if(page){await page.screenshot({path:join(capture,'failure.png')}).catch(()=>{});await writeFile(join(capture,'failure-body.txt'),await page.locator('body').innerText()).catch(()=>{});}console.error(error);process.exitCode=1;}finally{await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await browser?.close();child?.kill('SIGTERM');for(const socket of sockets)socket.destroy();server.close();}
