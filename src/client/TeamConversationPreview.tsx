@@ -117,7 +117,7 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>
         <div style={{ padding: '8px 10px', borderRadius: 10, background: message.own ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
-          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
+          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
         </div>
       </div>
     </article>)}

@@ -88,6 +88,7 @@ try{
  const mediaBubble=pane.locator('[data-team-message-key]').filter({hasText:'T09 attachment source'}).first();await mediaBubble.waitFor();
  await mediaBubble.getByRole('button',{name:/^预览图片 /}).click();
  const inlineImage=page.locator('[data-arkme-image-preview-viewport] img').first();await inlineImage.waitFor();
+ await inlineImage.evaluate(image=>image.decode());
  await inlineImage.evaluate(image=>window.__t09InlineImage=image);
  emitTeamChange('team.notification-policy.changed');emitTeamChange('team.message.changed',{conversation_uid:uid,message_uid:messages.ui.message_uid});
  await page.waitForTimeout(800);assert.equal(await inlineImage.evaluate(image=>image===window.__t09InlineImage),true);

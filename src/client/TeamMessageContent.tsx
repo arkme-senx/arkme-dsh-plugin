@@ -22,7 +22,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 }
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
-export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle, conversationKey }: { conversationKey?:string | undefined; message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
+export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle, conversationKey, readOnly = false }: { readOnly?:boolean; conversationKey?:string | undefined; message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
   // Keep mounted media and its URL across equivalent authorized snapshots.
   // Keys include viewer, message, Record version and asset. Changed content or
   // lost access replaces/unmounts this scope; byte reads still reauthorize.
@@ -33,7 +33,7 @@ export function TeamMessageContent({ message, conversationRef, presentation, onO
   const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
   return <ArkmeMediaAccessContext.Provider value={teamMessageMediaAccess(message,urls,conversationRef,conversationKey)}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
-      selectionTarget={conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
+      selectionTarget={!readOnly && conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
         ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref } : undefined} />
   </ArkmeMediaAccessContext.Provider>
 }

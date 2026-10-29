@@ -7,6 +7,7 @@ import { TeamConversationPreview } from '../src/client/TeamConversationPreview.j
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
 import { groupTeamConversations } from '../src/client/team-conversation-directory.js'
 import { arkmeVisibleReadIntentAllowed } from '../src/client/read-intent-visibility.js'
+import {messageSelectionTarget} from '../src/client/ArkmeMessageTextSelection.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -21,6 +22,13 @@ const preview = () => <TeamConversationPreview accountKey="preview-test" target=
 const render = async (node = preview()) => { await act(async () => root.render(node)) }
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
 const click = async (text: string) => { expect(button(text)).toBeDefined(); await act(async () => button(text).click()) }
+it('does not turn a read-only source into an annotation or reply target',async()=>{
+ mocks.call.mockResolvedValue(timeline([{...message,localMarkRef:'local-mark'}]))
+ await render()
+ const element=document.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+ expect(element).not.toBeNull()
+ expect(messageSelectionTarget(element)).toBeUndefined()
+})
 
 it('keeps the current preview material for policy and unrelated occurrences while a refresh is pending',async()=>{
  const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
