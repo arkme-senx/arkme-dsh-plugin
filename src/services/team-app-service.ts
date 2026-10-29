@@ -64,6 +64,13 @@ const reasons: Record<string, string> = {
   dependency_unavailable: '服务暂时不可用，请使用原请求重试', approval_required: '已启用加入审批', already_member: '你已经是团队成员',
 }
 
+// Publication and frozen-capture persistence are separate acknowledgements.
+function requireFrozenMetadataSaved(data: Record<string, unknown>, required: boolean): void {
+  if (required && data.state === 'published' && data.metadata_saved !== true) {
+    throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503)
+  }
+}
+
 // Signing credentials authorize a download; they do not identify its pixels.
 // Preserve content/version/processing parameters so a real avatar change still
 // invalidates the presentation. The original URL remains inside the access ref.
@@ -951,11 +958,13 @@ export class TeamAppService {
           const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: await this.mentionContent(p.content,actor,context),
             ...(p.metadataRef ? {record_metadata:await this.frozenMetadata(p.metadataRef,actor,context,str(p.clientUid),'send')} : {}),
             ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
+          requireFrozenMetadataSaved(data, !!p.metadataRef)
           return { message: await this.message(data, actor, context) }
         } catch (error) {
           if (!(error instanceof ArkmeUpstreamResponseError)) throw error
           const data = obj(error.responseData), pending = obj(data.operation)
           if (!pending.message_uid) throw error
+          requireFrozenMetadataSaved(pending, !!p.metadataRef)
           return { reason: str(data.reason), message: await this.message(pending, actor, context) }
         }
       }

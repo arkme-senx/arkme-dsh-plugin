@@ -1257,7 +1257,7 @@ it('recovers an uncertain open from the frozen target after Host recreation with
 })
 
 it('seals exact capture with account environment conversation and operation binding',async()=>{
- const f=fixture(path=>path.endsWith('/messages/send')?{...message,own:true,actor_user_id:90,side:'external'}:({conversation,channel})),destination=(await open(f)).conversation!.ref
+ const f=fixture(path=>path.endsWith('/messages/send')?{...message,own:true,actor_user_id:90,side:'external',metadata_saved:true}:({conversation,channel})),destination=(await open(f)).conversation!.ref
  const uid='11111111-1111-4111-8111-111111111111'
  const metadata={record_started_at:1000,send_at:1000,capture_context:{schema_version:1,captured_at:1000,client_name:'private-original',device_state:'recorded',location_state:'permission_denied'}}
  const seal=async()=>await f.service.execute('team.app.snapshot.seal',{conversationRef:destination,operationUid:uid,kind:'send',metadata}) as {metadataRef:string}
@@ -1275,4 +1275,22 @@ it('keeps unsupported capabilities separate from provider failures',async()=>{
  await expect(old.service.execute('team.app.snapshot.capabilities',{})).resolves.toEqual({schemaVersion:0})
  const broken=fixture(()=>new Response('unavailable',{status:503}))
  await expect(broken.service.execute('team.app.snapshot.capabilities',{})).rejects.toThrow()
+})
+
+it.each([false,true])('requires saved metadata on published send and accepted error, error=%s',async errorEnvelope=>{
+ let saved=false
+ const f=fixture(path=>{
+  if(!path.endsWith('/messages/send'))return {conversation,channel}
+  const published={...message,own:true,actor_user_id:90,side:'external',...(saved?{metadata_saved:true}:{})}
+  return errorEnvelope?new Response(JSON.stringify({code:1001,data:{reason:'dependency_unavailable',operation:published}}),{headers:{'content-type':'application/json'}}):published
+ })
+ const conversationRef=(await open(f)).conversation!.ref,operationUid='11111111-1111-4111-8111-111111111111'
+ const metadata={record_started_at:1000,send_at:1000,capture_context:{schema_version:1,captured_at:1000,client_name:'private-original',device_state:'recorded',location_state:'permission_denied'}}
+ const {metadataRef}=await f.service.execute('team.app.snapshot.seal',{conversationRef,operationUid,kind:'send',metadata}) as {metadataRef:string}
+ const command={conversationRef,clientUid:operationUid,metadataRef,content:{template_kind:1,text_content:'frozen'}}
+ await expect(f.service.execute('team.app.send',command)).rejects.toMatchObject({code:'team-dependency_unavailable'})
+ saved=true
+ await expect(f.service.execute('team.app.send',command)).resolves.toMatchObject({message:{state:'published',metadataSaved:true}})
+ const sends=f.requests.filter(v=>v.path.endsWith('/messages/send'))
+ expect(sends).toHaveLength(2);expect(sends[0]!.body).toEqual(sends[1]!.body)
 })

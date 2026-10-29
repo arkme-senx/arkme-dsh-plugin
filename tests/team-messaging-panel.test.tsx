@@ -1250,4 +1250,42 @@ describe('Team send UI recovery', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('private-device')
   })
 
+  it('does not reload private snapshots from focus online or retry while hidden',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'original preview'},media:[]}
+    const value={schemaVersion:1,version:1,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'private-device'}}}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?value:[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const reads=()=>mocks.call.mock.calls.filter(([op])=>op==='team.app.snapshot.read').length
+    const before=reads()
+    const visibility=vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden')
+    await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
+    await act(async()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'))})
+    await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onRetry())
+    expect(reads()).toBe(before)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('private-device')
+    visibility.mockReturnValue('visible')
+    await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
+    expect(reads()).toBe(before+1)
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail.captureContext.clientName).toBe('private-device')
+  })
+  it('preserves the original snapshot message preview during loading and failure',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'original message preview'},media:[]}
+    let reject!:(reason:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise((_,fail)=>reject=fail):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).findByType(ArkmeRichText).props.text).toBe('original message preview')
+    await act(async()=>reject(new Error('temporary read failure')))
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).findByType(ArkmeRichText).props.text).toBe('original message preview')
+  })
+
+  it('discards a private response if visibility changed before the lifecycle event',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'body'},media:[]}
+    let finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise(resolve=>finish=resolve):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden')
+    await act(async()=>finish({schemaVersion:1,detail:{captureContext:{clientName:'private-hidden-device'}}}))
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail).toBeUndefined()
+  })
+
 })
