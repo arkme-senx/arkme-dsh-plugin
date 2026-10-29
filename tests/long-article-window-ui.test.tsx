@@ -171,7 +171,8 @@ it('the original native editor retains its scoped team draft and sends that expl
  const representation={teamRef:'sealed-team',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
  const nativeTarget={accountKey:'prod:7',sourceKey:'chat:A',sourceRef:'chat',displayName:'产品群 · 我 · 团队',composition:{draftScope:'team',representation}}
  const published=vi.fn(async()=>true)
- mocks.call.mockImplementation(async(op:string,params:any)=>op==='auth.status'?{status:'authenticated',userId:7,environment:'prod'}:op==='provider.capabilities'?{features:{markdownLongArticles:false}}:op==='source.send-rich'?{sourceRef:'chat',itemUid:params.recordUid,status:1,localState:'synced'}:undefined)
+ const accepted={itemUid:'accepted-article',senderName:'我',isMe:true,sendAtMillis:1,status:1,representation:{...representation,name:'团队',jotmoId:'team_7'}}
+ mocks.call.mockImplementation(async(op:string,params:any)=>op==='auth.status'?{status:'authenticated',userId:7,environment:'prod'}:op==='provider.capabilities'?{features:{markdownLongArticles:false}}:op==='source.send-rich'?{sourceRef:'chat',itemUid:accepted.itemUid,status:1,sequence:9,localState:'synced',messageActionRef:'accepted-action'}:op==='source.long-article.detail'?{sourceRef:'chat',...accepted,title:'标题',textContent:'正文',actionItem:accepted}:undefined)
  vi.stubGlobal('document',{title:''})
  vi.stubGlobal('arkmeLongArticle',{version:3,context:async()=>nativeTarget,active:async()=>true,onInvalidated:()=>()=>{},onClose:mode.subscribeClose,cancelClose,close:vi.fn(),published})
  await act(async()=>{renderer=create(<ArkmeLongArticleWindow/>)})
@@ -181,5 +182,6 @@ it('the original native editor retains its scoped team draft and sends that expl
  await act(async()=>button('发送').props.onClick())
  expect(mocks.call).toHaveBeenCalledWith('source.send-rich',expect.objectContaining({sourceRef:'chat',representation,sendAtMillis:expect.any(Number)}))
  expect(mocks.call).toHaveBeenCalledWith('source.long-article.draft.delete',expect.objectContaining({sourceRef:'chat',draftScope:'team'}))
- expect(published).toHaveBeenCalledWith(expect.objectContaining({itemUid:expect.any(String)}))
+ expect(mocks.call).toHaveBeenCalledWith('source.long-article.detail',expect.objectContaining({messageActionRef:'accepted-action'}))
+ expect(published).toHaveBeenCalledWith(expect.objectContaining({itemUid:accepted.itemUid,representation:accepted.representation,sequence:9,messageActionRef:'accepted-action'}))
 })
