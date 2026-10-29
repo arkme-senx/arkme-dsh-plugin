@@ -21,9 +21,6 @@ export function TeamOutboundMount({ accountKey, active }: { accountKey: string; 
   useEffect(() => {
     setRequest(undefined)
     if (!active) return
-    try { const value=JSON.parse(localStorage.getItem(`arkme.team.outbound:${accountKey}`)??'null') as TeamOutboundIntent|null
-      if(value?.accountKey===accountKey && value.person && value.requestUid && value.teamJotmoId)setRequest({intent:value,revision:++sequence.current})
-    } catch { /* Invalid local presentation cannot authorize an opening. */ }
     return subscribeTeamOutbound(intent => {
       if (intent.accountKey === accountKey) setRequest({ intent, revision: ++sequence.current })
     })
@@ -43,8 +40,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
   const [query, setQuery] = useState(''), [lookup, setLookup] = useState(false), [lookupError, setLookupError] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const requests = useRef(new Set<AbortController>()), contactRequest = useRef<AbortController>(), lookupRequest = useRef<AbortController>()
-  const attemptKey=`arkme.team.outbound:${intent.accountKey}`
-  const opening = useRef(false), requestUid = useRef(intent.requestUid ?? ''), dialog = useRef<HTMLDivElement>(null)
+  const opening = useRef(false), requestUid = useRef(''), dialog = useRef<HTMLDivElement>(null)
   const mounted = useRef(true)
   const team = teams.find(value => value.jotmoId === teamId)
   const controller = () => { const c = new AbortController(); requests.current.add(c); return c }
@@ -106,14 +102,12 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
     const c = controller()
     requestUid.current ||= crypto.randomUUID()
     try {
-      localStorage.setItem(attemptKey,JSON.stringify({...intent,teamJotmoId:team.jotmoId,person,requestUid:requestUid.current}))
       const result = await callArkme<TeamOutboundOpenResult>('team.app.outbound.open', {
         expectedAccountKey: intent.accountKey, teamRef: team.teamRef, recipient: person.recipient, requestUid: requestUid.current,
       }, c.signal)
       if (c.signal.aborted || !mounted.current) return
       if (result.state !== 'ready' || !result.conversation?.ref || result.conversation.side !== 'team'
         || result.conversation.channel.jotmoId !== team.jotmoId) throw new Error(tr('团队会话返回异常，请重试'))
-      localStorage.removeItem(attemptKey)
       invalidateTeamMessages(intent.accountKey)
       onClose()
       openTeamMessages({ kind: 'conversation', conversation: result.conversation })

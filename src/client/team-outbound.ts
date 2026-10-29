@@ -6,7 +6,6 @@ export interface TeamOutboundPerson {
   avatarRef?: string | undefined
 }
 export interface TeamOutboundIntent {
- requestUid?: string
   accountKey: string
   /** Stable public team identity, since encrypted team references rotate. */
   teamJotmoId?: string | undefined

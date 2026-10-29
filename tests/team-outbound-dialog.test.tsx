@@ -144,3 +144,53 @@ it('adds a separate team action to the shared avatar card without triggering per
   await act(async () => root.render(<ArkmeMemberProfileCard member={{ displayName: '本人' }} hideSend busy={false} onClose={close} onSend={personal} onContactAsTeam={team} />))
   expect(document.body.textContent).not.toContain('以团队联系')
 })
+
+
+it('opens only on explicit intent even when an old browser attempt exists', async () => {
+  localStorage.setItem(`arkme.team.outbound:${intent.accountKey}`, JSON.stringify({ ...intent, teamJotmoId: 'team_a', requestUid: 'old-attempt' }))
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(call).not.toHaveBeenCalled()
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active={false} />))
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  const selected = { ...intent, person: { displayName: '当前选择客户', recipient: { kind: 'contact-lookup' as const, contactRef: 'current-selection' } } }
+  await act(async () => openTeamOutbound(selected))
+  expect(document.body.textContent).toContain('当前选择客户')
+  expect(document.body.textContent).not.toContain('客户备注')
+  expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams'])
+})
+
+it('opens through the Host when browser attempt storage is unavailable', async () => {
+  const conversation = { ref: 'real-ref', key: 'real-key', side: 'team', channel: { jotmoId: 'team_a' } }
+  await render()
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+  call.mockResolvedValueOnce({ state: 'ready', conversation })
+  await click('开始团队私信')
+  expect(call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')).toHaveLength(1)
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
+})
+
+it('dismisses an uncertain opening until the user enters again and retries the selected target', async () => {
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  await act(async () => openTeamOutbound(intent))
+  const wait = deferred(), conversation = { ref: 'same-cloud-conversation', key: 'same-cloud-key', side: 'team', channel: { jotmoId: 'team_a' } }
+  call.mockImplementationOnce(() => wait.promise)
+  await click('开始团队私信')
+  const first = call.mock.calls.at(-1)!
+  await click('关闭')
+  expect(first[2].aborted).toBe(true)
+  await act(async () => root.render(<TeamOutboundMount key="reloaded" accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => wait.resolve({ state: 'ready', conversation }))
+  expect(navigate).not.toHaveBeenCalled()
+  expect(call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')).toHaveLength(1)
+  await act(async () => openTeamOutbound(intent))
+  call.mockResolvedValueOnce({ state: 'ready', conversation })
+  await click('开始团队私信')
+  const opens = call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')
+  expect(opens).toHaveLength(2)
+  expect(opens[1]![1].recipient).toEqual(first[1].recipient)
+  expect(opens[1]![1].requestUid).not.toBe(first[1].requestUid)
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
+})
