@@ -454,6 +454,23 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
   })
 
+  it('hides an invalidated reedit source header while retaining the editable input', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'编辑源旧正文',template_kind:1},media:[]}
+    let recalled=false
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.preflight') {if(recalled)throw new Error('message_recalled');return [mine]}
+      if(op==='team.app.timeline')return {conversation,messages:recalled?[{...mine,state:'recalled',revision:2}]:[mine],hasMore:false,beforeSeq:0}
+      return []
+    })
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onEdit())
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('我的独立修改'))
+    recalled=true
+    await act(async()=>{invalidateTeamMessages('test:11');await tick()})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('我的独立修改')
+    expect(renderer!.root.findAll(node=>node.props.mode==='reedit'&&node.props.text==='编辑源旧正文')).toHaveLength(0)
+  })
+
   it('removes cached material immediately when recall proves conversation access was revoked', async () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤权前材料',template_kind:1},media:[]}
     const lost = vi.fn()

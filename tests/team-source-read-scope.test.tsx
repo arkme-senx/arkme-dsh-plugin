@@ -22,5 +22,8 @@ it('hides a frozen source until read, hides it immediately on a changed hint, an
  await act(async()=>pending[2]!.reject(new Error('message_recalled')))
  await act(async()=>pending[1]!.resolve([]))
  expect(view!.toJSON()).toMatchObject({children:['unavailable']})
+ await act(async()=>window.dispatchEvent(new Event('online')))
+ await act(async()=>pending.at(-1)!.resolve([]))
+ expect(view!.toJSON()).toMatchObject({children:['frozen source']})
  expect(target).toEqual({text:'frozen source',version:3})
 })

@@ -22,7 +22,9 @@ export function TeamSourceReadScope({ accountKey, conversationRef, messageRef, v
     }
     const stop = subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey && !receiptOnly) validate() })
     validate()
-    return () => { controller.abort(); stop() }
+    window.addEventListener('online', validate)
+    window.addEventListener('focus', validate)
+    return () => { controller.abort(); stop(); window.removeEventListener('online',validate); window.removeEventListener('focus',validate) }
   }, [identity])
   return children(authorized === identity)
 }
