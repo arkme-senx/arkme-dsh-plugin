@@ -1,7 +1,7 @@
 import { AnalysisModelDialog } from './AnalysisModelDialog.js'
 import type { DayReviewModels } from '../calendar-day-review.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
+import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewDetails, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
 import type { DayReviewOpenSource } from '../services/calendar-day-review-service.js'
 import { callArkme } from './api.js'
 import { ArkmeClientError } from '../sdk/index.js'
@@ -264,14 +264,14 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       {result.promptSnapshot && !prompts.block && (prompts.draft.saved || prompts.support?.defaults) && !sameReviewPrompts(prompts.draft.saved ?? prompts.support?.defaults, result.promptSnapshot) && <p className="day-review-status">{tr('提示词已修改，重新生成后生效')}</p>}
       <details className="day-review-coverage"><summary>{tr('使用的资料')} · {result.sourceKinds.map(kind => tr(DAY_REVIEW_LABELS[kind])).join('、')}
         {result.coverage.some(x => x.status === 'partial' || x.status === 'unavailable') && <span> · {tr('未包含全部资料')}</span>}</summary>
-        {result.coverage.map(item => <p key={item.kind}>{tr(DAY_REVIEW_LABELS[item.kind])} · {tr(coverageLabels[item.status])} · {item.count} {tr('条')}{item.note ? ` · ${item.note}` : ''}</p>)}
+        {result.coverage.map(item => <p key={item.kind}>{tr(DAY_REVIEW_LABELS[item.kind])} · {tr(coverageLabels[item.status])} · {item.count} {tr('条')}{item.note ? ` · ${item.note}` : ''}{item.details && <span> · {tr('正文')} {item.details.textCount} · {tr('媒体事件')} {item.details.mediaCount} · {tr('未纳入')} {item.details.skippedCount}</span>}</p>)}
       </details>
       {sourceError && <p role="alert" className="day-review-error">{sourceError}</p>}
       {view === 'summary' ? <div className="day-review-points">{result.summary.map((point, i) => <article key={`${result.id}:${i}`}>
-        <p>{point.text}</p>{citations(point.sourceRefs)}</article>)}{!result.summary.length && <p className="day-review-status">{tr('所选资料中没有可归纳的内容')}</p>}</div>
+        <p>{point.text}</p><ReviewDetails details={point.details} />{citations(point.sourceRefs)}</article>)}{!result.summary.length && <p className="day-review-status">{tr('所选资料中没有可归纳的内容')}</p>}</div>
         : <div className="day-review-events">{result.timeline.map((event, i) => <article key={`${result.id}:${i}`}>
           <time>{time(event.startAtMillis)}{event.startAtMillis !== null && event.endAtMillis !== null && event.endAtMillis > event.startAtMillis && <>–{time(event.endAtMillis)}</>}</time>
-          <div><h3>{event.title}</h3><p>{event.text}</p>{citations(event.sourceRefs)}</div>
+          <div><h3>{event.title}</h3><p>{event.text}</p><ReviewDetails details={event.details} />{citations(event.sourceRefs)}</div>
         </article>)}{!result.timeline.length && <p className="day-review-status">{tr('所选资料中没有可确定时间的事件')}</p>}</div>}
     </>}
     {state?.supported && !result && !active && !state.job && !selectedVersion && <div className="day-review-empty"><strong>{tr('把这一天串起来')}</strong>
@@ -285,4 +285,13 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
           durationSeconds: source.detail.durationSeconds, acceptedAtMillis: source.detail.acceptedAtMillis, summaryPreview: source.detail.summaryText ?? '' }} /></ArkmeDetailShell>}
     </div>}
   </div>
+}
+
+function ReviewDetails({ details: d }: { details: DayReviewDetails | undefined }) {
+  if (!d) return null
+  const fields = [[tr('场景'), d.scene], [tr('参与者'), d.roles.join('、')], [tr('事项'), d.events.join('；')], [tr('心情'), d.mood], [tr('待办'), d.todos.join('；')]]
+  return <details><summary>{tr('详情')}</summary><dl>{fields.filter(([, v]) => v).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {d.quotes.map((quote, i) => <blockquote key={i}>{quote}</blockquote>)}
+    {d.otherInfo.map((item, i) => <p key={i}>{item.label}：{item.value}</p>)}
+  </details>
 }

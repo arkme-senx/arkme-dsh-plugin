@@ -1,3 +1,5 @@
+export type { ArkmeRecordingPlayback } from '../types.js'
+export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -42,8 +44,8 @@ import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage,
 export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
-import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
-export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
 import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
@@ -750,6 +752,18 @@ export class ArkmeSdk {
   async recordingSpeakerCandidates(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[]> {
     await this.requireSpeakerPresence(signal)
     return await this.call('recordings.speaker.options', {}, signal)
+  }
+
+  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingPlayback> {
+    return this.call('recordings.playback.open', { itemRef }, signal)
+  }
+
+  async recordingSpeakerEvidenceQuery(query: import('../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../recording-evidence-contract.js').RecordingEvidenceResult> {
+    return this.call('recordings.speaker.evidence.query', { ...query }, signal)
+  }
+
+  async previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionPreview> {
+    return this.call('recordings.speaker.correction.preview', { ...input }, signal)
   }
 
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
