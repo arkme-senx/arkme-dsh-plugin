@@ -31,6 +31,7 @@ export function TeamMessageContent({ message, conversationRef, presentation, onO
   if (snapshot.current.identity !== identity) snapshot.current = { identity, media: message.media, localMarkRef: message.localMarkRef }
   const urls = new Map(snapshot.current.media.map(media => [media.ref, media.url]))
   const item = teamMessagePresentation({ ...message, media: snapshot.current.media })
+  if (message.historyPreview) return <div><div style={{whiteSpace:'pre-wrap'}}>{message.content?.title}{message.content?.title ? '\n' : ''}{message.content?.text_content}</div>{message.historyMedia?.map((m,i)=><div key={i}>{m.name || m.kind}</div>)}</div>
   return <ArkmeMediaAccessContext.Provider value={teamMessageMediaAccess(message,urls,conversationRef,conversationKey)}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
       selectionTarget={!readOnly && conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'

@@ -49,9 +49,10 @@ it('shows own profile without a private-chat send button and supports own record
   await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
   expect(document.querySelector('[role="menu"]')?.textContent).toContain('看我的快记')
 })
-it('filters by stable identity even when different colleagues have the same nickname',async()=>{
-  call.mockResolvedValue({conversation,messages:[message('mine'),message('other',{...person,personKey:'other'}),{...message('external'),side:'external',sender:{nickname:'访客'}}],hasMore:false,beforeSeq:0})
+it('asks the server to filter by sealed identity, never by an editable display name',async()=>{
+  call.mockResolvedValue({state:'ready',messages:[message('mine')],words:[],days:[],participants:[],hasMore:false})
   await act(async()=>root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" person={{...person,nickname:'我的备注'}} onClose={onClose} onLocate={onLocate}/>))
+  expect(call).toHaveBeenCalledWith('team.app.history',expect.objectContaining({action:'query',options:expect.objectContaining({personRef:'person-ref',personMode:'owner'})}),expect.any(AbortSignal))
   expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
   expect(host.textContent).toContain('我的备注的快记');expect(host.textContent).not.toContain('正文 other')
 })
