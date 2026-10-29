@@ -1288,7 +1288,7 @@ it.each([false,true])('requires saved metadata on published send and accepted er
  const metadata={record_started_at:1000,send_at:1000,capture_context:{schema_version:1,captured_at:1000,client_name:'private-original',device_state:'recorded',location_state:'permission_denied'}}
  const {metadataRef}=await f.service.execute('team.app.snapshot.seal',{conversationRef,operationUid,kind:'send',metadata}) as {metadataRef:string}
  const command={conversationRef,clientUid:operationUid,metadataRef,content:{template_kind:1,text_content:'frozen'}}
- await expect(f.service.execute('team.app.send',command)).rejects.toMatchObject({code:'team-dependency_unavailable'})
+ await expect(f.service.execute('team.app.send',command)).rejects.toMatchObject({code:'team-dependency_unavailable',writeOutcomeUnknown:true})
  saved=true
  await expect(f.service.execute('team.app.send',command)).resolves.toMatchObject({message:{state:'published',metadataSaved:true}})
  const sends=f.requests.filter(v=>v.path.endsWith('/messages/send'))

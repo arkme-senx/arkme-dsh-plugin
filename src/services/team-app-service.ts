@@ -67,7 +67,7 @@ const reasons: Record<string, string> = {
 // Publication and frozen-capture persistence are separate acknowledgements.
 function requireFrozenMetadataSaved(data: Record<string, unknown>, required: boolean): void {
   if (required && data.state === 'published' && data.metadata_saved !== true) {
-    throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503)
+    throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503, {writeOutcomeUnknown:true})
   }
 }
 
