@@ -53,7 +53,7 @@ try{
  assert.equal((await invoke('arkme_team_public_card',{jotmo_id:'identity_team'})).isError,false)
  assert.equal((await invoke('arkme_group_identities',{source_ref:'forged'})).isError,true)
  await ctx.sessions.flush(agent.session)
- browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'});page=await browser.newPage({viewport:{width:1200,height:850}})
+ browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'});page=await browser.newPage({locale:'zh-CN',viewport:{width:1200,height:850}})
  const url=ctx.get('webServer').getOrigin();await page.goto(ctx.get('connection').authenticatedUrl(url))
  const consumer=join(profile,'group identity consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}))
  await copyFile(join(repo,'tests/consumers/team-group-identity/consumer.ts'),join(consumer,'consumer.ts'))
