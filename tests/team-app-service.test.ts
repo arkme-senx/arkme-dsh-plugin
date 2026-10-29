@@ -229,7 +229,7 @@ it.each([
   [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
   [undefined, 'unknown'], [null, 'unknown'], [99, 'unknown'],
 ])('projects current visitor member_type %s consistently across directory and timeline', async (raw, expected) => {
-  const visitor = { nickname: '访客', ...(raw === undefined ? {} : { member_type: raw }) }
+  const visitor = { nickname: '访客', kind:'person',account_state:'active', ...(raw === undefined ? {} : { member_type: raw }) }
   const value = { ...conversation, side: 'team', visitor }
   const f = fixture(path => path.endsWith('/conversations/list') ? { items: [value], has_more: false }
     : { channel, conversation: value, messages: [{ ...message, sender: { ...message.sender, member_type: 'svip' } }] })
@@ -244,12 +244,12 @@ it.each([
 })
 
 it('clears a former membership when a fresh response is free or unavailable', async () => {
-  let visitor: Record<string, unknown> = { nickname: '访客', member_type: 'svip' }
+  let visitor: Record<string, unknown> = { nickname: '访客',kind:'person',account_state:'active', member_type: 'svip' }
   const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', visitor }, messages: [] }))
   const opened = await open(f)
   expect(opened.conversation!.visitor?.memberType).toBe('svip')
   for (const raw of ['free', undefined]) {
-    visitor = { nickname: '访客', member_type: raw }
+    visitor = { nickname: '访客',kind:'person',account_state:'active', member_type: raw }
     const value = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
     expect(value.conversation.visitor?.memberType).toBe(raw ?? 'unknown')
   }
@@ -866,7 +866,7 @@ it('projects scoped conversation cursor metadata without fetching bodies and rej
 
 describe('Team visitor private chat authority', () => {
   it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
-    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客' } }, messages: [] }))
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客',kind:'person',account_state:'active' } }, messages: [] }))
     const opened = await open(f)
     const result = await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', peerUserId: 999, displayName: '伪造昵称' })
     expect(result).toEqual({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })
@@ -1302,4 +1302,21 @@ it.each([false,true])('requires saved metadata on published send and accepted er
  await expect(f.service.execute('team.app.send',command)).resolves.toMatchObject({message:{state:'published',metadataSaved:true}})
  const sends=f.requests.filter(v=>v.path.endsWith('/messages/send'))
  expect(sends).toHaveLength(2);expect(sends[0]!.body).toEqual(sends[1]!.body)
+})
+
+
+it.each([undefined, 'unknown', 'bot', 'system', 'person'])('does not infer visitor identity from timeline messages for unavailable kind %s', async kind => {
+ const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:undefined,visitor:{nickname:'同名客户',kind,account_state:'active',member_type:'svip'}},messages:[{...message,side:'external',actor_user_id:200}]}))
+ const opened=await open(f)
+ const value=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+ expect(value.conversation.visitor).toMatchObject({nickname:'同名客户',memberType:'unknown'})
+ expect(value.conversation.visitor?.personRef).toBeUndefined()
+ expect(value.messages[0]!.sender.personRef).toBeTruthy()
+})
+it.each(['unknown','cancelled'])('does not expose current visitor actions or membership for account state %s',async account_state=>{
+ const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:'200',visitor:{kind:'person',account_state,member_type:'svip'}},messages:[]}))
+ const opened=await open(f)
+ expect(opened.conversation!.visitor?.memberType).toBe('unknown')
+ expect(opened.conversation!.visitor?.personRef).toBeUndefined()
+ await expect(f.service.execute('team.app.visitor.private.open',{conversationRef:opened.conversation!.ref})).rejects.toThrow()
 })

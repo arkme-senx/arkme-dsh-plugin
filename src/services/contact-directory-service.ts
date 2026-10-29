@@ -1,3 +1,4 @@
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 
 import { contactDirectoryLetter } from '../contact-directory-presentation.js'
@@ -22,7 +23,7 @@ import { DirectorySnapshotStore } from './directory-snapshot.js'
 
 interface ContactDirectoryRefEntry {
   viewerUserId: number
-  targetUserId: number
+  targetUserId: RecordOwnerId
   chatSessionUid?: string
   displayNameSnapshot?: string
   displayName: string
@@ -35,7 +36,7 @@ interface ContactDirectoryRefEntry {
 }
 
 interface ContactDirectoryDescriptor {
-  targetUserId: number
+  targetUserId: RecordOwnerId
   chatSessionUid?: string
   displayNameSnapshot?: string
   remark: string
@@ -96,7 +97,7 @@ export class ContactDirectoryService {
   ): Promise<Array<{ userId: number; label: string; avatarRef?: string; remark?: string; aliases?: string[] }>> {
     const snapshot = await this.contactSnapshot(session, signal === undefined ? {} : { signal })
     if (snapshot.value.coverage !== 'complete') throw new ArkmePluginError('directory-contact-incomplete', '联系人尚未加载完整，请稍后重试', true, 503)
-    const descriptors = snapshot.value.descriptors
+    const descriptors = snapshot.value.descriptors.filter((value): value is ContactDirectoryDescriptor & {targetUserId:number} => typeof value.targetUserId === 'number')
     const userIds = [session.userId, ...descriptors.map(descriptor => descriptor.targetUserId)]
     const profiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
     const candidates: Array<{ userId: number; label: string; avatarRef?: string; remark?: string; aliases?: string[] }> = []
@@ -112,7 +113,7 @@ export class ContactDirectoryService {
       const identity = await this.contactIdentity(
         descriptor.targetUserId,
         descriptor.remark,
-        profiles.get(descriptor.targetUserId),
+        profiles.get(typeof descriptor.targetUserId === 'number' ? descriptor.targetUserId : 0),
         session,
         descriptor.displayNameSnapshot,
       )
@@ -120,7 +121,7 @@ export class ContactDirectoryService {
         userId: descriptor.targetUserId,
         label: identity.displayName,
         ...(descriptor.remark?.trim() ? { remark: descriptor.remark.trim() } : {}),
-        aliases: [...new Set([profiles.get(descriptor.targetUserId)?.nickname, descriptor.displayNameSnapshot].filter((name): name is string => !!name && name !== identity.displayName))],
+        aliases: [...new Set([profiles.get(typeof descriptor.targetUserId === 'number' ? descriptor.targetUserId : 0)?.nickname, descriptor.displayNameSnapshot].filter((name): name is string => !!name && name !== identity.displayName))],
         ...(identity.avatarRef === undefined ? {} : { avatarRef: identity.avatarRef }),
       })
     }
@@ -167,8 +168,8 @@ export class ContactDirectoryService {
   async contactProfile(contactRef: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> {
     const { session, entry } = await this.resolveContactRef(contactRef)
     const publicProfile = (await this.profile.publicProfileSummariesByUserIds(
-      [entry.targetUserId], session, signal,
-    )).get(entry.targetUserId)
+      typeof entry.targetUserId === 'number' ? [entry.targetUserId] : [], session, signal,
+    )).get(typeof entry.targetUserId === 'number' ? entry.targetUserId : 0)
     const identity = await this.contactIdentity(
       entry.targetUserId, entry.remark, publicProfile, session, entry.displayNameSnapshot,
     )
@@ -182,7 +183,7 @@ export class ContactDirectoryService {
     this.contactRefs.set(contactRef.trim(), updated)
     return {
       contactRef: contactRef.trim(),
-      worldUserId: entry.targetUserId,
+      ...(typeof entry.targetUserId === 'number' ? {worldUserId: entry.targetUserId} : {}),
       displayName: updated.displayName,
       nickname: updated.nickname,
       remark: updated.remark,
@@ -212,7 +213,7 @@ export class ContactDirectoryService {
     this.snapshots.clear()
     const contact = objectValue(data.contact)
     if (stringValue(contact.chat_session_uid) !== entry.chatSessionUid
-      || numberValue(contact.user_id) !== entry.targetUserId
+      || recordOwnerId(contact.user_id) !== entry.targetUserId
       || (contact.remark !== undefined && typeof contact.remark !== 'string')) {
       throw new ArkmePluginError('directory-contact-remark-response-invalid', '备注保存响应不完整，请重试', true, 502)
     }
@@ -227,7 +228,7 @@ export class ContactDirectoryService {
     const current = this.contactRefs.get(contactRef.trim()) ?? entry
     return {
       contactRef: contactRef.trim(), remark: savedRemark,
-      worldUserId: entry.targetUserId,
+      ...(typeof entry.targetUserId === 'number' ? {worldUserId: entry.targetUserId} : {}),
       displayName: savedRemark || current.nickname || current.accountName || current.displayNameSnapshot || '联系人',
       nickname: current.nickname,
       ...(current.accountName === undefined ? {} : { accountName: current.accountName }),
@@ -241,10 +242,11 @@ export class ContactDirectoryService {
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldFeedPage> {
     const { entry } = await this.resolveContactRef(contactRef)
+    if (typeof entry.targetUserId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
     return await this.world.listUserWorldFeed(entry.targetUserId, cloneWorldOptions(options))
   }
 
-  async resolveTeamRecipient(contactRef:string,signal?:AbortSignal):Promise<number> {
+  async resolveTeamRecipient(contactRef:string,signal?:AbortSignal):Promise<RecordOwnerId> {
     signal?.throwIfAborted()
     const {entry}=await this.resolveContactRef(contactRef)
     // The issued, viewer-bound selection pins this person. Contact membership
@@ -318,7 +320,7 @@ export class ContactDirectoryService {
       ...(entry.avatarRef ? { avatarRef: entry.avatarRef } : {}),
       ...(entry.avatarFallback ? { avatarFallback: entry.avatarFallback } : {}),
     }))] : []))
-    return { items, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), ...(page.coverage ? { coverage: page.coverage } : {}) }
+    return { items: items.filter((v): v is typeof v & {userId:number} => typeof v.userId === 'number'), hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), ...(page.coverage ? { coverage: page.coverage } : {}) }
   }
 
   private async listContacts(
@@ -336,7 +338,7 @@ export class ContactDirectoryService {
     const pageDescriptors = descriptors.slice(offset, offset + limit)
     let presentationDegraded = false
     const profiles = await this.profile.publicProfileSummariesByUserIds(
-      pageDescriptors.map(item => item.targetUserId), session, options.signal,
+      pageDescriptors.flatMap(item => typeof item.targetUserId === 'number' ? [item.targetUserId] : []), session, options.signal,
     ).catch(error => {
       if (!(error instanceof ArkmePluginError) || !error.retryable || error.recovery?.owner !== 'host' || options.signal?.aborted
         || !['arkme-code-1002', 'arkme-timeout', 'arkme-network-error', 'arkme-http-error'].includes(error.code)) throw error
@@ -350,7 +352,7 @@ export class ContactDirectoryService {
       const previous = [...this.contactRefs.entries()].find(([, entry]) => entry.viewerUserId === session.userId
         && entry.targetUserId === descriptor.targetUserId && entry.expiresAtMillis > Date.now())
       const identity = await this.contactIdentity(
-        descriptor.targetUserId, descriptor.remark, profiles.get(descriptor.targetUserId), session,
+        descriptor.targetUserId, descriptor.remark, profiles.get(typeof descriptor.targetUserId === 'number' ? descriptor.targetUserId : 0), session,
         descriptor.displayNameSnapshot,
       )
       // A temporary profile outage must not replace a known person's name/avatar
@@ -430,7 +432,7 @@ export class ContactDirectoryService {
     session: ArkmeSessionCredentials,
     options: { refresh?: boolean; signal?: AbortSignal },
   ): Promise<{ descriptors: ContactDirectoryDescriptor[]; coverage: 'complete' | 'partial' }> {
-    const descriptorsByUserId = new Map<number, ContactDirectoryDescriptor>()
+    const descriptorsByUserId = new Map<RecordOwnerId, ContactDirectoryDescriptor>()
     let offset = 0
     let baseComplete = false
     for (let pageIndex = 0; pageIndex < CONTACT_DIRECTORY_MAX_SOURCE_PAGES; pageIndex += 1) {
@@ -445,8 +447,8 @@ export class ContactDirectoryService {
       const rawItems = data.items
       for (const value of rawItems) {
         const raw = objectValue(value)
-        const targetUserId = numberValue(raw.user_id)
-        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId)
+        const targetUserId = recordOwnerId(raw.user_id)
+        if (!targetUserId
           || targetUserId === session.userId || descriptorsByUserId.has(targetUserId)) continue
         const chatSessionUid = stringValue(raw.chat_session_uid).trim()
         descriptorsByUserId.set(targetUserId, {
@@ -496,8 +498,8 @@ export class ContactDirectoryService {
         const chatSession = objectValue(bundle.session)
         if (numberValue(chatSession.session_kind) !== 1 || listValue(bundle.bot_participants).length > 0) continue
         const counterpart = objectValue(bundle.private_counterpart)
-        const targetUserId = numberValue(counterpart.user_id)
-        if (targetUserId <= 0 || !Number.isSafeInteger(targetUserId) || targetUserId === session.userId) continue
+        const targetUserId = recordOwnerId(counterpart.user_id)
+        if (!targetUserId || targetUserId === session.userId) continue
         const chatSessionUid = stringValue(chatSession.chat_session_uid).trim()
         const existing = descriptorsByUserId.get(targetUserId)
         if (existing !== undefined) {
@@ -562,7 +564,7 @@ export class ContactDirectoryService {
   }
 
   private async contactIdentity(
-    targetUserId: number,
+    targetUserId: RecordOwnerId,
     remark: string,
     profile: ArkmePublicProfile | undefined,
     session: ArkmeSessionCredentials,
@@ -571,7 +573,7 @@ export class ContactDirectoryService {
     const nickname = profile?.nickname?.trim() ?? ''
     const accountName = profile?.accountName?.trim() ?? ''
     const displayName = remark || nickname || accountName || displayNameSnapshot?.trim() || '联系人'
-    const avatarRef = profile?.avatarUrl === undefined
+    const avatarRef = profile?.avatarUrl === undefined || typeof targetUserId !== 'number'
       ? undefined
       : await this.profile.sealProfileImageRef(session.userId, targetUserId)
     return {

@@ -240,10 +240,12 @@ export class TeamAppService {
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
     const v = obj(raw), uid = str(v.conversation_uid), side: TeamSide = v.side === 'team' ? 'team' : 'external'
     if (!uid) throw invalid()
+    const visitor = obj(v.visitor)
+    const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
     return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
-      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor, { id: v.external_user_id, context: { conversation_uid: uid, side } }) } : {}), side,
+      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
@@ -921,10 +923,6 @@ export class TeamAppService {
             : list(obj(obj(obj(row.record).content_payload).mention_metadata).human_mentions).some(m => String(m.user_id) === String(person.user_id))))
         }
         const current = await this.conversation(data.conversation, actor)
-        const external = list(data.messages).find(v => v.side === 'external')
-        if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
-          current.visitor = await this.identity(obj(data.conversation).visitor, actor, { id: external.actor_user_id, context })
-        }
         return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
@@ -958,7 +956,7 @@ export class TeamAppService {
         const current = obj(data.conversation)
         const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        if (!peer || String(peer) === String(actor) || !this.privateChat || (typeof peer === 'string' && obj(current.visitor).kind !== 'person') || (obj(current.visitor).kind !== undefined && obj(current.visitor).kind !== 'person') || obj(current.visitor).account_state === 'cancelled') {
+        if (!peer || String(peer) === String(actor) || !this.privateChat || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
         return await this.privateChat.openPrivateChatFromUser(peer, {
