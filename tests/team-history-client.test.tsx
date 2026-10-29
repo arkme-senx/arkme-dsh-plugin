@@ -54,3 +54,12 @@ it('fails closed for a non-advancing cursor and content invalidation, including 
  await act(async()=>finish({...page(9),state:'index_preparing'}))
  expect(host.querySelector('span')).toBeNull();expect(host.textContent).toContain('团队内容已更新');expect(call).toHaveBeenCalledTimes(calls)
 })
+it('uses independent local month boundaries when DST skips midnight on the first day',()=>{
+ vi.stubEnv('TZ','America/Asuncion')
+ try{
+  const range=historyMonthWindow('2017-10')
+  expect(new Date(range.fromAt!).getHours()).toBe(1)
+  expect(range.untilAt).toBe(new Date(2017,10,1).getTime())
+  expect(new Date(range.untilAt!).getHours()).toBe(0)
+ }finally{vi.unstubAllEnvs()}
+})
