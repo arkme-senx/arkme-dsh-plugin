@@ -66,6 +66,18 @@ describe('published package contents', () => {
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
   }, packageTestTimeout)
 
+  it('bundles yazl and its checksum dependency into the Release Set plugin', () => {
+    runPnpm(['run', 'bundle'])
+
+    const libDirectory = join(projectRoot, 'lib')
+    const javascript = readdirSync(libDirectory)
+      .filter(path => path.endsWith('.js'))
+      .map(path => readFileSync(join(libDirectory, path), 'utf8'))
+      .join('\n')
+
+    expect(javascript).not.toMatch(/(?:from\s+|(?:import|require)\s*\()(["'])(?:yazl|buffer-crc32)(?:\/[^"']*)?\1/)
+  }, packageTestTimeout)
+
   it('ships browser factories without unresolved local chunk requires', () => {
     runPnpm(['run', 'bundle'])
     const libDirectory = join(projectRoot, 'lib')
