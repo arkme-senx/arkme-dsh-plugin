@@ -1,5 +1,5 @@
 import { TeamSourceReadScope } from './TeamSourceReadScope.js'
-import { mergeTeamMessages, teamMessageProjection, withoutTeamMessageMaterial } from '../team-message-projection.js'
+import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial, withoutTeamMessageMaterial } from '../team-message-projection.js'
 import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
@@ -80,7 +80,7 @@ import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
-import { openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
+import { invalidateTeamMessages, openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, type TeamDraft as Draft } from './team-message-draft.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
@@ -457,7 +457,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       const old=latest.current
       if(old){
         for(const row of old.messages) if(row.own) confirmed.current.retain(conversation.key,withoutTeamMessageMaterial(row))
-        const next={...old,messages:old.messages.map(withoutTeamMessageMaterial)};latest.current=next;setTimeline(next)
+        const next={...old,conversation:withoutTeamConversationMaterial(old.conversation),messages:old.messages.map(withoutTeamMessageMaterial)};latest.current=next;setTimeline(next)
       }
       void recover()
     } } }) }, [recover, accountKey, receiptStore])
@@ -562,7 +562,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       confirmed.current.retain(conversation.key,result.message)
       const old=latest.current
       if (old) { const next={...old,messages:mergeTeamMessages(old.messages,[result.message])};latest.current=next;setTimeline(next) }
-      setRecallTarget(undefined);onChanged();void refresh()
+      setRecallTarget(undefined);invalidateTeamMessages(accountKey);onChanged();void refresh()
     } catch(error) { if(scope===currentScope.current&&!ctrl.current.signal.aborted) { if(inaccessible(error)) revokeAccess(); setError(errorText(error)) } }
     finally {if(scope===currentScope.current)setBusy(false)}
   }
@@ -874,7 +874,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     </div>
   return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {forwardAttempt&&<TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={forwardAttempt.messages[0]?.content?.text_content??''} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}
+    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} version={forwardAttempt.messages[0].version}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       onReply={(target,quote)=>{const message=timeline?.messages.find(m=>m.key===target.item.itemUid);if(message)chooseReply(message,quote)}}

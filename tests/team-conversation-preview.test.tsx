@@ -120,3 +120,24 @@ it('suspends the underlying team conversation read intent until the preview clos
   await render(<>{pane}</>)
   expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.read')).toHaveLength(1)
 })
+
+it('withdraws preview material on a source change and cannot revive from a late old read', async () => {
+  await render()
+  const pending: Array<(value: TeamTimeline) => void> = []
+  mocks.call.mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+  const { invalidateTeamMessages } = await import('../src/client/team-messaging-events.js')
+  await act(async () => invalidateTeamMessages('preview-test'))
+  expect(document.body.textContent).not.toContain('预览正文')
+  await act(async () => invalidateTeamMessages('preview-test'))
+  const {content: _content, ...redacted} = message
+  await act(async () => pending.at(-1)!(timeline([{ ...redacted, state: 'recalled', contentStatus: 'recalled' }])))
+  await act(async () => pending[0]!(timeline()))
+  expect(document.body.textContent).not.toContain('预览正文')
+  expect(document.querySelector('[contenteditable="true"],textarea')).toBeNull()
+})
+
+it('does not reuse a frozen folder summary when the current directory has no authorized row',async()=>{
+ const group=groupTeamConversations([{...conversation,preview:{status:'available',text:'冻结目录摘要',hasMedia:false,templateKind:1}}])[0]!
+ await render(<TeamConversationPreview accountKey="preview-test" target={{kind:'folder',group}} onClose={close}/>)
+ expect(document.body.textContent).not.toContain('冻结目录摘要')
+})

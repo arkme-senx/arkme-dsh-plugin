@@ -80,6 +80,7 @@ try{
  await page.screenshot({path:join(capture,'recall-confirm.png')});await page.getByRole('button',{name:'确认撤回',exact:true}).click();
  await pane.getByText(texts.ui,{exact:true}).waitFor({state:'hidden'});await pane.getByText('你撤回了一条消息',{exact:true}).first().waitFor();
  assert.ok((await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).innerText()).includes('撤回后保留的下一条草稿'));
+ for(const text of Object.values(texts))await page.locator('.team-conversation-row').filter({hasText:text}).waitFor({state:'hidden'});
  await page.screenshot({path:join(capture,'recall-placeholder.png')});
  const final=await post('/api/v1/team/conversations/timeline/page',{conversation_uid:uid,side:'team'});for(const message of Object.values(messages))assert.equal(final.messages.find(m=>m.message_uid===message.message_uid).state,'recalled');
  assert.ok(readFileSync(log,'utf8').includes('T09_REAL_TOOL_PASSED'));

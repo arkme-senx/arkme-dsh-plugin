@@ -12,7 +12,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory } from './team-conversation-directory.js'
-import { openTeamMessages } from './team-messaging-events.js'
+import { openTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { withoutTeamConversationMaterial } from '../team-message-projection.js'
 import type { TeamEntryTarget } from './team-directory-preferences.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
@@ -21,7 +22,7 @@ const button = { border: 0, background: 'transparent', color: arkmeTheme.accent,
 export function TeamConversationPreview({ accountKey, target, onClose }: { accountKey: string; target: TeamEntryTarget; onClose(): void }) {
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
-  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? target.group : undefined
+  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? {...target.group, latest:withoutTeamConversationMaterial(target.group.latest), conversations:target.group.conversations.map(withoutTeamConversationMaterial)} : undefined
   const [chosen, setChosen] = useState<TeamConversation | undefined>(target.kind === 'conversation' ? target.conversation : undefined)
   const conversation = target.kind === 'conversation' ? target.conversation : chosen
   const [loadedConversation, setLoadedConversation] = useState<TeamConversation>()
@@ -79,19 +80,27 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
 function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation(value: TeamConversation): void }) {
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
+  const generation = useRef(0)
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
+    if (account !== accountKey || receiptOnly) return
+    ++generation.current
+    setPage(undefined)
+    setRequest(value => ({before:0, attempt:value.attempt+1}))
+  }), [accountKey])
   const body = useRef<HTMLDivElement>(null), geometry = useRef<{ height: number; top: number }>()
   useEffect(() => {
-    const controller = new AbortController()
+    const controller = new AbortController(), token = ++generation.current
     setLoading(true); setError('')
     void callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: request.before, limit: 30 }, controller.signal)
       .then(value => {
         controller.signal.throwIfAborted()
+        if (token !== generation.current) return
         if (value.hasMore && (!value.beforeSeq || request.before > 0 && value.beforeSeq >= request.before)) throw new Error('消息分页异常，请重试')
         if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
         setPage(old => ({ ...value, messages: [...new Map([...(request.before ? old?.messages ?? [] : []), ...value.messages].map(message => [message.key, message])).values()].sort((a, b) => a.seq - b.seq) }))
         onConversation(value.conversation)
-      }).catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+      }).catch(caught => { if (!controller.signal.aborted && token === generation.current) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
+      .finally(() => { if (!controller.signal.aborted && token === generation.current) setLoading(false) })
     return () => controller.abort()
   }, [accountKey, conversation.ref, request, onConversation])
   useLayoutEffect(() => {

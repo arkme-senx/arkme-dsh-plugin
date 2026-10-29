@@ -40,7 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
-import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
+import { invalidateTeamMessages, subscribeTeamMessageChanges } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
 const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn(), extensions: vi.fn() }))
@@ -439,10 +439,14 @@ describe('Team send UI recovery', () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤回目标',template_kind:1},media:[]}
     mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? {message:{...mine,state:'recalled',revision:2},changed:true} : [])
     await mount()
+    const invalidated = vi.fn()
+    const stop = subscribeTeamMessageChanges(invalidated)
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
     await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
+    expect(invalidated).toHaveBeenCalledWith('test:11',false)
+    stop()
     const shown = renderer!.root.findByType(TeamConversationMessage).props.message
     expect(shown.state).toBe('recalled')
     expect(shown.content).toBeUndefined()
