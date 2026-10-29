@@ -96,9 +96,13 @@ try{
  await page.getByRole('button',{name:'关闭预览',exact:true}).click();
  // The official Web host has no desktop shell. Supply only its existing public
  // bridge contract to exercise the real popup owner; authority stays in Team.
+ // Navigation-only fixtures are no longer needed. Playwright routing stalls
+ // about:blank popup resources even for unmatched URLs; keep native reads real.
+ await page.unroute('**/arkme-self/api');
  await page.evaluate(()=>{window.arkmeAttachmentPreview={version:1,focus(){},close(){}}});
  const [preview]=await Promise.all([page.waitForEvent('popup'),mediaBubble.getByRole('button',{name:/^预览图片 /}).click()]);
- await preview.locator('img').first().waitFor();await preview.waitForFunction(()=>Array.from(document.images).some(image=>image.naturalWidth>0));
+ await preview.bringToFront();await preview.locator('img').first().waitFor();
+ await preview.locator('img').first().evaluate(image=>Promise.race([image.decode(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('popup image decode timeout')),30000))]));
  await preview.locator('img').first().evaluate(image=>window.__t09OriginalPreviewImage=image);
  const before=calls.filter(call=>call.path.endsWith('/batch-get')).length;
  emitTeamChange('team.notification-policy.changed');emitTeamChange('team.receipt.changed');emitTeamChange('team.message.changed',{conversation_uid:uid,message_uid:messages.ui.message_uid});
@@ -113,4 +117,4 @@ try{
  assert.ok(readFileSync(log,'utf8').includes('T09_REAL_TOOL_PASSED'));
  await writeFile(join(capture,'acceptance.json'),JSON.stringify({passed:true,realTeamAndRecord:true,officialDsh:true,installedArtifact:artifact,ui:true,uiDraftPreserved:true,publicSdk:true,externalTypedConsumer:true,officialSessionTool:true,confirmationRequired:true,originalWebInlinePreview:true,desktopBridge:'contract-fixture',originalAttachmentPreview:true,unrelatedEventsPreserveImage:true,matchingRecallRevalidatesAndCloses:true},null,2));
  console.log('PASS: T09 packaged UI, public SDK and real official-session Tool recall through real Team owner');
-}catch(error){if(page){await page.screenshot({path:join(capture,'failure.png')}).catch(()=>{});await writeFile(join(capture,'failure-body.txt'),await page.locator('body').innerText()).catch(()=>{});}console.error(error);process.exitCode=1;}finally{await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await browser?.close();child?.kill('SIGTERM');for(const socket of sockets)socket.destroy();server.close();}
+}catch(error){if(page){await page.screenshot({path:join(capture,'failure.png')}).catch(()=>{});await writeFile(join(capture,'failure-body.txt'),await page.locator('body').innerText()).catch(()=>{});}for(const [i,p] of (browser?.contexts().flatMap(c=>c.pages())??[]).entries()){await writeFile(join(capture,`failure-surface-${i}.json`),JSON.stringify(await p.evaluate(()=>({href:location.href,base:document.baseURI,body:document.body.innerText,images:[...document.images].map(image=>({src:image.src,currentSrc:image.currentSrc,width:image.naturalWidth,complete:image.complete}))})),null,2)).catch(()=>{});await p.screenshot({path:join(capture,`failure-surface-${i}.png`)}).catch(()=>{});}console.error(error);process.exitCode=1;}finally{await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await browser?.close();child?.kill('SIGTERM');for(const socket of sockets)socket.destroy();server.close();}
