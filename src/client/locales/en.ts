@@ -587,6 +587,44 @@ DSH 内测群|DSH beta group
 。浏览不会自动清除数据。|. Browsing does not delete any data.
 恢复|Restore
 恢复“|Restore “
+导出全部非隐私锁定快记，包含 Markdown 正文、图片和语音附件。|Export all unlocked notes, including Markdown, images and voice attachments.
+记录顺序|Record order
+从新到旧|Newest first
+从旧到新|Oldest first
+仅查看不会消耗次数，确认导出后将使用导出额度。关闭此页面会取消正在进行的导出。|Viewing does not use your allowance. Confirming an export does. Closing this page cancels an ongoing export.
+正在生成备份，已读取 {v0} 条|Preparing backup · {v0} records read
+取消导出|Cancel export
+导出 ZIP 备份|Export ZIP backup
+下载 ZIP 备份|Download ZIP backup
+备份已生成，共 {v0} 条。|Backup ready · {v0} records.
+下载链接有效期为 1 小时，请及时保存。|The download expires in one hour. Save it now.
+备份可正常下载，但导出次数确认暂未完成，请勿重复创建备份。|The backup is available, but quota confirmation is pending. Do not create another backup.
+确认导出完整备份？|Export a complete backup?
+将导出全部非隐私锁定快记及其附件，并使用导出额度。|Export all unlocked notes and their attachments using your export allowance.
+确认导出|Confirm export
+正在导出…|Exporting…
+导出已取消，未完成的备份已清理。|Export cancelled. The incomplete backup is being removed.
+当前暂不满足导出条件，请稍后重试。|Export is currently unavailable. Try again later.
+将快记与附件保存到本地，随时查看。|Keep a local copy of your notes and attachments.
+刷新导出信息|Refresh export information
+备份内容|Backup contents
+条快记|Notes
+段语音|Voice recordings
+导出范围|Export scope
+全部快记|All notes
+不含隐私锁定内容|Excludes privacy-locked content
+备份格式|Backup format
+附件|Attachments
+正在生成备份|Preparing your backup
+已读取 {v0} 条|{v0} records read
+导出进度|Export progress
+请保持此页面打开|Keep this page open
+备份已就绪|Your backup is ready
+共 {v0} 条快记|{v0} notes
+下载链接 1 小时内有效|Download available for one hour
+下载备份|Download backup
+导出备份|Export backup
+确认导出后将使用导出额度|Confirming an export uses your allowance
 完整备份|Full backup
 条快记 ·|notes ·
 个语音 ·|audio clips ·
@@ -1245,6 +1283,9 @@ TA 公开分享的内容|Publicly shared content
 绑定中…|Connecting…
 通用|General
 隐私与权限|Privacy & permissions
+表态记录隐私锁|Reaction history privacy lock
+开启后，在数据管理、时间轴和 AI 查询中隐藏你的表态操作记录，不影响消息上的表态。|Hide your reaction history from data management, the timeline and AI queries. Reactions on messages are unchanged.
+设置已在其他设备更新，请重新操作|This setting changed on another device. Please try again.
 用户协议|Terms of service
 隐私条款|Privacy policy
 个人资料|Profile
@@ -1252,6 +1293,9 @@ TA 公开分享的内容|Publicly shared content
 免费版|Free
 读取中|Loading
 读取中…|Loading…
+正在保存…|Saving…
+读取失败|Could not load
+保存失败|Could not save
 待确认|Unconfirmed
 正在读取会员状态|Loading membership
 会员状态暂时无法确认，点击重试|Membership unavailable. Click to retry.

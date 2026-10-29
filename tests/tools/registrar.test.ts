@@ -254,6 +254,7 @@ describe('registerArkmeTools', () => {
 
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
+      'arkme_records_export_preflight', 'arkme_records_export',
       'arkme_team_outbound_open','arkme_group_identities', 'arkme_team_public_card',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',

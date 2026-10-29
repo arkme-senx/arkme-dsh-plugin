@@ -123,7 +123,8 @@
     "@sentry/node": "10.73.0",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
-    "@dnd-kit/utilities": "3.2.2"
+    "@dnd-kit/utilities": "3.2.2",
+    "yazl": "3.3.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
@@ -262,7 +263,8 @@
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-math": "^3.0.0",
     "micromark-extension-gfm": "^3.0.0",
-    "micromark-util-sanitize-uri": "^2.0.1"
+    "micromark-util-sanitize-uri": "^2.0.1",
+    "@types/yazl": "3.3.0"
   },
   "packageManager": "pnpm@11.7.0",
   "engines": {
