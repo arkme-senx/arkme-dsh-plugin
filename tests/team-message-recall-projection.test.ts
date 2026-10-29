@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { mergeTeamMessages, teamMessageProjection } from '../src/team-message-projection.js'
+import { mergeTeamMessages, teamMessageProjection, withoutTeamMessageMaterial } from '../src/team-message-projection.js'
 import { ConfirmedSendRetentionOwner } from '../src/client/confirmed-send-retention.js'
 import type { TeamMessage } from '../src/team-app-contract.js'
 
@@ -19,4 +19,15 @@ it('the existing bounded retention owner preserves terminal knowledge across win
  owner.retain('c',original,3)
  expect(owner.merge('c',[original],4)).toEqual([recalled])
  expect(owner.merge('other',[original],4)).toEqual([original])
+})
+
+
+it('a draft-supplemented ACK cannot restore invalidated material, while a versioned read can', () => {
+  const original = {key:'source',ref:'source',seq:1,revision:1,state:'published',side:'team',sender:{nickname:'我'},own:true,createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'old',template_kind:1},media:[]} as import('../src/team-app-contract.js').TeamMessage
+  const invalidated = withoutTeamMessageMaterial(original)
+  const late = {...original,revision:2,version:0}
+  const merged = mergeTeamMessages([invalidated],[late])[0]!
+  expect(merged.revision).toBe(2)
+  expect(merged.content).toBeUndefined()
+  expect(mergeTeamMessages([merged],[{...original,revision:2}])[0]!.content?.text_content).toBe('old')
 })
