@@ -1,5 +1,5 @@
 import type {TeamMemberAdditionAttempt, TeamMemberAdditionRecovery, TeamMemberAddResult} from '../team-member-add-contract.js'
-import {ArkmePluginError, ArkmeUpstreamResponseError, objectValue as obj} from './service.js'
+import {ArkmePluginError, objectValue as obj} from './service.js'
 
 const invalid = () => new ArkmePluginError('team-member-result-invalid', '添加结果不完整，请核对原批次', true, 502)
 const uidValid = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(v)
@@ -49,13 +49,9 @@ export class TeamMemberAddition {
     return {state: 'acknowledged' as const}
   }
   private async send(attempt: TeamMemberAdditionAttempt) {
-    try {
-      return await this.receipt(attempt, await this.p.post('members/add', {team_id: this.p.teamId, user_ids: attempt.userIds, request_uid: attempt.requestUid}))
-    } catch (error) {
-      // Only an explicit pre-commit business rejection permits a new intent.
-      if (error instanceof ArkmeUpstreamResponseError && ['invalid_request', 'member_management_forbidden'].includes(String(obj(error.responseData).reason))) await this.p.journal({ack: attempt.requestUid})
-      throw error
-    }
+    // A rejected duplicate cannot prove that another in-flight copy did not
+    // commit. Only a verified completed receipt may release the durable intent.
+    return this.receipt(attempt, await this.p.post('members/add', {team_id: this.p.teamId, user_ids: attempt.userIds, request_uid: attempt.requestUid}))
   }
   async retry() {
     const attempt = await this.pending()
