@@ -1012,6 +1012,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async recordingSpeechCreate(input: unknown, signal?: AbortSignal) { return this.speechStatistics.create(input, signal) }
   async recordingSpeechOccurrences(input: unknown, signal?: AbortSignal) { return this.speechStatistics.occurrences(input, signal) }
   async recordingSpeechSource(input: unknown, signal?: AbortSignal) { return this.speechStatistics.source(input, signal) }
+  async dayReviewConfirmationAccount(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.confirmationAccount(input, signal) }
   async dayReviewState(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.state(input, signal) }
   async createDayReview(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.create(input, signal) }
   async dayReviewResult(input: unknown, signal?: AbortSignal) { return this.calendarDayReview.result(input, signal) }
@@ -1227,6 +1228,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         userProfile: true,
         accountSettings: true,
         calendarDayReview: true,
+        calendarDayReviewHumanConfirmation: true,
         analyticsV1: true,
 arkoImagesV1:true,
         aiPoints: true,

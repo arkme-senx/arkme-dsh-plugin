@@ -33,7 +33,8 @@ import type { ArkmeArkoAskOptions, ArkmeArkoPendingTurn } from '../arko-turn-con
 import type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoHistoryPage,ArkmeArkoRunStatus } from '../types.js'
 export type { ArkmeArkoAskOptions,ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
 export type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoModelOption,ArkmeArkoImageInput,ArkmeArkoHistoryPage,ArkmeArkoHistoryItem,ArkmeArkoRunStatus } from '../types.js'
-export type { DayReviewModels } from '../calendar-day-review.js'
+export { projectDayReviewRecordingSection } from '../calendar-day-review-projection.js'
+export type { DayReviewDetails, DayReviewCoverageDetails, DayReviewPoint, DayReviewEvent, DayReviewCoverage, DayReviewSource, DayReviewModels } from '../calendar-day-review.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
@@ -2822,13 +2823,63 @@ export class ArkmeSdk {
   }
 
   /** Read a device-location fact using a short-lived capability from the personal calendar. */
+  /** Call synchronously from a human click; the Host confirms the frozen intent. */
+  private async confirmDayReview(action: 'create' | 'resume' | 'reconcile', input: Record<string, unknown>, signal?: AbortSignal): Promise<DayReviewState> {
+    signal?.throwIfAborted()
+    if (typeof window === 'undefined' || globalThis.navigator?.userActivation?.isActive !== true) throw new ArkmeClientError({ code: 'day-review-human-required', message: '请通过当前的人类点击发起生成', retryable: false })
+    const id = crypto.randomUUID(), url = new URL(this.route, window.location.href)
+    url.searchParams.set('dayReviewConfirmation', id)
+    url.searchParams.set('intent', JSON.stringify(input))
+    url.searchParams.set('action', action)
+    if (!window.open(url.href, '_blank')) throw new Error('请允许打开宿主确认页后重试')
+    if ((await this.capabilities(signal)).features.calendarDayReviewHumanConfirmation !== true) throw new Error('当前 Provider 不支持日回顾宿主确认，请升级；仍可读取已有结果')
+    const deadline = Date.now() + 5 * 60_000, initialDeadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      signal?.throwIfAborted()
+      await new Promise<void>((resolve, reject) => {
+        const done = () => { signal?.removeEventListener('abort', abort); resolve() }
+        const timer = setTimeout(done, 1000)
+        const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason ?? new Error('已取消等待')) }
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+      let status: { status: string; result?: DayReviewState; message?: string; error?: ArkmePluginErrorBody }
+      try { status = await this.call('calendar.day-review.confirmation', { confirmationId: id }, signal) }
+      catch (error) { if (error instanceof ArkmeClientError && error.body.code === 'day-review-human-required' && Date.now() < initialDeadline) continue; throw error }
+      if (status.status === 'ready' && status.result) return status.result
+      if (status.status === 'failed') throw status.error ? new ArkmeClientError(status.error) : new Error(status.message ?? '提交未确认，请查询状态后手动重试')
+    }
+    throw new Error('确认已过期，请重新发起；不会自动生成')
+  }
+
+  /** Subscribe by bounded reads only; disposing aborts the current read. */
+  subscribeDayReview(query: DayReviewQuery, listener: (state: DayReviewState) => void, options: ArkmeSubscribeOptions = {}): () => void {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const interval = typeof options.intervalMs === 'number' && Number.isFinite(options.intervalMs)
+      ? Math.min(60000, Math.max(3000, options.intervalMs)) : undefined
+    let nextRead = interval ?? 5000
+    const poll = async () => {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { nextRead = 60000; return }
+        const state = await this.dayReviewState(query, controller.signal)
+        nextRead = interval ?? (state.job && state.job.status !== 'failed' ? 5000 : 60000)
+        if (!controller.signal.aborted) listener(state)
+      }
+      catch (error) { nextRead = Math.min(60000, nextRead * 2); if (!controller.signal.aborted) options.onError?.(error) }
+      finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, nextRead) }
+    }
+    if (options.immediate === false) timer = setTimeout(() => { void poll() }, nextRead)
+    else void poll()
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
+  }
+
   private async requireDayReview(signal?: AbortSignal) {
     if ((await this.capabilities(signal)).features.calendarDayReview !== true) throw new Error('当前 Provider 不支持完整日回顾')
   }
   async dayReviewState(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.state', { ...query }, signal) }
-  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.create', { ...input }, signal) }
-  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
-  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
+  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('create', { ...input }, signal) }
+  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('reconcile', { ...query }, signal) }
+  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('resume', { ...query }, signal) }
   async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
   async dayReviewModels(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review.js').DayReviewModels> { await this.requireDayReview(signal); return this.call('calendar.day-review.models', { ...query }, signal) }
   async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
@@ -3057,6 +3108,9 @@ export async function callArkme<T>(
   params?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (operation === 'calendar.day-review.create') return await defaultSdk.createDayReview(params as unknown as DayReviewCreateInput, signal) as T
+  if (operation === 'calendar.day-review.resume') return await defaultSdk.resumeDayReview(params as unknown as DayReviewQuery & { jobId: string }, signal) as T
+  if (operation === 'calendar.day-review.reconcile') return await defaultSdk.reconcileDayReview(params as unknown as DayReviewQuery, signal) as T
   return await defaultSdk.call<T>(operation, params, signal)
 }
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'

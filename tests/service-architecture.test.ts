@@ -37,7 +37,7 @@ const expectedPublicMethods = [
   'updateProfile', 'invitationRewards', 'listCommonGroups', 'syncCommonGroups',
   'accountRecordingUsage', 'aiPointsAccount', 'aiPointsConsumption', 'accountStorageUsage', 'accountTokenUsage', 'accountTokenUsageSummary', 'accountTokenUsageOperations', 'accountTokenUsageCalls', 'accountVoiceUsage',
   'calendarRecordLocation', 'dataDeletedRecords', 'dataExportPreflight', 'dataRecoverRecord', 'generateDayRecap', 'readBotPrivateChatHistory',
-  'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
+  'dayReviewConfirmationAccount', 'dayReviewState', 'createDayReview', 'dayReviewResult', 'dayReviewSource', 'dayReviewModels', 'dayReviewPrompts', 'dayReviewEvidence', 'reconcileDayReview', 'resumeDayReview',
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
   'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
