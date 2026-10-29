@@ -18,6 +18,13 @@ function fixture(side:'team'|'external'='team'){
   return {service,calls,handle(fn:typeof handler){handler=fn},change(){actor=22},async conversation(){return ((await service.execute('team.app.conversations',{side})) as {items:TeamConversation[]}).items[0]!}}
 }
 const raw={message_uid:'m1',seq:2,revision:1,version:9,side:'team',actor_user_id:11,created_at:1000,sender:{nickname:'甲'},own:true,text:'bounded excerpt',title:'title',media:[{name:'voice.m4a',kind:'audio'}]}
+it('accepts the complete empty external participant page without exposing identities',async()=>{
+  const f=fixture('external'),c=await f.conversation()
+  f.handle(()=>({state:'ready',result_id:'participants',items:[],cursor:'',has_more:false}))
+  const page=await f.service.execute('team.app.history',{conversationRef:c.ref,action:'participants',options:{}}) as TeamHistoryResponse
+  expect(page.participants).toEqual([])
+  expect(page.hasMore).toBe(false)
+})
 it('uses server filtering, opaque identities and excerpt-only message capabilities',async()=>{
   const f=fixture(),c=await f.conversation();f.handle(()=>({state:'ready',messages:[raw],through_seq:2,head_seq:3,indexing:true,has_more:true,cursor:'signed'}))
   const page=await f.service.execute('team.app.history',{conversationRef:c.ref,action:'query',options:{keyword:'中文',sender:'self',fromAt:10,untilAt:99}}) as TeamHistoryResponse
