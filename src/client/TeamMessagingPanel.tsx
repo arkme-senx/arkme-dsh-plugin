@@ -1,5 +1,6 @@
 import { TeamSourceReadScope } from './TeamSourceReadScope.js'
-import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial, withoutTeamMessageMaterial } from '../team-message-projection.js'
+import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial } from '../team-message-projection.js'
+import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
 import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
@@ -452,12 +453,16 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
+  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly, change) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
       generation.current++
       const old=latest.current
       if(old){
-        for(const row of old.messages) if(row.own) confirmed.current.retain(conversation.key,withoutTeamMessageMaterial(row))
-        const next={...old,conversation:withoutTeamConversationMaterial(old.conversation),messages:old.messages.map(withoutTeamMessageMaterial)};latest.current=next;setTimeline(next)
+        const messages=old.messages.map(row=>{
+          const next=invalidateTeamMessageRead(row,change,conversation.key)
+          if(row.own&&next!==row)confirmed.current.retain(conversation.key,next)
+          return next
+        })
+        const next={...old,conversation:teamChangeAffectsSource(change,{conversationKey:conversation.key})?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
       }
       void recover()
     } } }) }, [recover, accountKey, receiptStore])

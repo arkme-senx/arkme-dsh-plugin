@@ -21,6 +21,31 @@ const preview = () => <TeamConversationPreview accountKey="preview-test" target=
 const render = async (node = preview()) => { await act(async () => root.render(node)) }
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
 const click = async (text: string) => { expect(button(text)).toBeDefined(); await act(async () => button(text).click()) }
+
+it('keeps the current preview material for policy and unrelated occurrences while a refresh is pending',async()=>{
+ const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+ await render()
+ mocks.call.mockImplementation(()=>new Promise(()=>{}))
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.notification-policy.changed'}))
+ expect(document.body.textContent).toContain('预览正文')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:'another'}))
+ expect(document.body.textContent).toContain('预览正文')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:message.key}))
+ expect(document.body.textContent).not.toContain('预览正文')
+})
+it('retains an older mounted source when a changed occurrence refreshes only the first page',async()=>{
+ const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+ const older={...message,key:'older',ref:'older-ref',seq:1,content:{text_content:'历史预览',template_kind:1}}
+ mocks.call.mockImplementation(async(_,{beforeSeq})=>beforeSeq?timeline([older]):{...timeline(),hasMore:true,beforeSeq:4})
+ await render();await click('加载更早消息')
+ const article=[...document.querySelectorAll('article')].find(node=>node.textContent?.includes('历史预览'))!
+ expect(article).toBeDefined()
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:message.key}))
+ expect(document.body.contains(article)).toBe(true)
+ expect(article.textContent).toContain('历史预览')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:older.key}))
+ expect(article.textContent).not.toContain('历史预览')
+})
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('IntersectionObserver', class { constructor(private callback: (entries: unknown[]) => void) {} observe() { this.callback([{ isIntersecting: true }]) } disconnect() {} })

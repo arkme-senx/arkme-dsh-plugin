@@ -1,6 +1,7 @@
 import {callArkme} from './api.js'
 import {subscribeTeamMessageChanges} from './team-messaging-events.js'
-import type {TeamMessageChangeHint} from '../team-app-contract.js'
+import type {TeamMessage,TeamMessageChangeHint} from '../team-app-contract.js'
+import {withoutTeamMessageMaterial} from '../team-message-projection.js'
 import type {ArkmeMediaReadState} from './media-access.js'
 
 export interface TeamSourceReadTarget {
@@ -13,12 +14,22 @@ export interface TeamSourceReadTarget {
 }
 
 /** Delivery metadata is only a relevance hint. The existing Host preflight grants reads. */
-export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:TeamSourceReadTarget):boolean {
+export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'>):boolean {
   if (!change) return true // Reconnects must recheck facts missed while disconnected.
   if (['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
   if (change.conversationKeys?.length && target.conversationKey && !change.conversationKeys.includes(target.conversationKey)) return false
   if (change.messageKey && target.messageKey && change.messageKey !== target.messageKey) return false
   return true
+}
+
+/** Retain unrelated mounted readers; a parent hint only removes the parent material. */
+export function invalidateTeamMessageRead(message:TeamMessage,change:TeamMessageChangeHint|undefined,conversationKey:string):TeamMessage {
+  if(teamChangeAffectsSource(change,{conversationKey,messageKey:message.key}))return withoutTeamMessageMaterial(message)
+  if(message.reply&&teamChangeAffectsSource(change,{conversationKey,messageKey:message.reply.key})){
+    const {title,media,quote,...identity}=message.reply
+    return {...message,reply:{...identity,state:'unavailable',text:''}}
+  }
+  return message
 }
 
 /** One authority check lifetime, shared by frozen local references and independent previews. */

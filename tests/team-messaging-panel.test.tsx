@@ -454,6 +454,22 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
   })
 
+  it('keeps unrelated message material mounted and invalidates only the changed occurrence',async()=>{
+    const first:TeamMessage={ref:'first-ref',key:'first',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{text_content:'正在阅读的原界面',template_kind:1},media:[]}
+    const second={...first,ref:'second-ref',key:'second',seq:2}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[first,second],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    mocks.call.mockImplementation(op=>op==='team.app.timeline'?new Promise(()=>{}):Promise.resolve([]))
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!.props.message
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.notification-policy.changed'}))
+    expect(row('first').contentStatus).toBe('available')
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'second',conversationKeys:[conversation.key]}))
+    expect(row('first').contentStatus).toBe('available')
+    expect(row('first').version).toBe(3)
+    expect(row('second').contentStatus).toBe('revalidating')
+    expect(row('second').content).toBeUndefined()
+  })
+
   it('hides an invalidated reedit source header while retaining the editable input', async () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'编辑源旧正文',template_kind:1},media:[]}
     let recalled=false

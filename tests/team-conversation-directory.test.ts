@@ -158,3 +158,16 @@ it('redacts previews on changed hints and prevents an older in-flight read from 
   expect(readTeamDirectory('recall').items.every(c=>!c.preview?.text)).toBe(true)
   expect(readTeamDirectory('recall').items.map(c=>c.key)).toEqual([source.key])
 })
+it('does not redact a conversation preview for policy or another conversation',async()=>{
+ const source={...item('team'),preview:{status:'available',text:'保留的摘要',hasMedia:false}}
+ mock.mockImplementation(async(_,{side})=>({items:side==='team'?[source]:[],hasMore:false}))
+ stops.push(startTeamDirectory('scoped'))
+ await vi.waitFor(()=>expect(readTeamDirectory('scoped').items).toHaveLength(1))
+ mock.mockImplementation(()=>new Promise(()=>{}))
+ invalidateTeamMessages('scoped',false,{kind:'team.notification-policy.changed'})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('保留的摘要')
+ invalidateTeamMessages('scoped',false,{kind:'team.message.changed',conversationKeys:['other']})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('保留的摘要')
+ invalidateTeamMessages('scoped',false,{kind:'team.message.changed',conversationKeys:[source.key]})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('')
+})

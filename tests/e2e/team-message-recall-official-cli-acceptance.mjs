@@ -86,6 +86,16 @@ try{
  await page.screenshot({path:join(capture,'recall-placeholder.png')});
  // Existing independent preview, actual Team/Record bytes, upstream SSE and Host preflight.
  const mediaBubble=pane.locator('[data-team-message-key]').filter({hasText:'T09 attachment source'}).first();await mediaBubble.waitFor();
+ await mediaBubble.getByRole('button',{name:/^预览图片 /}).click();
+ const inlineImage=page.locator('[data-arkme-image-preview-viewport] img').first();await inlineImage.waitFor();
+ await inlineImage.evaluate(image=>window.__t09InlineImage=image);
+ emitTeamChange('team.notification-policy.changed');emitTeamChange('team.message.changed',{conversation_uid:uid,message_uid:messages.ui.message_uid});
+ await page.waitForTimeout(800);assert.equal(await inlineImage.evaluate(image=>image===window.__t09InlineImage),true);
+ await page.screenshot({path:join(capture,'attachment-original-inline.png')});
+ await page.getByRole('button',{name:'关闭预览',exact:true}).click();
+ // The official Web host has no desktop shell. Supply only its existing public
+ // bridge contract to exercise the real popup owner; authority stays in Team.
+ await page.evaluate(()=>{window.arkmeAttachmentPreview={version:1,focus(){},close(){}}});
  const [preview]=await Promise.all([page.waitForEvent('popup'),mediaBubble.getByRole('button',{name:/^预览图片 /}).click()]);
  await preview.locator('img').first().waitFor();await preview.waitForFunction(()=>Array.from(document.images).some(image=>image.naturalWidth>0));
  await preview.locator('img').first().evaluate(image=>window.__t09OriginalPreviewImage=image);
@@ -100,6 +110,6 @@ try{
  assert.ok(calls.slice().some(call=>call.path.endsWith('/batch-get')&&call.body.items?.some(item=>item.message_uid===media.message_uid)));
  const final=await post('/api/v1/team/conversations/timeline/page',{conversation_uid:uid,side:'team'});for(const message of [...Object.values(messages),media])assert.equal(final.messages.find(m=>m.message_uid===message.message_uid).state,'recalled');
  assert.ok(readFileSync(log,'utf8').includes('T09_REAL_TOOL_PASSED'));
- await writeFile(join(capture,'acceptance.json'),JSON.stringify({passed:true,realTeamAndRecord:true,officialDsh:true,installedArtifact:artifact,ui:true,uiDraftPreserved:true,publicSdk:true,externalTypedConsumer:true,officialSessionTool:true,confirmationRequired:true,originalAttachmentPreview:true,unrelatedEventsPreserveImage:true,matchingRecallRevalidatesAndCloses:true},null,2));
+ await writeFile(join(capture,'acceptance.json'),JSON.stringify({passed:true,realTeamAndRecord:true,officialDsh:true,installedArtifact:artifact,ui:true,uiDraftPreserved:true,publicSdk:true,externalTypedConsumer:true,officialSessionTool:true,confirmationRequired:true,originalWebInlinePreview:true,desktopBridge:'contract-fixture',originalAttachmentPreview:true,unrelatedEventsPreserveImage:true,matchingRecallRevalidatesAndCloses:true},null,2));
  console.log('PASS: T09 packaged UI, public SDK and real official-session Tool recall through real Team owner');
 }catch(error){if(page){await page.screenshot({path:join(capture,'failure.png')}).catch(()=>{});await writeFile(join(capture,'failure-body.txt'),await page.locator('body').innerText()).catch(()=>{});}console.error(error);process.exitCode=1;}finally{await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await browser?.close();child?.kill('SIGTERM');for(const socket of sockets)socket.destroy();server.close();}

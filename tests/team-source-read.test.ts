@@ -1,11 +1,23 @@
 // @vitest-environment jsdom
 import {afterEach,expect,it,vi} from 'vitest'
-import {teamChangeAffectsSource,watchTeamSourceRead} from '../src/client/team-source-read.js'
+import {teamChangeAffectsSource,watchTeamSourceRead,invalidateTeamMessageRead} from '../src/client/team-source-read.js'
+import type {TeamMessage} from '../src/team-app-contract.js'
 import {invalidateTeamMessages} from '../src/client/team-messaging-events.js'
 const call=vi.hoisted(()=>vi.fn())
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 const target={accountKey:'test:42',conversationRef:'conversation',conversationKey:'conversation-key',messageRef:'message',messageKey:'message-key',version:3}
 let stop:(()=>void)|undefined
+it('removes only the affected source or parent material, preserving an independent child body',()=>{
+ const child:TeamMessage={key:'child',ref:'child-ref',seq:2,revision:1,side:'team',sender:{nickname:'作者'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:4,contentStatus:'available',content:{text_content:'独立回复'},media:[],reply:{key:'parent',ref:'parent-ref',seq:1,version:3,state:'available',sender:{nickname:'父作者'},text:'父正文',title:'父标题',media:[]}}
+ expect(invalidateTeamMessageRead(child,{kind:'team.message.changed',messageKey:'other'},'conversation-key')).toBe(child)
+ const parent=invalidateTeamMessageRead(child,{kind:'team.message.changed',messageKey:'parent'},'conversation-key')
+ expect(parent.content).toBe(child.content);expect(parent.version).toBe(4)
+ expect(parent.reply).toMatchObject({ref:'parent-ref',key:'parent',state:'unavailable',text:''})
+ expect(parent.reply).not.toHaveProperty('title');expect(parent.reply).not.toHaveProperty('media')
+ const own=invalidateTeamMessageRead(child,{kind:'team.message.changed',messageKey:'child'},'conversation-key')
+ expect(own.content).toBeUndefined();expect(own.reply).toBeUndefined()
+ expect(own.contentStatus).toBe('revalidating')
+})
 afterEach(()=>{stop?.();stop=undefined;call.mockReset()})
 it.each(['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
  expect(teamChangeAffectsSource({kind},target)).toBe(false)

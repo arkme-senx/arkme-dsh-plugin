@@ -1,4 +1,5 @@
 import { withoutTeamConversationMaterial } from '../team-message-projection.js'
+import {teamChangeAffectsSource} from './team-source-read.js'
 import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
@@ -93,12 +94,13 @@ export function startTeamDirectory(key: string): () => void {
     snapshot = { ...snapshot, items: snapshot.items.filter(c => c.side !== conversation.side || c.channel.jotmoId !== conversation.channel.jotmoId) }; emit()
     void refresh()
   }
-  const stop = subscribeTeamMessageChanges((changed, receiptOnly) => {
+  const stop = subscribeTeamMessageChanges((changed, receiptOnly,change) => {
     if (changed !== key) return
     if (!receiptOnly) {
       ++revision
-      for (const [side,page] of pages) pages.set(side,{...page,items:page.items.map(withoutTeamConversationMaterial)})
-      snapshot={...snapshot,items:snapshot.items.map(withoutTeamConversationMaterial)};emit()
+      const invalidate=(row:TeamConversation)=>teamChangeAffectsSource(change,{conversationKey:row.key})?withoutTeamConversationMaterial(row):row
+      for (const [side,page] of pages) pages.set(side,{...page,items:page.items.map(invalidate)})
+      snapshot={...snapshot,items:snapshot.items.map(invalidate)};emit()
     }
     void refresh(false, receiptOnly === true)
   })

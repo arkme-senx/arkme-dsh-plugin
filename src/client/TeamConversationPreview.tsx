@@ -13,7 +13,8 @@ import { tr } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory } from './team-conversation-directory.js'
 import { openTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
-import { withoutTeamConversationMaterial } from '../team-message-projection.js'
+import { mergeTeamMessages,withoutTeamConversationMaterial } from '../team-message-projection.js'
+import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
 import type { TeamEntryTarget } from './team-directory-preferences.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
@@ -81,10 +82,10 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
   const generation = useRef(0)
-  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
-    if (account !== accountKey || receiptOnly) return
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly,change) => {
+    if (account !== accountKey || receiptOnly || !teamChangeAffectsSource(change,{conversationKey:conversation.key})) return
     ++generation.current
-    setPage(undefined)
+    setPage(old=>old?{...old,conversation:withoutTeamConversationMaterial(old.conversation),messages:old.messages.map(row=>invalidateTeamMessageRead(row,change,conversation.key))}:old)
     setRequest(value => ({before:0, attempt:value.attempt+1}))
   }), [accountKey])
   const body = useRef<HTMLDivElement>(null), geometry = useRef<{ height: number; top: number }>()
@@ -97,14 +98,14 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
         if (token !== generation.current) return
         if (value.hasMore && (!value.beforeSeq || request.before > 0 && value.beforeSeq >= request.before)) throw new Error('消息分页异常，请重试')
         if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
-        setPage(old => ({ ...value, messages: [...new Map([...(request.before ? old?.messages ?? [] : []), ...value.messages].map(message => [message.key, message])).values()].sort((a, b) => a.seq - b.seq) }))
+        setPage(old => ({ ...value, messages: mergeTeamMessages(old?.messages??[],value.messages) }))
         onConversation(value.conversation)
       }).catch(caught => { if (!controller.signal.aborted && token === generation.current) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
       .finally(() => { if (!controller.signal.aborted && token === generation.current) setLoading(false) })
     return () => controller.abort()
   }, [accountKey, conversation.ref, request, onConversation])
   useLayoutEffect(() => {
-    if (body.current && page) body.current.scrollTop = request.before && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
+    if (body.current && page) body.current.scrollTop = (request.before || request.attempt>0) && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
   }, [page])
   return <div ref={body} aria-label="预览消息列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}>
     {error && <p role="alert">{error}<button style={button} onClick={() => setRequest(value => ({ ...value, attempt: value.attempt + 1 }))}>{tr('重试')}</button></p>}
