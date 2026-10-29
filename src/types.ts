@@ -3426,11 +3426,24 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   version: string
   maxItems: number
   soundSource: ArkmeRecordingSoundSource
+  /** optionKey is empty for an excluded person no longer present in the directory. */
   excludedSpeakers: Array<{ optionKey: string; label: string }>
   undoRef?: string
 }
 
+export interface ArkmeRecordingSpeakerCorrectionPreview {
+  affectedCount: number
+  intentToken: string
+  expiresAt: number
+  selectionVersion: string
+  evidenceVersion: string
+}
+
 export interface ArkmeRecordingSpeakerCorrectionInput {
+  intentToken?: string
+  /** Offsets within the explicitly selected parent rows; Host resolves storage coordinates. */
+  selections?: import('./recording-evidence-contract.js').RecordingEvidenceSelection[]
+  target?: { kind: 'unknown' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
   itemRef: string
   itemRefs: string[]
   expectedVersion: string
@@ -3438,6 +3451,7 @@ export interface ArkmeRecordingSpeakerCorrectionInput {
   rejectedSpeakerRef?: string
   rejectCurrent?: boolean
   soundSource?: ArkmeRecordingSoundSource
+  /** Clear the assignment; must be false when assigning an existing or new target. */
   detach: boolean
 }
 
@@ -3449,6 +3463,7 @@ export interface ArkmeRecordingSpeakerCorrectionUndoInput {
 }
 
 export interface ArkmeRecordingSpeakerCorrectionResult {
+  learningStateAtCommit?: 'not_requested' | 'ineligible' | 'awaiting_evidence' | 'reference_ready' | 'reconciled'
   affectedCount: number
   version: string
   undoRef?: string
@@ -4230,7 +4245,10 @@ export type ArkmePluginOperation =
   | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.workflow'
+  | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.evidence.query'
+  | 'recordings.speaker.correction.preview'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'

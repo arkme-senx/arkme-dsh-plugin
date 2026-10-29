@@ -75,7 +75,7 @@ const expectedPublicMethods = [
   'recordingDay', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
-  'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
+  'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
   'importRecordingFiles', 'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',

@@ -87,7 +87,7 @@ function fixture() {
   })
   const runtime = { subscribeAccountScope: () => () => {}, config: { environment: 'test', maxTextLength: 20000 }, requireSession: async () => ({ ...session }),
     authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
-  return { service: new RecordingService(runtime, {} as RecordingServiceDependencies), state, post, date, session }
+  return { service: new RecordingService(runtime, {} as RecordingServiceDependencies), runtime, state, post, date, session }
 }
 
 describe('interval evidence adapter', () => {
@@ -134,5 +134,31 @@ describe('group consistency adapter', () => {
     await expect(f.service.recordingSpeakerConsistency({ anchorRefs: rows.map(row => row.itemRef), itemRefs: [rows[0]!.itemRef] })).rejects.toThrow()
     await expect(f.service.recordingSpeakerConsistency({ anchorRefs: Array(101).fill(rows[0]!.itemRef), itemRefs: [] })).rejects.toThrow()
     expect(f.post.mock.calls.filter(([path]) => path.endsWith('/speaker-evidence/consistency'))).toHaveLength(0)
+  })
+})
+
+describe('evidence member publication fence', () => {
+  it.each(['unchanged', 'account', 'revision', 'abort'] as const)('checks %s after asynchronously deriving member reference keys', async kind => {
+    const f = fixture(), row = (await f.service.recordingDay(f.date)).transcript.items[0]!
+    const controller = new AbortController()
+    let responseReceived = false
+    vi.spyOn(f.runtime.stateStore, 'uniqueCode').mockImplementation(async () => {
+      if (responseReceived) {
+        if (kind === 'account') f.session.userId = 43
+        if (kind === 'revision') f.service.dispose()
+        if (kind === 'abort') controller.abort()
+      }
+      return 'test-key'
+    })
+    f.post.mockImplementationOnce(async () => {
+      responseReceived = true
+      return { version: 'page-v1', total_count: 1, has_more: false, next_cursor: '', items: [{
+        locator: { session_id: '1'.repeat(24), child_id: '2'.repeat(24), transcript_source: 'system', item_index: 0, start_at: 0, end_at: 4000, revision: 'revision-1' },
+        group: 'person-1', start_at: f.date, source_number: 1, assignment_number: 1, text: '甲', deviation: null,
+      }] }
+    })
+    const pending = f.service.recordingSpeakerEvidenceQuery({ action: 'members', groupRefs: [row.itemRef] }, controller.signal)
+    if (kind === 'unchanged') expect(await pending).toMatchObject({ totalCount: 1, items: [{ text: '甲' }] })
+    else await expect(pending).rejects.toThrow()
   })
 })
