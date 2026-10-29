@@ -63,7 +63,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   const [syncTeam, setSyncTeam] = useState<ArkmeTeam>()
   const [messageChannelOpen, setMessageChannelOpen] = useState(false)
   const [internalGroupOpen, setInternalGroupOpen] = useState(false)
-  const [addingMembers, setAddingMembers] = useState(false)
+  const [memberAdditionRef, setMemberAdditionRef] = useState<string>()
   const [externalChatsOpen,setExternalChatsOpen]=useState(false)
   const [codexBusy, setCodexBusy] = useState(false)
   const navigationRef = useRef<AbortController>()
@@ -344,7 +344,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <div className="arkme-team-members-heading"><h2>{tr("团队成员")}</h2>
-          {page.canAddMembers && <button type="button" className="arkme-team-action" aria-haspopup="dialog" onClick={() => setAddingMembers(true)}>{tr('＋ 添加成员')}</button>}
+          {page.canAddMembers && <button type="button" className="arkme-team-action" aria-haspopup="dialog" onClick={() => setMemberAdditionRef(page.team.teamRef)}>{tr('＋ 添加成员')}</button>}
         </div>
         <div className="arkme-team-member-list" role="list">
           {confirmRemoval && <div className="team-confirm" role="alert"><p>{tr('确认移除 {v0}？', { v0: confirmRemoval.name })}</p>
@@ -392,7 +392,8 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       onViewConversations={() => { setMessageChannelOpen(false); openTeamMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
-    {addingMembers && <TeamAddMembersDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setAddingMembers(false)} />}
+    {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
+    {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setMemberAdditionRef(undefined)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

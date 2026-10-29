@@ -3,6 +3,7 @@ import {act} from 'react'
 import {createRoot,type Root} from 'react-dom/client'
 import {beforeEach,afterEach,it,expect,vi} from 'vitest'
 import {TeamAddMembersDialog} from '../src/client/TeamAddMembersDialog.js'
+import {TeamDetailPane} from '../src/client/redesign/contacts/TeamDetailPane.js'
 const {call}=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 vi.mock('../src/client/ArkmeAvatar.js',()=>({ArkmeUserAvatar:({label}:{label:string})=><span role="img" aria-label={label}/>}))
@@ -70,4 +71,31 @@ it('does not treat a historical added receipt as current membership after remova
  expect(document.body.textContent).toContain('同事：已添加')
  expect(check('同事').disabled).toBe(false)
  await act(async()=>check('同事').click());expect(button('确认添加（1）').disabled).toBe(false)
+})
+
+it('retains rejected selections while a completed batch refresh rotates an OpenAPI team reference',async()=>{
+ let rotation=0,recoveries=0,ackSignal:AbortSignal|undefined,finishAck!:(v:unknown)=>void
+ const ack=new Promise(resolve=>{finishAck=resolve})
+ call.mockImplementation(async(op,params,signal)=>{
+  if(op==='team.members.list')return {team:{jotmoId:'original_team'}}
+  if(op==='team.app.teams')return [{teamRef:`team-app-team.rotated-${++rotation}`,name:'原团队',jotmoId:'original_team',currentUserRole:'owner'}]
+  if(op==='team.app.members')return {team:{teamRef:params.teamRef,name:'原团队',jotmoId:'original_team',currentUserRole:'owner'},items:[],membershipRevision:2,canAddMembers:true,totalCount:3,hasMore:false,avatarState:'ready'}
+  if(op==='team.app.channel')return {canManage:false}
+  if(op==='team.app.members.add-recover'){recoveries++;return {state:'none'}}
+  if(op==='team.app.members.add')return completed
+  if(op==='team.app.members.add-ack'){ackSignal=signal;return ack}
+  return page([person('同事'),person('失败')])
+ })
+ await act(async()=>root.render(<TeamDetailPane accountKey="prod:90" teamRef={'team_v1_'+ 'a'.repeat(32)}/>))
+ await act(async()=>button('＋ 添加成员').click())
+ await act(async()=>check('同事').click());await act(async()=>check('失败').click())
+ await act(async()=>button('确认添加（2）').click())
+ try{
+  expect(rotation).toBeGreaterThan(1)
+  expect(recoveries).toBe(1)
+  expect(ackSignal?.aborted).toBe(false)
+  expect(check('失败').getAttribute('aria-checked')).toBe('true')
+  expect(document.body.textContent).toContain('同事：已添加')
+ }finally{await act(async()=>finishAck({state:'acknowledged'}))}
+ expect(button('确认添加（1）').disabled).toBe(false)
 })
