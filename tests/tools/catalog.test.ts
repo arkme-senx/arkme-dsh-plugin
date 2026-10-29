@@ -26,7 +26,7 @@ describe('Arkme tool catalog', () => {
   it('keeps the current business tool surface and stable order', () => {
     expect(arkmeToolCatalog.toolNamesFor('business')).toEqual([
       'arkme_plugin_contract',
-      'arkme_group_identities', 'arkme_team_public_card',
+      'arkme_team_outbound_open','arkme_group_identities', 'arkme_team_public_card',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
@@ -175,6 +175,7 @@ describe('Arkme tool catalog', () => {
 
     expect(image?.meta).toMatchObject({ kind: 'business', phase: 'attachments', effect: 'read' })
     expect(writes.map(module => module.meta.toolName)).toEqual([
+      'arkme_team_outbound_open',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_write',
       'arkme_message_sync_retry',

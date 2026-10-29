@@ -1502,6 +1502,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+    calendarDayReviewHumanConfirmation?: true
     analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
@@ -1524,6 +1525,7 @@ arkoImagesV1?:true
     teamMessageInteractions?: 1
     teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
+    teamOutboundReception?: 1
     teamGroupRepresentation?: 1
     teamProfiles?: true
     teamExternalChats?: true
@@ -4203,6 +4205,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'team.app.outbound.open'
   | 'team.app.group.context'
   | 'team.app.public-card'
   | 'recordings.strategies'
@@ -4404,6 +4407,7 @@ export type ArkmePluginOperation =
   | 'recordings.speech-statistics.occurrences'
   | 'recordings.speech-statistics.source'
   | 'calendar.day-review.state'
+  | 'calendar.day-review.confirmation'
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'
   | 'calendar.day-review.source'
