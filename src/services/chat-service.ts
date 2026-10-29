@@ -5467,8 +5467,10 @@ export class ChatService {
     const editDurationMillis = Math.max(0, numberValue(core.edit_duration_millis))
     const contentBlocks = this.media.richContentBlocks(raw, session.userId)
     const signingKey = await this.runtime.stateStore.uniqueCode()
+    const representation = await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation, session.userId)
     const actionItem: ArkmeTimelineItem = {
       ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      ...(representation ? { representation } : {}),
       senderName: reference.senderName, isMe: reference.senderUserId === session.userId,
       recordOwnerUserId: reference.recordOwnerUserId,
       messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({ ...reference,

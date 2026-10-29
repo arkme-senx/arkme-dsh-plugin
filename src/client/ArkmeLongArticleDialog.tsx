@@ -493,12 +493,12 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
           sendAtMillis: Date.now(), updateAtMillis: Date.now(), version: 1, editable: true,
           recordDurationMillis: duration, editDurationMillis: 0, thinkingDurationMillis: duration }
         // Detail hydration is best effort after a confirmed create. Never create it a second time.
-        updated = await callArkme<ArkmeLongArticleDetail>('source.long-article.detail', { sourceRef, itemUid: result.itemUid }).catch(() => undefined) ?? updated
+        updated = await callArkme<ArkmeLongArticleDetail>('source.long-article.detail', { sourceRef, itemUid: result.itemUid, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}) }).catch(() => undefined) ?? updated
         const created: ArkmeTimelineItem = { itemUid: result.itemUid, senderName: '我', isMe: true, sendAtMillis: updated.sendAtMillis,
           title: updated.title, textContent: updated.textContent, textFormat: format, ...(updated.contentBlocks ? { contentBlocks: updated.contentBlocks } : {}),
           status: result.status, templateKind: 8, displayKind: 1, version: 1, recordVersion: updated.version,
-          recordDurationMillis: duration, editDurationMillis: 0, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}), ...(result.sequence === undefined ? {} : { sequence: result.sequence }) }
-        updated.actionItem ??= created
+          recordDurationMillis: duration, editDurationMillis: 0, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}), ...(result.sequence === undefined ? {} : { sequence: result.sequence }), ...updated.actionItem }
+        updated.actionItem = created
         baseVersionRef.current = updated.version
         publishedDetail.current = updated; setDetail(updated)
         const receipt = Promise.resolve().then(() => onCreated?.(created)).catch(() => showImageNotice({ kind: 'error', message: '长文已发布，列表更新失败，请重新打开核对' }))

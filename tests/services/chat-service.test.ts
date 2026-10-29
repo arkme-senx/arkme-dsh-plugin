@@ -3736,6 +3736,17 @@ describe('received Markdown long article detail', () => {
     expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
     expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw, 42)
   })
+  it('keeps only this relation attribution in the received article action item', async () => {
+    const x = fixture('group_chat')
+    const accepted = { team_id: '7', membership_kind: 'member', membership_revision: 3, group_join_at: 9, name: '发送团队', jotmo_id: 'team_7' }
+    Object.assign(x.raw.relation, { representation: accepted })
+    Object.assign(x.raw.record.payload, { origin_representation: { ...accepted, name: '内容来源团队', team_id: '8', jotmo_id: 'team_8' } })
+    const value = await x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)
+    expect(value.actionItem?.representation).toMatchObject({ name: '发送团队', jotmoId: 'team_7', membershipRevision: 3 })
+    delete (x.raw.relation as Record<string, unknown>).representation
+    const personal = await x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)
+    expect(personal.actionItem?.representation).toBeUndefined()
+  })
   it('rejects a different record before requesting the backend', async () => {
     const x = fixture()
     await expect(x.chat.longArticleDetail('source', 'other', undefined, x.actionRef)).rejects.toMatchObject({ code: 'long-article-target-invalid' })
