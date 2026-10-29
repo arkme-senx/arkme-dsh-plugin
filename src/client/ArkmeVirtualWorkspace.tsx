@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { teamDirectoryPreferences, useTeamDirectoryPreferenceError } from './team-directory-preferences.js'
 import { localDirectoryPreferences, useDirectoryPreferenceError } from './local-directory-preferences.js'
 import { ArkmeMessageSyncBanner } from './ArkmeMessageSyncBanner.js'
@@ -1952,7 +1953,7 @@ export function ArkmeNavigation({
 
   const openOfficialAuthor = async (): Promise<void> => {
     if (!authenticated) { showLogin(); return }
-    openTeamMessages({ kind: 'official' })
+    openTeamEntryMessages({ kind: 'official' }, currentAccountKey)
   }
 
   const createdQuickAddSource = async (source: ArkmeSourceItem): Promise<void> => {

@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { TeamPublicCard } from '../team-group-contract.js'
 import type { TeamChannel } from '../team-app-contract.js'
@@ -6,7 +7,7 @@ import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
-import { invalidateTeamMessages, openTeamMessages } from './team-messaging-events.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { TeamMembershipForm } from './redesign/contacts/TeamDirectoryActions.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -38,12 +39,12 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
   }, [accountKey, jotmoId, attempt, currentChannel])
   const contact = () => {
     if (!card) return
-    if(card.navigation?.kind==='inbox'&&card.navigation.teamRef){onClose();openTeamMessages({kind:'team',teamRef:card.navigation.teamRef});return}
+    if(card.navigation?.kind==='inbox'&&card.navigation.teamRef){onClose();openTeamEntryMessages({kind:'team',teamRef:card.navigation.teamRef}, accountKey);return}
     if(card.contact.state==='disabled'||card.contact.state==='unavailable')return
     onClose()
     // Existing link navigation opens the canonical team conversation/inbox.
     // Merely reading the card never opens a conversation or sends a message.
-    openTeamMessages({ kind: 'link', publicRef: card.contact.publicRef })
+    openTeamEntryMessages({ kind: 'link', publicRef: card.contact.publicRef }, accountKey)
   }
   // Replace the card rather than stacking two modal focus traps. Cancelling
   // reveals the same card and leaves the underlying conversation/draft intact.

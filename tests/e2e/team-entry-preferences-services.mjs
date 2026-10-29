@@ -87,6 +87,17 @@ try{
  const reads=calls.filter(v=>v.path.endsWith('/read/advance')).length
  await menu('预览');await page.getByRole('menuitem',{name:'预览',exact:true}).click();await page.getByRole('dialog',{name:/聊天预览/}).waitFor();assert.equal(calls.filter(v=>v.path.endsWith('/read/advance')).length,reads);await page.getByRole('button',{name:'关闭聊天预览'}).click()
  await menu('移除');await page.getByRole('menuitem',{name:'移除',exact:true}).click();await eventually(async()=>(await query()).dismissed,'UI dismissal committed');await row.waitFor({state:'detached'})
+ // Explicitly reopen the removed existing folder through the colleague's
+ // original Contacts -> Team actions -> link form, without a replacement UI.
+ await page.getByRole('button',{name:'联系人',exact:true}).click()
+ await page.getByRole('button',{name:'团队操作',exact:true}).click()
+ await page.getByRole('menuitem',{name:'通过链接发消息',exact:true}).click()
+ await page.getByLabel('团队消息链接',{exact:true}).fill(channel.link || `https://arkme.example/team-message?channel=${channel.public_ref}`)
+ await page.getByRole('button',{name:'打开对话',exact:true}).click()
+ await eventually(async()=>!(await query()).dismissed,'explicit member link restores historical folder')
+ await page.getByRole('button',{name:'返回 Arkme 会话列表',exact:true}).click()
+ await row.waitFor()
+ await menu('移除');await page.getByRole('menuitem',{name:'移除',exact:true}).click();await eventually(async()=>(await query()).dismissed,'second UI dismissal committed');await row.waitFor({state:'detached'})
  const hidden=await query();await call(users.member,'entry-preferences/change',{operation_id:randomUUID(),changes:[{entry:folder,action:'dismiss',expected_version:hidden.version}]})
  const newer=await call(users.newcomer,'conversations/open',{public_ref:channel.public_ref});assert.equal((await query()).dismissed,true,'empty window must not restore')
  await send(users.newcomer,newer.conversation.conversation_uid,'新访客成功首条激活');await eventually(async()=>!(await query()).dismissed,'publication restores folder');await row.waitFor()
@@ -99,6 +110,6 @@ try{
  await menu('置顶对话');await page.keyboard.press('Escape')
  if(env.ARKME_E2E_CAPTURE_DIR){await mkdir(env.ARKME_E2E_CAPTURE_DIR,{recursive:true});await page.screenshot({path:join(env.ARKME_E2E_CAPTURE_DIR,'team-entry-cross-device.png')})}
  assert.deepEqual(errors,[])
- console.log(JSON.stringify({acceptance:'T16-entry-preferences-real-services',checks:['official-DSH-immutable-tgz','real-session-grant-and-schema','external-typed-SDK','UI-pin-preview-dismiss','personal-isolation','empty-open-keeps-dismissed','first-published-visitor-restores','mobile-runtime-real-HTTP','mobile-menu-widget-separate-suite','PC-pin-mobile-read','mobile-unpin-PC-IM-convergence'],boundaries:'account identity and unrelated search are fixtures; Team/Record/IM/Mongo/Redis/AMQP real'}))
+ console.log(JSON.stringify({acceptance:'T16-entry-preferences-real-services',checks:['official-DSH-immutable-tgz','real-session-grant-and-schema','external-typed-SDK','UI-pin-preview-dismiss','UI-explicit-member-link-restore','personal-isolation','empty-open-keeps-dismissed','first-published-visitor-restores','mobile-runtime-real-HTTP','mobile-menu-widget-separate-suite','PC-pin-mobile-read','mobile-unpin-PC-IM-convergence'],boundaries:'account identity and unrelated search are fixtures; Team/Record/IM/Mongo/Redis/AMQP real'}))
 }catch(e){console.error(e);if(page){console.error((await page.locator('body').innerText()).slice(-3500));if(env.ARKME_E2E_CAPTURE_DIR){await mkdir(env.ARKME_E2E_CAPTURE_DIR,{recursive:true});await page.screenshot({path:join(env.ARKME_E2E_CAPTURE_DIR,'failure.png')})}}process.exitCode=1}
 finally{await browser?.close();if(ctx)await ctx.get('arkmeData').logout();await shutdown?.shutdown(process.exitCode||0);for(const s of streams)s.destroy();for(const s of [proxy,account]){s.closeAllConnections();await new Promise(r=>s.close(r))}}

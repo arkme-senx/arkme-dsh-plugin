@@ -87,17 +87,29 @@ export class TeamDirectoryPreferenceStore {
     // Existing conversation sequences include historical publications. A folder's
     // new activity counter may legitimately still be zero for that history.
     if (publishedOnly && (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return Promise.resolve()
+    return this.command(account, this.restoreEntries(target), 'restore')
+  }
+  private restoreEntries(target: TeamEntryTarget) {
     const entries = [this.remember(target)]
     if (target.kind === 'conversation' && target.conversation.side === 'team') {
       const channel = target.conversation.channel, key = teamFolderEntryKey(channel), ref: TeamEntryReference = { kind: 'folder', ref: channel.teamRef }
       entries.push({ key, ref })
     }
-    return this.command(account, entries, 'restore')
+    return entries
+  }
+  /** Reserve the user intent before optional opening/activation IO, so a later
+   * dismissal stays later even when navigation resolves slowly. */
+  restoreNavigation(account: string, resolve: () => Promise<TeamEntryTarget | undefined>, signal?: AbortSignal): Promise<void> {
+    return this.command(account, [], 'restore', async () => {
+      const target = await resolve()
+      if (!target || (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return []
+      return this.restoreEntries(target)
+    }, signal)
   }
   private change(account: string, targets: TeamEntryTarget[], action: TeamEntryAction) {
     return this.command(account, targets.map(t => this.remember(t)), action)
   }
-  private command(account: string, entries: { key: string; ref: TeamEntryReference }[], action: TeamEntryAction): Promise<void> {
+  private command(account: string, entries: { key: string; ref: TeamEntryReference }[], action: TeamEntryAction, prepare?: () => Promise<{ key: string; ref: TeamEntryReference }[]>, signal?: AbortSignal): Promise<void> {
     if (!account) return Promise.reject(new Error('请先登录'))
     const state = this.state(account), token = ++this.token
     for (const { key } of entries) {
@@ -106,16 +118,23 @@ export class TeamDirectoryPreferenceStore {
     }
     this.publish(state)
     const run = state.queue.catch(() => {}).then(async () => {
-      const params = { entries: entries.map(e => e.ref), expectedAccountKey: account }
+      let params: Record<string, unknown> | undefined
       try {
+        signal?.throwIfAborted()
+        if (prepare) entries = await prepare()
+        signal?.throwIfAborted()
+        if (!entries.length) return
+        params = { entries: entries.map(e => e.ref), expectedAccountKey: account }
         // Recheck before a new explicit command. The Host replays any persisted response-loss command first.
-        this.accept(state, await this.transport('team.app.entries.query', params), entries.map(e => e.key))
+        this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key))
+        signal?.throwIfAborted()
         const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed) : entries
         if (!chosen.length) return
         const changes = chosen.map(e => ({ target: e.ref, action, expectedVersion: state.saved.get(state.aliases.get(e.key) ?? e.key)?.version ?? 0 }))
-        this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }))
+        this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }, signal))
       } catch (error) {
-        try { this.accept(state, await this.transport('team.app.entries.query', params), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
+        if (signal?.aborted) return
+        if (params) try { this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
         state.error = '入口设置同步未确认，请重试'
         throw error
       } finally {

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 const { call, open, changed } = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), changed: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
@@ -11,7 +12,7 @@ vi.mock('../src/client/team-messaging-events.js', () => ({ openTeamMessages: ope
 let host: HTMLDivElement, root: Root
 const close = vi.fn()
 const card = { name: '即我', jotmoId: 'our_team', contact: { state: 'available', publicRef: 'public-link' } }
-const mount = async (accountKey = 'prod:90') => act(async () => root.render(<TeamPublicCardDialog accountKey={accountKey} jotmoId="our_team" onClose={close} />))
+const mount = async (accountKey = 'prod:90') => act(async () => { arkmeAuthStore.setAuth({status:'authenticated',environment:'prod',userId:Number(accountKey.split(':')[1])}); root.render(<TeamPublicCardDialog accountKey={accountKey} jotmoId="our_team" onClose={close} />) })
 function button(label: string) { return [...document.querySelectorAll('button')].find(node => node.textContent === label)! }
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); call.mockReset().mockResolvedValue(card); open.mockReset(); close.mockReset(); changed.mockReset()
@@ -26,7 +27,7 @@ it('only opens the existing team-link flow on explicit contact, without sending 
   await act(async () => button('联系团队').click())
   expect(close).toHaveBeenCalledTimes(1)
   expect(open).toHaveBeenCalledExactlyOnceWith({ kind: 'link', publicRef: 'public-link' })
-  expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card'])
+  expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card', 'team.app.open'])
 })
 
 it('keeps public contact disabled but allows current members to enter inbox',async()=>{

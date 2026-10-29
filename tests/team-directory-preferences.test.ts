@@ -105,3 +105,30 @@ it('explicit historical navigation restores a zero-counter folder and its child 
   expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
   expect(teamEntryHidden(f.store.read('a'), direct)).toBe(false)
 })
+
+it('reserves slow navigation before a later dismissal in the same command queue', async () => {
+  const f = fixture()
+  await f.store.remove('a', direct)
+  let complete!: (target: TeamEntryTarget) => void
+  const pending = new Promise<TeamEntryTarget>(resolve => { complete = resolve })
+  const restore = f.store.restoreNavigation('a', () => pending)
+  const dismiss = f.store.remove('a', direct)
+  complete(direct)
+  await Promise.all([restore, dismiss])
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).slice(-2).map(([, p]) => p.changes[0].action)).toEqual(['restore', 'dismiss'])
+})
+it('cancelled navigation neither writes nor blocks the next user command', async () => {
+  const f = fixture(), controller = new AbortController()
+  let complete!: (target: TeamEntryTarget) => void
+  const pending = new Promise<TeamEntryTarget>(resolve => { complete = resolve })
+  const restore = f.store.restoreNavigation('a', () => pending, controller.signal)
+  await Promise.resolve()
+  controller.abort()
+  const dismiss = f.store.remove('a', direct)
+  complete(direct)
+  await Promise.all([restore, dismiss])
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).map(([, p]) => p.changes[0].action)).toEqual(['dismiss'])
+  expect(f.store.error('a')).toBe('')
+})
