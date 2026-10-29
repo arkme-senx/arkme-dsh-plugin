@@ -26,10 +26,13 @@ try{
  await page.waitForFunction(()=>document.querySelector('.arkme-team-add-dialog')?.textContent.includes('账号不可用，未添加'))
  const text=await dialog.textContent();if(!text.includes('同事99001002：已添加')||!text.includes('同事99001003：账号不可用，未添加'))throw new Error('UI per-person receipt missing')
  if(!await dialog.getByRole('button',{name:'确认添加（1）',exact:true}).isEnabled())throw new Error('rejected selection lost')
+ const added=dialog.getByRole('checkbox',{name:'同事99001002',exact:true}),rejected=dialog.getByRole('checkbox',{name:'同事99001003',exact:true})
+ await added.waitFor({state:'visible'})
+ if(!await added.isDisabled()||!await rejected.isEnabled()||await rejected.getAttribute('aria-checked')!=='true')throw new Error('current candidate authority or rejected selection mismatch')
  for(const width of [1200,800,480]) { await page.setViewportSize({width,height:900}); if(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth))throw new Error('Dialog overflow') }
  await page.screenshot({path:join(fixtureDir,'member-results.png')})
  await dialog.getByRole('button',{name:'关闭',exact:true}).click()
  await page.waitForFunction(()=>document.querySelector('.arkme-team-detail')?.textContent.includes('由 同事99001001 添加'))
- await writeFile(join(fixtureDir,'acceptance.json'),JSON.stringify({...result,uiPartialResult:true,uiRejectedSelection:true,publicAdderAttribution:true,installedArtifact:true,actualMongo:true}))
+ await writeFile(join(fixtureDir,'acceptance.json'),JSON.stringify({...result,uiPartialResult:true,uiRejectedSelection:true,publicAdderAttribution:true,currentCandidateAuthority:true,installedArtifact:true,actualMongo:true}))
  console.log('PASS: installed official DSH, external SDK, session Tool grant and UI actual Mongo receipt')
 }catch(error){await writeFile(join(fixtureDir,'browser-failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(fixtureDir,'browser-failure.png')});throw error}finally{await browser.close()}
