@@ -70,6 +70,10 @@ function TeamHistoryAnalysis(props: Props) {
   const [revision, setRevision] = useState(0), selectedPerson = useRef<TeamIdentity>()
   const people = useTeamHistoryParticipants(conversation.ref, accountKey, conversation.side, scope, revision)
   const names = useTeamPersonNames(conversation, accountKey, people.people)
+  const personName = (person: TeamIdentity) => {
+    const enriched = names(person)
+    return (enriched.nickname !== (person.publicNickname || person.nickname) ? enriched : props.resolveIdentity(person)).nickname
+  }
   const currentPerson = people.people.find(value => value.personKey === person) ?? selectedPerson.current
   const options: TeamHistoryOptions = { ...historyMonthWindow(month), ...(person === 'self' ? { sender: 'self' } : person !== 'all' && currentPerson?.personRef ? { personRef: currentPerson.personRef } : {}) }
   const signature = JSON.stringify([scope, tab, options, revision])
@@ -118,8 +122,8 @@ function TeamHistoryAnalysis(props: Props) {
       <div className="cw-controls" role="group" aria-label={tr('分析类型')}><button aria-pressed={tab === 'activity'} onClick={() => setTab('activity')}>{tr('活跃时间')}</button><button aria-pressed={tab === 'words'} onClick={() => setTab('words')}>{tr('词频分析')}</button></div>
       <div className="cw-controls"><select aria-label={tr('分析成员')} value={person} onChange={event => choose(event.target.value)}><option value="all">{tr('全部成员')}</option>
         {(conversation.side === 'external' || people.people.some(item => item.isMe) || person === 'self') && <option value="self">{tr('我')}</option>}
-        {people.people.filter(item => !item.isMe).map(item => <option key={item.personKey} value={item.personKey}>{names(item).nickname}</option>)}
-        {person !== 'all' && person !== 'self' && !people.people.some(item => item.personKey === person) && currentPerson && <option value={person}>{names(currentPerson).nickname}</option>}
+        {people.people.filter(item => !item.isMe).map(item => <option key={item.personKey} value={item.personKey}>{personName(item)}</option>)}
+        {person !== 'all' && person !== 'self' && !people.people.some(item => item.personKey === person) && currentPerson && <option value={person}>{personName(currentPerson)}</option>}
       </select>
         <input type="month" aria-label={tr('分析月份')} value={month} onChange={event => { setMonth(event.target.value); setBucket(undefined); setWord(undefined) }} /><button onClick={() => { setMonth(''); setBucket(undefined); setWord(undefined) }}>{tr('全部时间')}</button></div>
       <p className="cw-muted">{tr('所有消息类型 · 按发送时间统计')} · {options.timezone}</p>
