@@ -17,6 +17,7 @@ import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ConversationActionsMenu, conversationExportActionItem } from './PrivateChatActions.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
+import { teamHistoryDate } from './team-history-browser.js'
 import { TeamHistoryPanel } from './TeamHistoryPanel.js'
 import { historyCall, historyTimezone, localDateWindow, prepareHistory } from './team-history-client.js'
 import type { TeamHistoryResponse } from '../team-history-contract.js'
@@ -35,6 +36,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   resolveIdentity(identity: TeamIdentity): TeamIdentity; getReadingDate(): string | undefined
 }) {
   const [open, setOpen] = useState<Panel>()
+  const input = useRef<HTMLInputElement>(null)
   const calendar = useRef<HTMLButtonElement>(null), search = useRef<HTMLButtonElement>(null), analysis = useRef<HTMLButtonElement>(null), menu = useRef<HTMLButtonElement>(null)
   const lifetime=useRef(new AbortController()),reader=useRef<AbortController>()
   const [query,setQuery]=useState(''),[notice,setNotice]=useState(''),[opening,setOpening]=useState('')
@@ -71,6 +73,11 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   const privateLock = useRef(false), locateLock = useRef(false), exportLock = useRef(false)
   useEffect(()=>{lifetime.current=new AbortController();return()=>{lifetime.current.abort();reader.current?.abort()}},[accountKey,conversation.key,conversation.side])
   useEffect(() => { if (overlayOpen) setOpen(undefined) }, [overlayOpen])
+  useEffect(() => {
+    if (open !== 'search') return
+    const frame = requestAnimationFrame(() => input.current?.focus({ preventScroll: true }))
+    return () => cancelAnimationFrame(frame)
+  }, [open])
   const cancel = async () => {
     reader.current?.abort()
     const job=exportJob.current
@@ -87,7 +94,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     if (next === open) { setOpen(undefined); return }
     onOpenPanel(); setOpen(next); setNotice(''); setPolicyError('')
   }
-  useSelectedMessageSearch(conversation.ref, text => {onOpenPanel();setQuery(text);setOpen('search')})
+  useSelectedMessageSearch(conversation.ref, text => {onOpenPanel();setQuery(text);setOpen('search');requestAnimationFrame(()=>input.current?.focus({preventScroll:true}))})
   const loadCalendarMonth = async (range:{startDate:string;endDate:string;timezone:string},signal:AbortSignal) => {
     const options={...localDateWindow(range.startDate,range.endDate),timezone:range.timezone,requestId:crypto.randomUUID()}
     const manifest=await prepareHistory(conversation.ref,accountKey,'dates',options,signal)
@@ -104,7 +111,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     if (locateLock.current) return
     locateLock.current = true; setOpening(message.key); setNotice('')
     try { await onLocate(message, lifetime.current.signal); if (!lifetime.current.signal.aborted) setOpen(undefined) }
-    catch (e) { if (!lifetime.current.signal.aborted) setNotice(errorText(e)) }
+    catch (e) { if (!lifetime.current.signal.aborted) { setNotice(errorText(e)); invalidateTeamMessages(accountKey) } }
     finally { locateLock.current = false; if (!lifetime.current.signal.aborted) setOpening('') }
   }
   const openPrivate = async (mediaType?: 'audio' | 'video') => {
@@ -133,12 +140,13 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
       const manifest=await prepareHistory(conversation.ref,accountKey,'exports/create',{requestId:job.requestId,timezone:historyTimezone()},controller.signal,result=>{setExportProgress(result);if(result.resultRef)job.resultRef=result.resultRef})
       const ready=await historyCall(conversation.ref,accountKey,'exports/link',{resultRef:manifest.resultRef!},controller.signal)
       controller.signal.throwIfAborted()
-      const anchor=document.createElement('a');anchor.href=ready.downloadUrl!;anchor.download=ready.fileName!;document.body.append(anchor);anchor.click();anchor.remove()
+      const fileName=`${title.replace(/[\\/:*?"<>|\r\n]/g,'_')}-团队对话-${teamHistoryDate(Date.now())}.md`
+      const anchor=document.createElement('a');anchor.href=`${ready.downloadUrl!}&name=${encodeURIComponent(fileName)}`;anchor.download=fileName;document.body.append(anchor);anchor.click();anchor.remove()
       setNotice(tr('导出已生成，已开始下载'));exportJob.current=undefined
     }catch(error){if(!controller.signal.aborted)setNotice(errorText(error))}
     finally{exportLock.current=false;if(!controller.signal.aborted)setExporting(false)}
   }
-  const progress=tr('正在生成导出…')+` ${exportProgress?.processedThroughSeq??0} / ${conversation.lastSeq}`
+  const progress=`${tr('正在生成导出…')} · ${exportProgress?.messageCount??0} ${tr('条')}`
   return <div data-team-conversation-tools style={{ ...ARKME_CONVERSATION_HEADER_ACTIONS_STYLE, flex: '0 0 auto' }}>
     <ArkmeConversationHeaderIconButton label={tr('按日期查看团队消息')} buttonRef={calendar} hasPopup="dialog" expanded={open === 'calendar'} onClick={() => toggle('calendar')}><CalendarBlank size={24}/></ArkmeConversationHeaderIconButton>
     <ArkmeConversationHeaderIconButton label={tr('搜索团队消息')} buttonRef={search} hasPopup="dialog" expanded={open === 'search'} onClick={() => toggle('search')}><MagnifyingGlass size={24}/></ArkmeConversationHeaderIconButton>
@@ -159,8 +167,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
       onSelectIndexedDay={date => {const message=calendarAnchors.current.get(date);if(message)void locate(message)}}/>
     {host.current && (open === 'search' || open === 'analysis') && createPortal(<ArkmeDetailShell title={tr(open === 'search' ? '查找团队消息' : '对话分析')} label={tr(open === 'search' ? '查找团队消息' : '团队对话分析')}
       returnFocusRef={open === 'search' ? search : analysis} onPointerDownOutside={() => setOpen(undefined)} onClose={() => setOpen(undefined)} bodyStyle={{ padding: '12px 16px' }}>
-      {opening&&<p role="status">{tr('正在定位原消息…')}</p>}
-      <TeamHistoryPanel key={JSON.stringify([accountKey,conversation.key,conversation.side])} conversation={conversation} accountKey={accountKey} kind={open} initialKeyword={query} onLocate={message=>void locate(message)}/>
+      <TeamHistoryPanel key={JSON.stringify([accountKey,conversation.key,conversation.side])} conversation={conversation} accountKey={accountKey} kind={open} keyword={query} onKeywordChange={setQuery} inputRef={input} opening={opening} resolveIdentity={resolveIdentity} onLocate={message=>void locate(message)}/>
     </ArkmeDetailShell>, host.current)}
     {host.current && (notice || exporting || privateBusy) && createPortal(<div role="status" style={{ position: 'absolute', zIndex: 13, top: 76, right: 16, maxWidth: 'calc(100% - 32px)', padding: '8px 12px', borderRadius: 8, background: arkmeTheme.layer2, color: arkmeTheme.secondary, border: `1px solid ${arkmeTheme.border}`, fontSize: 12 }}>
       {exporting ? [progress,notice].filter(Boolean).join(' · ') : privateBusy ? tr('正在打开个人会话…') : notice}

@@ -50,7 +50,7 @@ it('shows own profile without a private-chat send button and supports own record
   expect(document.querySelector('[role="menu"]')?.textContent).toContain('看我的快记')
 })
 it('asks the server to filter by sealed identity, never by an editable display name',async()=>{
-  call.mockResolvedValue({state:'ready',messages:[message('mine')],words:[],days:[],participants:[],hasMore:false})
+  call.mockImplementation(async(op:string)=>op==='team.app.preflight'?[message('mine')]:{state:'ready',messages:[{...message('mine'),historyPreview:true}],words:[],days:[],participants:[],hasMore:false})
   await act(async()=>root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" person={{...person,nickname:'我的备注'}} onClose={onClose} onLocate={onLocate}/>))
   expect(call).toHaveBeenCalledWith('team.app.history',expect.objectContaining({action:'query',options:expect.objectContaining({personRef:'person-ref',personMode:'owner'})}),expect.any(AbortSignal))
   expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
@@ -91,4 +91,37 @@ it('uses the common author/time layout, no redundant title, resizable shell and 
   expect(onLocate).toHaveBeenCalledOnce();expect(host.textContent).not.toContain('相关快记暂未接通')
   expect(host.querySelector('[role="alert"]')).toBeTruthy()
   expect(host.querySelector('textarea')).toBeNull()
+})
+it('hydrates only the visible identity-filtered page through the existing authorized batch read and renders original media',async()=>{
+  const full={...message('photo'),media:[{key:'image',ref:'image-ref',name:'原图.png',mimeType:'image/png',size:20,url:'https://example.invalid/photo.png'}]}
+  call.mockImplementation(async(op:string)=>op==='team.app.preflight'?[full]:{state:'ready',messages:[{...message('photo'),historyPreview:true,historyMedia:[{name:'原图.png',kind:'image'}]}],words:[],days:[],participants:[],hasMore:false})
+  await act(async()=>root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" person={person} onClose={onClose} onLocate={onLocate}/>))
+  expect(call).toHaveBeenCalledWith('team.app.preflight',{conversationRef:'conversation',expectedAccountKey:'prod:90',selections:[{messageRef:'photo',version:1}]},expect.any(AbortSignal))
+  expect(host.querySelector('img[src="https://example.invalid/photo.png"]')).toBeTruthy()
+  expect(button('查看原消息')).toBeTruthy();expect(call.mock.calls.some(([op])=>op==='team.app.timeline')).toBe(false)
+})
+it('clears a page when its exact version cannot be hydrated and retries using a fresh query',async()=>{
+  let attempt=0
+  call.mockImplementation(async(op:string)=>{
+    if(op==='team.app.preflight')return [{...message('mine'),version:++attempt===1?2:1}]
+    return {state:'ready',messages:[{...message('mine'),historyPreview:true}],words:[],days:[],participants:[],hasMore:false}
+  })
+  await act(async()=>root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" person={person} onClose={onClose} onLocate={onLocate}/>))
+  expect(host.querySelector('[data-team-visitor-record]')).toBeNull();expect(host.textContent).toContain('历史内容已变化')
+  await act(async()=>button('重试').click());expect(host.querySelector('[data-team-visitor-record]')).toBeTruthy()
+  expect(call.mock.calls.filter(([op])=>op==='team.app.history')).toHaveLength(2)
+})
+it('never shows late hydrated messages after account changes or unauthorized page refreshes',async()=>{
+  let finish!:(value:unknown)=>void
+  call.mockImplementation(async(op:string)=>op==='team.app.preflight'?new Promise(resolve=>{finish=resolve}):{state:'ready',messages:[{...message('old'),historyPreview:true}],words:[],days:[],participants:[],hasMore:false})
+  const render=(account:string)=>root.render(<TeamVisitorRecords conversation={conversation} accountKey={account} person={person} onClose={onClose} onLocate={onLocate}/>)
+  await act(async()=>render('prod:90'));const old=finish,oldSignal=call.mock.lastCall![2] as AbortSignal
+  await act(async()=>render('prod:91'));expect(oldSignal.aborted).toBe(true)
+  await act(async()=>old([message('old')]));expect(host.querySelector('[data-team-visitor-record]')).toBeNull()
+  await act(async()=>finish([message('old')]));expect(host.querySelector('[data-team-visitor-record]')).toBeTruthy()
+  call.mockRejectedValue(new Error('无权访问'))
+  const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+  await act(async()=>invalidateTeamMessages('prod:91'))
+  expect(host.querySelector('[data-team-visitor-record]')).toBeNull()
+  await act(async()=>button('重试').click());expect(host.querySelector('[data-team-visitor-record]')).toBeNull();expect(host.textContent).toContain('无权访问')
 })

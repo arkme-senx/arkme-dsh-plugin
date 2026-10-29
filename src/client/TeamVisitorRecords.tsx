@@ -1,3 +1,4 @@
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { useTeamHistoryPage } from './team-history-client.js'
 import { useEffect, useRef, useState } from 'react'
 import type { TeamConversation, TeamIdentity, TeamMessage } from '../team-app-contract.js'
@@ -19,17 +20,18 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
   const personRef = target?.personRef
   // Signed refs rotate on refresh; only a different account/conversation/person resets paging.
   const scopeKey=JSON.stringify([accountKey,conversation.key,conversation.side,target?.personKey ?? personRef ?? 'external',mode])
-  const history=useTeamHistoryPage(conversation.ref,accountKey,'query',{...(personRef?{personRef,personMode:mode}:{}),limit:50},!!personRef,scopeKey,scopeKey)
+  const history=useTeamHistoryPage(conversation.ref,accountKey,'query',{...(personRef?{personRef,personMode:mode}:{}),limit:50},!!personRef,scopeKey,scopeKey,'full')
   const messages=history.page?.messages ?? [],loading=history.loading,hasMore=history.page?.hasMore ?? false,error=personRef?history.error:tr('发送者身份暂不可用，请重新打开')
   const [locating,setLocating]=useState(false),[locateError,setLocateError]=useState('')
   const controller=useRef(new AbortController())
-  useEffect(()=>{controller.current=new AbortController();return()=>controller.current.abort()},[scopeKey])
+  useEffect(()=>{controller.current=new AbortController();setLocating(false);setLocateError('');return()=>controller.current.abort()},[scopeKey])
   const locate = async (message: TeamMessage) => {
     if (locating) return
     setLocating(true); setLocateError('')
-    try { await onLocate(message, controller.current!.signal); if (!controller.current?.signal.aborted) onClose() }
-    catch (caught) { if (!controller.current?.signal.aborted) setLocateError(caught instanceof Error ? caught.message : tr('定位原消息失败')) }
-    finally { if (!controller.current?.signal.aborted) setLocating(false) }
+    const signal = controller.current.signal
+    try { await onLocate(message, signal); if (!signal.aborted) onClose() }
+    catch (caught) { if (!signal.aborted) { setLocateError(caught instanceof Error ? caught.message : tr('定位原消息失败')); invalidateTeamMessages(accountKey) } }
+    finally { if (!signal.aborted) setLocating(false) }
   }
   const name = person?.nickname || conversation.visitor?.nickname || tr('用户')
   const title = mode === 'mentioned' ? tr('@{v0}的快记',{v0:name}) : tr('{v0}的快记',{v0:name})
@@ -54,7 +56,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
     </article>)}
     {loading && <p role="status">{tr('正在加载快记…')}</p>}
     {locating && <p role="status">{tr('正在定位原消息…')}</p>}
-    {(error||locateError) && <p role="alert">{error||locateError}<button type="button" onClick={history.refresh}>{tr('重试')}</button></p>}
+    {(error||locateError) && <p role="alert">{error||locateError}<button type="button" onClick={() => { setLocateError(''); history.refresh() }}>{tr('重试')}</button></p>}
     {!loading && !error && !hasMore && !messages.length && <p>{tr('暂无快记')}</p>}
     {hasMore && <div><button type="button" disabled={loading} onClick={() => { void history.more() }}>{tr('加载更早消息')}</button></div>}
   </ArkmeDetailShell>

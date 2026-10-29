@@ -80,13 +80,27 @@ it('never exposes visitor actions to the external viewer', async () => {
 })
 
 const historyPage=(messages:TeamMessage[],hasMore=false,cursor='')=>({state:'ready',messages,words:[],days:[],participants:[],hasMore,cursor})
+// History pages are previews; the existing batch endpoint returns the visible full messages.
+const historyCalls=()=>call.mock.calls.filter(([op])=>op==='team.app.history')
+function setHistory(implementation:(op:string,payload:any)=>any){
+ const full=new Map<string,TeamMessage>()
+ call.mockImplementation(async(op,payload)=>{
+  if(op==='team.app.preflight')return payload.selections.map((selection:any)=>full.get(selection.messageRef))
+  const result=await implementation(op,payload)
+  if(op==='team.app.history'&&result?.messages){
+   for(const message of result.messages)full.set(message.ref,message)
+   return {...result,messages:result.messages.map((message:TeamMessage)=>({...message,historyPreview:true,media:[]}))}
+  }
+  return result
+ })
+}
 it('uses one authorized sender filter and stable cursor, then locates the exact source',async()=>{
- call.mockImplementation(async(_op,payload)=>payload.options.cursor?historyPage([message(8),message(7)]):historyPage([message(9),message(8)],true,'cursor-one'))
+ setHistory(async(_op,payload)=>payload.options.cursor?historyPage([message(8),message(7)]):historyPage([message(9),message(8)],true,'cursor-one'))
  await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" onClose={onClose} onLocate={onLocate}/>);await tick()})
  expect(call.mock.calls[0]!.slice(0,2)).toEqual(['team.app.history',{conversationRef:'conversation-ref',expectedAccountKey:'prod:90',action:'query',options:{personRef:'visitor',personMode:'owner',limit:50}}])
  await act(async()=>{findButton('加载更早消息').click();await tick()})
  expect([...host.querySelectorAll('[data-team-visitor-record]')].map(n=>n.getAttribute('data-team-visitor-record'))).toEqual(['m9','m8','m7'])
- expect(call.mock.calls[1]![1].options.cursor).toBe('cursor-one')
+ expect(historyCalls()[1]![1].options.cursor).toBe('cursor-one')
  await act(async()=>{host.querySelector<HTMLButtonElement>('[data-team-visitor-record="m7"] button')!.click();await tick()})
  expect(onLocate).toHaveBeenCalledWith(expect.objectContaining({key:'m7'}),expect.any(AbortSignal));expect(onClose).toHaveBeenCalledOnce()
 })
@@ -95,13 +109,14 @@ it('does not scan team-only timeline pages or turn a missing identity into all s
  expect(call).not.toHaveBeenCalled();expect(host.textContent).toContain('发送者身份暂不可用')
 })
 it('clears excerpts on a failed page and retries through an authorized fresh query',async()=>{
- call.mockResolvedValueOnce(historyPage([message(5)],true,'cursor')).mockRejectedValueOnce(new Error('网络失败'))
+ let reads=0
+ setHistory(()=>{if(++reads===2)throw new Error('网络失败');return historyPage([message(5)],true,'cursor')})
  await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" onClose={onClose} onLocate={onLocate}/>);await tick()})
  await act(async()=>{findButton('加载更早消息').click();await tick()})
  expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(0);expect(host.textContent).toContain('网络失败')
- call.mockResolvedValue(historyPage([message(3)]))
+ setHistory(()=>historyPage([message(3)]))
  await act(async()=>{findButton('重试').click();await tick()})
- expect(call.mock.lastCall![1].options.cursor).toBeUndefined();expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
+ expect(historyCalls().at(-1)![1].options.cursor).toBeUndefined();expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
 })
 it('offers mention and mentioned-record actions only for sealed people, never self mention',async()=>{
  const onMention=vi.fn()
@@ -120,27 +135,29 @@ it('offers mention and mentioned-record actions only for sealed people, never se
 })
 it('reads exactly one sparse mention page, continues explicitly and aborts after unmount',async()=>{
  const person={nickname:'同名',personRef:'sealed',personKey:'key'}
- call.mockResolvedValue(historyPage([],true,'cursor-50'))
+ setHistory(()=>historyPage([],true,'cursor-50'))
  await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="test:90" mode="mentioned" person={person} onClose={onClose} onLocate={onLocate}/>);await tick()})
- expect(call).toHaveBeenCalledOnce();expect(call.mock.calls[0]![1]).toMatchObject({options:{personRef:'sealed',personMode:'mentioned'}})
+ expect(historyCalls()).toHaveLength(1);expect(call.mock.calls[0]![1]).toMatchObject({options:{personRef:'sealed',personMode:'mentioned'}})
  expect(host.textContent).not.toContain('暂无快记')
- call.mockResolvedValue(historyPage([message(40,'team')]))
+ setHistory(()=>historyPage([message(40,'team')]))
  await act(async()=>{findButton('加载更早消息').click();await tick()})
  expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
 })
 it('bounds loaded people rows at 200 while keeping an explicit path back to latest',async()=>{
  let seq=300
  const person={nickname:'访客',personRef:'sealed',personKey:'key'}
- call.mockImplementation(async()=>{const messages=Array.from({length:50},()=>({...message(seq--),sender:{nickname:'访客',personKey:'key'}}));return historyPage(messages,true,`cursor-${seq}`)})
+ setHistory(async()=>{const messages=Array.from({length:50},()=>({...message(seq--),sender:{nickname:'访客',personKey:'key'}}));return historyPage(messages,true,`cursor-${seq}`)})
  await act(async()=>{root.render(<TeamVisitorRecords conversation={conversation} accountKey="test:90" person={person} onClose={onClose} onLocate={onLocate}/>);await tick()})
  for(let i=0;i<4;i++)await act(async()=>{findButton('加载更早消息').click();await tick()})
- expect(call).toHaveBeenCalledTimes(5)
+ expect(historyCalls()).toHaveLength(5)
+ expect(call.mock.calls.filter(([op])=>op==='team.app.preflight')).toHaveLength(5)
  expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(200)
  expect(findButton('返回最新快记')).toBeDefined()
 })
 it('aborts old person pages and never mixes late results into a replacement identity',async()=>{
  let finish!:(value:unknown)=>void
- call.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValue(historyPage([{...message(2),sender:{nickname:'second',personKey:'second'}}]))
+ let reads=0
+ setHistory(()=>++reads===1?new Promise(resolve=>{finish=resolve}):historyPage([{...message(2),sender:{nickname:'second',personKey:'second'}}]))
  const render=(ref:string)=><TeamVisitorRecords conversation={conversation} accountKey="test:90" person={{nickname:ref,personRef:ref,personKey:ref}} onClose={onClose} onLocate={onLocate}/>
  await act(async()=>{root.render(render('first'));await tick()})
  const firstSignal=call.mock.calls[0]![2]
@@ -150,13 +167,13 @@ it('aborts old person pages and never mixes late results into a replacement iden
  expect([...host.querySelectorAll('[data-team-visitor-record]')].map(n=>n.getAttribute('data-team-visitor-record'))).toEqual(['m2'])
 })
 it('retains a loaded person window when fresh signed references rotate for the same identities',async()=>{
- call.mockResolvedValue(historyPage([{...message(9),sender:{nickname:'同名',personKey:'same'}}],true,'cursor-9'))
+ setHistory(()=>historyPage([{...message(9),sender:{nickname:'同名',personKey:'same'}}],true,'cursor-9'))
  const render=(generation:number)=><TeamVisitorRecords conversation={{...conversation,ref:`conversation-${generation}`}} accountKey="test:90" person={{nickname:'同名',personKey:'same',personRef:`person-${generation}`}} onClose={onClose} onLocate={onLocate}/>
  await act(async()=>{root.render(render(1));await tick()})
  for(let i=2;i<=10;i++)await act(async()=>{root.render(render(i));await tick()})
- expect(call).toHaveBeenCalledOnce()
+ expect(historyCalls()).toHaveLength(1)
  expect(host.querySelectorAll('[data-team-visitor-record]')).toHaveLength(1)
- call.mockResolvedValue(historyPage([]))
+ setHistory(()=>historyPage([]))
  await act(async()=>{findButton('加载更早消息').click();await tick()})
- expect(call.mock.calls.at(-1)![1]).toMatchObject({conversationRef:'conversation-10',options:{personRef:'person-10',cursor:'cursor-9'}})
+ expect(historyCalls().at(-1)![1]).toMatchObject({conversationRef:'conversation-10',options:{personRef:'person-10',cursor:'cursor-9'}})
 })
