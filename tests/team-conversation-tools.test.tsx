@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
 import { findSelectedMessageText } from '../src/client/message-selection-search.js'
-import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
+import type { TeamConversation, TeamIdentity, TeamMessage } from '../src/team-app-contract.js'
 const {call,request,download}=vi.hoisted(()=>({call:vi.fn(),request:vi.fn(),download:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 vi.mock('../src/client/local-directory-preferences.js',()=>({localDirectoryPreferences:{subscribe:()=>()=>{},read:()=>({})},useLocalDirectoryPreferenceHydration:()=>{}}))
@@ -21,7 +21,7 @@ let host:HTMLDivElement,root:Root
 const locate=vi.fn(),onOpen=vi.fn()
 const byLabel=(name:string)=>host.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!
 const byText=(name:string)=>[...document.querySelectorAll('button')].find(b=>b.textContent===name)!
-const mount=(account='prod:11')=>root.render(<TeamConversationTools key={account} conversation={conversation} accountKey={account} host={{current:host}} overlayOpen={false} onOpenPanel={onOpen} onLocate={locate} resolveIdentity={p=>p} getReadingDate={()=>undefined}/>)
+const mount=(account='prod:11',resolveIdentity:(p:TeamIdentity)=>TeamIdentity=p=>p)=>root.render(<TeamConversationTools key={account} conversation={conversation} accountKey={account} host={{current:host}} overlayOpen={false} onOpenPanel={onOpen} onLocate={locate} resolveIdentity={resolveIdentity} getReadingDate={()=>undefined}/>)
 beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.clearAllMocks();call.mockReset();request.mockReset();localStorage.clear();host=document.createElement('div');document.body.append(host);root=createRoot(host);call.mockImplementation(async(op:string,p:any)=>op==='team.app.people.remarks'?{items:[]}:p?.action==='participants'?{...page([]),resultRef:'people'}:op==='team.app.notification-policy.get'?{muted:false,policyVersion:0,notifyAfterSeq:0}:p?.action==='dates'?{...page([]),resultRef:'dates',days:[{date:'2026-10-19',count:1,message:message(20)}]}:page([message(20)]));locate.mockResolvedValue(undefined)})
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
 it('queries only on demand, passes the selected text to the backend and locates server anchors',async()=>{
@@ -200,4 +200,14 @@ it('invalidates displayed summaries when source location loses access and keeps 
   expect(row.disabled).toBe(true);expect(row.textContent).toContain('正在定位…')
   await act(async()=>fail(new Error('原消息无权访问')))
   expect(host.querySelector('[data-team-history-hit]')).toBeNull();expect(host.textContent).toContain('原消息无权访问')
+})
+
+it('keeps personal remarks ahead of the existing current-name resolver in the original member select',async()=>{
+  mockAnalysis([{personKey:'p',personRef:'ref-p',nickname:'历史昵称'}])
+  await act(async()=>mount('prod:11',person=>({...person,nickname:'当前昵称'})));await act(async()=>byLabel('对话分析').click())
+  expect([...host.querySelectorAll('select option')].map(option=>option.textContent)).toContain('当前昵称')
+  const implementation=call.getMockImplementation()!
+  call.mockImplementation(async(op,p,signal)=>op==='team.app.people.remarks'?{items:[{personKey:'p',remark:'个人备注'}]}:implementation(op,p,signal))
+  await act(async()=>window.dispatchEvent(new Event('focus')))
+  expect([...host.querySelectorAll('select option')].map(option=>option.textContent)).toContain('个人备注')
 })
