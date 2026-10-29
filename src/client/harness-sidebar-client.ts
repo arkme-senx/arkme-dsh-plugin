@@ -1,6 +1,5 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { installHarnessHistoryConversation } from './harness-history-conversation.js'
 import { installHarnessAccountSessions } from './harness-account-sessions.js'
 import { installHarnessSessionListDefault } from './harness-session-list-default.js'
 import { installHarnessSessionDropdown } from './harness-session-dropdown.js'
@@ -19,7 +18,6 @@ export function apply(ctx: ClientContext): void {
     let restoreDefault: (() => void) | undefined
     let restoreSummary: (() => void) | undefined
     let restoreAccountSessions: (() => void) | undefined
-    let restoreHistory: (() => void) | undefined
     let restoreActivity: (() => void) | undefined
     const sync = () => {
       const accountId = Number(surface.getAttribute('data-arkme-account-id'))
@@ -30,12 +28,10 @@ export function apply(ctx: ClientContext): void {
         }, () => null))
         restoreDefault = installHarnessSessionListDefault(ctx)
         restoreAccountSessions = installHarnessAccountSessions(ctx, surface)
-        restoreHistory = installHarnessHistoryConversation(ctx, surface)
         restoreSummary = installHarnessSessionSummary(ctx, surface)
         restoreActivity = installHarnessActivityReporter(ctx, surface)
         restoreDropdown = installHarnessSessionDropdown(document)
       } else if (!authenticated) {
-        restoreHistory?.(); restoreHistory = undefined
         restoreAccountSessions?.()
         restoreAccountSessions = undefined
         restoreActivity?.()
@@ -55,7 +51,6 @@ export function apply(ctx: ClientContext): void {
     sync()
     return () => {
       observer.disconnect()
-      restoreHistory?.()
       restoreAccountSessions?.()
       restoreActivity?.()
       restoreSummary?.()

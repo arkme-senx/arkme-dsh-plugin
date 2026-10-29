@@ -33,6 +33,7 @@ export default defineConfig([
         '@sentry/node',
         'mediabunny',
         'pinyin-pro',
+        'yazl',
         'unified',
         'remark-parse',
         'remark-gfm',
