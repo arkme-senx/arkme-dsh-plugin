@@ -1296,6 +1296,7 @@ export async function dispatchArkmeHostOperation(
       if(typeof params?.muted!=='boolean') throw new TypeError('muted must be a boolean')
       return await service.setTeamNotificationPolicy(stringParam(params,'conversationRef'),params.muted,requestSignal)
     }
+    case 'team.members.manage': return await service.teamMemberManagement(params.request as import('./team-member-add-contract.js').TeamMemberManagementRequest, requestSignal)
     case 'team.profile.get':return await service.getTeamProfile(stringParam(params,'jotmoId'),requestSignal)
     case 'team.profile.update':return await service.updateTeamProfile(stringParam(params,'profileRef'),params.command as ArkmeTeamProfileUpdate,requestSignal)
     case 'team.profile.avatar.upload':return await service.uploadTeamAvatar(stringParam(params,'profileRef'),stringParam(params,'contentBase64'),stringParam(params,'uploadUid'),requestSignal)

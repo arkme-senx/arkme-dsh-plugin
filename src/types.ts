@@ -1531,6 +1531,7 @@ arkoImagesV1?:true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
     teamProfiles?: true
+    teamMemberManagementV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -4333,6 +4334,7 @@ export type ArkmePluginOperation =
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
+  | 'team.members.manage'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

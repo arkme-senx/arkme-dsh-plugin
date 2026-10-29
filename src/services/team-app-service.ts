@@ -1,3 +1,4 @@
+import {TeamMemberAddition} from './team-member-addition.js'
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
@@ -52,6 +53,7 @@ const reasons: Record<string, string> = {
   invalid_external_chat: '对外私聊请求无效，请重新打开',
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
+  member_management_forbidden: '仅当前团队所有者或管理员可添加成员', request_conflict: '同一批次的成员不一致，请核对原批次', snapshot_stale: '团队成员已变化，请重新加载',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
   message_recalled:'消息已撤回', message_not_published:'消息尚未发布，请取消发送',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
@@ -106,11 +108,11 @@ export class TeamAppService {
 
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
-    return await this.codec.seal(`team-app-${kind}`, { ...value, viewer: actor })
+    return await this.codec.seal(`team-app-${kind}`, { ...value, viewer: actor, environment: this.runtime.config.environment })
   }
   private async open(kind: string, value: unknown, actor: number): Promise<Record<string, unknown>> {
     const decoded = await this.codec.open(`team-app-${kind}`, str(value))
-    if (decoded.viewer !== actor) throw invalid()
+    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
     return decoded
   }
   async resolveConversation(ref:string,actor:number):Promise<{conversation_uid:string;side:TeamSide}>{
@@ -419,7 +421,11 @@ export class TeamAppService {
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
     }
-    const teamID = async () => (await this.open('team', p.teamRef, actor)).team_id
+    const teamID = async () => {
+      const value = await this.open('team', p.teamRef, actor)
+      if ((operation === 'team.app.member-candidates' || operation.startsWith('team.app.members.add')) && value.environment !== this.runtime.config.environment) throw invalid()
+      return value.team_id
+    }
     const conversation = async () => {
       const v = await this.open('conversation', p.conversationRef, actor)
       return { conversation_uid: v.conversation_uid, side: v.side }
@@ -566,7 +572,8 @@ export class TeamAppService {
       }
       case 'team.app.members': {
         const id = await teamID()
-        const [data, mine] = await Promise.all([post('members/list', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { page_cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        const [data, mine] = await Promise.all([post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        if (!Number.isSafeInteger(data.member_count) || Number(data.member_count) < 1 || !Number.isSafeInteger(data.membership_revision) || Number(data.membership_revision) < 0 || typeof data.can_add_members !== 'boolean' || typeof data.has_more !== 'boolean' || !Array.isArray(data.items) || data.has_more && !str(data.next_cursor)) throw invalid()
         const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         const members = list(data.items)
@@ -600,13 +607,14 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true, avatarState,
-          ...(data.next_page_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_page_cursor }, actor) } : {}),
+        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
             identityState: v.identity_state === 'ready' ? 'ready' as const : v.identity_state === 'unavailable' ? 'unavailable' as const : 'incomplete' as const,
+            ...(v.join_source === 3 && str(v.added_by_display_name) ? {addedByName:str(v.added_by_display_name)} : {}),
             role: role(v.role), joinedAtMillis: num(v.joined_at), canRemove: v.can_remove === true,
             codexSync: readTeamMemberCodexSync(v.codex_sync),
           }))),
@@ -734,41 +742,20 @@ export class TeamAppService {
         }
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
-      case 'team.app.member-candidates': case 'team.app.members.add': {
+      case 'team.app.members.add': case 'team.app.members.add-recover': case 'team.app.members.add-retry': case 'team.app.members.add-ack': {
+        const teamId = String(await teamID()), scope = `${this.runtime.config.environment}:${actor}`
+        const journal = this.runtime.stateStore.teamMemberAddition
+        if (!journal) throw new ArkmePluginError('team-member-storage-unavailable', '成员添加恢复存储不可用', true, 503)
+        const owner = new TeamMemberAddition({actor, teamId, post,
+          open: ref => this.open('member-candidate', ref, actor), key: userId => this.key(`member-candidate:${teamId}:${userId}`, actor),
+          journal: change => journal.call(this.runtime.stateStore, scope, teamId, change)})
+        if (operation === 'team.app.members.add-recover') return owner.recover()
+        if (operation === 'team.app.members.add-retry') return owner.retry()
+        if (operation === 'team.app.members.add-ack') return owner.ack(p.requestUid)
+        return owner.add(p.requestUid, p.candidateRefs)
+      }
+      case 'team.app.member-candidates': {
         const id = await teamID()
-        const mine = await post('list-mine', {}, true)
-        const currentTeam = list(mine.teams).find(team => String(team.team_id) === String(id))
-        if (!currentTeam || !['owner', 'admin'].includes(role(currentTeam.role))) {
-          throw new ArkmePluginError('team-member-add-forbidden', '仅团队所有者或管理员可添加成员', false, 403)
-        }
-        // Membership is authoritative. Do not label unknown users as non-members
-        // when an incomplete page or failed membership read prevents that check.
-        const members = new Set<string>(), cursors = new Set<string>()
-        let cursor = ''
-        for (let page = 0; ; page++) {
-          if (page >= 100) throw new ArkmePluginError('team-members-incomplete', '团队成员未读取完整，请稍后重试', true, 502)
-          const data = await post('members/list', { team_id: id, limit: 50, ...(cursor ? { page_cursor: cursor } : {}) }, true)
-          if (!Array.isArray(data.items) || typeof data.has_more !== 'boolean' || data.items.some(raw => !recordOwnerId(obj(raw).user_id))) throw invalid()
-          for (const member of list(data.items)) members.add(String(recordOwnerId(member.user_id)))
-          if (!data.has_more) break
-          const next = str(data.next_page_cursor)
-          if (!next || cursors.has(next)) throw invalid()
-          cursors.add(next); cursor = next
-        }
-        if (operation === 'team.app.members.add') {
-          if (!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid)) || !Array.isArray(p.candidateRefs)
-            || p.candidateRefs.length < 1 || p.candidateRefs.length > 50) throw invalid()
-          const selected = new Set<number>()
-          for (const ref of p.candidateRefs) {
-            const value = await this.open('member-candidate', ref, actor), userId = num(value.user_id)
-            if (String(value.team_id) !== String(id) || userId <= 0 || num(value.expires) < Date.now() || selected.has(userId)) throw invalid()
-            if (userId === actor || members.has(String(userId))) throw new ArkmePluginError('team-already-member', '所选用户已经加入团队，请刷新候选列表', false, 409)
-            selected.add(userId)
-          }
-          // No backend direct-add contract is connected yet. Never repurpose a
-          // group membership mutation or report a successful team addition.
-          return { state: 'backend_pending' } satisfies TeamMemberAddResult
-        }
         if (!this.memberCandidates || !['contacts', 'conversations', 'group'].includes(str(p.source))) throw invalid()
         const source = p.source as TeamMemberCandidateSource, sourceRef = str(p.sourceRef)
         if (source === 'group' && !sourceRef) throw invalid()
@@ -779,10 +766,30 @@ export class TeamAppService {
         })
         if (data.hasMore && !data.nextCursor) throw invalid()
         const unique = new Map(data.items.map(item => [item.userId, item]))
+        const members = new Set<string>(), candidates = [...unique.values()]
+        // Only resolve the current candidate page; no full-roster scan.
+        for (let offset = 0; offset < candidates.length; offset += 50) {
+          const ids = candidates.slice(offset, offset + 50).map(row => {
+            if (!Number.isSafeInteger(row.userId) || row.userId <= 0) throw invalid()
+            return String(row.userId)
+          })
+          const state = await post('members/query', {team_id: id, user_ids: ids}, true)
+          if (state.can_add_members !== true || !Array.isArray(state.items) || state.items.length !== ids.length) throw invalid()
+          const seen = new Set<string>()
+          for (const raw of list(state.items)) {
+            const key = String(recordOwnerId(raw.user_id))
+            if (!ids.includes(key) || seen.has(key) || typeof raw.active !== 'boolean') throw invalid()
+            seen.add(key); if (raw.active) members.add(key)
+          }
+        }
+        if (!candidates.length) {
+          const state = await post('members/query', {team_id: id, user_ids: [String(actor)]}, true)
+          if (state.can_add_members !== true || !Array.isArray(state.items) || state.items.length !== 1) throw invalid()
+        }
         const items = await Promise.all([...unique.values()].map(async ({ userId, ...identity }) => {
           if (!Number.isSafeInteger(userId) || userId <= 0) throw invalid()
           return { ...identity, key: await this.key(`member-candidate:${id}:${userId}`, actor),
-            candidateRef: await this.ref('member-candidate', { team_id: id, user_id: userId, expires: Date.now() + 60 * 60_000 }, actor),
+            candidateRef: await this.ref('member-candidate', { team_id: id, user_id: userId, display_name: identity.displayName, expires: Date.now() + 60 * 60_000 }, actor),
             alreadyMember: members.has(String(userId)), isSelf: userId === actor }
         }))
         return { items, groups: data.groups ?? [], hasMore: data.hasMore,

@@ -17,7 +17,7 @@ export type TeamAppOperation = `team.app.${
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory'
   | 'internal-group.prepare'
-  | 'public-card' | 'member-candidates' | 'members.add'
+  | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
   | 'world.view' | 'world.prepare'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
@@ -79,7 +79,8 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
-  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  membershipRevision: number; canAddMembers: boolean
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; addedByName?:string; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
   avatarState?: 'pending' | 'ready' | 'unavailable'
 }

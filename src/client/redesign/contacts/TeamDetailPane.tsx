@@ -344,7 +344,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
         <div className="arkme-team-members-heading"><h2>{tr("团队成员")}</h2>
-          {(page.team.currentUserRole === 'owner' || page.team.currentUserRole === 'admin') && <button type="button" className="arkme-team-action" aria-haspopup="dialog" onClick={() => setAddingMembers(true)}>{tr('＋ 添加成员')}</button>}
+          {page.canAddMembers && <button type="button" className="arkme-team-action" aria-haspopup="dialog" onClick={() => setAddingMembers(true)}>{tr('＋ 添加成员')}</button>}
         </div>
         <div className="arkme-team-member-list" role="list">
           {confirmRemoval && <div className="team-confirm" role="alert"><p>{tr('确认移除 {v0}？', { v0: confirmRemoval.name })}</p>
@@ -361,6 +361,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-member-copy">
               <strong>{member.displayName}</strong>
               <small>{memberIdentity(member)}</small>
+              {member.addedByName && <small>{tr('由 {v0} 添加', {v0:member.addedByName})}</small>}
             </span>
             <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
@@ -392,7 +393,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       onViewConversations={() => { setMessageChannelOpen(false); openTeamMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
-    {addingMembers && <TeamAddMembersDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name} onClose={() => setAddingMembers(false)} />}
+    {addingMembers && <TeamAddMembersDialog accountKey={accountKey} teamRef={page.team.teamRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setAddingMembers(false)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

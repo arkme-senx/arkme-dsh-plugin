@@ -32,4 +32,20 @@ export interface TeamMemberCandidateSourcePage {
 export interface TeamMemberCandidatePort {
   list(source: TeamMemberCandidateSource, options: { sourceRef?: string; cursor?: string; refresh?: boolean; signal?: AbortSignal }): Promise<TeamMemberCandidateSourcePage>
 }
-export interface TeamMemberAddResult { state: 'backend_pending' }
+export interface TeamMemberAddResult {
+  state: 'completed'
+  requestUid: string
+  memberCount: number
+  membershipRevision: number
+  items: Array<{key: string; displayName?: string; status: 'added' | 'already_member' | 'rejected'; reason?: string}>
+}
+export interface TeamMemberAdditionAttempt { requestUid: string; userIds: string[]; labels?: Record<string, string> }
+export type TeamMemberAdditionRecovery = TeamMemberAddResult | {state: 'none'} | {state: 'unresolved'; requestUid: string}
+export type TeamMemberManagementRequest = {teamRef: string} & (
+  {action: 'candidates'; source: TeamMemberCandidateSource; sourceRef?: string; cursor?: string; refresh?: boolean} |
+  {action: 'add'; candidateRefs: string[]; requestUid: string} |
+  {action: 'recover' | 'retry'} | {action: 'ack'; requestUid: string})
+export type TeamMemberManagementResult = TeamMemberCandidatePage | TeamMemberAddResult | TeamMemberAdditionRecovery | {state: 'acknowledged'}
+export interface TeamMemberManagementPort {
+  teamMemberManagement(request: TeamMemberManagementRequest, signal?: AbortSignal): Promise<TeamMemberManagementResult>
+}

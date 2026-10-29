@@ -16,6 +16,7 @@ const channel = { team_id: '9223372036854775800', name: '即我团队', jotmo_id
 const conversation = { conversation_uid: 'conversation-private', team_id: channel.team_id, external_user_id: 90, channel, side: 'external', last_seq: 2, latest_team_reply_seq: 1, my_read_seq: 0, unread: 1 }
 const message = { message_uid: 'message-private', actor_user_id: 11, record_owner_user_id: 11, seq: 2, revision: 2, side: 'team', state: 'published', sender: { nickname: '小林', avatar_url: 'https://userfiles.jotmo.cc/test.png' }, record: { status: 'available', version: 3, text_content: '已收到', media: [{ file_asset_uid: 'asset-secret', file_name: 'photo.png', mime_type: 'image/png', size: 42, file_kind: 1, download_url: 'https://private-signed.invalid' }] } }
 function fixture(handler: (path: string, body: Record<string, unknown>) => unknown | Promise<unknown> = () => ({})) {
+  let pending: import('../src/team-member-add-contract.js').TeamMemberAdditionAttempt | undefined
   let session = { userId: 90, accessToken: 'app-token', refreshToken: 'app-refresh' }
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = []
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -27,7 +28,7 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   })
   const config = { environment: 'test', teamBaseUrl: 'https://team.test', authBaseUrl: 'https://auth.test', chatBaseUrl: 'https://chat.test', recordBaseUrl: 'https://record.test', subjectBaseUrl: 'https://subject.test', routePath: '/custom/api', requestTimeoutMs: 500, shareWebsite: 'https://share.test', maxTextLength: 20000 } as ArkmeServiceConfig
   const recovery=new Map<string,import('../src/team-outbound-contract.js').TeamOutboundRecovery>()
-  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key',teamOutboundTarget:vi.fn(async(scope:string,uid:string)=>recovery.get(scope+uid)),retainTeamOutboundTarget:vi.fn(async(scope:string,uid:string,value:import('../src/team-outbound-contract.js').TeamOutboundRecovery)=>{recovery.set(scope+uid,value)}) } as StateStore, fetchImpl as typeof fetch)
+  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key', teamMemberAddition: async (_scope:string,_team:string,change?:any)=>{if(change?.put)pending=change.put;else if(change?.ack===pending?.requestUid)pending=undefined;return structuredClone(pending)},teamOutboundTarget:vi.fn(async(scope:string,uid:string)=>recovery.get(scope+uid)),retainTeamOutboundTarget:vi.fn(async(scope:string,uid:string,value:import('../src/team-outbound-contract.js').TeamOutboundRecovery)=>{recovery.set(scope+uid,value)}) } as StateStore, fetchImpl as typeof fetch)
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
@@ -648,10 +649,12 @@ describe('Team App owner adapter', () => {
     await expect(broken.service.execute('team.app.join',{jotmoId:'protected_team',requestUid:'broken'})).rejects.toThrow()
   })
   it('returns only current members and opaque removal handles', async () => {
-    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true }], total_count: 1 } : { teams: [{ ...channel, role: 1 }] })
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? { items: [{ user_id: 11, display_name: '林', role: 3, can_remove: true, join_source:3,added_by_display_name:'公开发起人' }], member_count: 1, membership_revision: 2, can_add_members: true, has_more: false } : { teams: [{ ...channel, role: 1 }] })
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const members = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(members.items[0]?.canRemove).toBe(true)
+    expect(members.items[0]?.addedByName).toBe('公开发起人')
+    expect(members).toMatchObject({totalCount:1,membershipRevision:2,canAddMembers:true})
     expect(members.items[0]?.codexSync).toEqual({state:'unavailable',reason:'unsupported'})
     const refreshed = await f.service.execute('team.app.members', { teamRef: c.teamRef }) as TeamMembers
     expect(refreshed.items[0]?.userRef).not.toBe(members.items[0]?.userRef)
@@ -661,11 +664,11 @@ describe('Team App owner adapter', () => {
     expect(f.requests.at(-1)?.body).toEqual({ team_id: channel.team_id, target_user_id: 11 })
   })
   it('passes only validated member sync status without additional member-by-member calls', async () => {
-    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? { items: [
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? { items: [
       { user_id: 11, display_name: '甲', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:false,can_view_conversations:true,private_path:'/private'} },
       { user_id: 12, display_name: '乙', role: 3, codex_sync: {version:1,state:'not_connected',has_conversations:false,can_view_conversations:false} },
       { user_id: 13, display_name: '丙', role: 3, codex_sync: {version:1,state:'enabled',has_conversations:0,can_view_conversations:'true'} },
-    ], total_count: 3 } : { teams: [{ ...channel, role: 1 }] })
+    ], member_count: 3, membership_revision: 2, can_add_members: true, has_more: false } : { teams: [{ ...channel, role: 1 }] })
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const result = await f.service.execute('team.app.members', {teamRef:c.teamRef,avatarMode:'deferred'}) as TeamMembers
     expect(result.items.map(item => item.codexSync)).toEqual([
@@ -674,13 +677,13 @@ describe('Team App owner adapter', () => {
       {state:'unavailable',reason:'invalid'},
     ])
     expect(JSON.stringify(result)).not.toContain('/private')
-    expect(f.requests.filter(r => r.path.includes('members/list'))).toHaveLength(1)
+    expect(f.requests.filter(r => r.path.includes('members/snapshot'))).toHaveLength(1)
     expect(f.requests.some(r => r.path.includes('connection/status'))).toBe(false)
   })
   it('preserves optional profile avatars and unavailable identity without changing member authority', async () => {
-    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? {
       items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 },
-        { user_id: 12, display_name: '用户', identity_state: 'unavailable', role: 3 }], total_count: 2,
+        { user_id: 12, display_name: '用户', identity_state: 'unavailable', role: 3 }], member_count: 2, membership_revision: 2, can_add_members: true, has_more: false,
     } : { teams: [{ ...channel, role: 1 }] })
     f.avatars.publicAvatarPresentationsByArkmeIds.mockResolvedValue(new Map([['member_lin', { avatarRef: 'profile-avatar' }]]))
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
@@ -695,8 +698,8 @@ describe('Team App owner adapter', () => {
     expect(degraded.avatarState).toBe('unavailable')
   })
   it('returns membership without waiting for avatars, then enriches and caches only viewer-scoped presentation', async () => {
-    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/list') ? {
-      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 }], total_count: 1,
+    const f = fixture(path => path.endsWith('official-feedback-target') ? channel : path.endsWith('members/snapshot') ? {
+      items: [{ user_id: 11, display_name: '林', jotmo_id: 'member_lin', identity_state: 'ready', role: 3 }], member_count: 1, membership_revision: 2, can_add_members: true, has_more: false,
     } : { teams: [{ ...channel, role: 1 }] })
     const c = await f.service.execute('team.app.official', {}) as TeamChannel
     const first = await f.service.execute('team.app.members', { teamRef: c.teamRef, avatarMode: 'deferred' }) as TeamMembers
@@ -986,74 +989,69 @@ it('projects server reply keys and rejects cross-conversation or cross-account r
   await expect(f.service.replyKey(conversationRef,parent.ref,91)).rejects.toThrow()
 })
 
-describe('team member candidate and pending add boundary', () => {
-  const owner = { team_id: 17, role: 1, name: '团队', jotmo_id: 'team' }
+describe('team member management boundary', () => {
+  const owner = {team_id:17,role:1,name:'团队',jotmo_id:'team'}
   type Page = import('../src/team-member-add-contract.js').TeamMemberCandidatePage
-  async function ref(f: ReturnType<typeof fixture>) { return ((await f.service.execute('team.app.teams', {})) as Array<{ teamRef: string }>)[0]!.teamRef }
-  const handler = (path: string) => path.endsWith('/list-mine') ? { teams: [owner] } : { items: [{ user_id: 90 }, { user_id: 12 }], has_more: false }
-  it('deduplicates people by real account across sources and disables self/existing members without exposing IDs', async () => {
-    const f = fixture(handler), teamRef = await ref(f)
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '备注' }, { userId: 11, displayName: '备注' }, { userId: 12, displayName: '同名' }, { userId: 90, displayName: '我' }], hasMore: false })
-    const first = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
-    expect(first.items).toHaveLength(3)
-    expect(first.items[0]).toMatchObject({ displayName: '备注', alreadyMember: false, isSelf: false })
-    expect(first.items[1]).toMatchObject({ alreadyMember: true, isSelf: false })
-    expect(first.items[2]).toMatchObject({ alreadyMember: true, isSelf: true })
-    expect(first.items.some(item => 'userId' in item)).toBe(false)
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '群昵称' }], hasMore: false })
-    const second = await f.service.execute('team.app.member-candidates', { teamRef, source: 'group', sourceRef: 'group' }) as Page
-    expect(second.items[0]!.key).toBe(first.items[0]!.key)
-    await expect(f.service.execute('team.app.members.add', { teamRef, candidateRefs: [second.items[0]!.candidateRef], requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
-    expect(f.requests.every(req => /\/(list-mine|members\/list)$/.test(req.path))).toBe(true)
+  function setup() {
+    let active = false, allowed = true
+    const f = fixture((path, body) => {
+      if(path.endsWith('/list-mine')) return {teams:[owner,{...owner,team_id:18}]}
+      if(path.endsWith('/members/query')) {
+        if(!allowed) return new Response(JSON.stringify({code:1001,data:{reason:'member_management_forbidden'}}))
+        return {can_add_members:true,items:(body.user_ids as string[]).map(user_id=>({user_id,active:active||['12','90'].includes(user_id)}))}
+      }
+      if(path.endsWith('/members/add-status')) return {state:'not_found'}
+      if(path.endsWith('/members/add')) return allowed ? {team_id:'17',actor_user_id:'90',request_uid:body.request_uid,member_count:3,membership_revision:1,items:(body.user_ids as string[]).map(user_id=>({user_id,status:active?'already_member':'added'}))} : new Response(JSON.stringify({code:1001,data:{reason:'member_management_forbidden'}}))
+      throw new Error(path)
+    })
+    f.candidates.list.mockResolvedValue({items:[{userId:11,displayName:'同事'},{userId:12,displayName:'已加入'},{userId:90,displayName:'我'}],hasMore:false})
+    return {...f, setActive(){active=true}, revoke(){allowed=false}}
+  }
+  async function refs(f:ReturnType<typeof setup>) {const teams=await f.service.execute('team.app.teams',{}) as Array<{teamRef:string}>;const teamRef=teams[0]!.teamRef;const page=await f.service.execute('team.app.member-candidates',{teamRef,source:'contacts'}) as Page;return {teamRef,page,other:teams[1]!.teamRef}}
+  it('queries only the current candidates and preserves stable identities across sources',async()=>{
+    const f=setup(),{teamRef,page}=await refs(f)
+    expect(page.items.map(i=>i.alreadyMember)).toEqual([false,true,true])
+    const group=await f.service.execute('team.app.member-candidates',{teamRef,source:'group',sourceRef:'group'}) as Page
+    expect(group.items[0]!.key).toBe(page.items[0]!.key)
+    expect(page.items[0]).not.toHaveProperty('userId')
+    expect(f.requests.filter(r=>r.path.endsWith('/members/query')).map(r=>r.body.user_ids)).toEqual([['11','12','90'],['11','12','90']])
+    expect(f.requests.some(r=>r.path.endsWith('/members/list'))).toBe(false)
+  })
+  it('returns a real per-person result, acknowledges it and treats concurrent membership as already joined',async()=>{
+    const f=setup(),{teamRef,page}=await refs(f);f.setActive()
+    const result=await f.service.execute('team.app.members.add',{teamRef,candidateRefs:[page.items[0]!.candidateRef],requestUid:'batch'})
+    expect(result).toMatchObject({state:'completed',items:[{key:page.items[0]!.key,status:'already_member'}]})
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
-  it('reads all membership pages so a later existing member cannot be selected', async () => {
-    const f = fixture((path, body) => path.endsWith('/list-mine') ? { teams: [owner] } : body.page_cursor ? { items: [{ user_id: 11 }], has_more: false } : { items: [{ user_id: 90 }], has_more: true, next_page_cursor: 'next' })
-    const teamRef = await ref(f)
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
-    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
-    expect(page.items[0]!.alreadyMember).toBe(true)
-    await expect(f.service.execute('team.app.members.add', { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' })).rejects.toThrow('已经加入')
+  it('binds cursor and selection references to source, team and account',async()=>{
+    const f=setup();f.candidates.list.mockResolvedValue({items:[{userId:11,displayName:'同事'}],hasMore:true,nextCursor:'page2'})
+    const {teamRef,page,other}=await refs(f)
+    await expect(f.service.execute('team.app.member-candidates',{teamRef,source:'conversations',cursor:page.nextCursor})).rejects.toThrow()
+    const add={teamRef,candidateRefs:[page.items[0]!.candidateRef],requestUid:'batch'}
+    await expect(f.service.execute('team.app.members.add',{...add,teamRef:other})).rejects.toThrow()
+    await expect(f.service.execute('team.app.members.add',{...add,candidateRefs:[...add.candidateRefs,...add.candidateRefs]})).rejects.toThrow()
+    f.changeAccount();await expect(f.service.execute('team.app.members.add',add)).rejects.toThrow()
   })
-  it('binds cursors and sealed candidates to team, account and source', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [owner, { ...owner, team_id: 18 }] } : { items: [], has_more: false })
-    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>, teamRef = teams[0]!.teamRef
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: true, nextCursor: 'opaque-upstream-cursor' })
-    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
-    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'conversations', cursor: page.nextCursor })).rejects.toThrow()
-    await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts', cursor: page.nextCursor })
-    expect(f.candidates.list).toHaveBeenLastCalledWith('contacts', { cursor: 'opaque-upstream-cursor' })
-    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
-    await expect(f.service.execute('team.app.members.add', { ...add, teamRef: teams[1]!.teamRef })).rejects.toThrow()
-    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: [...add.candidateRefs, ...add.candidateRefs] })).rejects.toThrow()
-    f.changeAccount()
-    await expect(f.service.execute('team.app.members.add', { ...add, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  it('rechecks server authority at submit and rejects malformed candidate membership',async()=>{
+    const f=setup(),{teamRef,page}=await refs(f);f.revoke()
+    await expect(f.service.execute('team.app.members.add',{teamRef,candidateRefs:[page.items[0]!.candidateRef],requestUid:'batch'})).rejects.toThrow('管理员')
+    await expect(f.service.execute('team.app.member-candidates',{teamRef,source:'contacts'})).rejects.toThrow()
+    f.candidates.list.mockResolvedValue({items:[{userId:Number.MAX_SAFE_INTEGER+1,displayName:'不精确'}],hasMore:false})
+    await expect(f.service.execute('team.app.member-candidates',{teamRef,source:'contacts'})).rejects.toThrow()
   })
-  it('rechecks permission and joining at submit, and fails closed for malformed membership', async () => {
-    let role = 1, members: unknown = { items: [], has_more: false }
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [{ ...owner, role }] } : members), teamRef = await ref(f)
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
-    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
-    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
-    role = 3
-    await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow('仅团队所有者或管理员')
-    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow('仅团队所有者或管理员')
-    role = 2; members = { items: [{ user_id: 11 }], has_more: false }
-    await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow('已经加入')
-    members = { items: [], has_more: true, next_page_cursor: 'loop' }
-    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow()
-    members = { items: [] }
-    await expect(f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' })).rejects.toThrow()
+  it('rejects management references issued for another environment before any write',async()=>{
+    const f=setup(),{teamRef,page}=await refs(f),before=f.requests.length
+    Object.assign(f.runtime.config,{environment:'prod'})
+    await expect(f.service.execute('team.app.members.add',{teamRef,candidateRefs:[page.items[0]!.candidateRef],requestUid:'batch'})).rejects.toThrow()
+    await expect(f.service.execute('team.app.member-candidates',{teamRef,source:'contacts'})).rejects.toThrow()
+    expect(f.requests).toHaveLength(before)
   })
-  it('rejects expired candidates, empty selections and oversized batches', async () => {
-    const f = fixture(handler), teamRef = await ref(f)
-    f.candidates.list.mockResolvedValue({ items: [{ userId: 11, displayName: '人' }], hasMore: false })
-    const page = await f.service.execute('team.app.member-candidates', { teamRef, source: 'contacts' }) as Page
-    const add = { teamRef, candidateRefs: [page.items[0]!.candidateRef], requestUid: '1' }
-    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: [] })).rejects.toThrow()
-    await expect(f.service.execute('team.app.members.add', { ...add, candidateRefs: Array(51).fill(add.candidateRefs[0]) })).rejects.toThrow()
-    const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 3_600_001)
-    try { await expect(f.service.execute('team.app.members.add', add)).rejects.toThrow() } finally { clock.mockRestore() }
+  it('rejects expired new candidates and invalid batch sizes',async()=>{
+    const f=setup(),{teamRef,page}=await refs(f),add={teamRef,candidateRefs:[page.items[0]!.candidateRef],requestUid:'batch'}
+    await expect(f.service.execute('team.app.members.add',{...add,candidateRefs:[]})).rejects.toThrow()
+    await expect(f.service.execute('team.app.members.add',{...add,candidateRefs:Array(51).fill(add.candidateRefs[0])})).rejects.toThrow()
+    const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now()+3_600_001)
+    try {await expect(f.service.execute('team.app.members.add',add)).rejects.toThrow()} finally {clock.mockRestore()}
   })
 })
 

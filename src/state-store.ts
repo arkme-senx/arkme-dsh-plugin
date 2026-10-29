@@ -34,6 +34,7 @@ export interface ArkmeCancellationCompletion {
 
 interface PersistedState {
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
+  teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
@@ -390,6 +391,7 @@ function parseState(raw: string): PersistedState {
     recordingImportJobsByUser,
     recordingToolBatches: source.recordingToolBatches,
     dayReviewPending: source.dayReviewPending ?? {},
+    teamMemberAdditions: source.teamMemberAdditions,
   }
 }
 
@@ -527,6 +529,25 @@ export class ArkmeStateStore {
   async arkoFileRefs(userId: number): Promise<string[]> {
     return this.read(state => Object.values(this.arkoTurns(state, userId))
       .flatMap(value => value.turn.images?.map(file => file.fileRef) ?? []))
+  }
+
+  async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) {
+    const access = (state: PersistedState) => {
+      const raw = state.teamMemberAdditions ?? {}
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('成员添加恢复记录损坏，已保留原记录')
+      state.teamMemberAdditions = raw
+      const values = raw as Record<string, import('./team-member-add-contract.js').TeamMemberAdditionAttempt>
+      const key = JSON.stringify([scope, teamId]), previous = values[key]
+      if (change && 'put' in change) {
+        if (previous && JSON.stringify(previous) !== JSON.stringify(change.put)) throw new Error('请先核对原批次的添加结果')
+        values[key] = structuredClone(change.put)
+      } else if (change && previous?.requestUid === change.ack) delete values[key]
+      return structuredClone(values[key])
+    }
+    if (!change) return this.read(access)
+    let result: import('./team-member-add-contract.js').TeamMemberAdditionAttempt | undefined
+    await this.update(state => { result = access(state) })
+    return result
   }
 
   private reviewPending(state: PersistedState): Record<string, unknown> {
