@@ -39,10 +39,13 @@ export function historyMonthWindow(month: string): TeamHistoryOptions {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(month)) throw new Error('分析月份无效')
   const [year, value] = month.split('-').map(Number)
   if (!year) throw new Error('分析月份无效')
-  const start = new Date(year!, value! - 1, 1)
-  start.setFullYear(year!)
-  const end = new Date(start); end.setMonth(end.getMonth() + 1)
-  return { fromAt: start.getTime(), untilAt: end.getTime(), timezone: historyTimezone() }
+  const boundary = (monthIndex: number) => {
+    const date = new Date(0)
+    date.setFullYear(year!, monthIndex, 1)
+    date.setHours(0, 0, 0, 0)
+    return date.getTime()
+  }
+  return { fromAt: boundary(value! - 1), untilAt: boundary(value!), timezone: historyTimezone() }
 }
 
 type PageState = { key: string; page?: TeamHistoryResponse; loading: boolean; error: string; windowed: boolean }
