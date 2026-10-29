@@ -86,7 +86,7 @@ try{
  await page.screenshot({path:join(capture,'recall-placeholder.png')});
  // Existing independent preview, actual Team/Record bytes, upstream SSE and Host preflight.
  const mediaBubble=pane.locator('[data-team-message-key]').filter({hasText:'T09 attachment source'}).first();await mediaBubble.waitFor();
- const popupReady=page.waitForEvent('popup');await mediaBubble.getByRole('button',{name:'预览图片 source.png',exact:true}).click();const preview=await popupReady;
+ const [preview]=await Promise.all([page.waitForEvent('popup'),mediaBubble.getByRole('button',{name:/^预览图片 /}).click()]);
  await preview.locator('img').first().waitFor();await preview.waitForFunction(()=>Array.from(document.images).some(image=>image.naturalWidth>0));
  await preview.locator('img').first().evaluate(image=>window.__t09OriginalPreviewImage=image);
  const before=calls.filter(call=>call.path.endsWith('/batch-get')).length;

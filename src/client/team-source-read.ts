@@ -44,7 +44,7 @@ export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:
     if(account===target.accountKey&&!receiptOnly&&teamChangeAffectsSource(change,target))validate()
   })
   const recover=()=>{if(!available)validate()}
-  window.addEventListener('online',recover);window.addEventListener('focus',recover)
+  window.addEventListener('online',validate);window.addEventListener('focus',recover)
   validate()
-  return ()=>{++generation;controller.abort();stop();window.removeEventListener('online',recover);window.removeEventListener('focus',recover)}
+  return ()=>{++generation;controller.abort();stop();window.removeEventListener('online',validate);window.removeEventListener('focus',recover)}
 }
