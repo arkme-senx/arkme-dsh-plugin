@@ -12,6 +12,9 @@ import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture
 import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
+import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { TeamGroupIdentityPicker } from '../src/client/TeamGroupControls.js'
+import { longArticleWindowBridge } from '../src/client/long-article-window.js'
 import { composerArticleKey, composerArticleStore } from '../src/client/composer-article-store.js'
 import { ArkmeSelfCalendarPopover } from '../src/client/ArkmeCalendarSurface.js'
 import { ArkmeCalendarNavigationStatus } from '../src/client/ArkmeCalendarNavigationStatus.js'
@@ -2102,6 +2105,35 @@ describe('conversation send directory projection', () => {
       ] }
       throw new Error(`unexpected operation ${operation}`)
     })
+  })
+
+  it.each([true, false])('keeps the original article creation entry and team draft context with native available=%s', async native => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    const composition = { draftScope: 'stable-team-7', representation: { teamRef: 'frozen-team-7', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 } }
+    let nativeTarget: any
+    const open = vi.fn(async (target: any) => { nativeTarget = { accountKey: target.accountKey, sourceKey: target.sourceKey, sourceRef: target.sourceRef, displayName: target.displayName }; return true })
+    vi.stubGlobal('arkmeLongArticle', native ? { version: 2, open, account: async () => true, context: async () => nativeTarget, onCreated: () => () => {} } : undefined)
+    vi.stubGlobal('document', { body: {}, activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => operation === 'search.scene' ? { items: [], hasMore: false } : base(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    act(() => renderer!.root.findByType(TeamGroupIdentityPicker).props.onSelect({ team: { key: composition.draftScope, jotmoId: 'team_7', name: '接待' }, selection: composition.representation }))
+    act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
+    const add = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.find((action: { id: string }) => action.id === 'article')
+    expect(add.label).toBe('添加长文')
+    act(() => add.onSelect())
+    const picker = renderer!.root.findByType(ArkmeArticlePicker)
+    expect(picker.props.composition).toEqual(composition)
+    let opened: boolean | undefined
+    await act(async () => { opened = await picker.props.onCreate() })
+    expect(opened).toBe(native)
+    // The original picker owns browser fallback; the parent must not introduce a second editor.
+    expect(renderer!.root.findAllByType(ArkmeLongArticleDialog)).toHaveLength(0)
+    if (native) {
+      expect(open).toHaveBeenCalledOnce()
+      expect(await longArticleWindowBridge()!.context()).toEqual(expect.objectContaining({ sourceRef: group.sourceRef, displayName: `${group.displayName} · 我 · 接待团队`, composition }))
+    } else expect(open).not.toHaveBeenCalled()
   })
 
   it.each([target, group].flatMap(selectedSource => ['inactive', 'switch'].map(exit => ({ selectedSource, exit, kind: selectedSource.kind }))))('preserves pending articles and text/files in $kind through picker exit via $exit', async ({ selectedSource, exit }) => {

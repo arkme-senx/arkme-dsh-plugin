@@ -78,3 +78,15 @@ describe('ordinary Record forward snapshots', () => {
     expect(result!.items[3]).toMatchObject({ avatarKind: 'deepseek' })
   })
 })
+
+it('keeps represented source attribution in the existing author row without adding a provenance section', () => {
+ const team={name:'来源团队',jotmoId:'source_team',teamRef:'sealed',membershipKind:'member' as const,membershipRevision:1,groupJoinAt:9}
+ const item={itemUid:'forward',senderName:'转发者',isMe:true,sendAtMillis:1,textContent:'',status:1,forwardRecords:{title:'转发',createdAtMillis:1,summaryLines:[],items:[{senderName:'真实作者',sendAtMillis:1,title:'',textContent:'正文',sourceTeam:team,originTeam:team}]}}
+ const html=renderToStaticMarkup(<ForwardRecordsDetail item={item} onClose={()=>{}}/>)
+ expect(html).toContain('真实作者')
+ expect(html).toContain('查看来源团队团队资料')
+ expect(html).not.toContain('原始内容来源')
+ expect(html.match(/查看来源团队团队资料/g)).toHaveLength(1)
+ const personal={...item,forwardRecords:{...item.forwardRecords,items:[{...item.forwardRecords.items[0]!,sourceTeam:undefined}]}}
+ expect(renderToStaticMarkup(<ForwardRecordsDetail item={personal} onClose={()=>{}}/>)).not.toContain('查看来源团队团队资料')
+})

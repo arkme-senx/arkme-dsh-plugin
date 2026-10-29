@@ -7,6 +7,7 @@ import { callArkme } from './api.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from './ArkmeLongArticleDialog.js'
 import type { ComposerArticle } from './composer-article-store.js'
+import type { LongArticleComposition } from './long-article-window.js'
 
 const styles: Record<string, CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 16 },
@@ -29,7 +30,8 @@ export function isOwnArticle(item: ArkmeSearchRecordItem, userId: number): boole
     && (item.recordCreatorUserId === undefined || String(item.recordCreatorUserId) === String(userId))
 }
 
-export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCreate }: {
+export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, onSelect, onCreate }: {
+  composition?: LongArticleComposition | undefined
   onCreate?: () => Promise<boolean>
   sourceRef: string; userId: number; onClose: () => void; onSelect: (article: ComposerArticle) => void
 }) {
@@ -150,7 +152,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
           <button style={{ ...styles.button, background: theme.primaryAction, color: theme.onPrimaryAction, opacity: !selected || opening ? .5 : 1 }} disabled={!selected || opening} onClick={() => { void resolveArticle(selected, true) }}>{opening ? tr("正在读取…") : '添加所选'}</button></footer>
       </div>
     </div>
-    {creating && <ArkmeLongArticleDialog sourceRef={sourceRef} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
+    {creating && <ArkmeLongArticleDialog sourceRef={sourceRef} draftScope={composition?.draftScope} representation={composition?.representation} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
       if (!draft.recordUid || !draft.relationUid) return
       onSelect({ kind: 'new', draft: { ...draft, recordUid: draft.recordUid, relationUid: draft.relationUid } }); onClose()
     }} />}

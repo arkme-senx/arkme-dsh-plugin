@@ -164,3 +164,22 @@ it('previews Markdown and a local draft image without enabling the editor', asyn
  act(() => renderer!.root.findByProps({ 'aria-label': '关闭草稿预览' }).props.onClick())
  expect(renderer!.root.findByProps({ 'aria-label': '预览草稿' })).toBeDefined()
 })
+
+it('the original native editor retains its scoped team draft and sends that explicit identity', async()=>{
+ const {arkmeAuthStore}=await import('../src/client/auth-store.js')
+ arkmeAuthStore.setAuth({status:'authenticated',userId:7,environment:'prod'})
+ const representation={teamRef:'sealed-team',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
+ const nativeTarget={accountKey:'prod:7',sourceKey:'chat:A',sourceRef:'chat',displayName:'产品群 · 我 · 团队',composition:{draftScope:'team',representation}}
+ const published=vi.fn(async()=>true)
+ mocks.call.mockImplementation(async(op:string,params:any)=>op==='auth.status'?{status:'authenticated',userId:7,environment:'prod'}:op==='provider.capabilities'?{features:{markdownLongArticles:false}}:op==='source.send-rich'?{sourceRef:'chat',itemUid:params.recordUid,status:1,localState:'synced'}:undefined)
+ vi.stubGlobal('document',{title:''})
+ vi.stubGlobal('arkmeLongArticle',{version:3,context:async()=>nativeTarget,active:async()=>true,onInvalidated:()=>()=>{},onClose:mode.subscribeClose,cancelClose,close:vi.fn(),published})
+ await act(async()=>{renderer=create(<ArkmeLongArticleWindow/>)})
+ expect(renderer!.root.findByType(ArkmeLongArticleDialog).props.representation).toEqual(representation)
+ expect(renderer!.root.findByType(ArkmeLongArticleDialog).props.draftScope).toBe('team')
+ act(()=>{renderer!.root.findByProps({'aria-label':'长文标题'}).props.onChange({target:{value:'标题'}});renderer!.root.findByProps({'aria-label':'长文正文'}).props.onChange({target:{value:'正文'}})})
+ await act(async()=>button('发送').props.onClick())
+ expect(mocks.call).toHaveBeenCalledWith('source.send-rich',expect.objectContaining({sourceRef:'chat',representation,sendAtMillis:expect.any(Number)}))
+ expect(mocks.call).toHaveBeenCalledWith('source.long-article.draft.delete',expect.objectContaining({sourceRef:'chat',draftScope:'team'}))
+ expect(published).toHaveBeenCalledWith(expect.objectContaining({itemUid:expect.any(String)}))
+})

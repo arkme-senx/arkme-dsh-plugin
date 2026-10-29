@@ -1123,10 +1123,11 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, segment = false, children }: {
+function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, representation, segment = false, children }: {
   name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined
   senderUserId?: number | undefined
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+  representation?: Pick<import('../team-group-contract.js').TeamRepresentationSnapshot, 'name' | 'jotmoId'> | undefined
   segment?: boolean; children: ReactNode
 }) {
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
@@ -1135,7 +1136,7 @@ function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onP
       : <ForwardSenderAvatar name={name} avatarRef={avatarRef} senderUserId={senderUserId}
         onPrivateChatOpened={onPrivateChatOpened} segment={segment} />}
     <div style={styles.content}>
-      <div style={styles.meta}><span style={styles.name}>{name}</span><span style={styles.time}>{time}</span></div>
+      <div style={styles.meta}><span style={styles.name}>{name}</span>{representation && <TeamRepresentationBadge value={representation} />}<span style={styles.time}>{time}</span></div>
       {children}
     </div>
   </div>
@@ -1259,10 +1260,8 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
-        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened}
+        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened} representation={value.sourceTeam}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {value.sourceTeam&&<TeamRepresentationBadge value={value.sourceTeam}/>}
-        {value.originTeam&&<div style={{fontSize:11}}>原始内容来源：<TeamRepresentationBadge value={value.originTeam}/></div>}
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
         </h3>}

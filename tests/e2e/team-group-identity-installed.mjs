@@ -64,7 +64,7 @@ try{
  await page.getByText('身份验收普通群',{exact:true}).first().click()
  const trigger=page.getByRole('button',{name:'群聊发言身份：我',exact:true});await trigger.waitFor();await trigger.click()
  await page.getByRole('dialog',{name:'选择发言角色'}).getByRole('button',{name:/代表验收团队/}).click()
- await page.getByRole('button',{name:/真人验收 · 代表验收团队/}).waitFor()
+ await page.getByRole('button',{name:/群聊发言身份：我 · 代表验收团队/}).waitFor()
  await page.screenshot({path:join(capture,'represented-composer.png')})
  await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2))
  console.log(JSON.stringify({acceptance:'team-group-identity-installed',dsh:'0.2.1-rc.2',artifact:'immutable tgz',tools:'real-session-discovery+read+forgery-rejection',sdk:'external-compiled-consumer+installed-host+represented-send+missing-capability',ui:'actual-group-identity-selection',backend:'isolated HTTPS fixture',readHasNoOpenOrRepair:true}))
