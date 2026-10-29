@@ -1,4 +1,3 @@
-import type { SessionControlFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { DshAccountSession } from './dsh-remote/account-session-types.js'
 
 export interface HarnessNativeDirectory {
@@ -27,7 +26,7 @@ function installNativeTransport(route: string): void {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(runtime) || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new Error('会话来源标识无效')
     return { runtime, id: value }
   }
-  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected) || writable.get(split(selected)!.runtime) === true))
+  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected)))
   const scheduleFailure = (id: string | undefined, code?: string) => {
     if (id !== selected) return
     if (code) surface.setAttribute('data-arkme-schedule-error', code)
@@ -57,7 +56,6 @@ function installNativeTransport(route: string): void {
   }
   const events = new Set<ReturnType<typeof inbox>>(), controls = new Set<ReturnType<typeof inbox>>()
   const emit = (frame: Json) => { for (const queue of events) queue.push(frame) }
-  const control = (frame: Json) => { for (const queue of controls) queue.push(frame) }
   const localRows = new Map<string, Json>(), folded = new Map<string, DshAccountSession>(), hiddenRemote = new Map<string, string>()
   const aliasCandidates = new Map<string, DshAccountSession[]>()
   let localRuntimeRef: string | undefined
@@ -79,8 +77,9 @@ function installNativeTransport(route: string): void {
         && cut !== undefined && cut.runtimeRef === localRuntimeRef
     })
     const row = matches.length === 1 ? matches[0] : undefined
-    // Do not move an active/selected local conversation when an upload completes.
-    return row && !row.archived && (local.running || selected === local.sessionId)
+    // A verified native journal stays executable even when idle. Cloud history
+    // must not displace its local owner after an upload or Runtime change.
+    return row && !row.archived
       ? { ...row, coveredLocalHistory: { ...row.coveredLocalHistory!, source: 'local' } } : row
   }
   const preferred = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? row.sessionRef : identity(row.runtimeRef, row.sessionRef)
@@ -167,7 +166,7 @@ function installNativeTransport(route: string): void {
     },
     canonicalLocal(id: string) { const row = folded.get(id); return row && row.coveredLocalHistory?.source !== 'local' ? preferred(row) : undefined },
     preferredSession(id: string) { const row = folded.get(id); return row ? preferred(row) : hiddenRemote.get(id) },
-    writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
+    writable(id: string) { return !split(id) },
     select(id: string | undefined) {
       const changed = selected !== id
       selected = id
@@ -263,18 +262,6 @@ function installNativeTransport(route: string): void {
     try { yield* queue.read() }
     finally { localStreams.delete(id); if (carrier.readyState === WebSocket.OPEN) carrier.send(JSON.stringify({ type: 'cancel', streamId: id })) }
   }
-  async function* remoteStream(runtime: string, endpoint: string, payload: unknown, signal: AbortSignal) {
-    const streamRef = crypto.randomUUID()
-    let opening = true
-    try {
-      while (!signal.aborted) {
-        const page = await request(runtime, { mode: 'pull', streamRef, ...(opening ? { endpoint, payload } : {}) }, signal) as Json
-        opening = false
-        for (const value of page.items) { signal.throwIfAborted(); yield value }
-        if (page.done) return
-      }
-    } finally { void request(runtime, { mode: 'close', streamRef }).catch(() => undefined) }
-  }
   // Decode only declared routing fields. Never recursively rewrite user content.
   function addressed(payload: unknown) {
     const value = structuredClone(payload) as Json, args = value.args ?? {}, body = args.request ?? {}
@@ -289,86 +276,6 @@ function installNativeTransport(route: string): void {
     if (body.address) for (const key of ['sessionId', 'parentSessionId', 'childSessionId']) decode(body.address, key)
     if (runtime && local) throw new Error('请求不能跨实例混用会话')
     return { runtime, payload: value }
-  }
-  const encodeSummary = (runtime: string, value: Json) => ({ ...value, sessionId: identity(runtime, value.sessionId), ...(value.parentSessionId ? { parentSessionId: identity(runtime, value.parentSessionId) } : {}) })
-  function nativeFrame(runtime: string, frame: Json): Json {
-    // Journal records remain byte-for-byte semantic source values. Only the
-    // envelope header carries the virtual identity used by the native view.
-    return { ...frame, ...(frame.header ? { header: { ...frame.header, id: identity(runtime, frame.header.id) } } : {}),
-      ...(frame.sessionId ? { sessionId: identity(runtime, frame.sessionId) } : {}) }
-  }
-  type ControlFrames = Map<string, { value: SessionControlFrame; bytes: number }>
-  const controlCuts = (frames: ControlFrames) => {
-    const cuts = new Map<string, number>()
-    for (const { value: frame } of frames.values()) {
-      if (frame.type === 'baseline') for (const [id, block] of Object.entries(frame.value.projections)) cuts.set(id, Math.max(cuts.get(id) ?? -1, block.asOfSeq))
-      else cuts.set(frame.sessionId, Math.max(cuts.get(frame.sessionId) ?? -1, frame.seq))
-    }
-    return cuts
-  }
-  const clearControl = (frames: ControlFrames) => control({ type: 'baseline', value: { projections: Object.fromEntries([...controlCuts(frames)].map(([id, asOfSeq]) => [id, { asOfSeq, values: {} }])) } })
-  const sources = new Map<string, { users: number; abort: AbortController; clientId?: string; frames: ControlFrames; bytes: number }>()
-  function retainSource(runtime: string, signal: AbortSignal): () => void {
-    let source = sources.get(runtime)
-    if (!source) {
-      if (sources.size >= 8) throw new Error('打开的远程实例过多')
-      const state = source = { users: 0, abort: new AbortController(), frames: new Map<string, { value: SessionControlFrame; bytes: number }>(), bytes: 0 }; sources.set(runtime, state)
-      const scoped = AbortSignal.any([state.abort.signal, lifetime.signal])
-      // Keep only the latest control value per field, to replay after a local
-      // reconnect baseline. Journals/history remain in the native session store.
-      const publish = (frame: SessionControlFrame) => {
-        const key = frame.type === 'baseline' ? 'baseline' : JSON.stringify([frame.sessionId, frame.key])
-        if (!state.frames.has(key) && state.frames.size >= 32768) throw new Error('远端控制状态数量超限')
-        const bytes = JSON.stringify(frame).length * 2
-        const total = state.bytes - (state.frames.get(key)?.bytes ?? 0) + bytes
-        if (total > 64 * 1024 * 1024) throw new Error('远端控制状态大小超限')
-        state.bytes = total; state.frames.set(key, { value: frame, bytes }); control(frame)
-      }
-      const pump = async (endpoint: string) => {
-        while (!scoped.aborted) {
-        try {
-          for await (const frame of remoteStream(runtime, endpoint, { args: {} }, scoped)) {
-            if (endpoint === '$events') {
-              if (frame.type === 'ready') { (state as { clientId?: string }).clientId = frame.clientId; continue }
-              if (frame.type === 'emit') {
-                if (frame.event === 'schedule/changed') {
-                  if (split(selected)?.runtime === runtime) emit({ type: 'emit', event: 'schedule/changed', args: [] })
-                  continue
-                }
-                // Deployment-wide events must not invalidate another source's caches.
-                if (!String(frame.event).startsWith('api-session/')) continue
-                const args = [...frame.args]
-                args[0] = frame.event === 'api-session/added' ? encodeSummary(runtime, args[0]) : identity(runtime, args[0])
-                const id = frame.event === 'api-session/added' ? args[0].sessionId : args[0]
-                if (hiddenRemote.has(id)) continue
-                emit({ ...frame, args })
-              } else emit({ ...frame, eventId: identity(runtime, frame.eventId), ...(frame.agentId ? { agentId: identity(runtime, frame.agentId) } : {}) })
-            } else {
-              const current = frame as SessionControlFrame
-              if (current.type === 'baseline') {
-                const projections = Object.fromEntries(Object.entries(current.value.projections).map(([id, block]) => [identity(runtime, id), block]))
-                // A source baseline only replaces its own named Sessions. Empty
-                // blocks clear removed projections without inventing newer cuts.
-                for (const [id, asOfSeq] of controlCuts(state.frames)) if (!(id in projections)) projections[id] = { asOfSeq, values: {} }
-                state.frames.clear(); state.bytes = 0
-                publish({ type: 'baseline', value: { projections } })
-              } else publish(nativeFrame(runtime, current) as SessionControlFrame)
-            }
-          }
-        } catch { if (!scoped.aborted) { writable.set(runtime, false); availability() } }
-        if (!scoped.aborted) await new Promise<void>(resolve => {
-          const done = () => { clearTimeout(timer); scoped.removeEventListener('abort', done); resolve() }
-          const timer = setTimeout(done, 1000); scoped.addEventListener('abort', done, { once: true })
-        })
-        }
-      }
-      void pump('$events'); void pump('session/control')
-    }
-    source.users++
-    let released = false
-    const owned = source
-    const release = () => { if (released) return; released = true; signal.removeEventListener('abort', release); if (--owned.users === 0) { owned.abort.abort(); sources.delete(runtime); clearControl(owned.frames); owned.frames.clear() } }
-    signal.addEventListener('abort', release, { once: true }); return release
   }
   const failure = (message: string) => ({ ok: false, error: { code: 'CAPABILITY_UNSUPPORTED', message, details: {} } })
   const hooks = {
@@ -389,9 +296,6 @@ function installNativeTransport(route: string): void {
       const event = message.method === '$events/result' ? split(message.payload.args.eventId) : undefined
       if (event) {
         target.runtime = event.runtime; target.payload.args.eventId = event.id
-        const clientId = sources.get(event.runtime)?.clientId
-        if (!clientId) throw new Error('源实例交互已结束')
-        target.payload.args.clientId = clientId
       }
       if (!target.runtime) {
         const response = await fetch(url, init)
@@ -405,10 +309,10 @@ function installNativeTransport(route: string): void {
         return Response.json(envelope)
       }
       const endpoint = message.method
-      // Phase one: only actions with complete per-session routing are admitted.
-      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result', 'schedule/catalog', 'schedule/list', 'schedule/history', 'schedule/update', 'schedule/delete']
+      // The browser UI only executes local sessions, including retained selections.
+      const allowed = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history']
       let result: any
-      if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
+      if (!allowed.includes(endpoint)) result = failure('其他电脑的会话仅支持只读查看，请在对话所属电脑上执行。')
       else {
         try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined) }
         catch (error) {
@@ -430,10 +334,9 @@ function installNativeTransport(route: string): void {
     async *openStream(endpoint: string, payload: unknown, signal: AbortSignal) {
       const scoped = AbortSignal.any([signal, lifetime.signal]), target = addressed(payload)
       if (target.runtime) {
-        const release = retainSource(target.runtime, scoped)
-        try { for await (const frame of remoteStream(target.runtime, endpoint, target.payload, scoped)) yield nativeFrame(target.runtime, frame) }
-        finally { release() }
-        return
+        // Projected history has its own read owner. Never open a second journal,
+        // interactive event subscription, or source control baseline for a remote view.
+        throw Object.assign(new Error('其他实例的历史通过云端投影查看'), { code: 'CAPABILITY_UNSUPPORTED', details: {} })
       }
       if (endpoint !== '$events' && endpoint !== 'session/control') { yield* localStream(endpoint, payload, scoped); return }
       const controller = new AbortController(), combined = AbortSignal.any([scoped, controller.signal]), queue = inbox(combined)
@@ -444,7 +347,6 @@ function installNativeTransport(route: string): void {
           try {
             for await (const frame of localStream(endpoint, payload, combined)) {
               if (localFrame(frame as Json)) queue.push(frame)
-              if (endpoint === 'session/control' && (frame as Json).type === 'baseline') for (const source of sources.values()) for (const cached of source.frames.values()) queue.push(cached.value)
               if (first) {
                 first = false; listeners.add(queue)
                 if (endpoint === '$events') for (const row of rows.values()) if (!hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))) queue.push({ type: 'emit', event: 'api-session/added', args: [summary(row)] })
@@ -459,7 +361,7 @@ function installNativeTransport(route: string): void {
     },
   }
   Object.assign(window, { __DSH_TRANSPORT__: hooks })
-  window.addEventListener('pagehide', () => { lifetime.abort(); socket?.close(); localSocket?.close(); for (const source of sources.values()) source.abort.abort(); sources.clear(); localRows.clear(); folded.clear(); hiddenRemote.clear() }, { once: true })
+  window.addEventListener('pagehide', () => { lifetime.abort(); socket?.close(); localSocket?.close(); localRows.clear(); folded.clear(); hiddenRemote.clear() }, { once: true })
 }
 
 export const harnessNativeTransportScript = (route: string): string => `(${installNativeTransport.toString()})(${JSON.stringify(route)});`

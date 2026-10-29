@@ -28,3 +28,16 @@ it('disables native input through connecting/offline, retains the draft, and res
   expect(storeFor('windows-B').getSnapshot()).toBeUndefined()
   expect(connection.listeners.size + list.listeners.size + [...values.values()].reduce((n, s) => n + s.listeners.size, 0)).toBe(0)
 })
+
+it('keeps other instances disabled while online and releases the native local composer on selection', () => {
+  const connection = store<string | undefined>('connected'), list = store({ current: 'arkme:runtime:remote' })
+  const remote = store<{ reason: string } | undefined>(undefined), local = store<{ reason: string } | undefined>(undefined)
+  const blocks = { storeFor: (id: string) => id.startsWith('arkme:') ? remote : local,
+    set(id: string, block: { reason: string } | undefined) { this.storeFor(id).set(block) } }
+  const stop = lockDisconnectedComposer({ list } as never, connection, () => blocks)
+  expect(remote.getSnapshot()?.reason).toBe('请在所属实例或电脑上继续对话')
+  connection.set('connected'); expect(remote.getSnapshot()).toBeDefined()
+  list.set({ current: 'native-local' })
+  expect(remote.getSnapshot()).toBeUndefined(); expect(local.getSnapshot()).toBeUndefined()
+  stop()
+})
