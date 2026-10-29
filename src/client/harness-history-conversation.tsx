@@ -56,7 +56,7 @@ function mirrorSlot(ctx: Context, source: string, target: string, keys?: readonl
       const Native = entry.component as ComponentType<Props>
       restores.push(register({ ...entry.options, name: target, store: entry.store, inject: source === 'conversation.composer.bar' && entry.inject ? () => entry.inject!(undefined as never) : entry.inject, locale: entry.locale,
         ...(entry.children ? { children: Object.fromEntries(children.map(name => [own(name), entry.children![name as keyof typeof entry.children]])) } : {}) },
-      (props: Props) => <div data-slot={source} style={{ display: 'contents' }}><Native {...props}
+      (props: Props) => <div data-slot={source} data-arkme-history-slot="" style={{ display: 'contents' }}><Native {...props}
         {...(source === 'conversation.composer.bar' ? { sessionId: undefined, useInput: noop, useSession: noop, inputActions: undefined, keyboard: undefined, placeholder: typeof props.t === 'function' ? props.t('placeholder.default') : undefined } : {})}
         renderSlot={(name, owner, options) => props.renderSlot(own(name), owner, options)} /></div>))
       for (const child of children) restores.push(mirrorSlot(ctx, child, own(child)))
