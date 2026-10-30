@@ -22,7 +22,7 @@ export function lockDisconnectedComposer(sessions: ISessions, connection: {
   getSnapshot(): string | undefined; subscribe(listener: () => void): () => void
 }, blocksFor: (id: SessionId) => ComposerBlocks | undefined): () => void {
   const offline = { reason: '源电脑未连接' }
-  const remote = { reason: '请在所属实例或电脑上继续对话' }
+  const remote = { reason: '源实例未连接或暂不支持继续对话' }
   const owned = (block: ComposerBlock | undefined) => block === offline || block === remote
   let current: SessionId | undefined, blocks: ComposerBlocks | undefined, stopBlock: (() => void) | undefined
   const clear = () => {
@@ -37,7 +37,7 @@ export function lockDisconnectedComposer(sessions: ISessions, connection: {
     }
     if (!current || !blocks) return
     const block = blocks.storeFor(current).getSnapshot()
-    if (current.startsWith('arkme:') || connection.getSnapshot() !== 'connected') {
+    if (connection.getSnapshot() !== 'connected') {
       // Other native blocks already disable input; never overwrite their owner.
       if (block === undefined) blocks.set(current, current.startsWith('arkme:') ? remote : offline)
     } else if (owned(block)) blocks.set(current, undefined)

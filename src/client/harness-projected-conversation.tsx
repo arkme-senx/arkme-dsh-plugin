@@ -81,6 +81,7 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
     if (updating) return
     const id = sessions.list.getSnapshot().current
     const active = id?.startsWith('arkme:') && surface.getAttribute('data-arkme-visible') !== 'false'
+      && surface.getAttribute('data-arkme-source-writable') !== 'true'
     const native = slots.entries('conversation.session').find(entry => (entry.options.priority ?? 0) >= 0)
     if (active && installedFor === id && installedNative === native && remove) return
     updating = true
@@ -101,7 +102,7 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
   }
   const stops = [sessions.list.subscribe(sync), slots.subscribe('conversation.view', sync), slots.subscribe('conversation.session', sync)]
   const observer = new MutationObserver(sync)
-  observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
+  observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-source-writable'] })
   sync()
   return () => { stops.forEach(stop => stop()); observer.disconnect(); remove?.() }
 }

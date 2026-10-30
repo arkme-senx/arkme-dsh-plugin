@@ -185,16 +185,29 @@ it('updates activity through the native activity event and keeps unchanged direc
   expect((await stream.next()).value).toEqual({ type: 'emit', event: 'api-session/removed', args: ['arkme:windows:same'] })
   await stream.return()
 })
-it('blocks foreign native mutations even after online source replies and selection changes', async () => {
+it('admits online conversation actions only, blocks offline and unsupported sources, and keeps routing exact', async () => {
   const f = fixture()
   f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
-  for (const operation of ['session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', 'schedule/update', 'schedule/delete']) {
+  for (const operation of ['session/rename', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', 'schedule/update', 'schedule/delete']) {
     const result = await f.rpc(operation, { request: { sessionId: 'arkme:windows:same', text: 'arkme:linux:same' } })
     expect(result.result.ok).toBe(false)
   }
   expect(f.fetch).not.toHaveBeenCalled(); expect(f.wire).not.toHaveBeenCalled()
-  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
-  expect(f.directory.writable('arkme:windows:same')).toBe(false); expect(f.directory.writable('local')).toBe(true)
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  expect(f.directory.writable('arkme:windows:same')).toBe(true); expect(f.directory.writable('local')).toBe(true)
+  for (const operation of ['session/prompt', 'session/cancel', 'session/updateQueue', 'session/attachment']) {
+    expect((await f.rpc(operation, { request: { sessionId: 'arkme:windows:same', content: [{ type: 'text', text: 'arkme:linux:same' }] } })).result.ok).toBe(true)
+    const { params } = JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body))
+    expect(params.runtimeRef).toBe('windows'); expect(params.body.payload.args.request.sessionId).toBe('same')
+    expect(params.body.payload.args.request.content[0].text).toBe('arkme:linux:same')
+  }
+  f.fetch.mockClear()
+  for (const extra of [{ presence: 'offline' }, { capabilities: [] }]) {
+    f.directory.publish([f.row('windows', extra)])
+    expect((await f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same' } })).result.ok).toBe(false)
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+  }
+  expect(f.fetch).not.toHaveBeenCalled()
   await expect(f.rpc('session/prompt', { agent: 'arkme:windows:same', request: { sessionId: 'arkme:linux:same' } })).rejects.toThrow('跨实例')
   await expect(f.rpc('session/prompt', { agent: 'local', request: { sessionId: 'arkme:linux:same' } })).rejects.toThrow('跨实例')
 })
@@ -332,20 +345,67 @@ it('returns a cold-start cloud selection to its native owner when registration i
 
 
 
-it('never opens remote journal/control/event streams while retaining the local control baseline', async () => {
+it('waits offline without opening remote streams and resumes the journal when the source returns', async () => {
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row('windows', { presence: 'offline' })]); f.directory.select('arkme:windows:same')
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  const next = journal.next()
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(f.wire).not.toHaveBeenCalled()
+  f.directory.publish([f.row()]); await vi.advanceTimersByTimeAsync(1000)
+  expect((await next).value.header.id).toBe('arkme:windows:same')
+  abort.abort(); await journal.return()
+})
+
+it('starts a new combined control generation instead of appending a second baseline', async () => {
   const f = fixture(), abort = new AbortController()
   f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
   const control = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
   expect((await control.next()).value).toEqual(currentBaseline)
-  for (const endpoint of ['session/follow', 'session/control', '$events']) {
-    const stream = f.hooks.openStream(endpoint, { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
-    await expect(stream.next()).rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED' })
-  }
-  expect(f.wire).not.toHaveBeenCalled()
-  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
-  const response = await f.rpc('$events/result', { eventId: 'arkme:windows:question', outcome: { kind: 'next' } })
-  expect(response.result.ok).toBe(false)
-  expect(f.fetch).not.toHaveBeenCalled()
-  f.directory.select('local'); expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
-  abort.abort(); await control.return()
+  const baseline = await publishedControlBaseline({ same: { asOfSeq: 5, values: { modelSelection: { model: 'source-model' } } } })
+  f.wire.mockImplementation(async params => ({ ok: true, value: params.body.mode === 'close' ? { done: true } : {
+    items: params.body.endpoint === 'session/control' ? [baseline] : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] : [], done: true,
+  } }))
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await journal.next()).value.header.id).toBe('arkme:windows:same')
+  expect((await control.next()).done).toBe(true)
+  const renewed = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  const opening = (await renewed.next()).value
+  expect(opening.type).toBe('baseline')
+  expect(opening.value.projections['arkme:windows:same']).toEqual({ asOfSeq: 5, values: { modelSelection: { model: 'source-model' } } })
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  abort.abort(); await journal.return(); await renewed.return()
+})
+
+it('delivers an online prompt to its source and forwards the subsequent live journal event', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  let resolveReply!: (value: any) => void
+  const reply = new Promise(resolve => { resolveReply = resolve })
+  let journalRef = ''
+  f.wire.mockImplementation(async params => {
+    const body = params.body
+    if (body.mode === 'close') return { ok: true, value: { done: true } }
+    if (body.endpoint === 'session/follow') {
+      journalRef = body.streamRef
+      return { ok: true, value: { sourceWritable: true, items: [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }], done: false } }
+    }
+    if (body.streamRef === journalRef) return reply
+    return { ok: true, value: { items: [], done: true } }
+  })
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await journal.next()).value.header.id).toBe('arkme:windows:same')
+  const live = journal.next()
+  f.fetch.mockImplementation(async (_url, init) => {
+    const { params } = JSON.parse(String(init.body))
+    expect(params.body.endpoint).toBe('session/prompt')
+    expect(params.runtimeRef).toBe('windows')
+    expect(params.body.payload.args.request.sessionId).toBe('same')
+    resolveReply({ ok: true, value: { sourceWritable: true, items: [{ type: 'event', event: { type: 'assistant/message', seq: 1, data: { text: 'response from source' } } }], done: false } })
+    return Response.json({ ok: true, value: { ok: true, value: { accepted: true }, sourceWritable: true } })
+  })
+  expect((await f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same', content: [{ type: 'text', text: 'hello' }] } })).result.value.accepted).toBe(true)
+  expect((await live).value.event.data.text).toBe('response from source')
+  abort.abort(); await journal.return()
 })
