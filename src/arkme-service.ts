@@ -463,7 +463,7 @@ export class ArkmeService {
   }
   async setTeamNotificationPolicy(conversationRef:string, muted:boolean, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     const value=await this.teamApp.execute('team.app.notification-policy.set',{conversationRef,muted},signal) as TeamNotificationPolicy
-    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision()})
+    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision(),change:{kind:'team.notification-policy.changed'}})
     return value
   }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
@@ -490,6 +490,9 @@ export class ArkmeService {
   async forwardTeamMessages(input:import('./team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>{return this.teamForward.forward(input,signal)}
   async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>{
     return await this.executeTeamApp('team.app.copy-link',{conversationRef,selections},signal) as import('./types.js').ArkmeMessageCopyLinkResult
+  }
+  async recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamRecallResult>{
+    return await this.executeTeamApp('team.app.recall',{conversationRef,messageRef},signal) as import('./team-message-contract.js').TeamRecallResult
   }
   async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('./team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamReportResult>{
     return await this.executeTeamApp('team.app.report',{conversationRef,messageRef,version,reason,description},signal) as import('./team-message-contract.js').TeamReportResult
@@ -766,6 +769,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       },
     })
     this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
+    this.realtime.teamChange=(hint,actor)=>this.teamApp.changeHint(hint,actor)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
@@ -1255,6 +1259,7 @@ arkoImagesV1:true,
         teamExternalChats: true,
         teamMessageExtensions: 1,
         teamMessageInteractions: 1,
+        teamMessageRecall: 1,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,

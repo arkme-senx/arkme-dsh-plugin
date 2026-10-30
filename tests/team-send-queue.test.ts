@@ -446,3 +446,16 @@ it('derives the reply identity on the Host for Tools and reuses it after an unkn
  expect(replay.taskRef).toBe(accepted.taskRef)
  expect(replay.reply?.messageRef).toBe(request.reply!.messageRef)
 })
+
+it.each(['replay','cancel'] as const)('finishes accepted delivery with recalled projection after lost ACK: %s',async(mode)=>{
+ const f=await fixture(),command=input()
+ f.setOnline(false);await f.queue.enqueue(command)
+ f.setOnline(true);f.loseAck();await f.queue.recover()
+ const accepted=f.published.get(command.clientUid)!
+ f.published.set(command.clientUid,{...accepted,state:'recalled',revision:accepted.revision+1,content:undefined,contentStatus:'recalled',media:[]})
+ f.restart();vi.setSystemTime(Date.now()+10_000)
+ if(mode==='cancel') {const task=(await f.queue.list(command.conversationRef))[0]!;await f.queue.cancel(command.conversationRef,task.taskRef)}
+ else await f.queue.recover()
+ expect(f.published.size).toBe(1)
+ expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'sent',message:{state:'recalled'}})
+})

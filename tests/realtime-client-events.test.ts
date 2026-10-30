@@ -21,6 +21,28 @@ import {
   useArkmeRealtimeClientEvents,
 } from '../src/client/realtime-client-events.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
+import {subscribeTeamMessageChanges} from '../src/client/team-messaging-events.js'
+
+it('delivers opaque Team change scope and retains conservative reconnect invalidation',async()=>{
+  let socket!:FakeWebSocket
+  class FakeWebSocket {onopen=null;onmessage:((event:MessageEvent<string>)=>void)|null=null;constructor(){socket=this}close(){}}
+  vi.stubGlobal('WebSocket',FakeWebSocket)
+  vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
+  vi.spyOn(clientApi,'callArkme').mockResolvedValue({items:[],hasMore:false})
+  function Harness(){useArkmeRealtimeClientEvents({status:'authenticated',userId:42,environment:'test'},1,false);return null}
+  const changed=vi.fn(),stop=subscribeTeamMessageChanges(changed)
+  let renderer!:ReactTestRenderer
+  try{
+    await act(async()=>{renderer=create(createElement(Harness))})
+    const change={kind:'team.message.changed',messageKey:'message-key',conversationKeys:['conversation-key']}
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:1,change})} as MessageEvent<string>))
+    expect(changed).toHaveBeenLastCalledWith('test:42',false,change)
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:2,receiptOnly:true})} as MessageEvent<string>))
+    expect(changed).toHaveBeenLastCalledWith('test:42',true,undefined)
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'reconcile',revision:3})} as MessageEvent<string>))
+    expect(changed).toHaveBeenLastCalledWith('test:42',false,undefined)
+  }finally{stop();await act(async()=>renderer?.unmount())}
+})
 
 const selectedBot: ArkmeBotSummary = {
   botRef: 'bot-ref', name: 'Chat Bot', provider: 'webhook', description: '', status: 'online',

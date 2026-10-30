@@ -40,7 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
-import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
+import { invalidateTeamMessages, subscribeTeamMessageChanges } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
 const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn(), extensions: vi.fn() }))
@@ -233,7 +233,10 @@ describe('Team send UI recovery', () => {
     expect(stored().text).toBe('下一条普通消息')
     expect(stored().reply).toBeUndefined()
     await act(async () => {invalidateTeamMessages('test:11');await tick()})
-    expect(outgoing().reply?.text).toBe('延展原文')
+    expect(outgoing().reply).toBeUndefined()
+    expect(outgoing().content).toBeUndefined()
+    expect(outgoing().contentStatus).toBe('revalidating')
+    expect(stored().text).toBe('下一条普通消息')
   })
 
   it('replaces a locally retained parent with the authoritative unavailable preview', async () => {
@@ -413,6 +416,91 @@ describe('Team send UI recovery', () => {
     fresh = { ...value, visitor: { nickname: '访客', memberType: 'free' } }
     await act(async () => { invalidateTeamMessages('test:11'); await tick() })
     expect(badges()).toHaveLength(0)
+  })
+
+  it('retains selected identities while hiding unverified material and disables operations until refreshed', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'临时材料',template_kind:1},media:[]}
+    let hold = false, release!: (value: unknown) => void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? hold ? new Promise(resolve => { release = resolve }) : {conversation,messages:[mine],hasMore:false,beforeSeq:0} : [])
+    await mount()
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSelect())
+    hold = true
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    const bar = () => renderer!.root.findByType(ArkmeMessageSelectionBar)
+    expect(bar().props.count).toBe(1)
+    expect(bar().props.actions.filter((a:any) => a.id !== 'close').every((a:any) => a.disabled)).toBe(true)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content).toBeUndefined()
+    await act(async () => {release({conversation,messages:[mine],hasMore:false,beforeSeq:0});await tick()})
+    expect(bar().props.count).toBe(1)
+    expect(bar().props.actions.find((a:any) => a.id==='copy').disabled).toBe(false)
+  })
+
+  it('recalls only after confirmation, retains the next draft and rejects a late published snapshot', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤回目标',template_kind:1},media:[]}
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? {message:{...mine,state:'recalled',revision:2},changed:true} : [])
+    await mount()
+    const invalidated = vi.fn()
+    const stop = subscribeTeamMessageChanges(invalidated)
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
+    await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
+    expect(invalidated).toHaveBeenCalledWith('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:[conversation.key]})
+    stop()
+    const shown = renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(shown.state).toBe('recalled')
+    expect(shown.content).toBeUndefined()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
+  })
+
+  it('keeps unrelated message material mounted and invalidates only the changed occurrence',async()=>{
+    const first:TeamMessage={ref:'first-ref',key:'first',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{text_content:'正在阅读的原界面',template_kind:1},media:[]}
+    const second={...first,ref:'second-ref',key:'second',seq:2}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[first,second],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    mocks.call.mockImplementation(op=>op==='team.app.timeline'?new Promise(()=>{}):Promise.resolve([]))
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!.props.message
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.notification-policy.changed'}))
+    expect(row('first').contentStatus).toBe('available')
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'second',conversationKeys:[conversation.key]}))
+    expect(row('first').contentStatus).toBe('available')
+    expect(row('first').version).toBe(3)
+    expect(row('second').contentStatus).toBe('revalidating')
+    expect(row('second').content).toBeUndefined()
+  })
+
+  it('hides an invalidated reedit source header while retaining the editable input', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'编辑源旧正文',template_kind:1},media:[]}
+    let recalled=false
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.preflight') {if(recalled)throw new Error('message_recalled');return [mine]}
+      if(op==='team.app.timeline')return {conversation,messages:recalled?[{...mine,state:'recalled',revision:2}]:[mine],hasMore:false,beforeSeq:0}
+      return []
+    })
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onEdit())
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('我的独立修改'))
+    recalled=true
+    await act(async()=>{invalidateTeamMessages('test:11');await tick()})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('我的独立修改')
+    expect(renderer!.root.findAll(node=>node.props.mode==='reedit'&&node.props.text==='编辑源旧正文')).toHaveLength(0)
+  })
+
+  it('removes cached material immediately when recall proves conversation access was revoked', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤权前材料',template_kind:1},media:[]}
+    const lost = vi.fn()
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.timeline') return {conversation,messages:[mine],hasMore:false,beforeSeq:0}
+      if(op==='team.app.recall') throw {body:{code:'team-not_accessible',message:'无权访问'}}
+      return []
+    })
+    await act(async () => {renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={()=>{}} onAccessLost={lost}/>);await tick()})
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
+    await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+    expect(lost).toHaveBeenCalledOnce()
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('问题')
   })
 
   it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
@@ -686,7 +774,10 @@ describe('Team send UI recovery', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('刷新失败')
     refreshFails = false
     await act(async () => {invalidateTeamMessages('test:11');await tick()})
-    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+    const invalidated = renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(invalidated.content).toBeUndefined()
+    expect(invalidated.contentStatus).toBe('revalidating')
+    expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('下一条')
   })
 
   it('keeps staged image bytes visible when a minimal published ACK is followed by a failed refresh',async()=>{

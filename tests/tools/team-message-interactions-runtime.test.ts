@@ -18,7 +18,8 @@ it('requires real current human confirmation for every new Team write and dispos
   const update = vi.fn(async () => ({state: 'cancelled'}))
   const send=vi.fn(async()=>({state:'queued',taskRef:'same'}))
   const read=vi.fn(async()=>({messages:[],hasMore:false}))
-  const ports = {sendTeamMessage:send,readTeamMessages:read,forwardTeamMessages: forward, createTeamMessageCopyLink: share, reportTeamMessage: report, updateTeamSend: update}
+  const recall=vi.fn(async()=>({message:{state:'recalled'},changed:false}))
+  const ports = {recallTeamMessage:recall,sendTeamMessage:send,readTeamMessages:read,forwardTeamMessages: forward, createTeamMessageCopyLink: share, reportTeamMessage: report, updateTeamSend: update}
   const mounted = await ctx.plugin(Object.assign((inner: Context) => registerArkmeTools(inner, ports as unknown as ArkmeToolPorts), {inject: ['tools', 'systemPrompt']}))
   const session = Session.create(SessionId('team-interaction-session'))
   const inbox = createSessionInput(session)
@@ -33,6 +34,7 @@ it('requires real current human confirmation for every new Team write and dispos
   }
   const mentions=[{personRef:'sealed-person',displayName:'人',startIndex:0,length:2}]
   const cases = [
+    ['arkme_team_message_recall',{conversation_ref:'source',message_ref:'message'},recall],
     ['arkme_team_message_send',{conversation_ref:'source',text:'@人',mentions_json:JSON.stringify(mentions)},send],
     ['arkme_team_message_forward', {conversation_ref: 'source', selections_json: JSON.stringify([{messageRef: 'message', version: 3}]), target_conversation_ref: 'target', send_at_millis: 1700000000000}, forward],
     ['arkme_team_message_copy_link', {conversation_ref: 'source', selections_json: JSON.stringify([{messageRef: 'message', version: 3}])}, share],

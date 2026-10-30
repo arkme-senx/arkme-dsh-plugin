@@ -1524,6 +1524,7 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamMessageInteractions?: 1
+    teamMessageRecall?: 1
     teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
@@ -4099,6 +4100,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'team-invalidated'
   revision: number
+  change?: import('./team-app-contract.js').TeamMessageChangeHint
   receiptOnly?: boolean
 } | {
   type: 'directory-update'
@@ -4319,7 +4321,7 @@ export type ArkmePluginOperation =
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
   | 'team.external'
-  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
+  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.recall' | 'team.messages.report' | 'team.messages.preflight'
   | 'team.messages.marks-read' | 'team.messages.marks-change'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'

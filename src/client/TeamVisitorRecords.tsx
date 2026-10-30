@@ -87,7 +87,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
         <div style={{ minWidth: 0, maxWidth: 'calc(100% - 44px)' }}>
           <div style={{ fontSize: 12, color: arkmeTheme.secondary, marginBottom: 4 }}>{name}</div>
           <div style={{ padding: '10px 13px', borderRadius: '5px 14px 14px 14px', background: arkmeTheme.memberRecordOther, color: arkmeTheme.text, fontSize: 14, lineHeight: '22px', overflowWrap: 'anywhere' }}>
-            <TeamMessageContent message={message} conversationRef={conversation.ref} />
+            <TeamMessageContent message={message} conversationRef={conversation.ref} conversationKey={conversation.key} />
           </div>
           <button type="button" disabled={locating} onClick={() => { void locate(message) }}
             style={{ border: 0, background: 'transparent', padding: '5px 0', fontSize: 12, color: arkmeTheme.secondary, cursor: 'pointer' }}>{tr('查看原消息')}</button>

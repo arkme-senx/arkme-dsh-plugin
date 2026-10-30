@@ -8,7 +8,7 @@ import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
 export type TeamAppOperation = `team.app.${
   'external.list' | 'external.mine' | 'external.share' | 'external.unshare' | 'external.page' | 'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
-  | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
+  | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
@@ -51,6 +51,7 @@ export interface TeamMedia { ref: string; key: string; url: string; name: string
 export interface TeamMessage {
  forwardRecords?: import('./types.js').ArkmeForwardRecordsPreview
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
+  canRecall?: boolean; recalledAt?: number
   own: boolean; state: string; createdAt: number; canEdit: boolean; canDelete: boolean
   content?: TeamContent; version: number; contentStatus: string; media: TeamMedia[]
   reply?: TeamReplyPreview | undefined
@@ -65,7 +66,7 @@ export interface TeamOpen { channel: TeamChannel; openInbox: boolean; conversati
 export interface TeamSendResult { message?: TeamMessage; reason?: string }
 export interface TeamReceiptMember extends TeamIdentity { key?: string; isMe?: boolean; read?: boolean; readAt?: number }
 export interface TeamReceiptCounts { read: number; unread: number; total: number }
-export interface TeamMessageReceiptSummary { key: string; summary?: TeamReceiptCounts; teamRead?: boolean; visitorRead?: boolean }
+export interface TeamMessageReceiptSummary { unavailableReason?: string; key: string; summary?: TeamReceiptCounts; teamRead?: boolean; visitorRead?: boolean }
 export interface TeamReceiptSummaryBatch { items: TeamMessageReceiptSummary[]; lastSeq: number; myReadSeq: number; unread: number }
 export interface TeamReceipts {
   summary?: TeamReceiptCounts
@@ -102,3 +103,10 @@ export type TeamConversationReadState = {key: string; accessible: false}
   | {key: string; accessible: true; notificationPolicy?: TeamNotificationPolicy; lastSeq: number; myReadSeq: number; unread: number}
 
 export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[]; totalCount: number; hasMore: boolean; nextSeq: number; throughSeq: number }
+
+/** A scoped invalidation hint, never a read grant or raw backend locator. */
+export interface TeamMessageChangeHint {
+  kind: string
+  messageKey?: string
+  conversationKeys?: string[]
+}

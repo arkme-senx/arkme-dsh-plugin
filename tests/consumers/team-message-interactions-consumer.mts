@@ -19,7 +19,8 @@ const sdk: TeamMessagePort = createArkmeSdk({fetchImpl: async (_url, init) => {
   const request = JSON.parse(String(init?.body)) as (typeof calls)[number]
   calls.push(request)
   const {operation, params} = request
-  const value = operation === 'provider.capabilities' ? {contractVersion: 1, features: {teamMessageInteractions: supported ? 1 : 0, teamPersonMentions: supported ? 1 : 0, teamMessageExtensions: supported ? 1 : 0}}
+  const value = operation === 'provider.capabilities' ? {contractVersion: 1, features: {teamMessageInteractions: supported ? 1 : 0, teamPersonMentions: supported ? 1 : 0, teamMessageExtensions: supported ? 1 : 0, teamMessageRecall: supported ? 1 : 0}}
+    : operation === 'team.messages.recall' ? {message:{key:'recalled-source',state:'recalled'},changed:true}
     : operation === 'team.messages.forward' ? {sourceRef: 'target', itemUid: 'accepted-card', localState: 'synced'}
     : operation === 'team.messages.copy-link' ? {url: 'https://example.invalid/s/frozen-sid'}
     : operation === 'team.messages.report' ? {reportUid: 'evidence'}
@@ -50,7 +51,9 @@ const send: TeamSendInput = {conversationRef: 'source-team', clientUid: 'stable-
 assert.equal((await sdk.sendTeamMessage(send, lifecycle.signal)).state, 'queued')
 await sdk.teamMessageTasks('source-team', lifecycle.signal)
 assert.equal((await sdk.updateTeamSend('source-team', 'stable-task', 'cancel', lifecycle.signal)).state, 'cancelled')
+assert.equal((await sdk.recallTeamMessage('source-team', selections[0]!.messageRef, lifecycle.signal)).message.state, 'recalled')
 supported = false
+await assert.rejects(sdk.recallTeamMessage('source-team', selections[0]!.messageRef), /Provider/)
 const before = calls.filter(call => call.operation === 'team.messages.forward').length
 await assert.rejects(sdk.forwardTeamMessages(command), /Provider/)
 assert.equal(calls.filter(call => call.operation === 'team.messages.forward').length, before)

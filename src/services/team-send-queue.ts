@@ -164,12 +164,12 @@ export class TeamSendQueue {
       const result = await this.ports.execute('team.app.cancel', {
         conversationRef: task.conversationRef, clientUid: task.clientUid,
       }, signal) as TeamSendResult
-      if (!result?.message || !['published', 'cancelled'].includes(result.message.state)) {
+      if (!result?.message || !['published', 'recalled', 'cancelled'].includes(result.message.state)) {
         throw fail('cancel-uncertain', '取消结果待确认，请稍后重试')
       }
       task.message = result.message
     }
-    task.state = task.message?.state === 'published' ? 'sent' : 'cancelled'
+    task.state = ['published','recalled'].includes(task.message?.state ?? '') ? 'sent' : 'cancelled'
     task.completedAtMillis = Date.now()
     delete task.error; delete task.reason
   }
@@ -266,7 +266,7 @@ export class TeamSendQueue {
       await this.guard(user, epoch, controller.signal)
       if (result.message) task.message = result.message
       if (result.reason) task.reason = result.reason; else delete task.reason
-      if (result.message?.state === 'published') { task.state = 'sent'; delete task.error }
+      if (result.message && ['published','recalled'].includes(result.message.state)) { task.state = 'sent'; delete task.error }
       else if (result.message?.state === 'cancelled') { task.state = 'cancelled'; delete task.error }
       else if (!result.reason || ['preparing', 'network_unavailable', 'dependency_unavailable', 'rate_limited', 'reply_conflict'].includes(result.reason)) { task.state = 'retrying'; task.reason = result.reason ?? 'preparing'; delete task.error; this.backoff(task) }
       else { task.state = 'failed'; task.error = '消息未能发送，请核对后取消或重新编辑' }

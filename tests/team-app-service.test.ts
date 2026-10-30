@@ -45,6 +45,17 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it('projects realtime locators into the same opaque viewer keys used by current Team reads',async()=>{
+ const f=fixture(path=>path.endsWith('/open')?{channel,conversation}:{conversation,messages:[message]})
+ const opened=await open(f),c=opened.conversation!
+ const page=await f.service.execute('team.app.timeline',{conversationRef:c.ref}) as TeamTimeline
+ const hint=await f.service.changeHint({kind:'team.message.changed',messageUid:message.message_uid,conversationUid:conversation.conversation_uid},90)
+ expect(hint).toMatchObject({messageKey:page.messages[0]!.key,conversationKeys:expect.arrayContaining([c.key])})
+ expect(JSON.stringify(hint)).not.toContain(message.message_uid)
+ expect(JSON.stringify(hint)).not.toContain(conversation.conversation_uid)
+ expect((await f.service.changeHint({kind:'team.message.changed',messageUid:message.message_uid},91)).messageKey).not.toBe(hint.messageKey)
+})
+
 it('opens private matching references for maximum-size Team text without cloud IO', async () => {
  const text = '长'.repeat(60_000) + ' end'
  const f = fixture(() => ({ channel, conversation, messages: [{ ...message, record: { ...message.record, text_content: text } }] }))
@@ -705,7 +716,7 @@ describe('Team App owner adapter', () => {
   })
   it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
     const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
-    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: event.kind==='team.receipt.changed' })
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: false, change:{kind:event.kind,conversationUid:'c'} })
     expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()
@@ -1204,6 +1215,22 @@ it('projects only sealed mentions, filters a bounded page by person, and encodes
  expect(body.mentions).toBeUndefined()
  expect((body.content_payload as any).mention_metadata.human_mentions[0].user_id).toBe(91)
  await expect(f.service.execute('team.app.send',{conversationRef:ref,content:{text_content:'changed',template_kind:1,mentions}})).rejects.toThrow()
+})
+
+it.each([false,true])('recalls one opaque occurrence and reconciles a lost response: %s',async(lost)=>{
+ const terminal={...message,own:true,state:'recalled',revision:8,recalled_at:123,can_recall:false}
+ const f=fixture(path=>{
+  if(path.endsWith('/messages/recall')){if(lost)throw new Error('lost response');return {message:terminal,changed:true}}
+  if(path.endsWith('/messages/send-status'))return terminal
+  return {channel,conversation,messages:[{...message,own:true,can_recall:true}]}
+ })
+ const conversationRef=(await open(f)).conversation!.ref
+ const page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+ const result=await f.service.execute('team.app.recall',{conversationRef,messageRef:page.messages[0]!.ref}) as import('../src/team-message-contract.js').TeamRecallResult
+ expect(result.message).toMatchObject({state:'recalled',recalledAt:123,revision:8,canRecall:false,media:[],contentStatus:'recalled'})
+ expect(result.message.content).toBeUndefined()
+ expect(f.requests.filter(r=>r.path.endsWith('/messages/recall'))[0]!.body).toEqual({conversation_uid:conversation.conversation_uid,side:conversation.side,message_uid:message.message_uid})
+ expect(f.requests.some(r=>r.path.endsWith('/delete')||r.path.endsWith('/cancel'))).toBe(false)
 })
 
 it('preserves an explicitly classified large visitor across person refs, remarks and actual private-open target',async()=>{

@@ -66,7 +66,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
       const value = await callArkme<TeamNotificationPolicy>('team.app.notification-policy.set',
         {conversationRef:conversation.ref,expectedAccountKey:accountKey,muted:!policy.muted},lifetime.current.signal)
       if (!lifetime.current.signal.aborted) {
-        setPolicy(current=>mergeTeamNotificationPolicy(current,value)); invalidateTeamMessages(accountKey)
+        setPolicy(current=>mergeTeamNotificationPolicy(current,value)); invalidateTeamMessages(accountKey,false,{kind:'team.notification-policy.changed'})
       }
     } catch (error) { if (!lifetime.current.signal.aborted) setPolicyError(errorText(error)) }
     finally { policyLock.current=false; if (!lifetime.current.signal.aborted) setPolicyBusy(false) }

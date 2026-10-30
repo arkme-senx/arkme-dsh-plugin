@@ -73,6 +73,9 @@ export class AttachmentPreviewWindow {
     if (child && !child.closed) child.close()
     attachmentPreviewBridge()?.close()
   }
+  closeSource(source: string): void {
+    if (this.identity?.startsWith(`${source}:`)) this.close()
+  }
   private dispose(): void {
     this.disconnect?.(); this.disconnect = undefined
     for (const media of this.child?.document.querySelectorAll('video,audio') ?? []) {
@@ -90,3 +93,5 @@ export function showAttachmentPreview(identity: string, render: (document: Docum
   catch { host.close(); host.show(identity, render) }
 }
 export function closeAttachmentPreview(): void { host?.close(); host = undefined }
+
+export function closeAttachmentPreviewSource(source: string): void { host?.closeSource(source) }

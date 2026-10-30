@@ -9,6 +9,7 @@ import {
   decodeArkmeChatTimelineChangedDataLine, decodeArkmeChatPolicyUpdatedDataLine,
   decodeArkmeConversationListPreferenceUpdatedDataLine,
   decodeArkmeProjectionInvalidatedDataLine, decodeArkmeMemberJoinedDataLine,
+  decodeArkmeTeamNotificationDataLine,
 } from '../src/chat-realtime.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 
@@ -55,6 +56,20 @@ const timelineChangedHint = {
 }
 
 describe('Arkme Chat realtime', () => {
+  it('preserves Team source relevance across decoder and live SSE delivery without content',async()=>{
+    const event={t:28,event_uid:'recall-hint',kind:'team.message.changed',message_uid:'message-uid',conversation_uid:'conversation-uid',revision:2,event_at:123456}
+    const change={kind:event.kind,messageUid:event.message_uid,conversationUid:event.conversation_uid}
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toMatchObject({change,receiptOnly:false})
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,message_uid:1,conversation_uid:null})}`)).toMatchObject({change:{kind:event.kind}})
+    let stream!:ReadableStreamDefaultController<Uint8Array>
+    const runtime=new ArkmeChatRealtimeRuntime({imBaseUrl:'https://im.test',readSession:async()=>({userId:42,accessToken:'access',refreshToken:'refresh'}),fetchImpl:vi.fn(async()=>new Response(new ReadableStream({start(c){stream=c}}),{headers:{'content-type':'text/event-stream'}})),inactivityTimeoutMs:10_000,leaseDurationMs:10_000})
+    const notice=vi.fn(),unsubscribe=runtime.subscribe(notice),stop=runtime.start()
+    try{
+      await vi.waitFor(()=>expect(runtime.state().connected).toBe(true))
+      stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
+      await vi.waitFor(()=>expect(notice).toHaveBeenCalledWith(expect.objectContaining({cause:'team-invalidation',connectionUserId:42,teamChange:change})))
+    }finally{unsubscribe();stop()}
+  })
   it('decodes only complete Chat receive hints and ignores heartbeats', () => {
     expect(decodeArkmeChatReceiveDataLine('data:')).toBeUndefined()
     expect(decodeArkmeChatReceiveDataLine('data: {"t":18}')).toBeUndefined()

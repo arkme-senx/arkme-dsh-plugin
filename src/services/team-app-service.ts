@@ -3,6 +3,7 @@ import { encodeMentionMetadata } from './mention-metadata-codec.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
+import { teamMessageProjection } from '../team-message-projection.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
 import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -51,6 +52,7 @@ const reasons: Record<string, string> = {
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
+  message_recalled:'消息已撤回', message_not_published:'消息尚未发布，请取消发送',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
@@ -119,6 +121,11 @@ export class TeamAppService {
   async conversationKey(ref: string, actor: number): Promise<string> {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
+  }
+  async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
+    return {kind:hint.kind,
+      ...(hint.messageUid?{messageKey:await this.key(hint.messageUid,actor)}:{}),
+      ...(hint.conversationUid?{conversationKeys:await Promise.all(['team','external'].map(side=>this.key(`${hint.conversationUid}:${side}`,actor)))}:{})}
   }
   async reactionTarget(conversationRef:string,messageRef:string):Promise<import('./reaction-service.js').ReactionWireTarget>{
     const actor=(await this.runtime.requireSession()).userId
@@ -236,7 +243,7 @@ export class TeamAppService {
     }))
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
-    const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
+    const v = obj(raw), content = v.state === 'recalled' ? {} : obj(v.record), uid = str(v.message_uid)
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id), ...(obj(content.content_payload).mention_metadata ? { has_mentions: true } : {}) }
     const mentions = []
     if (context.side === 'team') {
@@ -260,21 +267,22 @@ export class TeamAppService {
     const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
-    return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
+    return teamMessageProjection({ ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
+      canRecall: v.can_recall === true, ...(v.state === 'recalled' ? {recalledAt:num(v.recalled_at)} : {}),
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       ...(replyPreview ? {reply:replyPreview} : {}),
-      version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
+      version: num(content.version), contentStatus: str(content.status), ...(v.record && v.state !== 'recalled' ? { content: {
         ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
         ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
       media: projectedMedia,
       ...(forwardRecords?{forwardRecords}:{}),
-    }
+    })
   }
 
   private async externalShare(v: Record<string,unknown>, actor: number): Promise<import('../team-external-chat-contract.js').ExternalChatShare> {
@@ -937,6 +945,19 @@ export class TeamAppService {
         const m = await message()
         return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side })
       }
+      case 'team.app.recall': {
+        const context=await conversation(), m=await message()
+        if (m.conversation_uid!==context.conversation_uid || m.side!==context.side) throw invalid()
+        try {
+          const data=await post('conversations/messages/recall',{...context,message_uid:m.message_uid})
+          return {message:await this.message(data.message,actor,context),changed:data.changed===true}
+        } catch (error) {
+          signal?.throwIfAborted()
+          const current=await post('conversations/messages/send-status',{message_uid:m.message_uid,side:m.side})
+          if (current.state !== 'recalled') throw error
+          return {message:await this.message(current,actor,context),changed:false}
+        }
+      }
       case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
       case 'team.app.notification-policy.get': {
         const context=await conversation()
@@ -992,7 +1013,9 @@ export class TeamAppService {
         if (!Array.isArray(data.items) || rows.length !== ids.length || byId.size !== ids.length || !Number.isSafeInteger(data.last_seq) || num(data.last_seq) < 0 || !Number.isSafeInteger(data.my_read_seq) || num(data.my_read_seq) < 0 || !Number.isSafeInteger(data.unread) || num(data.unread) < 0) throw invalid()
         return { items: await Promise.all(ids.map(async id => {
           const row = byId.get(id)
-          if (!row || typeof row.team_read !== 'boolean') throw invalid()
+          if (!row) throw invalid()
+          if (row.unavailable_reason === 'message_recalled') return {key:await this.key(id,actor),unavailableReason:'message_recalled'}
+          if (typeof row.team_read !== 'boolean') throw invalid()
           return { key: await this.key(id, actor), teamRead: row.team_read,
             ...(first.side === 'team' ? { summary: receiptCounts(row.summary), ...(typeof row.visitor_read === 'boolean' ? {visitorRead: row.visitor_read} : {}) } : {}) }
         })), lastSeq: num(data.last_seq), myReadSeq: num(data.my_read_seq), unread: num(data.unread) }
@@ -1081,7 +1104,12 @@ export class TeamAppService {
     if (response.status === 401 || response.status === 403) { await response.body?.cancel(); session = await this.runtime.refreshAccessToken(session); response = await fetchMedia() }
     const current = await this.runtime.accountScopedSession()
     if (signal.aborted || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
-    if (!response.ok || response.headers.get('content-type')?.includes('application/json')) { await response.body?.cancel(); throw new ArkmePluginError('team-not_accessible', '附件已失效或无权访问，请刷新消息', false, 403) }
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const failure=obj(await response.json())
+      if(obj(failure.data).reason==='message_recalled') throw new ArkmePluginError('team-message_recalled','消息已撤回',false,409)
+      throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)
+    }
+    if (!response.ok) {await response.body?.cancel();throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)}
     return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream',size:num(ref.size) }
   }
   private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
