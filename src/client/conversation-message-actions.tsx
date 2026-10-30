@@ -3,6 +3,7 @@ import type { ArkmeMenuAction } from './ArkmeDshMenu.js'
 import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { ReactionAddIcon } from './ArkmeReactionPreview.js'
 import { AskDshIcon } from './AskDshIcon.js'
+import { Info } from '@phosphor-icons/react/dist/icons/Info'
 import { Checks } from '@phosphor-icons/react/dist/icons/Checks'
 import { tr } from './locale.js'
 
@@ -24,6 +25,7 @@ function conversationMessageIcon(id: string): ReactNode {
   if (id === 'reaction') return <ReactionAddIcon />
   if (id === 'extend') return <ArkmeDesktopExtensionIcon />
   if (id === 'ask-dsh') return <AskDshIcon size={20} />
+  if (id === 'detail') return <Info />
   if (id === 'receipts') return <Checks />
   if (id === 'assign') return <ArkmeSelectActionIcon kind="assign" size={16} />
   if (['copy', 'link', 'select', 'forward', 'report', 'withdraw', 'edit'].includes(id)) return <ArkmeMessageActionIcon kind={id as Parameters<typeof ArkmeMessageActionIcon>[0]['kind']} />

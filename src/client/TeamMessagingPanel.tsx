@@ -1064,7 +1064,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       onConfirm={() => { void selection.remove() }} onClose={selection.closeConfirm} />}
     {snapshot && <ArkmeMessageSnapshotDialog item={teamMessagePresentation(snapshot)}
       {...(snapshotState.value ? {detail:snapshotState.value.detail} : {})} loading={snapshotState.loading} {...(snapshotState.error?{loadError:snapshotState.error}:{})} onRetry={snapshotState.retry}
-      metadataUnavailable={tr('未提供的快照项目显示未记录。')} createdAtMillis={snapshot.createdAt}
+      createdAtMillis={snapshot.createdAt}
       backgroundSoundSupported={false} onClose={closeSnapshot} />}
     {detail && (detail.forwardRecords ? <TeamForwardDetail key={`${detail.key}:${detail.version}`} message={detail} conversationRef={conversation.ref} conversationKey={conversation.key} onClose={()=>setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} accountKey={accountKey} message={detail} conversation={current} displayIdentity={personName}
       footer={source => conversationComposer(source, !!source)}

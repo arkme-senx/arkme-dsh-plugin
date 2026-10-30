@@ -16,3 +16,9 @@ it('rejects extra collection fields and contradictory location outcomes before s
   expect(()=>readTeamRecordMetadata({...metadata,send_at:999})).toThrow()
   expect(()=>readTeamRecordMetadata({...metadata,capture_context:{...metadata.capture_context,automatic_location:{lat:0,lon:0,captured_at:900}}})).toThrow()
 })
+
+it('retains capture outcomes separately without presenting missing locations as data',()=>{
+ const value=decodeTeamMessageSnapshot({schema_version:1,recorded:true,version:1,snapshot_version:1,capture_context:{schema_version:1,captured_at:1000,device_state:'unavailable',location_state:'permission_denied'}},'opaque')
+ expect(value.captureStates).toEqual({device:'unavailable',location:'permission_denied'})
+ expect(value.detail.locationCapture).toBeUndefined();expect(value.detail.locationLabel).toBeUndefined()
+})
