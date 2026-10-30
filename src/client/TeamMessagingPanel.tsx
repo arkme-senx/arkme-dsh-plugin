@@ -814,7 +814,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const snapshot = displayedMessages.find(message => message.key === snapshotKey && message.own && message.state === 'published' && message.contentStatus === 'available')
   useEffect(() => { if (snapshotKey && !snapshot) setSnapshotKey(undefined) }, [snapshotKey, !!snapshot])
   const snapshotState=useTeamMessageSnapshot(accountKey,conversation.ref,snapshot,closeSnapshot)
-  const detail = displayedMessages.find(message => message.key === detailKey && (message.state === 'recalled' || message.state === 'published' && message.contentStatus === 'available'))
+  const detail = displayedMessages.find(message => message.key === detailKey && (message.state === 'recalled' || message.state === 'published' && ['available','revalidating'].includes(message.contentStatus)))
   useEffect(() => { if (detailKey && !detail) setDetailKey(undefined) }, [detailKey, !!detail])
   const [forwardAttempt,setForwardAttempt]=useState<{attempt:TeamForwardAttempt;messages:TeamMessage[]}>()
   const openTeamForward=(messages:TeamMessage[])=>{
@@ -1066,7 +1066,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       {...(snapshotState.value ? {detail:snapshotState.value.detail} : {})} loading={snapshotState.loading} {...(snapshotState.error?{loadError:snapshotState.error}:{})} onRetry={snapshotState.retry}
       metadataUnavailable={tr('未提供的快照项目显示未记录。')} createdAtMillis={snapshot.createdAt}
       backgroundSoundSupported={false} onClose={closeSnapshot} />}
-    {detail && (detail.forwardRecords ? <TeamForwardDetail key={`${detail.key}:${detail.version}`} message={detail} conversationRef={conversation.ref} conversationKey={conversation.key} onClose={()=>setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} message={detail} conversation={current} displayIdentity={personName}
+    {detail && (detail.forwardRecords ? <TeamForwardDetail key={`${detail.key}:${detail.version}`} message={detail} conversationRef={conversation.ref} conversationKey={conversation.key} onClose={()=>setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} accountKey={accountKey} message={detail} conversation={current} displayIdentity={personName}
       footer={source => conversationComposer(source, !!source)}
       onExtend={current.channel.enabled && !current.blocked && !busy && !editing ? (target = detail) => extendMessage(target, true) : undefined}
       onLocateReply={(target = detail) => {void locateReply(target)}}

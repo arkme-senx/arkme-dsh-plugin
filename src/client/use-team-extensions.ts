@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createArkmeSdk } from '../sdk/index.js'
-import type { TeamExtensionPage, TeamMessage } from '../team-app-contract.js'
+import type { TeamConversation, TeamExtensionPage, TeamMessage } from '../team-app-contract.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { invalidateTeamMessageRead, teamChangeAffectsSource } from './team-source-read.js'
 
-export function useTeamExtensions(conversationRef:string,message:TeamMessage) {
+export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConversation,'ref'|'key'>,message:TeamMessage) {
+ const conversationRef=conversation.ref,conversationKey=conversation.key
  const [page,setPage]=useState<TeamExtensionPage>()
  const [error,setError]=useState(''),[loading,setLoading]=useState(false),[invalidated,setInvalidated]=useState(false)
  const saved=useRef(new Map<string,TeamExtensionPage>()),pageScope=useRef('')
- const scope=`${conversationRef}:${message.key}`
+ const scope=`${accountKey}:${conversationKey}:${message.key}`
  const pending=useRef<AbortController>(),state=useRef<TeamExtensionPage>(),mounted=useRef(true)
  const load=useCallback(async(more=false)=>{
   pending.current?.abort();const controller=new AbortController();pending.current=controller
@@ -28,19 +30,38 @@ export function useTeamExtensions(conversationRef:string,message:TeamMessage) {
    const merged=previous?{...next,items:[...new Map([...previous.items,...next.items].map(row=>[row.key,row])).values()]}:next
    state.current=merged;pageScope.current=scope;saved.current.set(scope,merged);setPage(merged);setInvalidated(false)
   }catch(error){if(!controller.signal.aborted&&mounted.current){
-   saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true)
+   const code=(error as {body?:{code?:string}})?.body?.code
+   if(!['local-network-unavailable','arkme-network-error','arkme-timeout','team-dependency_unavailable','team-rate_limited'].includes(code??'')) {
+    saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true)
+   }
    setError(error instanceof Error?error.message:'延展加载失败，请重试')
   }}
   finally{if(!controller.signal.aborted&&mounted.current)setLoading(false)}
  },[conversationRef,message.ref,message.key,scope])
  useEffect(()=>{
-  mounted.current=true;state.current=undefined;setPage(undefined);setInvalidated(false);void load()
+  mounted.current=true
+  if(pageScope.current!==scope){state.current=undefined;setPage(undefined);setInvalidated(false)}
+  else if(state.current&&state.current.message.version!==message.version){
+   const change={kind:'team.message.changed',messageKey:message.key}
+   state.current={...state.current,message:invalidateTeamMessageRead(state.current.message,change,conversationKey),items:state.current.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey))}
+   setPage(state.current)
+  }
+  void load()
   return ()=>{mounted.current=false;pending.current?.abort()}
- },[load,message.version])
- useEffect(()=>subscribeTeamMessageChanges((_account,receiptOnly)=>{
-  if(receiptOnly)return
-  // Hide stale snapshots immediately; a failed refresh cannot restore them.
-  saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true);void load()
- }),[load])
+ },[load,message.version,scope,conversationKey])
+ useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly,change)=>{
+  if(account!==accountKey||receiptOnly||!teamChangeAffectsSource(change,{conversationKey}))return
+  if(change?.kind==='team.message.changed'&&change.messageKey){
+   const project=(value:TeamExtensionPage):TeamExtensionPage=>({...value,
+    message:invalidateTeamMessageRead(value.message,change,conversationKey),
+    items:value.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey)),throughSeq:0})
+   for(const [key,value] of saved.current)saved.current.set(key,project(value))
+   if(state.current){state.current=project(state.current);setPage(state.current)}
+  }else{
+   // Unknown/reconnect and access changes still remove every stale snapshot.
+   saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true)
+  }
+  void load()
+ }),[accountKey,conversationKey,load])
  return {page:pageScope.current===scope&&page?.message.key===message.key?page:undefined,error,loading,invalidated,retry:()=>{void load()},more:()=>{void load(true)}}
 }
