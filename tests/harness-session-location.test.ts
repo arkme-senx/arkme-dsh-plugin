@@ -13,9 +13,9 @@ let stop: (() => void) | undefined
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 afterEach(() => { act(() => root?.unmount()); root = undefined; stop?.(); stop = undefined; document.body.replaceChildren(); vi.clearAllMocks(); vi.useRealTimers() })
 const remote = { runtimeRef: 'remote', sessionRef: 'same', desktopName: 'DESKTOP-MQ3A4TB', local: false, sameDesktop: false, capabilities: [], archived: false } as unknown as DshAccountSession
-const t = ((key: string) => ({ remote: '非本机' })[key]) as Parameters<typeof SessionComputerLocation>[0]['t']
+const t = ((key: string) => ({ remote: '非本机', otherInstance: '其他实例' })[key]) as Parameters<typeof SessionComputerLocation>[0]['t']
 
-it('uses runtime/session identity, hides same-computer instances, and follows rename/offline without another poller', async () => {
+it('uses runtime/session identity, uses the same location for other instances, and follows rename/offline without another poller', async () => {
   vi.useFakeTimers()
   const surface = document.createElement('section'), container = document.createElement('div')
   document.body.append(surface, container)
@@ -36,7 +36,7 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   await render('same')
   expect(container.textContent).toBe('')
   await render(accountSessionKey(rows[1]!))
-  expect(container.textContent).toBe('')
+  expect(container.textContent).toBe('其他实例 · DESKTOP-MQ3A4TB')
   await render('arkme:missing:same')
   expect(container.textContent).toBe('')
   await render(accountSessionKey(remote))
@@ -48,11 +48,11 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   localDesktopName = remote.desktopName
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
   expect(callArkme).toHaveBeenCalledTimes(2)
-  expect(container.textContent).toBe('')
+  expect(container.textContent).toBe('其他实例 · DESKTOP-MQ3A4TB')
   expect(rows[0]!.sameDesktop).toBe(false)
   localDesktopName = undefined
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-  expect(container.textContent).toBe('')
+  expect(container.textContent).toBe('其他实例 · DESKTOP-MQ3A4TB')
   localDesktopName = 'Mac.local'
   rows = [{ ...remote, desktopName: '<img src=x onerror=alert(1)>'.repeat(10), presence: 'offline' }]
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
@@ -61,7 +61,7 @@ it('uses runtime/session identity, hides same-computer instances, and follows re
   expect(container.textContent).toContain('非本机')
   rows = [{ ...remote, desktopName: ' ' }]
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-  expect(container.textContent).toBe('')
+  expect(container.textContent).toBe('其他实例')
   act(() => root!.unmount()); root = undefined
   expect(vi.getTimerCount()).toBe(1)
   stop(); stop = undefined

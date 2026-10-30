@@ -21,6 +21,7 @@ it('shadows only remote content, preserving native header/composer entries and r
   register({ name: 'conversation.chat.flow', children: { 'conversation.chat.node': { kind: 'keyed', scope: 'session' } } }, () => null)
   register({ name: 'conversation.chat.node', key: 'user' }, () => null)
   const original = slots.entriesOfSlot('conversation.session')[0]
+  const corner = slots.entries('conversation.session.header.corner')
   const header = slots.entries('conversation.session.header'), composer = slots.entries('conversation.composer')
   let state: any
   const listeners = new Set<() => void>()
@@ -35,6 +36,7 @@ it('shadows only remote content, preserving native header/composer entries and r
   select('arkme:runtime:remote')
   expect(slots.entriesOfSlot('conversation.session')[0]).not.toBe(original)
   expect(slots.entries('conversation.session.header')).toBe(header)
+  expect(slots.entries('conversation.session.header.corner')).toBe(corner)
   expect(slots.entries('conversation.composer')).toBe(composer)
   expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow')).toHaveLength(1)
   expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow.default.conversation.chat.node')).toHaveLength(1)
@@ -46,6 +48,7 @@ it('shadows only remote content, preserving native header/composer entries and r
   expect(slots.entriesOfSlot('conversation.session')[0]).toBe(original)
   stop(); expect(listeners.size).toBe(0)
   expect(slots.entries('conversation.session.header')).toBe(header)
+  expect(slots.entries('conversation.session.header.corner')).toBe(corner)
 })
 
 it('does not let a projected file path or fork action reach the local Host', async () => {

@@ -3,7 +3,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { tr } from './locale.js'
 import { callArkme } from '../sdk/index.js'
-import { useAccountSessionCatalog, accountSessionKey } from './harness-account-sessions.js'
 import { harnessSessions } from './harness-session-state.js'
 import { createProjectedHistory, type ProjectedHistorySnapshot } from './harness-projected-history.js'
 import type { DshAccountSessionHistory } from '../dsh-remote/account-session-types.js'
@@ -96,14 +95,8 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
         children: Object.fromEntries(children.map(name => [`${PREFIX}${name}`, native.children![name]])) },
       (props: Props) => <ProjectedConversation key={String(props.sessionId)} {...props} Native={Native} />)
       const stopMessages = mirrorMessages(ctx, 'conversation.view', `${PREFIX}conversation.view`)
-      // An additive native corner, never a second title or a replacement header.
-      const stopOrigin = slots.spec('conversation.session.header.corner') ? register({ name: 'conversation.session.header.corner', priority: -100 }, () => {
-        const snapshot = useAccountSessionCatalog(surface)
-        const row = snapshot.rows.find(row => accountSessionKey(row) === id)
-        return <span title={row?.runtimeName} style={{ fontSize: 12, opacity: .65, whiteSpace: 'nowrap' }}>{tr('其他实例')}{row?.desktopName ? ` · ${row.desktopName}` : ''}</span>
-      }) : () => {}
       installedFor = id; installedNative = native
-      remove = () => { stopOrigin(); stopMessages(); removeView() }
+      remove = () => { stopMessages(); removeView() }
     } finally { updating = false }
   }
   const stops = [sessions.list.subscribe(sync), slots.subscribe('conversation.view', sync), slots.subscribe('conversation.session', sync)]
