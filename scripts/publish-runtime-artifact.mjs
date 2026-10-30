@@ -318,6 +318,13 @@ export async function publishRuntimeArtifact(options, {
   const storedCompatibility = readStoredCompatibility(current)
   log(`version_id=${versionID} status=${current.status} harness_version_code_range=${storedCompatibility.harnessVersionCodeRange.min}-${storedCompatibility.harnessVersionCodeRange.max} compatibility_source=${formatCompatibilitySource(storedCompatibility.compatibilitySource)}`)
 
+  if (options.verifyStoredNotes && (current.notes !== options.notes.trim() || current.source_revision !== options.sourceSHA)) {
+    throw new Error('Stored Runtime notes or source SHA differ from the production release')
+  }
+  // A previous activation may have succeeded even when its response was lost. Never reactivate it.
+  if (options.verifyStoredNotes && Number.isSafeInteger(current.last_activated_version_code) && current.last_activated_version_code > 0) {
+    return { version: metadata.version, versionId: versionID, versionCode: current.last_activated_version_code, reused: true, ...storedCompatibility }
+  }
   const activation = await request(`${versionsPath}/${encodeURIComponent(versionID)}/activate`, { method: 'POST' })
   if (!Number.isSafeInteger(activation?.version_code)) throw new Error('Backend returned an invalid activation result')
   return {

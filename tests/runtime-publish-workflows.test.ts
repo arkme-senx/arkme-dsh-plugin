@@ -29,7 +29,7 @@ describe('Arkme runtime publish workflow boundaries', () => {
   it.each(['publish-pre-release-runtime.yml', 'publish-production-runtime.yml'])('passes the optional persisted range from the publishing Environment in %s', async file => {
     const definition = parse(await workflow(file))
     const steps = Object.values(definition.jobs).flatMap((job: any) => job.steps ?? [])
-    const publish = steps.find((step: any) => step.run === 'node scripts/publish-runtime-artifact.mjs')
+    const publish = steps.find((step: any) => /node scripts\/(publish-runtime-artifact\.mjs|production-runtime-release\.mjs publish)$/.test(step.run ?? ''))
     expect(publish?.env.ARKME_HARNESS_VERSION_CODE_RANGE).toBe('${{ vars.ARKME_HARNESS_VERSION_CODE_RANGE }}')
   })
   it.each([
@@ -51,7 +51,9 @@ describe('Arkme runtime publish workflow boundaries', () => {
       commands.push(...step.run.split('\n').map((line: string) => line.trim().replace(/^pnpm --config\.verifyDepsBeforeRun=warn /,'pnpm ')))
     }
     expect(commands.filter(line => line === 'pnpm run build')).toHaveLength(1)
-    expect(commands.filter(line => line.startsWith('pnpm install'))).toEqual(['pnpm install --frozen-lockfile'])
+    expect(commands.filter(line => line.startsWith('pnpm install'))).toEqual(file === 'publish-production-runtime.yml'
+      ? ['pnpm install --frozen-lockfile --ignore-scripts', 'pnpm install --frozen-lockfile']
+      : ['pnpm install --frozen-lockfile'])
     const build = commands.indexOf('pnpm run build')
     const pack = commands.findIndex(line => /^(pnpm run pack:runtime|npm pack)/.test(line))
     if (pack !== -1) expect(pack).toBeGreaterThan(build)
@@ -115,8 +117,8 @@ describe('Arkme runtime publish workflow boundaries', () => {
   it('validates the trusted production release before building its exact SHA', async () => {
     const production = await workflow('publish-production-runtime.yml')
     const validation = production.indexOf('name: 验证生产版本与提交')
-    const exactCheckout = production.indexOf('git checkout --detach "$RELEASE_SHA"')
-    const publish = production.indexOf('node scripts/publish-runtime-artifact.mjs')
+    const exactCheckout = production.indexOf('name: 检出精确发布提交')
+    const publish = production.indexOf('node scripts/production-runtime-release.mjs publish')
 
     expect(production).toContain('repository_dispatch:')
     expect(parse(production).on.repository_dispatch.types).toContain('arkme-plugin-release-published')
@@ -139,6 +141,12 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(production).toContain('ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}')
     expect(production).toContain('ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}')
     expect(production).toContain('DEBUG: ""')
+    const steps = parse(production).jobs['publish-runtime'].steps
+    const source = steps.find((step: any) => step.name === '检出精确发布提交')
+    expect(source.with.ref).toBe('${{ github.event.client_payload.release_sha }}')
+    expect(source.with.path).toBe('runtime-source')
+    expect(steps.find((step: any) => step.name === '校验、构建并打包 Runtime')['working-directory']).toBe('runtime-source')
+    expect(steps.filter((step: any) => step.env?.OPENAI_API_KEY)).toHaveLength(1)
     expect(production).not.toContain('vars.ARKME_BACKEND_BASE_URL')
     expect(production).not.toContain('request-arkme-build.sh')
     expect(production).not.toContain('/arkme-plugin/build')
@@ -198,6 +206,8 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(codeOwners).toContain('/.github/workflows/ @SimonHe-1D3E')
     expect(codeOwners).toContain('/.github/scripts/ @SimonHe-1D3E')
     expect(codeOwners).toContain('/scripts/publish-runtime-artifact.mjs @SimonHe-1D3E')
+    expect(codeOwners).toContain('/scripts/production-runtime-release.mjs @SimonHe-1D3E')
+    expect(codeOwners).toContain('/scripts/runtime-release-notes.mjs @SimonHe-1D3E')
     expect(codeOwners).toContain('/package.json @SimonHe-1D3E')
     expect(codeOwners).toContain('/pnpm-lock.yaml @SimonHe-1D3E')
   })
