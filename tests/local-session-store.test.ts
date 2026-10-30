@@ -10,7 +10,7 @@ it('moves complete native directories with cloud aliases and leaves conflicting 
   const temp = await mkdtemp(join(tmpdir(), 'arkme-store-'))
   const home = join(temp, 'profile'), root = join(temp, 'shared')
   const accountRef = createHash('sha256').update('arkme-dsh-account-scope-v1\n42').digest('hex')
-  const input = { dshHome: home, root, accountRef, environment: 'test' as const, dshVersion: '0.1.5-rc.2' }
+  const input = { dshHome: home, root, accountRef, environment: 'test' as const, dshVersion: '0.2.1-rc.2' }
   try {
     await mkdir(join(home, 'sessions', 'project', 's1'), { recursive: true })
     await writeFile(join(home, 'sessions', 'project', 's1', 'events.jsonl'), 'original bytes')
@@ -44,19 +44,19 @@ it('does not reinterpret the successor projection inventory as migration aliases
     await writeFile(join(home, 'arkme-self', 'test', 'dsh-remote', 'runtime-state.json'), JSON.stringify({ schemaVersion: 2,
       accounts: { '42': { runtimes: { web: { runtimeRef: 'successor-runtime' } }, projections: { web: { sessions: [{ sessionRef: 's1' }] } } } },
     }))
-    await prepareLocalSessionStore({ dshHome: home, root, accountRef, environment: 'test', dshVersion: '0.1.5-rc.2' })
+    await prepareLocalSessionStore({ dshHome: home, root, accountRef, environment: 'test', dshVersion: '0.2.1-rc.2' })
     expect(store.address('s1')).toBe('original-runtime')
   } finally { store.close(); await rm(temp, { recursive: true, force: true }) }
 })
 
 it('owns profile composition and rejects unsupported scopes before migration', async () => {
-  const input = {root: join(tmpdir(), 'shared sessions'), accountRef: 'a'.repeat(64), environment: 'test' as const, dshVersion: '0.1.5-rc.2', pluginDir: join(tmpdir(), 'plugin files'), basePatch: '- id: arkme-self\n  config:\n    environment: test\n'}
+  const input = {root: join(tmpdir(), 'shared sessions'), accountRef: 'a'.repeat(64), environment: 'test' as const, dshVersion: '0.2.1-rc.2', pluginDir: join(tmpdir(), 'plugin files'), basePatch: '- id: arkme-self\n  config:\n    environment: test\n'}
   const patch = localSessionProfilePatch(input)
   expect(patch).toContain('local-session/index.js')
   expect(patch).toContain('local-session/gateway-browser/index.js')
   expect(patch).toContain(JSON.stringify(join(input.root, 'sessions')))
   expect(patch).not.toMatch(/credentials|stateDirectory/)
   expect(() => localSessionProfilePatch({...input, environment: 'prod'})).toThrow('测试环境')
-  expect(() => localSessionProfilePatch({...input, dshVersion: '0.1.5'})).toThrow('0.1.5-rc.2')
+  expect(() => localSessionProfilePatch({...input, dshVersion: '0.1.5'})).toThrow('0.2.1-rc.2')
   await expect(prepareLocalSessionStore({...input, environment: 'prod', dshHome: join(input.root, 'unused')})).rejects.toThrow('测试环境')
 })

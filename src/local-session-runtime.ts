@@ -43,11 +43,13 @@ export default class LocalSessionRuntime {
   private accountId: string | undefined
   private readonly carriers = new Map<string, { sessionId: string; owner: string; epoch: number; touched: number }>()
   private readonly native: DshNativeTransport
+  private readonly peer: ReturnType<Context['connection']['createPeer']>
   private readonly registry: LocalSessionRegistry
 
   constructor(private readonly ctx: Context, private readonly config: Config) {
     this.registry = ctx.agents as LocalSessionRegistry
-    this.native = new DshNativeTransport(ctx.get('typertGateway') as DshGatewayLike, ctx.get('connection') as DshConnectionLike)
+    this.peer = ctx.connection.createPeer({ principal: { kind: 'owner' } })
+    this.native = new DshNativeTransport(ctx.get('typertGateway') as DshGatewayLike, ctx.connection, this.peer)
     ctx.provide('arkmeLocalSessions', this)
     ctx.effect(() => async () => {
       this.lifetime.abort(); this.native.close()
@@ -55,6 +57,7 @@ export default class LocalSessionRuntime {
       await this.controls?.close()
       await this.coordinator?.close()
       this.ownership?.close()
+      await this.peer.dispose()
     }, 'arkme: same-machine session ownership')
   }
 
@@ -78,7 +81,7 @@ export default class LocalSessionRuntime {
       this.coordinator = new LocalSessionCoordinator({ ownership, registry: this.registry, instance: this.instance, scope,
         authorize: async () => { await this.authorize() }, native: (body, signal) => this.receive(body, signal) })
       await this.coordinator.start()
-      this.controls = new LocalSessionControl(this.ctx, ownership, this.coordinator, this.instance, this.accountId)
+      this.controls = new LocalSessionControl(this.ctx, ownership, this.coordinator, this.instance, this.accountId, this.peer)
     })().catch(error => {
       this.ctx.logger.warn('本机会话接管启动失败：%s', error instanceof Error ? error.message : String(error))
       throw error

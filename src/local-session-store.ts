@@ -9,7 +9,7 @@ import { LocalSessionOwnership } from './local-session-ownership.js'
 type LocalSessionScope = { root: string; accountRef: string; environment: 'test' | 'prod'; dshVersion: string }
 
 function assertSupportedScope(input: LocalSessionScope): void {
-  if (input.environment !== 'test' || input.dshVersion !== '0.1.5-rc.2') throw new Error('本机接管需要测试环境与 DSH 0.1.5-rc.2')
+  if (input.environment !== 'test' || input.dshVersion !== '0.2.1-rc.2') throw new Error('本机接管需要测试环境与 DSH 0.2.1-rc.2')
   if (!isAbsolute(input.root) || !/^[a-f0-9]{64}$/.test(input.accountRef)) throw new Error('共享会话作用域无效')
 }
 
@@ -31,7 +31,7 @@ export function localSessionProfilePatch(input: LocalSessionScope & { pluginDir:
 }
 
 /** Called by the desktop launcher only after its previous Harness exited.
- * DSH 0.1.5 stores project/session directories; move each complete directory
+ * DSH 0.2.1 stores project/session directories; move each complete directory
  * atomically, retaining the native log and lock files without decoding them. */
 export async function prepareLocalSessionStore(input: {
   dshHome: string; root: string; accountRef: string; environment: 'test' | 'prod'; dshVersion: string

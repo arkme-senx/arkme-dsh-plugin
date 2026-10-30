@@ -16,7 +16,7 @@ export default class LocalSessionRegistry extends AgentRegistry {
   private coordination: { ownership: LocalSessionOwnership; instance: string } | undefined
 
   constructor(ctx: Context) {
-    if (agentPackage.version !== '0.1.5-rc.2') throw new Error('本机接管需要已验证的 DSH Agent 0.1.5-rc.2')
+    if (agentPackage.version !== '0.2.1-rc.2') throw new Error('本机接管需要已验证的 DSH Agent 0.2.1-rc.2')
     super(ctx)
     ctx.on('agent/disposed', ({ agent }) => {
       if (this.handles.get(agent.id)?.agent === agent) this.handles.delete(agent.id)

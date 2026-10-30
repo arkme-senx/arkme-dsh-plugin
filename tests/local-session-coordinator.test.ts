@@ -37,7 +37,7 @@ it('keeps one native iterator across completed HTTP pulls and closes it explicit
   const scope = { accountId: '3016', environment: 'test' as const }
   const store = new LocalSessionOwnership(root, scope)
   let advance!: () => void
-  const opened = vi.fn(async (_endpoint: string, _payload: unknown, signal: AbortSignal) => ({
+  const opened = vi.fn(async (_endpoint: string, _payload: unknown, _uplink: AsyncIterable<unknown>, _peer: unknown, signal: AbortSignal) => ({
     async *[Symbol.asyncIterator]() {
       yield { type: 'cursor', seq: 0 }
       await new Promise<void>(resolve => { advance = resolve; signal.addEventListener('abort', resolve, { once: true }) })

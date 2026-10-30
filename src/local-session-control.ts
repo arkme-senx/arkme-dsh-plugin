@@ -1,3 +1,4 @@
+import type { PeerScope } from '@deepseek-ai/dsh-client-connection'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Context } from '@deepseek-ai/cordis'
@@ -45,8 +46,8 @@ export class LocalSessionControl {
 
   constructor(private readonly ctx: Context, private readonly store: LocalSessionOwnership,
     private readonly coordinator: LocalSessionCoordinator, private readonly instance: string,
-    private readonly accountId: string) {
-    this.transport = new DshNativeTransport({ wireStream: { open: (_endpoint: string, _payload: unknown, signal: AbortSignal) => Promise.resolve(this.local(signal)) } }, { createSharedFetchHandler: () => { throw new Error('状态订阅不支持命令') } })
+    private readonly accountId: string, peer: PeerScope) {
+    this.transport = new DshNativeTransport({ wireStream: { open: (_endpoint: string, _payload: unknown, _uplink: AsyncIterable<unknown>, _peer: PeerScope, signal: AbortSignal) => Promise.resolve(this.local(signal)) } }, { createSharedFetchHandler: () => { throw new Error('状态订阅不支持命令') } }, peer)
     this.task = this.watch().catch(error => {
       if (this.lifetime.signal.aborted) return
       this.failure = error
@@ -161,9 +162,6 @@ export class LocalSessionControl {
       for (const [id, epoch] of Object.entries(frame.epochs ?? {})) {
         if (!this.owns(id, instance, Number(epoch))) continue
         const value = frame.value
-        for (const [field, type, key] of [['queues', 'queue', 'items'], ['jobs', 'jobs', 'jobs']] as const) {
-          this.accept(instance, { type, sessionId: id, epoch, [key]: value[field]?.[id] ?? [] })
-        }
         const block = value.projections?.[id]
         if (block) for (const [key, value] of Object.entries(block.values)) this.accept(instance,
           { type: 'projection', sessionId: id, epoch, key, value, seq: block.asOfSeq })

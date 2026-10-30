@@ -31,7 +31,7 @@ function fixture(search = '?arkme-harness-embed=1') {
       : params.body.endpoint === 'session/control' ? [currentBaseline]
         : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] : [], done: true,
   } }))
-  const localBaseline = { queues: {} as Record<string, unknown>, jobs: {} as Record<string, unknown>, projections: {} as Record<string, unknown> }
+  const localBaseline = { projections: {} as Record<string, unknown> }
   const sockets: Socket[] = []
   class Socket {
     static OPEN = 1
@@ -605,7 +605,7 @@ it('starts a new combined control generation instead of appending a second basel
   } }))
   const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
   expect((await journal.next()).value.header.id).toBe('arkme:windows:same')
-  expect((await control.next()).done).toBe(true)
+  await expect(control.next()).rejects.toMatchObject({ dshRemoteStreamFailure: { kind: 'carrier' } })
   const renewed = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
   const opening = (await renewed.next()).value
   expect(opening.type).toBe('baseline')
@@ -644,6 +644,48 @@ it('delivers an online prompt to its source and forwards the subsequent live jou
   expect((await f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same', content: [{ type: 'text', text: 'hello' }] } })).result.value.accepted).toBe(true)
   expect((await live).value.event.data.text).toBe('response from source')
   abort.abort(); await journal.return()
+})
+
+it('replaces a reconnected source baseline, replays newer deltas and keeps another source isolated', async () => {
+  const first = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'old' } } } }, retired: { asOfSeq: 5, values: { title: 'retired' } } })
+  const second = await publishedControlBaseline({ same: { asOfSeq: 9, values: { title: 'new' } } })
+  const other = await publishedControlBaseline({ same: { asOfSeq: 20, values: { title: 'other source' } } })
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController(), counts = new Map<string, number>()
+  const original = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async (params: any) => {
+    if (params.body.endpoint !== 'session/control') return original(params)
+    const count = (counts.get(params.runtimeRef) ?? 0) + 1; counts.set(params.runtimeRef, count)
+    const frames = params.runtimeRef === 'linux' ? [other] : count === 1
+      ? [first, { type: 'projection', sessionId: 'same', key: 'goal', value: { status: 'running' }, seq: 8 }] : [second]
+    return { ok: true, value: { items: frames, done: true } }
+  })
+  const openControl = () => f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  let control = openControl()
+  await control.next()
+  const reopen = async () => {
+    await expect(control.next()).rejects.toMatchObject({ dshRemoteStreamFailure: { kind: 'carrier' } })
+    await control.return(); control = openControl()
+    return (await control.next()).value.value.projections
+  }
+  const history = (runtime: string) => f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: `arkme:${runtime}:same` } } } }, abort.signal)[Symbol.asyncIterator]()
+  const windows = history('windows'); await windows.next()
+  expect(await reopen()).toEqual({ 'arkme:windows:same': first.value.projections.same })
+  expect((await control.next()).value).toMatchObject({ type: 'projection', sessionId: 'arkme:windows:same', key: 'goal', seq: 8 })
+  const linux = history('linux'); await linux.next()
+  const combined = { 'arkme:windows:same': first.value.projections.same, 'arkme:linux:same': other.value.projections.same }
+  expect(await reopen()).toEqual(combined)
+  expect((await control.next()).value).toMatchObject({ type: 'projection', key: 'goal', seq: 8 })
+  const warm = openControl()
+  expect((await warm.next()).value.value.projections).toEqual(combined)
+  expect((await warm.next()).value).toMatchObject({ type: 'projection', key: 'goal', seq: 8 })
+  await warm.return()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(await reopen()).toEqual({ 'arkme:windows:same': second.value.projections.same, 'arkme:linux:same': other.value.projections.same })
+  expect(counts).toEqual(new Map([['windows', 4], ['linux', 4]]))
+  await windows.return(); await vi.advanceTimersByTimeAsync(1)
+  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 9, values: {} } } } })
+  abort.abort(); await linux.return(); await control.return()
 })
 
 it('retries a source that ends before its opening snapshot instead of completing the journal', async () => {
@@ -691,12 +733,7 @@ it('reopens ended remote control streams while the conversation remains open', a
 })
 
 it('uses the real DSH snapshot reader to replace complete control baselines while retaining every other source', async () => {
-  const nativeRequire = createRequire(import.meta.url)
-  let gateway: any
-  runInNewContext(readFileSync(nativeRequire.resolve('@deepseek-ai/dsh-api-gateway/client'), 'utf8'), {
-    window: { __ModuleLoader__: { load: (entry: any) => { gateway = entry.factory(nativeRequire) } } },
-    Error, AbortController, AbortSignal, crypto, setTimeout, clearTimeout, queueMicrotask,
-  })
+  const gateway = await import('@deepseek-ai/dsh-api-gateway/client')
   const f = fixture(), abort = new AbortController(), failures: unknown[] = [], snapshots: any[] = [], updates: any[] = []
   f.localBaseline.projections.local = { asOfSeq: 4, values: { title: 'local stays' } }
   const baselines: Record<string, any> = {

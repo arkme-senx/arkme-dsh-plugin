@@ -204,6 +204,7 @@ function installNativeTransport(route: string): void {
   const remoteFailure = (error?: { message?: string; code?: string; retryable?: boolean }) => {
     const message = error?.message ?? '原生远程连接已断开'
     return error?.retryable === true ? carrierFailure(message) : Object.assign(new Error(message), {
+      code: error?.code ?? 'REMOTE_TRANSPORT_FAILED',
       dshRemoteStreamFailure: { kind: 'remote', code: error?.code ?? 'REMOTE_TRANSPORT_FAILED', details: {} },
     })
   }

@@ -81,6 +81,11 @@ describe('published package contents', () => {
   it('ships browser factories without unresolved local chunk requires', () => {
     runPnpm(['run', 'bundle'])
     const libDirectory = join(projectRoot, 'lib')
+    const gatewayManifestUrl = import.meta.resolve('@deepseek-ai/dsh-api-gateway/package.json')
+    const gatewayManifest = JSON.parse(readFileSync(new URL(gatewayManifestUrl), 'utf8'))
+    const browserCarrier = readFileSync(join(libDirectory, 'local-session/gateway-browser/client.js'), 'utf8')
+    expect(browserCarrier).toBe(readFileSync(new URL(gatewayManifest.exports['./client'].browser, gatewayManifestUrl), 'utf8'))
+    expect(browserCarrier).toContain('window.__ModuleLoader__.load(')
     const factories = readdirSync(libDirectory)
       .filter(path => path === 'client.js' || /^harness-.*-client\.js$/.test(path))
     expect(factories.length).toBeGreaterThanOrEqual(7)

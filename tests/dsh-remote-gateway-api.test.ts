@@ -3,7 +3,7 @@ import { Peer, type PeerScope } from '@deepseek-ai/dsh-client-connection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { Session } from '@deepseek-ai/dsh-session'
+import { Session, SessionSeq } from '@deepseek-ai/dsh-session'
 import { createDshGatewayApi, type DshGatewayLike } from '../src/dsh-remote/gateway-api.js'
 import { DshApiProxyAdapter } from '../src/dsh-remote/api-proxy-adapter.js'
 
@@ -159,9 +159,9 @@ describe('current DSH public Gateway compatibility', () => {
     seed.append('session/end-seed', {})
     seed.append('turn/start', { turn: 1 })
     seed.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    const restored = Session.create('session-1', seed.events)
+    const restored = Session.create('session-1', seed.snapshotEvents())
     // rc.2 constructor appends seq3 before store attachment, without session/event.
-    expect(restored.events[restored.firstLiveSeq]?.type).toBe('session/end-seed')
+    expect(restored.eventAt(SessionSeq(restored.firstLiveSeq))?.type).toBe('session/end-seed')
     if (alreadyRestored) f.liveSessions.push(restored)
     const adapter = new DshApiProxyAdapter(f.api)
     const events: number[] = []
@@ -183,7 +183,7 @@ describe('current DSH public Gateway compatibility', () => {
     const f = fixture()
     const seed = Session.create('seed')
     seed.append('session/end-seed', {})
-    f.liveSessions.push(Session.create('untouched', seed.events), Session.create('empty'))
+    f.liveSessions.push(Session.create('untouched', seed.snapshotEvents()), Session.create('empty'))
     const adapter = new DshApiProxyAdapter(f.api)
     const projected = vi.fn()
     adapter.subscribeProjectionEvents(projected)

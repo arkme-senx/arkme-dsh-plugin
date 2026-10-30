@@ -115,7 +115,7 @@ function controlCarrierFixture() {
       controls: { stream: (open: (signal: AbortSignal) => Promise<AsyncIterable<unknown>>, signal: AbortSignal) => open(signal) },
       coordinator: { requestPeer: (peer: string, body: object, signal: AbortSignal) => (runtimes.get(peer) as any).receive(body, signal) },
     })
-    const transport = new DshNativeTransport({ wireStream: { open: async (endpoint: string, payload: any, signal: AbortSignal) => {
+    const transport = new DshNativeTransport({ wireStream: { open: async (endpoint: string, payload: any, _uplink: AsyncIterable<unknown>, _peer: unknown, signal: AbortSignal) => {
       expect(endpoint).toBe('session/control')
       expect(payload.args).toEqual({})
       return runtime.stream({ namespace: 'session', method: 'control', args: payload.args, signal }, async current =>

@@ -128,7 +128,8 @@ it('publishes the initial native selection even before the session list changes'
   Object.assign(frame.contentWindow!, { __ARKME_NATIVE_DIRECTORY__: { select } })
   vi.stubGlobal('window', frame.contentWindow!)
   apply({ inject: () => undefined, effect: (fn: () => () => void) => disposers.push(fn()), sessions: {
-    list: { getSnapshot: () => ({ byId: { restored: {} }, current: 'restored' }), subscribe: () => () => {} },
+    subagentAddress: () => undefined,
+    list: { getSnapshot: () => ({ byId: { restored: { id: 'restored', retainedBy: { mainView: 1 } } } }), subscribe: () => () => {} },
   } } as never)
   expect(select).toHaveBeenCalledExactlyOnceWith('restored')
 })

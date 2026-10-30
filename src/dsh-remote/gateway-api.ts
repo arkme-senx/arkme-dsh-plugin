@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
 import type { ConnectionFetchHandler, PeerScope } from '@deepseek-ai/dsh-client-connection'
-import type { Session } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type Session } from '@deepseek-ai/dsh-session'
 import { randomUUID } from 'node:crypto'
 import type { DshPublicApiProxyLike } from './api-proxy-adapter.js'
 import { snapshotDshHistoryEntry } from './dsh-event-contract.js'
@@ -156,13 +156,12 @@ export function createDshGatewayApi(
     // rc.2 appends this one constructor marker before attaching publication hooks.
     // Adopt it once per live Session, including sessions restored before this mux.
     const adopted = new WeakSet<Session>()
-    const adopt = (session: Session & { eventAt?(seq: number): Session['events'][number] | undefined }, incoming?: unknown) => {
+    const adopt = (session: Session, incoming?: unknown) => {
       if (adopted.has(session)) return
       adopted.add(session)
       if (!Number.isSafeInteger(session.firstLiveSeq)) return
-      // rc.2 exposes a bounded point read; older supported peers expose events.
-      const event = typeof session.eventAt === 'function'
-        ? session.eventAt(session.firstLiveSeq) : session.events?.[session.firstLiveSeq]
+      // Read only the restore marker through the supported bounded public API.
+      const event = session.eventAt(SessionSeq(session.firstLiveSeq))
       if (event?.type === 'session/end-seed' && event !== incoming) push({ type: 'session/event', sessionId: session.id, event: snapshotDshHistoryEntry({ event }).event })
     }
     // One public append subscription for all sessions, not one follower per historical session.
