@@ -1,5 +1,6 @@
 import { readCompleteRecordingTranscript } from '../../src/recording-transcript-page.js'
 import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, recordingRevision, speakerReference } from '../fixtures/recording-owner.js'
+import { recordingImportBatchID } from '../../src/recording-workflow-contract.js'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,6 +41,38 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('accepts native uploads without the new header using the registered strategy after Host restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-native-strategy-host-'))
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const makeService = () => new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1_000 }), discard: async () => {} },
+    }))
+    let service = makeService()
+    try {
+      const tasks = [recordingImportBatchID(), recordingImportBatchID()].map(taskId => ({ taskId, strategy: 'baseline-sd-asr/20261026' }))
+      await service.registerRecordingImportStrategies(tasks, 42)
+      service.dispose(); service = makeService()
+      // The account setting fixture now returns system-sd-asr/v1. These tasks
+      // still use the baseline snapshot registered before any file upload.
+      const preference = vi.spyOn(service, 'recordingStrategies').mockRejectedValue(new Error('must not reread current preference'))
+      for (const [index, task] of tasks.entries()) {
+        const metadata = { clientTaskId: task.taskId, fileName: `native-${index}.wav`, mimeType: 'audio/wav', fileSize: 16_044,
+          sha256: String(index).repeat(64), startAtMillis: 1_725_000_000_000, belongUserId: 42, recordingKind: 3 as const }
+        const accepted = await service.acceptRecordingImport('/private/fixture.upload', metadata, 42)
+        expect(await new ArkmeStateStore(root).listRecordingImportJobs(42)).toContainEqual(expect.objectContaining({ clientTaskId: task.taskId, strategy: task.strategy }))
+        await expect(service.acceptRecordingImport('/private/retry.upload', metadata, 42)).resolves.toMatchObject({ importRef: accepted.importRef })
+      }
+      expect(preference).not.toHaveBeenCalled()
+      await expect(service.registerRecordingImportStrategies([{ taskId: tasks[0]!.taskId, strategy: 'system-sd-asr/v1' }], 42)).rejects.toMatchObject({ code: 'recording-import-task-conflict' })
+      await expect(service.registerRecordingImportStrategies(tasks, 43)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+      await vi.waitFor(async () => {
+        const jobs = await new ArkmeStateStore(root).listRecordingImportJobs(42)
+        expect(jobs).toHaveLength(2)
+        expect(jobs.every(job => job.phase === 'accepted')).toBe(true)
+      })
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
+  })
+
   it('exposes only aggregate capture coverage alongside received transcript work', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme capture coverage '))
     try {

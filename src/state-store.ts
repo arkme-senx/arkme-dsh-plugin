@@ -16,6 +16,8 @@ import type {
 } from './types.js'
 import {
   sameRecordingImportIdentity,
+  validRecordingImportTaskId,
+  RecordingImportContractError,
   isUnresolvedRecordingImportJob,
   type RecordingImportAdmission,
   type RecordingImportJob,
@@ -36,6 +38,7 @@ interface PersistedState {
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
+  recordingImportStrategiesByAccount?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
  offlineContextJournal?: unknown
@@ -390,6 +393,7 @@ function parseState(raw: string): PersistedState {
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
     recordingToolBatches: source.recordingToolBatches,
+    recordingImportStrategiesByAccount: source.recordingImportStrategiesByAccount,
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
   }
@@ -770,6 +774,43 @@ export class ArkmeStateStore {
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.read(state => Object.values(state.recordingImportJobsByUser[String(userId)] ?? {})
       .map(cloneRecordingImportJob))
+  }
+
+  /** Freeze native UI strategies without extending the desktop upload headers. */
+  async recordingImportStrategies(scope: string, tasks: Array<{ taskId: string; strategy?: RecordingStrategy }>, signal?: AbortSignal): Promise<Record<string, RecordingStrategy>> {
+    if (!/^(prod|test):[1-9][0-9]*$/.test(scope) || tasks.length > 10_000
+      || new Set(tasks.map(task => task.taskId)).size !== tasks.length
+      || tasks.some(task => !validRecordingImportTaskId(task.taskId)
+        || task.strategy !== undefined && !RECORDING_STRATEGIES.some(value => value.id === task.strategy))) {
+      throw new RecordingImportContractError('recording-import-task-invalid', '录音导入任务或策略无效')
+    }
+    const access = (state: PersistedState): Record<string, RecordingStrategy> => {
+      const root = state.recordingImportStrategiesByAccount === undefined ? {} : state.recordingImportStrategiesByAccount
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+      const accounts = root as Record<string, unknown>
+      const stored = accounts[scope] === undefined ? {} : accounts[scope]
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+      const entries: Record<string, RecordingStrategy> = {}
+      for (const [taskId, strategy] of Object.entries(stored)) {
+        if (!RECORDING_STRATEGIES.some(value => value.id === strategy)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+        if (validRecordingImportTaskId(taskId)) entries[taskId] = strategy as RecordingStrategy
+      }
+      for (const task of tasks) if (task.strategy !== undefined) {
+        if (entries[task.taskId] !== undefined && entries[task.taskId] !== task.strategy) {
+          throw new RecordingImportContractError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试')
+        }
+        entries[task.taskId] = task.strategy
+      }
+      if (tasks.some(task => task.strategy !== undefined)) {
+        accounts[scope] = entries
+        state.recordingImportStrategiesByAccount = accounts
+      }
+      return Object.fromEntries(tasks.flatMap(task => entries[task.taskId] === undefined ? [] : [[task.taskId, entries[task.taskId]!]]))
+    }
+    if (!tasks.some(task => task.strategy !== undefined)) return await this.read(access)
+    let result: Record<string, RecordingStrategy> = {}
+    await this.update(state => { result = access(state) }, signal)
+    return result
   }
 
   async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal) {

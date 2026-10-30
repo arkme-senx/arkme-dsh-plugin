@@ -1000,6 +1000,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.listRecordingImportJobs(userId)
   }
 
+  async recordingImportStrategies(...args: Parameters<ArkmeStateStore['recordingImportStrategies']>) {
+    return await this.operationalState.recordingImportStrategies(...args)
+  }
+
   async planRecordingToolBatch(...args: Parameters<ArkmeStateStore['planRecordingToolBatch']>) {
     return await this.operationalState.planRecordingToolBatch(...args)
   }

@@ -1007,6 +1007,9 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       if (request.operation === 'recordings.speaker.evidence.query' && params.action === 'build' && origin === undefined) throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       if (request.operation === 'offline-context' && origin === undefined) throw new ArkmePluginError('origin-required','上下文操作需要受信任来源',false,403)
+      if (request.operation === 'recordings.import.strategies.register' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
+        throw new ArkmePluginError('origin-required', '录音导入策略登记必须从本机页面发起', false, 403)
+      }
       if (['recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
@@ -1705,6 +1708,9 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
+    )
+    case 'recordings.import.strategies.register': return await service.registerRecordingImportStrategies(
+      params.tasks, numberParam(params, 'expectedUserId', Number.NaN), requestSignal,
     )
     case 'recordings.import.list': return await service.recordingImportList(requestSignal, params.limit === undefined ? undefined : {
       toMillis: numberParam(params, 'toMillis', Number.NaN),

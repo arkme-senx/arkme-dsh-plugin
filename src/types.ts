@@ -4743,6 +4743,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
   | 'recordings.import.preflight'
+  | 'recordings.import.strategies.register'
   | 'recordings.import.list'
   | 'recordings.import.history'
   | 'recordings.import.cancel'

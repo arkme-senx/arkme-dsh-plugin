@@ -120,6 +120,7 @@ arkoFileRefs(userId:number):Promise<string[]>
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  recordingImportStrategies?(scope: string, tasks: Array<{ taskId: string; strategy?: import('../recording-strategy-contract.js').RecordingStrategy }>, signal?: AbortSignal): Promise<Record<string, import('../recording-strategy-contract.js').RecordingStrategy>>
   planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('../recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
