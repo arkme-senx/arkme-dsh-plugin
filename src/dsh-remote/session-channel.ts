@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { parseDshDirectoryDelta, type DshDirectoryDelta } from './account-session-directory.js'
 import { setTimeout as delay } from 'node:timers/promises'
+import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { DshRemoteError, asDshRemoteError } from './errors.js'
 import { nativeRecord } from './native-transport.js'
 import { parseDshRemoteRequest } from './protocol-v1.js'
@@ -320,9 +321,14 @@ export class DshSessionChannelHost {
   private async respond(request: Request, epoch: number, value: unknown, error?: unknown): Promise<void> {
     if (this.options.target.hostLeaseGeneration <= 0) return
     const remote = error === undefined ? undefined : asDshRemoteError(error)
+    // A stopped native source cancels its read streams before the Host closes.
+    // Preserve the existing carrier recovery path; never retry an untyped
+    // failure or a cancelled command whose write outcome may be unknown.
+    const retryable = error instanceof DshRemoteError ? error.retryable
+      : request.body.mode === 'pull' && remoteErrorOf(error)?.code === 'gateway/cancelled'
     const payload = { kind: 'session.response', runtimeRef: request.runtimeRef,
       sessionRef: request.sessionRef, requestRef: request.requestRef, ...(request.body.mode === 'pull' ? { streamRef: request.body.streamRef } : {}),
-      epoch, ...(remote ? { error: { code: remote.code, message: remote.message, retryable: error instanceof DshRemoteError && remote.retryable } } : { value }) }
+      epoch, ...(remote ? { error: { code: remote.code, message: remote.message, retryable } } : { value }) }
     if (request.sharedFollowResponses && request.body.mode === 'pull' && request.body.endpoint === 'session/follow' && !remote) {
       // Share bytes only, not native stream ownership. Exact same read result,
       // address and epoch can serve opt-in readers in this microtask batch.

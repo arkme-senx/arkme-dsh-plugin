@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import { DshSessionChannelClient, DshSessionChannelHost } from '../src/dsh-remote/session-channel.js'
 import type { DshRemoteRealtimeTransport, DshRemoteTrustedEventMetadata } from '../src/dsh-remote/types.js'
@@ -476,6 +477,40 @@ it.each(['native', 'call'] as const)('returns an actual %s execution failure in 
     expect(replies).toHaveLength(1)
     expect(replies[0]).toMatchObject({ requestRef: 'failed-once', error: { code: error.code, message: error.message, retryable: false } })
     expect(replies[0]).not.toHaveProperty('value')
+    expect(failed).not.toHaveBeenCalled()
+  } finally { host.close(); vi.useRealTimers() }
+})
+
+it.each([
+  { mode: 'pull', endpoint: 'session/follow', error: new RemoteError('gateway/cancelled', 'source stopped', {}), retryable: true },
+  { mode: 'pull', endpoint: 'session/control', error: new RemoteError('gateway/cancelled', 'source stopped', {}), retryable: true },
+  { mode: 'call', endpoint: 'session/prompt', error: new RemoteError('gateway/cancelled', 'write outcome unknown', {}), retryable: false },
+  { mode: 'pull', endpoint: 'session/follow', error: new RemoteError('gateway/protocol', 'invalid frame', {}), retryable: false },
+  { mode: 'pull', endpoint: 'session/follow', error: new DshRemoteError('REMOTE_LOGIN_REQUIRED', 'account ended', false), retryable: false },
+  { mode: 'pull', endpoint: 'session/follow', error: new Error('Remote invocation "session/follow" was aborted'), retryable: false },
+  { mode: 'pull', endpoint: 'session/follow', error: Object.assign(new Error('untyped cancellation'), { code: 'gateway/cancelled' }), retryable: false },
+])('classifies $mode $endpoint cancellation without retrying commands or terminal failures: $retryable', async ({ mode, endpoint, error, retryable }) => {
+  vi.useFakeTimers()
+  let receive: any
+  const replies: any[] = [], failed = vi.fn()
+  const transport = { subscribe: async ({ onEvent }: any) => { receive = onEvent; return () => {} },
+    publish: async ({ payload }: any) => { replies.push(payload); return { sequence: 1 } },
+  } as unknown as DshRemoteRealtimeTransport
+  const native = vi.fn(async () => { throw error })
+  const host = new DshSessionChannelHost({ transport,
+    target: { runtimeRef: 'origin', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 },
+    epoch: () => 1, native, failed })
+  try {
+    await host.start()
+    receive({ kind: 'session.request', runtimeRef: 'origin', sessionRef: 'session', requestRef: 'interrupted-source', expiresAt: Date.now() + 30000,
+      body: { mode, endpoint, ...(mode === 'pull' ? { streamRef: 'source-stream' } : {}), payload: { args: { request: { sessionId: 'session' } } } },
+    }, { senderRole: 'controller' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(replies).toHaveLength(1)
+    expect(replies[0]).toMatchObject({ requestRef: 'interrupted-source', error: { message: error.message, retryable } })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(native).toHaveBeenCalledOnce() // Recovery belongs to the existing observing stream, never producer replay.
+    expect(replies).toHaveLength(1)
     expect(failed).not.toHaveBeenCalled()
   } finally { host.close(); vi.useRealTimers() }
 })

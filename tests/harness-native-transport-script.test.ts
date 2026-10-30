@@ -890,6 +890,34 @@ it('recovers a real DSH RemoteStream across carrier loss and repeated opening fa
   } finally { await dispose() }
 })
 
+it('automatically starts one new official follow generation after a stopped source cancels its stream', async () => {
+  const f = fixture(), original = f.wire.getMockImplementation()!
+  let opens = 0, cancelSource: ((value: any) => void) | undefined
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') {
+      opens++
+      return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: opens, records: [] }] } } as any
+    }
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(resolve => { cancelSource = resolve })
+    return original(params)
+  })
+  const { iterator, dispose } = await officialFollow(f)
+  try {
+    const before = (await iterator.next()).value
+    before.accept()
+    const pending = iterator.next()
+    await vi.waitFor(() => expect(cancelSource).toBeDefined())
+    cancelSource!({ ok: false, error: { code: 'REMOTE_TRANSPORT_FAILED', message: 'Remote invocation "session/follow" was aborted', retryable: true } })
+    const restored = (await pending).value
+    restored.accept()
+    expect(restored.generation).toBe(2)
+    expect(restored.value).toMatchObject({ type: 'snapshot', header: { id: 'arkme:windows:same' }, cursor: 2 })
+    expect(before.signal.aborted).toBe(true)
+    expect(opens).toBe(2)
+    expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === 'session/prompt')).toHaveLength(0)
+  } finally { await dispose() }
+})
+
 it('keeps a writable session enabled during an official carrier generation restart', async () => {
   const f = fixture(), abort = new AbortController()
   f.directory.publish([f.row('creator', { local: true, localTakeover: true, capabilities: ['session.native.channel'] })])
