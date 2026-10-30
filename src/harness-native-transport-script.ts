@@ -180,6 +180,7 @@ function installNativeTransport(route: string): void {
       if (selectionKnown && (previousSelection?.runtime !== currentSelection?.runtime || previousSelection?.id !== currentSelection?.id)) changeSelection()
       availability()
       if (wasWritable !== canWrite(selected)) {
+        changeSelection()
         scheduleFailure(selected)
         emit({ type: 'emit', event: 'schedule/changed', args: [] })
       }
@@ -374,7 +375,9 @@ function installNativeTransport(route: string): void {
     while (true) {
       signal.throwIfAborted()
       const current = split(selected), changed = selectionChanged.signal
-      if (!selectionKnown || current?.runtime === runtime && current.id === sessionRef) return changed
+      const row = sessionRef ? rows.get(identity(runtime, sessionRef)) : undefined
+      const available = !row || row.capabilities.includes('session.native.channel') || row.presence === 'online' && row.capabilities.includes('session.native')
+      if (available && (!selectionKnown || current?.runtime === runtime && current.id === sessionRef)) return changed
       await new Promise<void>((resolve, reject) => {
         const stop = () => { changed.removeEventListener('abort', wake); signal.removeEventListener('abort', cancel) }
         const wake = () => { stop(); resolve() }
@@ -520,9 +523,15 @@ function installNativeTransport(route: string): void {
       }
       const endpoint = message.method
       // Phase one: only actions with complete per-session routing are admitted.
-      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/selectModel', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result', 'schedule/catalog', 'schedule/list', 'schedule/history', 'schedule/update', 'schedule/delete']
+      const source = target.sessionRef ? rows.get(identity(target.runtime, target.sessionRef)) : undefined
+      const stable = source?.capabilities.includes('session.native.channel') || source?.localTakeover === true
+      const reads = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history']
+      const writes = ['session/prompt', 'session/cancel', 'session/updateQueue', 'session/attachment', '$events/result']
+      const allowed = stable
+        ? [...reads, ...writes, 'session/rename', 'session/selectModel', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', 'schedule/update', 'schedule/delete']
+        : [...reads, ...(target.sessionRef && writable.get(sourceId(target.runtime, target.sessionRef)) === true ? writes : [])]
       let result: any
-      if (!allowed.includes(endpoint)) result = failure('其他电脑的会话仅支持只读查看，请在对话所属电脑上执行。')
+      if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
       else {
         try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined, target.sessionRef) }
         catch (error) {

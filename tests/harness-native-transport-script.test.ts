@@ -384,12 +384,14 @@ it('replays current source baselines after local reconnects and clears only the 
 })
 it('returns interactive responses to the source event generation instead of the local client', async () => {
   const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row()])
   f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === '$events' ? [
     { type: 'ready', clientId: 'source-client', host: { home: 'C:/' } },
     { type: 'waterfall', event: 'question/ask', eventId: 'ask-1', agentId: 'same', request: { text: 'same' } },
   ] : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, records: [] }] : [], done: true } }) as any)
   const events = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator](); await events.next()
   const history = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator](); await history.next()
+  expect((await events.next()).value.event).toBe('api-session/added')
   const question = (await events.next()).value
   expect(question).toMatchObject({ eventId: expect.stringMatching(/^arkme:request-\d+:ask-1$/), agentId: 'arkme:windows:same', request: { text: 'same' } })
   await f.rpc('$events/result', { clientId: 'local-client', eventId: question.eventId, outcome: { kind: 'next' } })
@@ -906,4 +908,13 @@ it('ignores an old cancelled read-only response after its successor became writa
   await f.rpc('session/prompt', { request: { sessionId: 'arkme:creator:same', content: [] } })
   finish(); await checked
   expect(f.directory.writable('arkme:creator:same')).toBe(true)
+})
+
+it('keeps stable-session actions available while their creator is offline', async () => {
+  const f = fixture()
+  f.directory.publish([f.row('windows', { presence: 'offline', capabilities: ['session.native', 'session.native.channel'] })])
+  f.directory.select('arkme:windows:same')
+  expect(f.directory.writable('arkme:windows:same')).toBe(true)
+  expect((await f.rpc('session/selectModel', { request: { sessionId: 'arkme:windows:same', provider: 'deepseek', model: 'pro' } })).result.ok).toBe(true)
+  expect(JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body)).params).toMatchObject({ runtimeRef: 'windows', sessionRef: 'same' })
 })
