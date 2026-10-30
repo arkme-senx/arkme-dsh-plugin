@@ -1524,11 +1524,14 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamMessageInteractions?: 1
+    teamMessageRecall?: 1
+    teamMessageSnapshot?: 1
     teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
     teamProfiles?: true
+    teamMemberManagementV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -2006,12 +2009,17 @@ export interface ArkmeCalendarRecordLocation {
 
 /** Browser-safe playback projection for every segment of one background recording. */
 export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
+  /** Same-origin, author-scoped media routes for conversation-private audio. */
+  mediaUrls?: string[]
   mediaRefs: string[]
   amplitudes: number[]
   durationSeconds?: number
 }
 
 export interface ArkmeMessageSnapshotDetail {
+  /** Explicit coverage; omitted retains existing consumer semantics. */
+  durationState?: 'complete' | 'partial' | 'not-recorded'
+  captureUnavailable?: string
   /** Included only when explicitly requesting the full attachment snapshot. */
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: boolean
@@ -4099,6 +4107,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'team-invalidated'
   revision: number
+  change?: import('./team-app-contract.js').TeamMessageChangeHint
   receiptOnly?: boolean
 } | {
   type: 'directory-update'
@@ -4319,10 +4328,13 @@ export type ArkmePluginOperation =
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
   | 'team.external'
-  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
+  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.recall' | 'team.messages.report' | 'team.messages.preflight'
   | 'team.messages.marks-read' | 'team.messages.marks-change'
+  | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
+  | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
+  | 'team.members.manage'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
@@ -4336,6 +4348,7 @@ export type ArkmePluginOperation =
   | 'team.create'
   | 'team.join-by-jotmo-id'
   | 'remote.sessions.list'
+  | 'remote.sessions.observe'
   | 'remote.session.read'
   | 'remote.session.native'
   | 'remote.session.command'

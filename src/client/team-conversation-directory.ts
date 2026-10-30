@@ -1,3 +1,5 @@
+import { withoutTeamConversationMaterial } from '../team-message-projection.js'
+import {teamChangeAffectsConversationPreview} from './team-source-read.js'
 import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
@@ -92,7 +94,16 @@ export function startTeamDirectory(key: string): () => void {
     snapshot = { ...snapshot, items: snapshot.items.filter(c => c.side !== conversation.side || c.channel.jotmoId !== conversation.channel.jotmoId) }; emit()
     void refresh()
   }
-  const stop = subscribeTeamMessageChanges((changed, receiptOnly) => { if (changed === key) void refresh(false, receiptOnly === true) })
+  const stop = subscribeTeamMessageChanges((changed, receiptOnly,change) => {
+    if (changed !== key) return
+    if (!receiptOnly) {
+      ++revision
+      const invalidate=(row:TeamConversation)=>teamChangeAffectsConversationPreview(change,row)?withoutTeamConversationMaterial(row):row
+      for (const [side,page] of pages) pages.set(side,{...page,items:page.items.map(invalidate)})
+      snapshot={...snapshot,items:snapshot.items.map(invalidate)};emit()
+    }
+    void refresh(false, receiptOnly === true)
+  })
   const focus = () => { void refresh() }
   const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 60_000)
   window.addEventListener('focus', focus)

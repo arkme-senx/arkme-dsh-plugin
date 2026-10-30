@@ -1,5 +1,6 @@
 import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
+import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
@@ -81,6 +82,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...officialNotificationToolModules,
   directoryReadToolModule,
   ...teamProfileTools,
+  ...teamMemberTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
   ...teamNotificationTools,

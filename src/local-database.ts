@@ -563,7 +563,15 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       // Disk cache has a byte budget; eviction never deletes directory identities or preferences.
       let bytes = (this.database.prepare('SELECT COALESCE(sum(length(data)),0) AS bytes FROM avatar_cache').get() as { bytes: number }).bytes
       if (bytes <= 256 * 1024 * 1024) return
-      const oldest = this.database.prepare('SELECT a.user_id, a.image_ref, length(a.data) AS bytes FROM avatar_cache a WHERE NOT EXISTS (SELECT 1 FROM conversation_directory d, json_tree(d.payload) j WHERE d.user_id=a.user_id AND j.value=a.image_ref) AND NOT EXISTS (SELECT 1 FROM conversation_directory_meta m, json_tree(m.payload) j WHERE m.user_id=a.user_id AND j.value=a.image_ref) ORDER BY a.touched_at').all() as unknown as Array<{ user_id: number; image_ref: string; bytes: number }>
+      // Expand directory JSON once, instead of once per cached image on the Host thread.
+      const oldest = this.database.prepare(`WITH referenced(user_id, image_ref) AS MATERIALIZED (
+        SELECT d.user_id, j.value FROM conversation_directory d, json_tree(d.payload) j
+        UNION
+        SELECT m.user_id, j.value FROM conversation_directory_meta m, json_tree(m.payload) j
+      )
+      SELECT a.user_id, a.image_ref, length(a.data) AS bytes FROM avatar_cache a
+      WHERE NOT EXISTS (SELECT 1 FROM referenced r WHERE r.user_id=a.user_id AND r.image_ref=a.image_ref)
+      ORDER BY a.touched_at`).all() as unknown as Array<{ user_id: number; image_ref: string; bytes: number }>
       for (const row of oldest) {
         if (bytes <= 256 * 1024 * 1024) break
         this.database.prepare('DELETE FROM avatar_cache WHERE user_id=? AND image_ref=?').run(row.user_id, row.image_ref)
@@ -955,6 +963,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
   async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
 
+  async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) { return this.operationalState.teamMemberAddition(scope, teamId, change) }
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
   async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }

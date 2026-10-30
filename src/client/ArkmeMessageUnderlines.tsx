@@ -261,8 +261,8 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
       {popup.stale && popupItems.map(item => <div key={item.id} style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{item.anchor ? `“${item.anchor.text}”` : '原文已修改，标记未定位'}</div>)}
       {popupItems.filter(item => item.mine).map(item => <button key={item.id} type="button" disabled={session.pending.has(underlineTargetKey(popup.target))} onClick={() => { void cancel(item) }} style={actionStyle}>取消我的标记</button>)}
     </div>}
-    {session.notice && session.capability?.supported && <div role="status" style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 12002, maxWidth: 360, padding: 10, borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.secondary, border: `1px solid ${arkmeTheme.border}`, fontSize: 12 }}>
-      {session.notice}{session.retry && <button type="button" style={actionStyle} onClick={() => { void session.retry?.().catch(error => session.report(error)) }}>重试</button>}
+    {session.notice && session.capability?.supported && <div role="status" style={{ position: 'fixed', right: 24, top: 72, pointerEvents: 'none', zIndex: 12002, maxWidth: 360, padding: 10, borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.secondary, border: `1px solid ${arkmeTheme.border}`, fontSize: 12 }}>
+      {session.notice}{session.retry && <button type="button" style={{ ...actionStyle, pointerEvents: 'auto' }} onClick={() => { void session.retry?.().catch(error => session.report(error)) }}>重试</button>}
     </div>}
   </div>, document.body)
 }

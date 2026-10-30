@@ -15,13 +15,13 @@ const message: TeamMessage = { ref: 'team-message-ref', key: 'm1', seq: 1, revis
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   localMarkRef: 'team-mark-ref', content: { text_content: '前缀选中的文字后缀', template_kind: 1 } }
 let root: Root, host: HTMLDivElement
-const selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
+const recall = vi.fn(), selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
 function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false, onReply }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean; onReply?: (target: any, quote: any) => void }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onReply={onReply} onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onRecall={recall} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -110,9 +110,9 @@ it('keeps whole-message commands permission gated and clears the menu after dele
   expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '多选', '转发', '问 DSH', '举报', '查看阅读状态'])
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '复制')!.click())
   expect(copyText).toHaveBeenCalledWith(message.content!.text_content)
-  await render({ ...message, own: true, canEdit: true, canDelete: true })
+  await render({ ...message, own: true, canRecall:true, canEdit: true, canDelete: true })
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '重新编辑', '多选', '转发', '问 DSH', '消息详情', '查看阅读状态', '撤回'])
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '重新编辑', '多选', '转发', '问 DSH', '查看阅读状态', '撤回', '详情'])
   await render({ ...message, contentStatus: 'deleted' })
   expect(document.querySelector('[role="menu"]')).toBeNull()
 })
@@ -173,7 +173,7 @@ it('routes own right-click details to the snapshot while body click stays in rea
   await mouse(host.querySelector('p')!, 'click')
   expect(detail).toHaveBeenCalledOnce(); expect(snapshot).not.toHaveBeenCalled()
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
-  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '消息详情')!.click())
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '详情')!.click())
   expect(snapshot).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
 })
 
@@ -201,4 +201,15 @@ it('keeps selected-text reply available for Team without borrowing an ordinary C
  await act(async()=>[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='回复')!.click())
  await waitForMark(()=>expect(reply).toHaveBeenCalledWith(expect.objectContaining({sourceRef:'team-conversation',cloudMarkRef:message.ref}),expect.objectContaining({text:'选中的文字',start:2,end:7,recordVersion:1})))
  expect(reply.mock.calls[0]![0].item.messageActionRef).toBeUndefined()
+})
+
+it('recalls by server capability even without readable body, and renders terminal placeholders',async()=>{
+ await render({...message,own:true,canRecall:true,contentStatus:'unavailable',content:undefined})
+ await mouse(host.querySelector('p')!,'contextmenu',2)
+ expect(labels(document.querySelector('[role="menu"]'))).toEqual(['撤回'])
+ await act(async()=>{(document.querySelector('[role="menu"] button') as HTMLButtonElement).click()})
+ expect(recall).toHaveBeenCalledOnce()
+ await render({...message,own:true,state:'recalled',canRecall:false,contentStatus:'recalled',media:[]})
+ expect(host.textContent).toContain('你撤回了一条消息')
+ expect(host.textContent).not.toContain(message.content!.text_content)
 })

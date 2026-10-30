@@ -35,9 +35,13 @@ describe('DSH compatibility contract', () => {
   it('accepts only the migrated Harness release for every DSH peer', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       peerDependencies: Record<string, string>
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     const peers = Object.entries(manifest.peerDependencies)
-      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-') && name !== '@deepseek-ai/dsh-api-gateway')
+
+    expect(manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-api-gateway']?.optional).toBe(true)
+    expect(satisfies('0.2.1-rc.2', manifest.peerDependencies['@deepseek-ai/dsh-api-gateway']!)).toBe(true)
 
     expect(peers.length).toBeGreaterThan(0)
     for (const [name, range] of peers) {

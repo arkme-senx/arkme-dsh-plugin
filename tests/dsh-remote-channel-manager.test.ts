@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSecureValueStore } from '../src/keychain-store.js'
-import { DshRemoteHostChannelManager } from '../src/dsh-remote/channel-manager.js'
+import { DshRemoteHostChannelManager, type DshRemoteHostChannelManagerOptions } from '../src/dsh-remote/channel-manager.js'
+import { DshSessionChannelHost } from '../src/dsh-remote/session-channel.js'
 import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import { DshRemoteRuntimeSecretBroker } from '../src/dsh-remote/runtime-secret-broker.js'
 import type {
@@ -57,7 +58,7 @@ function response(requestRef: string): Record<string, unknown> {
   }
 }
 
-function managerFixture(): {
+function managerFixture(onProjection?: DshRemoteHostChannelManagerOptions['onProjection']): {
   manager: DshRemoteHostChannelManager
   realtime: FakeRealtime
   dispatch: ReturnType<typeof vi.fn>
@@ -74,6 +75,7 @@ function managerFixture(): {
     onProjectionError: error => { fatals.push({ projection: error }) },
     onFatal: error => { fatals.push(error) },
     onDiagnostic: diagnostics,
+    ...(onProjection ? { onProjection } : {}),
   })
   return { manager, realtime, dispatch, fatals, diagnostics }
 }
@@ -84,6 +86,76 @@ const controllerMetadata = (generation: number, sequence = 1): DshRemoteTrustedE
 })
 
 describe('account-scoped Runtime channel manager', () => {
+  it.each(['stable', 'both', 'stable-failure', 'legacy-failure', 'inactive'] as const)(
+    'reports one actual projection outcome for %s carriers', async mode => {
+      const stableWire = new FakeRealtime()
+      const stable = new DshSessionChannelHost({ transport: stableWire,
+        target: { runtimeRef: 'runtime-01', hostProfileRef: 'web', hostClientRef: 'host-client-01', hostLeaseGeneration: mode === 'inactive' ? 0 : 9 },
+        epoch: () => 1, native: vi.fn(), command: vi.fn(), failed: vi.fn() })
+      const { manager, realtime, dispatch } = managerFixture((envelope, timing) => stable.projection(envelope, timing))
+      const timing = vi.fn()
+      try {
+        await manager.prepare()
+        manager.activate(9)
+        if (mode === 'both' || mode === 'legacy-failure') {
+          realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+          await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+          await vi.waitFor(() => expect(realtime.publishes).toHaveLength(1))
+        }
+        if (mode === 'stable-failure') stableWire.failPublishCount = 1
+        if (mode === 'legacy-failure') realtime.failPublishCount = 1
+        const publication = manager.publishProjectionEvent(response('projection-01'), 'projection-01', timing)
+        if (mode.endsWith('failure')) await expect(publication).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED' })
+        else await publication
+        expect(timing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ queueMs: expect.any(Number), publishMs: expect.any(Number),
+          completed: mode === 'stable' || mode === 'both' }))
+        if (mode === 'stable') expect(realtime.publishes).toHaveLength(0)
+        if (mode === 'inactive') expect(stableWire.publishes).toHaveLength(0)
+      } finally { stable.close(); await manager.close() }
+    })
+
+  it('does not report stable success before all fragment acknowledgements arrive', async () => {
+    const stableWire = new FakeRealtime()
+    let release!: () => void
+    const ack = new Promise<void>(resolve => { release = resolve })
+    vi.spyOn(stableWire, 'publish').mockImplementation(async () => { await ack; return { sequence: 1 } })
+    const stable = new DshSessionChannelHost({ transport: stableWire,
+      target: { runtimeRef: 'runtime-01', hostProfileRef: 'web', hostClientRef: 'host-client-01', hostLeaseGeneration: 9 },
+      epoch: () => 1, native: vi.fn(), command: vi.fn(), failed: vi.fn() })
+    const { manager } = managerFixture((envelope, timing) => stable.projection(envelope, timing))
+    const timing = vi.fn()
+    try {
+      await manager.prepare(); manager.activate(9)
+      const publication = manager.publishProjectionEvent({ ...response('projection-01'), body: { text: 'x'.repeat(100_000) } }, 'projection-01', timing)
+      await vi.waitFor(() => expect(stableWire.publish).toHaveBeenCalled())
+      expect(timing).not.toHaveBeenCalled()
+      release(); await publication
+      expect(timing).toHaveBeenCalledExactlyOnceWith({ queueMs: 0, publishMs: expect.any(Number), completed: true })
+    } finally { release(); stable.close(); await manager.close() }
+  })
+
+  it('waits for the remaining carrier after one projection carrier fails', async () => {
+    const gate = Promise.withResolvers<void>()
+    const { manager, realtime, dispatch } = managerFixture(async (_envelope, timing) => {
+      await gate.promise
+      timing?.({ queueMs: 0, publishMs: 50, completed: true })
+    })
+    const timing = vi.fn()
+    try {
+      await manager.prepare(); manager.activate(9)
+      realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+      await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(realtime.publishes).toHaveLength(1))
+      realtime.failPublishCount = 1
+      const publication = manager.publishProjectionEvent(response('projection'), 'projection', timing)
+      const rejected = expect(publication).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED' })
+      await vi.waitFor(() => expect(realtime.publishes).toHaveLength(2))
+      expect(timing).not.toHaveBeenCalled()
+      gate.resolve(); await rejected
+      expect(timing).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ publishMs: expect.any(Number), completed: false }))
+    } finally { gate.resolve(); await manager.close() }
+  })
+
   it('redelivers a ledger result without reusing the previous response delivery ID', async () => {
     const { manager, realtime, dispatch, fatals } = managerFixture()
     await manager.prepare()
@@ -91,14 +163,11 @@ describe('account-scoped Runtime channel manager', () => {
     realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
     await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(1) })
     dispatch.mockResolvedValueOnce({ ...response('request-01'), status: 'duplicate', issued_at: 2_000 } as never)
-    realtime.failPublishCount = 1
     realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9, 2))
-    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(3) })
-    const [first, retried, publishRetry] = realtime.publishes
+    await vi.waitFor(() => { expect(realtime.publishes).toHaveLength(2) })
+    const [first, retried] = realtime.publishes
     expect(retried!.commandId).not.toBe(first!.commandId)
-    expect(publishRetry!.commandId).toBe(retried!.commandId)
-    expect(publishRetry!.payload).toEqual(retried!.payload)
-    expect(publishRetry!.payload).toMatchObject({ request_ref: 'request-01', status: 'duplicate' })
+    expect(retried!.payload).toMatchObject({ request_ref: 'request-01', status: 'duplicate' })
     expect(fatals).toEqual([])
     await manager.close()
   })
@@ -108,7 +177,7 @@ describe('account-scoped Runtime channel manager', () => {
     await manager.prepare()
     manager.activate(9)
     realtime.event({ ...response('request-01'), kind: 'request', body: { content: 'private prompt' } }, controllerMetadata(9))
-    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: true })) })
+    await vi.waitFor(() => { expect(diagnostics).toHaveBeenCalledWith('host_response_publish_finished', expect.objectContaining({ completed: true, payload_bytes: expect.any(Number), fragment_count: 1, frame_ack_max_ms: expect.any(Number) })) })
     expect(diagnostics.mock.calls.map(([event]) => event)).toEqual(['host_request_received', 'host_request_processed', 'host_response_publish_finished'])
     for (const [, fields] of diagnostics.mock.calls) expect(fields).toMatchObject({ user_id: '42', runtime_ref: 'runtime-01', request_ref: 'request-01', operation: 'capabilities.get' })
     expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('private prompt')
@@ -261,18 +330,13 @@ describe('account-scoped Runtime channel manager', () => {
     expect(fatals).toEqual([])
   })
 
-  it('retries a retryable frame with the same idempotent command id', async () => {
-    vi.useFakeTimers()
+  it('leaves unknown publish outcomes to transport recovery instead of retrying a second layer', async () => {
     const { manager, realtime } = managerFixture()
     realtime.failPublishCount = 2
-    await manager.prepare()
-    await manager.activate(9)
-    const publish = manager.publishProjectionEvent({ kind: 'event' }, 'projection-01')
-    await vi.advanceTimersByTimeAsync(300)
-    await publish
-    expect(realtime.publishes).toHaveLength(3)
-    expect(new Set(realtime.publishes.map(item => item.commandId))).toEqual(new Set(['projection-01']))
-    vi.useRealTimers()
+    await manager.prepare(); manager.activate(9)
+    await expect(manager.publishProjectionEvent({ kind: 'event' }, 'projection-01')).rejects.toThrow('retry publish')
+    expect(realtime.publishes).toHaveLength(1)
+    await manager.close()
   })
 })
 
@@ -306,14 +370,14 @@ it('separates outbound queue time from ACK time and contains diagnostic failures
     })
     now = 80; gate.resolve()
     await Promise.all([first, second])
-    expect(timings).toEqual([
+    expect(timings).toMatchObject([
       { queueMs: 0, publishMs: 80, completed: true },
       { queueMs: 70, publishMs: 0, completed: true },
     ])
     vi.spyOn(realtime, 'publish').mockRejectedValueOnce(new DshRemoteError('REMOTE_INVALID_RESPONSE', 'invalid', false))
     const timing = vi.fn()
     await expect(manager.publishProjectionEvent({ kind: 'event' }, 'failed', timing)).rejects.toThrow('invalid')
-    expect(timing).toHaveBeenCalledWith({ queueMs: 0, publishMs: 0, completed: false })
+    expect(timing).toHaveBeenCalledWith(expect.objectContaining({ queueMs: 0, publishMs: 0, completed: false, fragmentCount: 1, payloadBytes: 16, frameAckMaxMs: 0 }))
   } finally { clock.mockRestore(); await manager.close() }
 })
 
@@ -330,4 +394,37 @@ it('reassembles native attachment requests only from the current authenticated c
   expect(dispatch.mock.calls[0]![0]).toEqual(payload)
   expect(fatals).toEqual([])
   await manager.close()
+})
+
+it('publishes command replies while a history event is waiting for acknowledgement', async () => {
+  const f = managerFixture()
+  await f.manager.prepare(); f.manager.activate(9)
+  let unblock!: () => void
+  const blocked = new Promise<void>(resolve => { unblock = resolve })
+  const publish = f.realtime.publish.bind(f.realtime)
+  f.realtime.publish = async input => { if (input.commandId === 'blocked-history') await blocked; return publish(input) }
+  const history = f.manager.publishProjectionEvent({ ...response('history'), kind: 'event' } as never, 'blocked-history')
+  await Promise.resolve()
+  f.realtime.event({ ...response('request-01'), kind: 'request' }, controllerMetadata(9))
+  await vi.waitFor(() => expect(f.dispatch).toHaveBeenCalledOnce())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(f.realtime.publishes.map(frame => frame.direction)).toEqual(['response'])
+  unblock(); await history
+  await vi.waitFor(() => expect(f.realtime.publishes).toHaveLength(2))
+  expect(f.realtime.publishes.map(frame => frame.direction)).toEqual(['response', 'event'])
+  await f.manager.close()
+})
+
+it('bounds the bulk backlog and drains cancelled entries without sending them', async () => {
+  const f = managerFixture()
+  await f.manager.prepare(); f.manager.activate(9)
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const publish = f.realtime.publish.bind(f.realtime)
+  f.realtime.publish = async input => { await blocked; return publish(input) }
+  const pending = Array.from({ length: 64 }, (_, i) => f.manager.publishProjectionEvent({ value: i }, `event-${i}`))
+  await expect(f.manager.publishProjectionEvent({ value: 65 }, 'overflow')).rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED', retryable: true })
+  await Promise.resolve()
+  await f.manager.close(); release(); await Promise.all(pending)
+  expect(f.realtime.publishes).toHaveLength(1)
 })

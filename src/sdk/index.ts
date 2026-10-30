@@ -2,6 +2,8 @@ import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProg
 export type * from '../data-management.js'
 export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
+export type { TeamRecallResult } from '../team-message-contract.js'
+export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -74,6 +76,8 @@ export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, Arkme
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
 import type { ArkmeCommonGroupPage } from '../common-groups.js'
 export type { ArkmeCommonGroupPage } from '../common-groups.js'
+import type { DshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
+export type { DshDirectoryDelta, DshDirectorySession } from '../dsh-remote/account-session-directory.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
@@ -869,10 +873,23 @@ export class ArkmeSdk {
   private async requireTeamMessages(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageInteractions!==1)throw new Error('当前 Provider 不支持 Team 消息交互，请升级')}
   async forwardTeamMessages(input:import('../team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('../types.js').ArkmeSourceSendResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.forward',{input},signal)}
   async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../types.js').ArkmeMessageCopyLinkResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.copy-link',{conversationRef,selections},signal)}
+  async recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamRecallResult>{
+    if (!conversationRef.trim() || !messageRef.trim()) throw new TypeError('Team recall requires conversation and message references')
+    if ((await this.capabilities(signal)).features.teamMessageRecall!==1) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持团队消息撤回，请升级',retryable:false})
+    return await this.call('team.messages.recall',{conversationRef,messageRef},signal)
+  }
   async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('../team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamReportResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.report',{conversationRef,messageRef,version,reason,description},signal)}
   async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamMessage[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.preflight',{conversationRef,selections},signal)}
   async readTeamMarks(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('../message-annotations.js').MessageUnderlineSnapshot}[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-read',{conversationRef,audience,markRefs},signal)}
   async changeTeamMark(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRef:string,change:import('../message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('../message-annotations.js').MessageUnderlineSnapshot>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-change',{conversationRef,audience,markRef,change},signal)}
+  async editTeamMessage(command:import('../team-snapshot-contract.js').TeamEditCommand,signal?:AbortSignal):Promise<{version:number}>{if((await this.teamSnapshotCapabilities(signal)).schemaVersion!==1)throw new Error('当前服务不支持准确编辑回执');return await this.call('team.messages.edit',{command},signal)}
+  async readTeamEditReceipt(conversationRef:string,messageRef:string,revisionUid:string,signal?:AbortSignal):Promise<import('../team-snapshot-contract.js').TeamEditReceipt>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.edit-receipt',{conversationRef,messageRef,revisionUid},signal)}
+  async freezeTeamEditMetadata(conversationRef:string,messageRef:string,metadata:import('../team-snapshot-contract.js').TeamEditMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>{if((await this.teamSnapshotCapabilities(signal)).recordPropertiesVersion!==1)throw new Error('当前服务不支持团队采集保存');return await this.call('team.messages.edit-metadata-freeze',{conversationRef,messageRef,metadata},signal)}
+  private async requireTeamSnapshot(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageSnapshot!==1)throw new Error('当前 Provider 不支持团队记忆快照，请升级')}
+  async teamSnapshotCapabilities(signal?:AbortSignal):Promise<{schemaVersion:0|1;recordPropertiesVersion:0|1}>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.snapshot-capabilities',{},signal)}
+  /** Only forward actual origin capture; automation must not manufacture human input time. */
+  async freezeTeamMetadata(conversationRef:string,operationUid:string,metadata:import('../team-snapshot-contract.js').TeamRecordMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>{if((await this.teamSnapshotCapabilities(signal)).recordPropertiesVersion!==1)throw new Error('当前服务尚不支持团队采集保存');return await this.call('team.messages.metadata-freeze',{conversationRef,operationUid,metadata},signal)}
+  async readTeamMessageSnapshot(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('../team-snapshot-contract.js').TeamMessageSnapshot>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.snapshot',{conversationRef,messageRef},signal)}
   async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>>{await this.requireTeamMessages(signal);return await this.call('team.messages.conversations',{side,options},signal)}
   async readTeamExtensions(conversationRef:string,messageRef:string,options:import('../team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamExtensionPage>{
     if((await this.capabilities(signal)).features.teamMessageExtensions!==1)throw new Error('当前 Provider 不支持团队延展浏览，请升级')
@@ -893,6 +910,13 @@ export class ArkmeSdk {
   }
   async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
+   * After applying a completed result, acknowledge its UID. On uncertain transport use recover/retry.
+   */
+  async teamMemberManagement(request: import('../team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('../team-member-add-contract.js').TeamMemberManagementResult> {
+    if ((await this.capabilities(signal)).features.teamMemberManagementV1 !== true) throw new Error('当前 Provider 不支持批量添加团队成员')
+    return this.call('team.members.manage', {request}, signal)
   }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
@@ -3045,7 +3069,7 @@ export class ArkmeSdk {
     }
   }
 
-  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
+  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number; includeDeleted?: boolean } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
     const result = await this.call<DshAccountSessionPage>('remote.sessions.list', options, signal)
     if (result.contractVersion !== 1) throw new Error('账号会话协议版本不受支持')
     return result
@@ -3059,7 +3083,11 @@ export class ArkmeSdk {
     return await this.call('remote.session.command', options, signal)
   }
 
-  /** Event-driven invalidation only. Abort or dispose closes the Host subscription. */
+  /** A committed delta when available; otherwise refresh the authoritative directory. */
+  observeDshAccountSessions(changed: (delta?: DshDirectoryDelta) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    return observeDshAccountSession(this.route, this.fetchImpl, undefined, changed, options)
+  }
+
   observeDshAccountSession(target: { runtimeRef: string; sessionRef: string }, changed: () => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
     return observeDshAccountSession(this.route, this.fetchImpl, target, changed, options)
   }
@@ -3163,3 +3191,4 @@ export type {TeamMention} from '../team-app-contract.js'
 export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
 
 export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
+export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'

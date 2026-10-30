@@ -73,4 +73,4 @@ jobs:
           git add package.json
           git commit -m "chore(release): prepare v${VERSION}"
           git push origin "$branch"
-          gh pr create --base master --head "$branch" --title "chore(release): prepare v${VERSION}" --body "## 发版准备\n\n- 版本：v${VERSION}\n- 已自动完成版本元数据更新与完整验证。\n- 合并后会自动发布 npm、创建 Git Tag 和 GitHub Release。"
+          gh pr create --base master --head "$branch" --title "chore(release): prepare v${VERSION}" --body "## 发版准备\n\n- 版本：v${VERSION}\n- 已自动完成版本元数据更新与完整验证。\n- 合并后会并行发布 npm 和生产 Runtime；Runtime 激活成功后创建 Git Tag 和 GitHub Release。"

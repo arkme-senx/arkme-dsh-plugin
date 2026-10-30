@@ -463,8 +463,14 @@ export class ArkmeService {
   }
   async setTeamNotificationPolicy(conversationRef:string, muted:boolean, signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     const value=await this.teamApp.execute('team.app.notification-policy.set',{conversationRef,muted},signal) as TeamNotificationPolicy
-    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision()})
+    this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision(),change:{kind:'team.notification-policy.changed'}})
     return value
+  }
+  async teamMemberManagement(request: import('./team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('./team-member-add-contract.js').TeamMemberManagementResult> {
+    if (!request || !['candidates','add','recover','retry','ack'].includes(request.action)) throw new ArkmePluginError('team-member-request-invalid','成员管理请求无效',false,400)
+    const {action, ...params} = request
+    const operations = {candidates:'team.app.member-candidates',add:'team.app.members.add',recover:'team.app.members.add-recover',retry:'team.app.members.add-retry',ack:'team.app.members.add-ack'} as const
+    return await this.teamApp.execute(operations[action], params, signal) as import('./team-member-add-contract.js').TeamMemberManagementResult
   }
   async getTeamProfile(jotmoId:string,signal?:AbortSignal):Promise<ArkmeTeamProfile> {
     const teams=await this.teamApp.execute('team.app.teams',{},signal) as import('./types.js').ArkmeTeam[]
@@ -491,6 +497,9 @@ export class ArkmeService {
   async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>{
     return await this.executeTeamApp('team.app.copy-link',{conversationRef,selections},signal) as import('./types.js').ArkmeMessageCopyLinkResult
   }
+  async recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamRecallResult>{
+    return await this.executeTeamApp('team.app.recall',{conversationRef,messageRef},signal) as import('./team-message-contract.js').TeamRecallResult
+  }
   async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('./team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamReportResult>{
     return await this.executeTeamApp('team.app.report',{conversationRef,messageRef,version,reason,description},signal) as import('./team-message-contract.js').TeamReportResult
   }
@@ -503,6 +512,12 @@ export class ArkmeService {
   async changeTeamMark(conversationRef:string,audience:import('./team-message-contract.js').TeamMarkAudience,markRef:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('./message-annotations.js').MessageUnderlineSnapshot> {
     return await this.executeTeamApp('team.app.mark.change',{conversationRef,audience,markRef,change},signal) as import('./message-annotations.js').MessageUnderlineSnapshot
   }
+  async editTeamMessage(command:import('./team-snapshot-contract.js').TeamEditCommand,signal?:AbortSignal):Promise<{version:number}>{return await this.executeTeamApp('team.app.edit',command as unknown as Record<string,unknown>,signal) as {version:number}}
+  async readTeamEditReceipt(conversationRef:string,messageRef:string,revisionUid:string,signal?:AbortSignal):Promise<import('./team-snapshot-contract.js').TeamEditReceipt>{return await this.executeTeamApp('team.app.snapshot.receipt',{conversationRef,messageRef,revisionUid},signal) as import('./team-snapshot-contract.js').TeamEditReceipt}
+  async freezeTeamEditMetadata(conversationRef:string,messageRef:string,metadata:import('./team-snapshot-contract.js').TeamEditMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>{return await this.executeTeamApp('team.app.snapshot.seal',{conversationRef,messageRef,operationUid:metadata.revision_uid,kind:'edit',metadata},signal) as {metadataRef:string}}
+  async teamSnapshotCapabilities(signal?: AbortSignal): Promise<{schemaVersion:0|1;recordPropertiesVersion:0|1}> { return await this.executeTeamApp('team.app.snapshot.capabilities',{},signal) as {schemaVersion:0|1;recordPropertiesVersion:0|1} }
+  async freezeTeamMetadata(conversationRef:string,operationUid:string,metadata:import('./team-snapshot-contract.js').TeamRecordMetadata,signal?:AbortSignal):Promise<{metadataRef:string}> {return await this.executeTeamApp('team.app.snapshot.seal',{conversationRef,operationUid,kind:'send',metadata},signal) as {metadataRef:string}}
+  async readTeamMessageSnapshot(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./team-snapshot-contract.js').TeamMessageSnapshot> {return await this.executeTeamApp('team.app.snapshot.read',{conversationRef,messageRef},signal) as import('./team-snapshot-contract.js').TeamMessageSnapshot}
   async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>> {
     if (!['team','external'].includes(side)) throw new TypeError('Invalid Team side')
     return await this.executeTeamApp('team.app.conversations',{side,...options},signal) as TeamPage<TeamConversation>
@@ -649,6 +664,7 @@ export class ArkmeService {
       return await this.contact.resolveRegisteredContactUserId(recipient.contactRef,session,signal)
     } })
     this.teamDelivery = new TeamSendQueue({
+      metadataDigest: (conversation,uid,ref,user) => this.teamApp.sendMetadataDigest(conversation,uid,ref,user),
       currentUser: async () => (await this.runtime.accountScopedSession())?.userId,
       files: () => this.filesOwner(),
       identify: (ref, user) => this.teamApp.conversationKey(ref, user),
@@ -766,6 +782,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       },
     })
     this.realtime.teamPublication=notice=>this.teamNotifications.accept(notice)
+    this.realtime.teamChange=(hint,actor)=>this.teamApp.changeHint(hint,actor)
     this.conversationDirectoryVisibility = new ConversationDirectoryVisibilityService(new ConversationListPreferenceService(this.runtime), this.source, this.bot, this.realtime)
     this.directory = new ConversationDirectoryService(this.runtime, this.source, this.conversationDirectoryVisibility,
       async signal => await this.botConversation.directory({ signal }),
@@ -1252,9 +1269,12 @@ arkoImagesV1:true,
         teamOutboundReception: 1,
         teamGroupRepresentation: 1,
         teamProfiles: true,
+        teamMemberManagementV1: true,
         teamExternalChats: true,
         teamMessageExtensions: 1,
         teamMessageInteractions: 1,
+        teamMessageRecall: 1,
+        teamMessageSnapshot: 1,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         groupSelfNickname: true,

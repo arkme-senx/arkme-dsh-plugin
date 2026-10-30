@@ -16,7 +16,16 @@ export interface TeamForwardInput {
  requestId:string;recordUid:string;sendAtMillis:number
  commentText?:string;commentRecordUid?:string
 }
+export type {TeamRecordMetadata,TeamMessageSnapshot} from './team-snapshot-contract.js'
+export interface TeamRecallResult {message: import('./team-app-contract.js').TeamMessage; changed: boolean}
 export interface TeamMessagePort {
+ recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<TeamRecallResult>
+ editTeamMessage(command:import('./team-snapshot-contract.js').TeamEditCommand,signal?:AbortSignal):Promise<{version:number}>
+ readTeamEditReceipt(conversationRef:string,messageRef:string,revisionUid:string,signal?:AbortSignal):Promise<import('./team-snapshot-contract.js').TeamEditReceipt>
+ freezeTeamEditMetadata(conversationRef:string,messageRef:string,metadata:import('./team-snapshot-contract.js').TeamEditMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>
+ teamSnapshotCapabilities(signal?:AbortSignal):Promise<{schemaVersion:0|1}>
+ freezeTeamMetadata(conversationRef:string,operationUid:string,metadata:import('./team-snapshot-contract.js').TeamRecordMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>
+ readTeamMessageSnapshot(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./team-snapshot-contract.js').TeamMessageSnapshot>
  readTeamExtensions(conversationRef:string,messageRef:string,options?:TeamExtensionOptions,signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage>
  forwardTeamMessages(input:TeamForwardInput,signal?:AbortSignal):Promise<import('./types.js').ArkmeSourceSendResult>
  createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('./types.js').ArkmeMessageCopyLinkResult>

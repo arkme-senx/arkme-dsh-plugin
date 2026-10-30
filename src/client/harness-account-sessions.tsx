@@ -7,10 +7,10 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { callArkme } from '../sdk/index.js'
+import { callArkme, createArkmeSdk } from '../sdk/index.js'
 import type { DshAccountSession, DshAccountSessionPage } from '../dsh-remote/account-session-types.js'
+import { compareDshDirectoryVersion, parseDshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
 import { openNativeAccountSession } from './harness-native-navigation.js'
-import { HARNESS_MENU_OPEN } from './harness-session-menu-bridge.js'
 import { collapseAccountSessionCopies } from './harness-session-copies.js'
 
 type SessionsState = HarnessSessionList
@@ -108,30 +108,87 @@ export function reconcileAccountSessions(previous: DshAccountSession[], incoming
   const unique = [...new Map(incoming.map(row => [accountSessionKey(row), row])).values()]
   const next = collapseAccountSessionCopies(unique, previous).map(row => {
     const old = known.get(accountSessionKey(row))
+    if (old?.directoryVersion && row.directoryVersion) {
+      const order = compareDshDirectoryVersion(old.directoryVersion, row.directoryVersion)
+      if (order > 0 || order === 0 && old.deleted) return old
+      row = { ...row, projectionAsOfSeq: Math.max(old.projectionAsOfSeq ?? -1, row.projectionAsOfSeq ?? -1) }
+    }
     return old && ([...new Set([...Object.keys(row), ...Object.keys(old)])] as Array<keyof DshAccountSession>).every(key =>
-      key === 'coveredLocalHistory' ? JSON.stringify(row.coveredLocalHistory) === JSON.stringify(old.coveredLocalHistory) : key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' ? (row.previousRuntimeRefs ?? []).join('\0') === (old.previousRuntimeRefs ?? []).join('\0') : row[key] === old[key]) ? old : row
+      key === 'directoryVersion' ? row.directoryVersion?.join('/') === old.directoryVersion?.join('/') : key === 'coveredLocalHistory' ? JSON.stringify(row.coveredLocalHistory) === JSON.stringify(old.coveredLocalHistory) : key === 'capabilities' ? row.capabilities.join('\0') === old.capabilities.join('\0') : key === 'previousRuntimeRefs' || key === 'readableRuntimeRefs' ? (row[key] ?? []).join('\0') === (old[key] ?? []).join('\0') : row[key] === old[key]) ? old : row
   })
   return next.length === previous.length && next.every((row, i) => row === previous[i]) ? previous : next
 }
 
+/** Reuse this catalog's known runtime/workspace decorations; unknown facts require a read. */
+export function applyAccountSessionDelta(previous: DshAccountSession[], value: unknown, localRuntimeRef?: string): DshAccountSession[] | undefined {
+  const delta = parseDshDirectoryDelta(value)
+  if (!delta) return
+  const next = new Map(previous.map(row => [accountSessionKey(row), row]))
+  for (const item of delta.sessions) {
+    const key = accountSessionKey({ runtimeRef: item.runtime_ref, sessionRef: item.session_ref })
+    const old = next.get(key), version = [item.host_generation, item.projection_at] as const
+    if (old?.directoryVersion && compareDshDirectoryVersion(version, old.directoryVersion) <= 0) {
+      if (compareDshDirectoryVersion(version, old.directoryVersion) === 0 && (item.projection_as_of_seq ?? -1) > (old.projectionAsOfSeq ?? -1)) {
+        next.set(key, { ...old, projectionAsOfSeq: Number(item.projection_as_of_seq) })
+      }
+      continue
+    }
+    const deleted = (item.deleted_at ?? 0) > 0
+    const executor = item.executor_runtime_ref ?? item.runtime_ref
+    const source = previous.find(row => !row.deleted && (row.executorRuntimeRef ?? row.runtimeRef) === executor)
+    const workspace = previous.find(row => !row.deleted && row.runtimeRef === item.runtime_ref && row.workspaceRef === item.workspace_ref)
+    if (!deleted && (!source || item.workspace_ref !== '' && !workspace)) return
+    next.set(key, {
+      runtimeRef: item.runtime_ref, sessionRef: item.session_ref,
+      canonicalIdentity: item.canonical_identity === true,
+      ...(old?.coveredLocalHistory && old.contentRevision && old.contentRevision === item.content_revision && old.historyRevision === item.history_revision
+        ? { coveredLocalHistory: old.coveredLocalHistory } : {}),
+      ...(item.deduplicated_runtime_refs ? { previousRuntimeRefs: item.deduplicated_runtime_refs } : {}),
+      ...(item.readable_runtime_refs ? { readableRuntimeRefs: item.readable_runtime_refs } : {}),
+      ...(item.history_revision ? { historyRevision: item.history_revision } : {}),
+      ...(item.content_revision ? { contentRevision: item.content_revision } : {}),
+      workspaceRef: item.workspace_ref, workspaceName: item.workspace_ref === '' ? '未分组' : workspace?.workspaceName ?? '',
+      directoryVersion: version, ...(deleted ? { deleted: true } : {}),
+      title: item.title ?? '', updatedAt: item.source_updated_at,
+      projectionAsOfSeq: Math.max(old?.projectionAsOfSeq ?? -1, item.projection_as_of_seq ?? -1),
+      running: item.running, blank: item.blank, archived: item.archived, origin: item.origin ?? '',
+      capabilities: source?.capabilities ?? [], desktopName: source?.desktopName ?? '', runtimeName: source?.runtimeName ?? '',
+      sameDesktop: source?.sameDesktop ?? false, presence: source?.presence ?? 'unknown',
+      local: item.runtime_ref === localRuntimeRef || item.localTakeover === true,
+      ...(item.localTakeover ? { localTakeover: true } : {}),
+      ...(item.executor_runtime_ref ? { executorRuntimeRef: item.executor_runtime_ref } : {}),
+    })
+  }
+  if (next.size > 10_000) return
+  return reconcileAccountSessions(previous, [...next.values()].sort((a, b) => b.updatedAt - a.updatedAt
+    || b.sessionRef.localeCompare(a.sessionRef) || b.runtimeRef.localeCompare(a.runtimeRef)))
+}
+
 function createCatalog(surface: Element, remove: () => void) {
-    const owner = surface.ownerDocument
     let rows: DshAccountSession[] = [], localRuntimeRef: string | undefined, localDesktopName: string | undefined, users = 0
-    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false
+    let snapshot = { rows, localRuntimeRef, localDesktopName }, active = true, busy = false, pending = false, incremental = false
     const listeners = new Set<() => void>()
     let controller = new AbortController()
     let stopRefresh: (() => void) | undefined
-    const publish = () => { snapshot = { rows, localRuntimeRef, localDesktopName }; listeners.forEach(listener => listener()) }
+    const publish = (nativeChanged = true) => {
+      const visible = rows.filter(row => !row.deleted)
+      snapshot = { rows: visible, localRuntimeRef, localDesktopName }
+      if (nativeChanged) (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(visible, localRuntimeRef)
+      listeners.forEach(listener => listener())
+    }
     const refresh = async () => {
-      if (!active || busy || owner.hidden) return
+      if (!active || busy) return
       busy = true
       const signal = controller.signal
+      const before = new Map(rows.map(row => [accountSessionKey(row), row]))
       try {
         const next: DshAccountSession[] = [], seen = new Set<string>()
+        let includesDeleted = true
         let cursor: DshAccountSessionPage['nextCursor']
         do {
-          const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, ...(cursor ? { cursor } : {}) }, signal)
+          const page = await callArkme<DshAccountSessionPage>('remote.sessions.list', { limit: 100, includeDeleted: true, ...(cursor ? { cursor } : {}) }, signal)
           if (page.contractVersion !== 1 || !Array.isArray(page.items)) throw new Error('会话目录不可用')
+          includesDeleted &&= page.includesDeleted === true
           localRuntimeRef = page.localRuntimeRef
           localDesktopName = page.localRuntime?.desktopName
           next.push(...page.items.map(row => {
@@ -149,11 +206,23 @@ function createCatalog(surface: Element, remove: () => void) {
           if (next.length > 10_000) throw new Error('会话目录过大')
         } while (cursor && active)
         if (!active || signal.aborted) return
+        // A full read started before a pushed create/delete cannot undo that commit.
+        const returned = new Set(next.map(accountSessionKey))
+        next.push(...rows.filter(row => !returned.has(accountSessionKey(row))
+          && (row.deleted || before.get(accountSessionKey(row)) !== row)))
         const merged = reconcileAccountSessions(rows, next)
-        if (merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef) { rows = merged; (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.publish(rows, localRuntimeRef) }
-        if (snapshot.rows !== rows || snapshot.localRuntimeRef !== localRuntimeRef || snapshot.localDesktopName !== localDesktopName) publish()
+        incremental = includesDeleted
+        const nativeChanged = merged !== rows || snapshot.localRuntimeRef !== localRuntimeRef
+        const changed = nativeChanged || snapshot.localDesktopName !== localDesktopName
+        rows = merged
+        if (changed) publish(nativeChanged)
       } catch { /* Keep the last complete same-account catalog. Native local data stays live. */ }
-      finally { if (signal === controller.signal) busy = false }
+      finally {
+        if (signal === controller.signal) {
+          busy = false
+          if (pending) { pending = false; void refresh() }
+        }
+      }
     }
     return {
       get signal() { return controller.signal },
@@ -162,17 +231,27 @@ function createCatalog(surface: Element, remove: () => void) {
         active = true; busy = false; controller = new AbortController()
         // Discovery belongs to the surface, including when its menu is unmounted.
         const resume = () => { if (surface.getAttribute('data-arkme-visible') !== 'false') void refresh() }
-        const timer = setInterval(resume, 5_000)
+        const sdk = createArkmeSdk()
+        let stopObservation: (() => void) | undefined
+        let retry: ReturnType<typeof setTimeout> | undefined
+        const observe = () => {
+          if (controller.signal.aborted) return
+          stopObservation ??= sdk.observeDshAccountSessions(delta => {
+            if (!active || controller.signal.aborted) return
+            const merged = incremental ? applyAccountSessionDelta(rows, delta, localRuntimeRef) : undefined
+            if (merged !== undefined) {
+              if (merged !== rows) { rows = merged; publish() }
+              return
+            }
+            if (busy) pending = true
+            else resume()
+          }, { signal: controller.signal, onError: () => { stopObservation = undefined; retry = setTimeout(observe, 1_000) } })
+        }
+        observe()
         const observer = new MutationObserver(resume)
         observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
-        document.addEventListener(HARNESS_MENU_OPEN, resume)
-        owner.addEventListener('visibilitychange', resume)
-        owner.defaultView?.addEventListener('focus', resume)
         stopRefresh = () => {
-          clearInterval(timer); observer.disconnect()
-          document.removeEventListener(HARNESS_MENU_OPEN, resume)
-          owner.removeEventListener('visibilitychange', resume)
-          owner.defaultView?.removeEventListener('focus', resume)
+          stopObservation?.(); clearTimeout(retry); observer.disconnect()
         }
       },
       getSnapshot: () => snapshot,
@@ -219,7 +298,6 @@ export function AccountSessionBrowser({ Native, surface, ...props }: BrowserProp
 
 function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: ComponentType<BrowserProps>; surface: Element }) {
   const sourceRuntime: string | null = null
-  const creating = useRef(false)
   const [operationError, setOperationError] = useState('')
   const catalogState = props.useSessions(state => state)
   const local = useMemo(() => ({ ...catalogState, current: currentHarnessSession(catalogState) }), [catalogState])
@@ -284,31 +362,26 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   const command = async (id: string, operation: string, body = {}) => {
     const target = remote(id)
     if (!target) throw new Error('会话不存在')
+    if (!target.local) { readOnly(); return }
     const value = await callArkme('remote.session.command', { runtimeRef: target.runtimeRef, sessionRef: target.sessionRef, operation, body, requestRef: crypto.randomUUID() }, catalog.signal)
     await catalog.refresh()
     return value
   }
+  const readOnly = () => setOperationError('请在对话所属实例或电脑上执行。')
   const open = (id: string) => {
+    id = (window as HarnessNativeWindow).__ARKME_NATIVE_DIRECTORY__?.preferredSession?.(id) ?? id
     const target = remote(id)
     if (local.byId[id as SessionId]) props.open(id)
     else if (target) void navigate(target)
   }
   return <>
     <Native {...props} useSessions={useSessions} useWorkspaces={useWorkspaces} useStore={useStore} open={open}
-      renameSession={(id, title) => remote(id) ? command(id, 'session.rename', { title }).then(() => undefined) : props.renameSession(id, title)}
-      archiveSession={async id => { if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
-      forkSession={id => { if (!remote(id)) props.forkSession(id); else setOperationError('此操作需要在对话所属电脑上执行。') }}
+      renameSession={async (id, title) => { if (id.startsWith('arkme:')) { readOnly(); return }; if (remote(id)) await command(id, 'session.rename', { title }); else await props.renameSession(id, title) }}
+      archiveSession={async id => { if (id.startsWith('arkme:')) { readOnly(); return }; if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
+      forkSession={id => { if (!id.startsWith('arkme:') && !remote(id)) props.forkSession(id); else setOperationError('此操作需要在对话所属电脑上执行。') }}
       startSession={id => {
         if (!id?.startsWith('arkme:')) { props.startSession(id); return }
-        const source = rows.find(row => `arkme:${row.runtimeRef}:${row.workspaceRef}` === id)
-        if (!source || creating.current) return
-        const blank = rows.find(row => row.runtimeRef === source.runtimeRef && row.workspaceRef === source.workspaceRef && row.blank && !row.archived)
-        if (blank) { void navigate(blank); return }
-        creating.current = true
-        void callArkme<{ sessionId: string }>('remote.session.command', { runtimeRef: source.runtimeRef, operation: 'session.create', requestRef: crypto.randomUUID(), body: { workspace_ref: source.workspaceRef } }, catalog.signal)
-          .then(value => { if (!catalog.signal.aborted) return navigate({ ...source, sessionRef: value.sessionId }) })
-          .catch(error => { if (!catalog.signal.aborted) setOperationError(error instanceof Error ? error.message : '新建会话失败') })
-          .finally(() => { creating.current = false })
+        readOnly()
       }} />
     {operationError && <Modal open closeLabel="关闭" onClose={() => setOperationError('')} title="无法执行操作"><p>{operationError}</p><Button onClick={() => setOperationError('')}>知道了</Button></Modal>}
   </>

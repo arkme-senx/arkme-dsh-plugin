@@ -21,6 +21,31 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatRealtimeService', () => {
+  it.each(['current','account-change','token-change','aborted','projection-failed'] as const)('keeps Team change relevance account-bound through async projection: %s',async scenario=>{
+    let account={userId:42,accessToken:'access',refreshToken:'refresh'}
+    const runtime=new ServiceRuntime(config,{} as ArkmeSessionStore,{} as StateStore)
+    vi.spyOn(runtime,'accountScopedSession').mockImplementation(async()=>({...account}))
+    const source=new SourceService(runtime,new ProfileService(runtime),{async summary(){return {recordCount:0,wordsCount:0,totalSec:0}},recordItem(){return undefined}})
+    const timeline=vi.fn(async()=>[]),service=new ChatRealtimeService(runtime,source,{chatTimelineItems:timeline})
+    const change={kind:'team.message.changed',messageKey:'opaque-message',conversationKeys:['opaque-team','opaque-external']}
+    let release!:(hint:typeof change)=>void
+    service.teamChange=vi.fn(()=>scenario==='projection-failed'?Promise.reject(new Error('storage unavailable')):new Promise(resolve=>{release=resolve}))
+    const events:unknown[]=[];service.subscribeChatRealtime(event=>events.push(event))
+    const controller=new AbortController()
+    try{
+      service.handleChatRealtimeNotice({cause:'team-invalidation',connectionUserId:42,connectionSignal:controller.signal,state:{revision:1,connected:true,connectionGeneration:1},teamChange:{kind:change.kind,messageUid:'private-message',conversationUid:'private-conversation'}})
+      await vi.waitFor(()=>expect(service.teamChange).toHaveBeenCalledWith({kind:change.kind,messageUid:'private-message',conversationUid:'private-conversation'},42))
+      if(scenario==='account-change')account={...account,userId:43}
+      if(scenario==='token-change')account={...account,refreshToken:'another-login'}
+      if(scenario==='aborted')controller.abort()
+      if(scenario!=='projection-failed')release(change)
+      await new Promise(resolve=>setImmediate(resolve))
+      expect(events).toEqual(scenario==='current'?[expect.objectContaining({type:'team-invalidated',change})]:scenario==='projection-failed'?[expect.objectContaining({type:'team-invalidated'})]:[])
+      if(scenario==='projection-failed')expect(events[0]).not.toHaveProperty('change')
+      expect(JSON.stringify(events)).not.toContain('private-message')
+      expect(timeline).not.toHaveBeenCalled()
+    }finally{service.dispose();runtime.dispose()}
+  })
   it.each(['current', 'other-account', 'aborted'] as const)('routes annotation hints without body reads and rejects stale ownership: %s', async scenario => {
     const sessions: ArkmeSessionStore = {
       async read() { return {userId: 42, accessToken: 'access', refreshToken: 'refresh'} },

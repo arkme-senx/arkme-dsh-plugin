@@ -42,6 +42,31 @@ async function artifactFixture() {
 }
 
 describe('runtime artifact publisher', () => {
+  it.each(['fresh', 'activated', 'mismatch'])('verifies persisted production notes before activation: %s', async state => {
+    const fixture = await artifactFixture()
+    const notes = '1. 新增聊天记录导出。\n2. 修复录音中断问题。'
+    const objectKey = `app/arkme/prod/plugin/${fixture.version}/${fixture.sha256}/${fixture.file}`
+    const stored = { id: 'version-1', status: 'ready', notes: state === 'mismatch' ? 'wrong' : notes, source_revision: sourceSHA,
+      last_activated_version_code: state === 'activated' ? 42 : 0, harness_version_code_range: { min: 4, max: 9 } }
+    const responses = [
+      { bucket: 'arkme-release-bucket', upload_endpoint: 'https://oss-cn-hangzhou.aliyuncs.com', object_key: objectKey,
+        credentials: { access_key_id: 'test-ak', access_key_secret: 'test-sk', security_token: 'test-token' } },
+      { version: stored },
+      { version_code: 43 },
+    ]
+    const calls: Array<{ url: string; body: any }> = []
+    const promise = publishRuntimeArtifact({ artifactDirectory: fixture.root, backendBaseURL: 'https://backend.example.com',
+      secret: 'test-secret', sourceSHA, notes, verifyStoredNotes: true,
+    }, { fetchImpl: async (url, init) => {
+      calls.push({ url, body: init.body ? JSON.parse(init.body) : undefined })
+      return new Response(JSON.stringify(responses.shift()))
+    }, createOSSClient: () => ({ put: async () => ({}) }), mask: () => {} })
+    if (state === 'mismatch') await expect(promise).rejects.toThrow('Stored Runtime notes')
+    else expect(await promise).toMatchObject({ versionCode: state === 'activated' ? 42 : 43 })
+    expect(calls[1].body.notes).toBe(notes)
+    expect(calls.filter(call => call.url.endsWith('/activate'))).toHaveLength(state === 'fresh' ? 1 : 0)
+  })
+
   it('reads an optional release range from the publishing environment', () => {
     expect(readHarnessVersionCodeRangeFromEnvironment({})).toBeUndefined()
     for (const invalid of ['null', '{}', '{"min":1}', '{"min":4,"max":2}']) {

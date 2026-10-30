@@ -28,3 +28,20 @@ it('disables native input through connecting/offline, retains the draft, and res
   expect(storeFor('windows-B').getSnapshot()).toBeUndefined()
   expect(connection.listeners.size + list.listeners.size + [...values.values()].reduce((n, s) => n + s.listeners.size, 0)).toBe(0)
 })
+
+it('unlocks online capable instances, relocks on disconnect and retains other native blockers', () => {
+  const connection = store<string | undefined>('connected'), list = store({ current: 'arkme:runtime:remote' })
+  const remote = store<{ reason: string } | undefined>(undefined), local = store<{ reason: string } | undefined>(undefined)
+  const blocks = { storeFor: (id: string) => id.startsWith('arkme:') ? remote : local,
+    set(id: string, block: { reason: string } | undefined) { this.storeFor(id).set(block) } }
+  const stop = lockDisconnectedComposer({ list } as never, connection, () => blocks)
+  expect(remote.getSnapshot()).toBeUndefined()
+  connection.set('disconnected'); expect(remote.getSnapshot()).toBeDefined()
+  connection.set('connected'); expect(remote.getSnapshot()).toBeUndefined()
+  const other = { reason: '模型不可用' }; blocks.set('arkme:runtime:remote', other)
+  connection.set('disconnected'); connection.set('connected'); expect(remote.getSnapshot()).toBe(other)
+  blocks.set('arkme:runtime:remote', undefined)
+  list.set({ current: 'native-local' })
+  expect(remote.getSnapshot()).toBeUndefined(); expect(local.getSnapshot()).toBeUndefined()
+  stop()
+})

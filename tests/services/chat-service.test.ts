@@ -3873,3 +3873,20 @@ it('preserves global person order when two sessions reuse the same relation uid'
  expect(result.items.map(item=>item.sendAtMillis)).toEqual([300,200,100]);
  expect(new Set(result.items.map(item=>item.eventRef)).size).toBe(3);
 });
+
+it.each([true,false])('ordinary details keep version-1 environment after editing, original=%s',async found=>{
+ const authenticatedPost=vi.fn(async(path:string)=>{
+  if(path.endsWith('/revisions/query'))return {record_uid:'record-snapshot-1',items:found?[{record_uid:'record-snapshot-1',version:1,revision_uid:'creation',edit_capture_context:{schema_version:1,captured_at:1000,client_name:'original device',network_name:'original network',electric:0,charge:0},content_payload:{},template_extra:{}}]:[],has_more:false};
+  if(path.endsWith('/context/get'))return {};
+  return {record_core:{record_uid:'record-snapshot-1',version:2,has_manual_edit:true,text_content:'latest text',capture_context:{schema_version:1,captured_at:3000,client_name:'later edit device',electric:100}}};
+ });
+ const runtime={stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'},requireSession:async()=>({userId:42,accessToken:'access',refreshToken:'refresh'}),authenticatedPost,authenticatedChatPost:async()=>({item:{relation:{record_uid:'record-snapshot-1'},record:{record_uid:'record-snapshot-1'}}})};
+ const source={openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat-1'})};
+ const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never);
+ const detail=await chat.messageSnapshotDetail('opaque-source',snapshotActionRef());
+ expect(detail.textContent).toBe('latest text');
+ expect(detail.captureContext?.clientName).toBe(found?'original device':undefined);
+ expect(JSON.stringify(detail)).not.toContain('later edit device');
+ if(found)expect(detail.captureContext?.electric).toBe(0);
+ expect(authenticatedPost.mock.calls.some(([path])=>path.endsWith('/context/get'))).toBe(found);
+});

@@ -15,6 +15,7 @@ import { parseArrangementBoardCachePages } from './arrangement-board-cache.js'
 import type { TeamAppOperation } from './team-app-contract.js'
 import type { RecordAppOperation } from './record-app-contract.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
+import { DSH_DIRECTORY_DELTA_MAX_BYTES, parseDshDirectoryDelta, type DshDirectoryDelta } from './dsh-remote/account-session-directory.js'
 import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -1038,14 +1039,18 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         } finally { if (!res.destroyed) res.end() }
         return
       }
-      if (request.operation === 'remote.session.observe') {
+      if (request.operation === 'remote.session.observe' || request.operation === 'remote.sessions.observe') {
         const directory = options.accountSessions?.()
         if (!directory) throw new ArkmePluginError('capability-unsupported', '当前运行环境不支持账号会话', false)
         try {
-          await directory.observe(params, controller.signal, () => {
+          const notify = (delta?: DshDirectoryDelta) => {
             if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })
-            if (!res.write('{"changed":true}\n') && res.writableLength > 4096) { controller.abort(); res.destroy() }
-          })
+            const directoryDelta = parseDshDirectoryDelta(delta)
+            const line = JSON.stringify({ changed: true, ...(directoryDelta === undefined ? {} : { directoryDelta }) }) + '\n'
+            if (!res.write(line) && res.writableLength > DSH_DIRECTORY_DELTA_MAX_BYTES + 4096) { controller.abort(); res.destroy() }
+          }
+          if (request.operation === 'remote.sessions.observe') await directory.observeDirectory(controller.signal, notify)
+          else await directory.observe(params, controller.signal, notify)
         } catch (error) {
           if (!res.headersSent) throw error
           if (!res.destroyed) res.write('{"error":"远程连接已断开，请重试"}\n')
@@ -1273,11 +1278,18 @@ export async function dispatchArkmeHostOperation(
     case 'team.external': return await service.externalChats(stringParam(params, 'operation') as import('./team-external-chat-contract.js').ExternalChatOperation, (params.params ?? {}) as Record<string,unknown>, requestSignal)
     case 'team.messages.forward':return await service.forwardTeamMessages(params.input as import('./team-message-contract.js').TeamForwardInput,requestSignal)
     case 'team.messages.copy-link':return await service.createTeamMessageCopyLink(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
+    case 'team.messages.recall':return await service.recallTeamMessage(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),requestSignal)
     case 'team.messages.report':return await service.reportTeamMessage(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),numberParam(params,'version',0),params.reason as import('./team-message-contract.js').TeamReportReason,optionalTeamStringParam(params,'description'),requestSignal)
     case 'team.messages.preflight':return await service.preflightTeamMessages(stringParam(params,'conversationRef'),params.selections as {messageRef:string;version:number}[],requestSignal)
     case 'team.messages.marks-read':return await service.readTeamMarks(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,params.markRefs as string[],requestSignal)
     case 'team.messages.marks-change':return await service.changeTeamMark(stringParam(params,'conversationRef'),params.audience as import('./team-message-contract.js').TeamMarkAudience,stringParam(params,'markRef'),params.change as import('./message-annotations.js').MessageUnderlineChange,requestSignal)
     case 'team.messages.conversations':return await service.listTeamConversations(params.side as import('./team-app-contract.js').TeamSide,params.options as {cursor?:string;limit?:number},requestSignal)
+    case 'team.messages.edit':return await service.editTeamMessage(params.command as import('./team-snapshot-contract.js').TeamEditCommand,requestSignal)
+    case 'team.messages.edit-receipt':return await service.readTeamEditReceipt(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),stringParam(params,'revisionUid'),requestSignal)
+    case 'team.messages.edit-metadata-freeze':return await service.freezeTeamEditMetadata(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.metadata as import('./team-snapshot-contract.js').TeamEditMetadata,requestSignal)
+    case 'team.messages.snapshot-capabilities':return await service.teamSnapshotCapabilities(requestSignal)
+    case 'team.messages.metadata-freeze':return await service.freezeTeamMetadata(stringParam(params,'conversationRef'),stringParam(params,'operationUid'),params.metadata as import('./team-snapshot-contract.js').TeamRecordMetadata,requestSignal)
+    case 'team.messages.snapshot':return await service.readTeamMessageSnapshot(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),requestSignal)
     case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
@@ -1289,6 +1301,7 @@ export async function dispatchArkmeHostOperation(
       if(typeof params?.muted!=='boolean') throw new TypeError('muted must be a boolean')
       return await service.setTeamNotificationPolicy(stringParam(params,'conversationRef'),params.muted,requestSignal)
     }
+    case 'team.members.manage': return await service.teamMemberManagement(params.request as import('./team-member-add-contract.js').TeamMemberManagementRequest, requestSignal)
     case 'team.profile.get':return await service.getTeamProfile(stringParam(params,'jotmoId'),requestSignal)
     case 'team.profile.update':return await service.updateTeamProfile(stringParam(params,'profileRef'),params.command as ArkmeTeamProfileUpdate,requestSignal)
     case 'team.profile.avatar.upload':return await service.uploadTeamAvatar(stringParam(params,'profileRef'),stringParam(params,'contentBase64'),stringParam(params,'uploadUid'),requestSignal)

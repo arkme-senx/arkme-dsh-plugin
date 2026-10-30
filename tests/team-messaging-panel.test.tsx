@@ -1,3 +1,7 @@
+import {ArkmeRecordInputCaptureOwner} from '../src/client/record-input-capture.js'
+import * as recordLocation from '../src/client/record-capture-location.js'
+import {ArkmeComposerTargetPreview} from '../src/client/ArkmeComposerTargetPreview.js'
+import {liveTeamSnapshotStack} from './fixtures/team-snapshot-live.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
@@ -40,7 +44,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
-import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
+import { invalidateTeamMessages, subscribeTeamMessageChanges } from '../src/client/team-messaging-events.js'
 
 vi.mock('react-dom', async original => ({...await original<typeof import('react-dom')>(),createPortal:(children:unknown)=>children}))
 const mocks = vi.hoisted(() => ({ call: vi.fn(), upload: vi.fn(), stage: vi.fn(), extensions: vi.fn() }))
@@ -127,6 +131,76 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
   })
 
+  it('retains the open detail and independent replies while its timeline source is revalidating', async () => {
+    const source:TeamMessage={key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
+    const child={...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'独立子回复'}}
+    mocks.extensions.mockResolvedValue({message:source,items:[child],totalCount:1,hasMore:false,nextSeq:2,throughSeq:2})
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[source],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    await act(async()=>{renderer!.root.findByType(TeamConversationMessage).props.onDetail();await tick()})
+    const detail=renderer!.root.findByType(TeamMessageDetail)
+    const reply=renderer!.root.findByProps({'data-team-extension-item':'child'})
+    const input=renderer!.root.findByType(ArkmeRichComposerInput)
+    mocks.extensions.mockImplementation(()=>new Promise(()=>{}))
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?await new Promise(()=>{}):[])
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'source',conversationKeys:['key']}))
+    expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(1)
+    expect(renderer!.root.findByType(TeamMessageDetail)).toBe(detail)
+    expect(renderer!.root.findByProps({'data-team-extension-item':'child'})).toBe(reply)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(input)
+  })
+
+  it('keeps a just-sent body for its publication/older hints, but invalidates a newer occurrence revision',async()=>{
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=()=>renderer!.root.findByType(TeamConversationMessage)
+    expect(row().props.message.content.text_content).toBe('问题')
+    for(const revision of [2,1,2]){
+      await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:revision,sequence:1});await tick()})
+      expect(row().props.message.content?.text_content).toBe('问题')
+    }
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    expect(row().props.message.content).toBeUndefined()
+    expect(row().props.message.contentStatus).toBe('revalidating')
+  })
+
+  it('does not restore draft material when a newer source change arrives before the send ACK', async () => {
+    let sent=false, finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){sent=true;return new Promise(resolve=>{finish=resolve})}
+      return []
+    })
+    await mount();await send()
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    await act(async()=>{finish(accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}}));await tick()})
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('revalidating')
+  })
+  it('does not supplement an explicitly unavailable recovery ACK with the send draft', async () => {
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:3,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:'unavailable'}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('unavailable')
+  })
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
     const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}
@@ -233,7 +307,10 @@ describe('Team send UI recovery', () => {
     expect(stored().text).toBe('下一条普通消息')
     expect(stored().reply).toBeUndefined()
     await act(async () => {invalidateTeamMessages('test:11');await tick()})
-    expect(outgoing().reply?.text).toBe('延展原文')
+    expect(outgoing().reply).toBeUndefined()
+    expect(outgoing().content).toBeUndefined()
+    expect(outgoing().contentStatus).toBe('revalidating')
+    expect(stored().text).toBe('下一条普通消息')
   })
 
   it('replaces a locally retained parent with the authoritative unavailable preview', async () => {
@@ -365,8 +442,10 @@ describe('Team send UI recovery', () => {
     await mount()
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
     const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
-    expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
-    expect(snapshot.props.metadataUnavailable).toContain('暂未接通')
+    expect(snapshot.props.createdAtMillis).toBeUndefined()
+    expect(snapshot.props.metadataUnavailable).toBeUndefined()
+    expect(snapshot.props.onEnableBackgroundSound).toBeTypeOf('function')
+    expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.snapshot.read')).toBe(true)
     expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
     expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
     await act(async () => snapshot.props.onClose())
@@ -413,6 +492,100 @@ describe('Team send UI recovery', () => {
     fresh = { ...value, visitor: { nickname: '访客', memberType: 'free' } }
     await act(async () => { invalidateTeamMessages('test:11'); await tick() })
     expect(badges()).toHaveLength(0)
+  })
+
+  it('retains selected identities while hiding unverified material and disables operations until refreshed', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'临时材料',template_kind:1},media:[]}
+    let hold = false, release!: (value: unknown) => void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? hold ? new Promise(resolve => { release = resolve }) : {conversation,messages:[mine],hasMore:false,beforeSeq:0} : [])
+    await mount()
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSelect())
+    hold = true
+    await act(async () => {invalidateTeamMessages('test:11');await tick()})
+    const bar = () => renderer!.root.findByType(ArkmeMessageSelectionBar)
+    expect(bar().props.count).toBe(1)
+    expect(bar().props.actions.filter((a:any) => a.id !== 'close').every((a:any) => a.disabled)).toBe(true)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content).toBeUndefined()
+    await act(async () => {release({conversation,messages:[mine],hasMore:false,beforeSeq:0});await tick()})
+    expect(bar().props.count).toBe(1)
+    expect(bar().props.actions.find((a:any) => a.id==='copy').disabled).toBe(false)
+  })
+
+  it('recalls only after confirmation, retains the next draft and rejects a late published snapshot', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤回目标',template_kind:1},media:[]}
+    const sibling: TeamMessage = {...mine,ref:'stable-ref',key:'stable',seq:2,content:{text_content:'其他消息保持可读',template_kind:1}}
+    let finishRecall!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine,sibling],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? new Promise(resolve=>{finishRecall=resolve}) : [])
+    await mount()
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!
+    const stable=row('stable')
+    const invalidated = vi.fn()
+    const stop = subscribeTeamMessageChanges(invalidated)
+    await act(async () => row('own').props.onRecall())
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
+    await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
+    await act(async () => {finishRecall({message:{...mine,state:'recalled',revision:2},changed:true});await tick()})
+    expect(invalidated).toHaveBeenCalledWith('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:[conversation.key]})
+    stop()
+    const shown = row('own').props.message
+    expect(shown.state).toBe('recalled')
+    expect(shown.content).toBeUndefined()
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
+    expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
+  })
+
+  it('keeps unrelated message material mounted and invalidates only the changed occurrence',async()=>{
+    const first:TeamMessage={ref:'first-ref',key:'first',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{text_content:'正在阅读的原界面',template_kind:1},media:[]}
+    const second={...first,ref:'second-ref',key:'second',seq:2}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[first,second],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    mocks.call.mockImplementation(op=>op==='team.app.timeline'?new Promise(()=>{}):Promise.resolve([]))
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!.props.message
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.notification-policy.changed'}))
+    expect(row('first').contentStatus).toBe('available')
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'second',conversationKeys:[conversation.key]}))
+    expect(row('first').contentStatus).toBe('available')
+    expect(row('first').version).toBe(3)
+    expect(row('second').contentStatus).toBe('revalidating')
+    expect(row('second').content).toBeUndefined()
+  })
+
+  it('hides an invalidated reedit source header while retaining the editable input', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'编辑源旧正文',template_kind:1},media:[]}
+    let recalled=false
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.preflight') {if(recalled)throw new Error('message_recalled');return [mine]}
+      if(op==='team.app.timeline')return {conversation,messages:recalled?[{...mine,state:'recalled',revision:2}]:[mine],hasMore:false,beforeSeq:0}
+      return []
+    })
+    await mount()
+    await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onEdit())
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('我的独立修改'))
+    recalled=true
+    await act(async()=>{invalidateTeamMessages('test:11');await tick()})
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('我的独立修改')
+    expect(renderer!.root.findAll(node=>node.props.mode==='reedit'&&node.props.text==='编辑源旧正文')).toHaveLength(0)
+  })
+
+  it('removes cached material immediately when recall proves conversation access was revoked', async () => {
+    const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤权前材料',template_kind:1},media:[]}
+    const lost = vi.fn()
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.timeline') return {conversation,messages:[mine],hasMore:false,beforeSeq:0}
+      if(op==='team.app.recall') throw {body:{code:'team-not_accessible',message:'无权访问'}}
+      return []
+    })
+    await act(async () => {renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={()=>{}} onAccessLost={lost}/>);await tick()})
+    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
+    await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+    expect(lost).toHaveBeenCalledOnce()
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('问题')
   })
 
   it.each(['team', 'external'] as const)('%s uses shared selection and detail UI without clearing the composer or issuing writes', async side => {
@@ -686,10 +859,13 @@ describe('Team send UI recovery', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('刷新失败')
     refreshFails = false
     await act(async () => {invalidateTeamMessages('test:11');await tick()})
-    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('问题')
+    const invalidated = renderer!.root.findByType(TeamConversationMessage).props.message
+    expect(invalidated.content).toBeUndefined()
+    expect(invalidated.contentStatus).toBe('revalidating')
+    expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('下一条')
   })
 
-  it('keeps staged image bytes visible when a minimal published ACK is followed by a failed refresh',async()=>{
+  it('keeps only staged visible media when a minimal published ACK is followed by a failed refresh',async()=>{
     const file={fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10}
     localStorage.setItem(storageKey,JSON.stringify({text:'图片',assets:[],localFiles:[file]}))
     let refreshFails=false
@@ -700,7 +876,7 @@ describe('Team send UI recovery', () => {
       }
       if(op==='team.app.send.enqueue'){
         refreshFails=true
-        return accepted({state:'sent',createdAtMillis:Date.now()-8*86400000,completedAtMillis:Date.now(),files:[file],message:{key:'image-ack',ref:'image-ack',seq:1,revision:1,side:'external',own:true,sender:{nickname:'我'},state:'published',createdAt:1,version:0,contentStatus:'',media:[]}})
+        return accepted({state:'sent',createdAtMillis:Date.now()-8*86400000,completedAtMillis:Date.now(),backgroundSound:{fileRefs:['private-recording'],amplitudes:[0,0.5]},files:[file,{fileRef:'private-recording',fileName:'private.webm',mimeType:'audio/webm',fileKind:2,size:10}],message:{key:'image-ack',ref:'image-ack',seq:1,revision:1,side:'external',own:true,sender:{nickname:'我'},state:'published',createdAt:1,version:0,contentStatus:'',media:[]}})
       }
       throw new Error(op)
     })
@@ -709,6 +885,8 @@ describe('Team send UI recovery', () => {
     expect(shown.contentStatus).toBe('available')
     expect(shown.content.text_content).toBe('图片')
     expect(shown.media[0].url).toBe('/local/local-image')
+    expect(shown.media).toHaveLength(1)
+    expect(JSON.stringify(shown)).not.toContain('private-recording')
   })
 
   it('retains the live editor DOM and selection on background invalidation', async () => {
@@ -1073,4 +1251,151 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeComposerSendButton).props.ariaLabel).toBe('重试')
     expect(JSON.stringify(renderer!.toJSON())).toContain('草稿未能保存到本机')
   })
+  it('recovers a frozen edit by exact receipt after remount without overwriting a later version',async()=>{
+    const pending={messageKey:'own',messageRef:'old-opaque-ref',version:1,content:{template_kind:1,text_content:'未确认的修改'},revisionUid:'stable-edit',protocolVersion:1,metadataRef:'sealed-private'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'下一条草稿',assets:[],pendingEdit:pending}))
+    const own:TeamMessage={key:'own',ref:'refreshed-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{template_kind:1,text_content:'后续版本'},media:[]}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.receipt'?{revisionUid:'stable-edit',accepted:true,acceptedVersion:2,currentVersion:3}:[])
+    await mount()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('未确认的修改')
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(true)
+    await send()
+    expect(mocks.call.mock.calls.filter(([op])=>op==='team.app.edit')).toHaveLength(0)
+    const saved=JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.pendingEdit).toBeUndefined();expect(saved.text).toBe('下一条草稿')
+  })
+  it.skipIf(!process.env.T15_OWNER_STACK)('UI input/send/edit/snapshot reaches the real owner stack',async()=>{
+    const live=await liveTeamSnapshotStack(process.env.T15_OWNER_STACK!)
+    try {
+      const opened=await live.dispatch('team.app.open',{publicRef:'a'.repeat(32)}) as {conversation:TeamConversation}
+      arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:2});socialAccessStore.confirm('test:2',true)
+      mocks.call.mockImplementation((op,params,signal)=>live.dispatch(op,params??{},signal))
+      await act(async()=>{renderer=create(<TeamConversationPane conversation={opened.conversation} accountKey="test:2" onChanged={()=>{}} />);await tick()})
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('T15 PC UI input'))
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false),{timeout:10000})
+      await send()
+      await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue'),JSON.stringify(renderer!.toJSON())).toBe(true),{timeout:10000})
+      await live.teamDelivery.recover()
+      await act(async()=>{invalidateTeamMessages('test:2');await tick()})
+      const ownRow=()=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.content?.text_content==='T15 PC UI input')!
+      await vi.waitFor(()=>expect(ownRow()?.props.message.canEdit).toBe(true),{timeout:10000})
+      await act(async()=>{ownRow().props.onSnapshot();await tick()})
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail?.startAtMillis).toBeGreaterThan(0),{timeout:10000})
+      const initial=renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail
+      expect(initial.completeAtMillis).toBeGreaterThanOrEqual(initial.startAtMillis)
+      await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onClose())
+      await act(async()=>ownRow().props.onEdit())
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('T15 PC UI edited'))
+      await send()
+      await vi.waitFor(()=>expect(renderer!.root.findAllByType(TeamConversationMessage).some(row=>row.props.message.content?.text_content==='T15 PC UI edited'),JSON.stringify(live.trace.slice(-8))).toBe(true),{timeout:10000})
+      const edited=renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.content?.text_content==='T15 PC UI edited')!
+      await act(async()=>edited.props.onSnapshot())
+      await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail?.editDurationMillis).toBeGreaterThanOrEqual(0),{timeout:10000})
+      expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail.startAtMillis).toBe(initial.startAtMillis)
+      live.fixture.pcUIEndToEnd=true;await live.save()
+    } finally {await act(async()=>renderer?.unmount());renderer=undefined;await live.close()}
+  },30000)
+  it('freezes location before a slow background-file stage completes',async()=>{
+    const finish=vi.spyOn(ArkmeRecordInputCaptureOwner.prototype,'finishForSubmit').mockResolvedValue({schemaVersion:1,captureId:'frozen',completedAtMillis:1000,recordDurationMillis:0,captureContext:{clientName:'frozen device'},backgroundSound:{enabled:true,state:'ready',segments:[{blob:new Blob(['recorded']),fileName:'background.webm',amplitudes:[0,0.5]}],amplitudes:[0,0.5]}} as never);
+    const location=vi.spyOn(recordLocation,'captureArkmeRecordLocation').mockResolvedValue({latitude:30,longitude:114,capturedAtMillis:1000});
+    let release!:(v:unknown)=>void;
+    mocks.stage.mockImplementation(()=>new Promise(resolve=>release=resolve));
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.capabilities'?{schemaVersion:1,recordPropertiesVersion:1}:op==='team.app.snapshot.seal'?{metadataRef:'sealed'}:op==='team.app.send.enqueue'?accepted():[]);
+    try {
+      await mount();await send();
+      await vi.waitFor(()=>expect(mocks.stage).toHaveBeenCalled());
+      expect(location).toHaveBeenCalledOnce();
+      expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false);
+      await act(async()=>{release({fileRef:'background-local',fileName:'background.webm',mimeType:'audio/webm',size:8,fileKind:2});await tick()});
+      await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(true));
+      expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].backgroundSound.fileRefs).toEqual(['background-local']);
+    } finally {finish.mockRestore();location.mockRestore();mocks.stage.mockReset()}
+  });
+  it('freezes the input only during metadata preparation and accepts the original send',async()=>{
+    const reply={messageRef:'parent-ref',messageKey:'parent',version:1,text:'original parent',senderName:'同事'}
+    localStorage.setItem(storageKey,JSON.stringify({text:'问题',assets:[],reply}))
+    let release!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.capabilities'?new Promise(resolve=>release=resolve):op==='team.app.send.enqueue'?accepted():[])
+    await mount();await send()
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(true)
+    expect(renderer!.root.findByType(ArkmeComposerTargetPreview).props.disabled).toBe(true)
+    await act(async()=>renderer!.root.findByType(ArkmeComposerTargetPreview).props.onClose())
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('must not replace frozen input'))
+    await act(async()=>release({schemaVersion:0}))
+    await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(true))
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].content.text_content).toBe('问题')
+    expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].reply).toEqual(reply)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('next draft'))
+    expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('next draft')
+  })
+  it('can dismiss an orphaned edit recovery item while preserving the next composer',async()=>{
+    localStorage.setItem(storageKey,JSON.stringify({text:'下一条草稿',assets:[],pendingEdit:{messageKey:'deleted',messageRef:'old-ref',version:1,content:{template_kind:1,text_content:'old edit'},revisionUid:'stable-edit',protocolVersion:1,metadataRef:'sealed-private'}}))
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    const dismiss=renderer!.root.findAllByType('button').find(button=>button.children.includes('关闭待核对项'))!
+    await act(async()=>dismiss.props.onClick())
+    const saved=JSON.parse(localStorage.getItem(storageKey)!)
+    expect(saved.pendingEdit).toBeUndefined();expect(saved.text).toBe('下一条草稿')
+    expect(mocks.call.mock.calls.some(([op])=>op==='team.app.edit')).toBe(false)
+  })
+  it('discards a late private snapshot after closing the dialog',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'body'},media:[]}
+    let finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise(resolve=>finish=resolve):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onClose())
+    await act(async()=>finish({schemaVersion:1,version:1,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'private-device'}}}))
+    expect(renderer!.root.findAllByType(ArkmeMessageSnapshotDialog)).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('private-device')
+  })
+
+  it('does not reload private snapshots from focus online or retry while hidden',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'original preview'},media:[]}
+    const value={schemaVersion:1,version:1,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'private-device'}}}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?value:[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const reads=()=>mocks.call.mock.calls.filter(([op])=>op==='team.app.snapshot.read').length
+    const before=reads()
+    const visibility=vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden')
+    await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
+    await act(async()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'))})
+    await act(async()=>renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.onRetry())
+    expect(reads()).toBe(before)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('private-device')
+    visibility.mockReturnValue('visible')
+    await act(async()=>document.dispatchEvent(new Event('visibilitychange')))
+    expect(reads()).toBe(before+1)
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail.captureContext.clientName).toBe('private-device')
+  })
+  it('preserves the original snapshot message preview during loading and failure',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'original message preview'},media:[]}
+    let reject!:(reason:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise((_,fail)=>reject=fail):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).findByType(ArkmeRichText).props.text).toBe('original message preview')
+    await act(async()=>reject(new Error('temporary read failure')))
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).findByType(ArkmeRichText).props.text).toBe('original message preview')
+  })
+
+  it('discards a private response if visibility changed before the lifecycle event',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'body'},media:[]}
+    let finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?new Promise(resolve=>finish=resolve):[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden')
+    await act(async()=>finish({schemaVersion:1,detail:{captureContext:{clientName:'private-hidden-device'}}}))
+    expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail).toBeUndefined()
+  })
+
+  it('rejects snapshot facts for a newer version than the displayed message',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'version one preview'},media:[]}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?{schemaVersion:1,version:2,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'newer-private-device'}}}:[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const snapshot=renderer!.root.findByType(ArkmeMessageSnapshotDialog)
+    expect(snapshot.props.detail).toBeUndefined()
+    expect(snapshot.props.loadError).toContain('消息已更新')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('newer-private-device')
+  })
+
 })

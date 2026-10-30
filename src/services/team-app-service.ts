@@ -1,8 +1,11 @@
+import {TeamMemberAddition} from './team-member-addition.js'
 import { GroupRepresentationCodec } from './group-representation.js'
+import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
+import { teamMessageProjection } from '../team-message-projection.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
 import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
@@ -50,7 +53,9 @@ const reasons: Record<string, string> = {
   invalid_external_chat: '对外私聊请求无效，请重新打开',
   conversation_blocked: '此对话已被屏蔽，双方暂时不能发送或编辑消息',
   official_unavailable: '暂时无法联系作者，请稍后重试',
+  member_management_forbidden: '仅当前团队所有者或管理员可添加成员', request_conflict: '同一批次的成员不一致，请核对原批次', snapshot_stale: '团队成员已变化，请重新加载',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
+  message_recalled:'消息已撤回', message_not_published:'消息尚未发布，请取消发送',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
@@ -59,6 +64,13 @@ const reasons: Record<string, string> = {
   annotation_limit:'这条消息的共享标记已达上限，请先取消不需要的标记',
   rate_limited: '操作过于频繁，请稍后使用原请求重试',
   dependency_unavailable: '服务暂时不可用，请使用原请求重试', approval_required: '已启用加入审批', already_member: '你已经是团队成员',
+}
+
+// Publication and frozen-capture persistence are separate acknowledgements.
+function requireFrozenMetadataSaved(data: Record<string, unknown>, required: boolean): void {
+  if (required && data.state === 'published' && data.metadata_saved !== true) {
+    throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503, {writeOutcomeUnknown:true})
+  }
 }
 
 // Signing credentials authorize a download; they do not identify its pixels.
@@ -96,11 +108,11 @@ export class TeamAppService {
 
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
-    return await this.codec.seal(`team-app-${kind}`, { ...value, viewer: actor })
+    return await this.codec.seal(`team-app-${kind}`, { ...value, viewer: actor, environment: this.runtime.config.environment })
   }
   private async open(kind: string, value: unknown, actor: number): Promise<Record<string, unknown>> {
     const decoded = await this.codec.open(`team-app-${kind}`, str(value))
-    if (decoded.viewer !== actor) throw invalid()
+    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
     return decoded
   }
   async resolveConversation(ref:string,actor:number):Promise<{conversation_uid:string;side:TeamSide}>{
@@ -119,6 +131,14 @@ export class TeamAppService {
   async conversationKey(ref: string, actor: number): Promise<string> {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
+  }
+  async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
+    return {kind:hint.kind,
+      ...(hint.messageRevision?{messageRevision:hint.messageRevision}:{}),
+      ...(hint.conversationRevision?{conversationRevision:hint.conversationRevision}:{}),
+      ...(hint.sequence?{sequence:hint.sequence}:{}),
+      ...(hint.messageUid?{messageKey:await this.key(hint.messageUid,actor)}:{}),
+      ...(hint.conversationUid?{conversationKeys:await Promise.all(['team','external'].map(side=>this.key(`${hint.conversationUid}:${side}`,actor)))}:{})}
   }
   async reactionTarget(conversationRef:string,messageRef:string):Promise<import('./reaction-service.js').ReactionWireTarget>{
     const actor=(await this.runtime.requireSession()).userId
@@ -236,7 +256,7 @@ export class TeamAppService {
     }))
   }
   private async message(raw: unknown, actor: number, context: Record<string, unknown>): Promise<TeamMessage> {
-    const v = obj(raw), content = obj(v.record), uid = str(v.message_uid)
+    const v = obj(raw), content = v.state === 'recalled' ? {} : obj(v.record), uid = str(v.message_uid)
     const locator = { conversation_uid: context.conversation_uid, side: context.side, message_uid: uid, message_side: v.side, sender_user_id: recordOwnerId(v.actor_user_id), ...(obj(content.content_payload).mention_metadata ? { has_mentions: true } : {}) }
     const mentions = []
     if (context.side === 'team') {
@@ -260,21 +280,22 @@ export class TeamAppService {
     const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
-    return { ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
+    return teamMessageProjection({ ...(v.own===true&&typeof v.metadata_saved==='boolean'?{metadataSaved:v.metadata_saved}:{}), ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),
       side: v.side === 'team' ? 'team' : 'external', sender: await this.identity(v.sender, actor, { id: v.actor_user_id, context }), own: v.own === true,
+      canRecall: v.can_recall === true, ...(v.state === 'recalled' ? {recalledAt:num(v.recalled_at)} : {}),
       state: str(v.state), createdAt: num(v.created_at), canEdit: v.can_edit === true, canDelete: v.can_delete === true,
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       ...(replyPreview ? {reply:replyPreview} : {}),
-      version: num(content.version), contentStatus: str(content.status), ...(v.record ? { content: {
+      version: num(content.version), contentStatus: str(content.status), ...(v.record && v.state !== 'recalled' ? { content: {
         ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
         ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
       media: projectedMedia,
       ...(forwardRecords?{forwardRecords}:{}),
-    }
+    })
   }
 
   private async externalShare(v: Record<string,unknown>, actor: number): Promise<import('../team-external-chat-contract.js').ExternalChatShare> {
@@ -296,6 +317,18 @@ export class TeamAppService {
       title:str(n.title), body:str(n.body), eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
   }
 
+  private async frozenMetadata(ref: unknown, actor: number, context: Record<string, unknown>, uid: string, kind: 'send'|'edit', messageUid?: unknown) {
+    const value = await this.codec.open('team-app-capture', str(ref))
+    if (value.viewer !== actor || value.environment !== this.runtime.config.environment || value.conversation_uid !== context.conversation_uid || value.side !== context.side || value.operation_uid !== uid || value.kind !== kind || (kind === 'edit' && value.message_uid !== messageUid)) throw invalid()
+    return kind === 'send' ? readTeamRecordMetadata(value.metadata) : readTeamEditMetadata(value.metadata)
+  }
+  async sendMetadataDigest(conversationRef: string, uid: string, ref: string, actor: number): Promise<string> {
+    const session = await this.assertViewer(undefined)
+    if (session.userId !== actor) throw invalid()
+    const context = await this.resolveConversation(conversationRef, actor)
+    const metadata = await this.frozenMetadata(ref, actor, context, uid, 'send')
+    return createHash('sha256').update(JSON.stringify(metadata)).digest('hex')
+  }
   async assertViewer(expectedAccountKey: unknown): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
     if (expectedAccountKey !== undefined && expectedAccountKey !== `${this.runtime.config.environment}:${session.userId}`) {
@@ -388,7 +421,11 @@ export class TeamAppService {
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
     }
-    const teamID = async () => (await this.open('team', p.teamRef, actor)).team_id
+    const teamID = async () => {
+      const value = await this.open('team', p.teamRef, actor)
+      if ((operation === 'team.app.member-candidates' || operation.startsWith('team.app.members.add')) && value.environment !== this.runtime.config.environment) throw invalid()
+      return value.team_id
+    }
     const conversation = async () => {
       const v = await this.open('conversation', p.conversationRef, actor)
       return { conversation_uid: v.conversation_uid, side: v.side }
@@ -398,6 +435,41 @@ export class TeamAppService {
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
     }
     switch (operation) {
+      case 'team.app.snapshot.capabilities': {
+        try { const data = await post('conversations/messages/metadata/capabilities', {}, true); return { schemaVersion: data.schema_version === 1 ? 1 : 0, recordPropertiesVersion: data.schema_version === 1 && data.record_properties_version === 1 ? 1 : 0 } }
+        catch (error) { if (error instanceof ArkmePluginError && error.upstreamStatus === 404) return {schemaVersion: 0,recordPropertiesVersion:0}; throw error }
+      }
+      case 'team.app.snapshot.seal': {
+        const capability = obj(await this.dispatch('team.app.snapshot.capabilities',{},session,post,signal))
+        if (capability.recordPropertiesVersion !== 1) throw new ArkmePluginError('team-snapshot-unsupported','当前服务尚不支持完整快记属性',false,409)
+        if(p.kind!=='send'&&p.kind!=='edit')throw invalid()
+        const context = await conversation(), uid = str(p.operationUid), kind = p.kind === 'edit' ? 'edit' : 'send'
+        if (!/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(uid) || !await this.runtime.stateStore.uniqueCode()) throw invalid()
+        const target = kind === 'edit' ? await message() : undefined
+        if (target && (target.conversation_uid !== context.conversation_uid || target.side !== context.side)) throw invalid()
+        const metadata = kind === 'send' ? readTeamRecordMetadata(p.metadata) : readTeamEditMetadata(p.metadata)
+        if (kind === 'edit' && (metadata as import('../team-snapshot-contract.js').TeamEditMetadata).revision_uid !== uid) throw invalid()
+        return { metadataRef: await this.codec.seal('team-app-capture', {viewer:actor, environment:this.runtime.config.environment, ...context, operation_uid:uid, kind, ...(target ? {message_uid:target.message_uid} : {}), metadata}) }
+      }
+      case 'team.app.snapshot.read': case 'team.app.snapshot.receipt': {
+        const context = await conversation(), target = await message()
+        if (target.conversation_uid !== context.conversation_uid || target.side !== context.side) throw invalid()
+        const capability=obj(await this.dispatch('team.app.snapshot.capabilities',{},session,post,signal))
+        if(capability.schemaVersion!==1)throw new ArkmePluginError('team-snapshot-unsupported','当前服务尚不支持团队记忆快照',false,409)
+        if (operation === 'team.app.snapshot.receipt') {
+          const data = await post('conversations/messages/edit-receipt/get', {...target, revision_uid:str(p.revisionUid)}, true)
+          return {revisionUid:str(data.revision_uid), accepted:data.accepted===true, ...(num(data.accepted_version)>0?{acceptedVersion:num(data.accepted_version)}:{}), ...(num(data.current_version)>0?{currentVersion:num(data.current_version)}:{})}
+        }
+        const raw = await post('conversations/messages/snapshot/get', target, true)
+        const snapshot = decodeTeamMessageSnapshot(raw, str(p.messageRef))
+        const background = await this.mediaItems(Array.isArray(raw.background_sound) ? raw.background_sound.filter(file => obj(file).delivery_state === 1) : [], actor, {...target,private_snapshot:true}, snapshot.version)
+        if (background.length) {
+          snapshot.detail.backgroundSound = 'available'
+          snapshot.detail.backgroundSoundPlayback = {mediaRefs:[],mediaUrls:background.map(file => file.url),amplitudes:(Array.isArray(raw.background_sound_amplitudes) ? raw.background_sound_amplitudes : []).filter((n):n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1).slice(-4096)}
+        }
+        return snapshot
+      }
+
       case 'team.app.external.mine': case 'team.app.external.share': {
         const source = await this.contacts?.openSourceRef?.(str(p.sourceRef), actor)
         if (!source || source.kind !== 'private_chat') throw invalid()
@@ -500,7 +572,8 @@ export class TeamAppService {
       }
       case 'team.app.members': {
         const id = await teamID()
-        const [data, mine] = await Promise.all([post('members/list', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { page_cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        const [data, mine] = await Promise.all([post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        if (!Number.isSafeInteger(data.member_count) || Number(data.member_count) < 1 || !Number.isSafeInteger(data.membership_revision) || Number(data.membership_revision) < 0 || typeof data.can_add_members !== 'boolean' || typeof data.has_more !== 'boolean' || !Array.isArray(data.items) || data.has_more && !str(data.next_cursor)) throw invalid()
         const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         const members = list(data.items)
@@ -534,8 +607,8 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { team: await this.team(selected, actor), totalCount: num(data.total_count), hasMore: data.has_more === true, avatarState,
-          ...(data.next_page_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_page_cursor }, actor) } : {}),
+        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
@@ -668,41 +741,20 @@ export class TeamAppService {
         }
         return { state: 'backend_pending' } satisfies TeamGroupPending
       }
-      case 'team.app.member-candidates': case 'team.app.members.add': {
+      case 'team.app.members.add': case 'team.app.members.add-recover': case 'team.app.members.add-retry': case 'team.app.members.add-ack': {
+        const teamId = String(await teamID()), scope = `${this.runtime.config.environment}:${actor}`
+        const journal = this.runtime.stateStore.teamMemberAddition
+        if (!journal) throw new ArkmePluginError('team-member-storage-unavailable', '成员添加恢复存储不可用', true, 503)
+        const owner = new TeamMemberAddition({actor, teamId, post,
+          open: ref => this.open('member-candidate', ref, actor), key: userId => this.key(`member-candidate:${teamId}:${userId}`, actor),
+          journal: change => journal.call(this.runtime.stateStore, scope, teamId, change)})
+        if (operation === 'team.app.members.add-recover') return owner.recover()
+        if (operation === 'team.app.members.add-retry') return owner.retry()
+        if (operation === 'team.app.members.add-ack') return owner.ack(p.requestUid)
+        return owner.add(p.requestUid, p.candidateRefs)
+      }
+      case 'team.app.member-candidates': {
         const id = await teamID()
-        const mine = await post('list-mine', {}, true)
-        const currentTeam = list(mine.teams).find(team => String(team.team_id) === String(id))
-        if (!currentTeam || !['owner', 'admin'].includes(role(currentTeam.role))) {
-          throw new ArkmePluginError('team-member-add-forbidden', '仅团队所有者或管理员可添加成员', false, 403)
-        }
-        // Membership is authoritative. Do not label unknown users as non-members
-        // when an incomplete page or failed membership read prevents that check.
-        const members = new Set<string>(), cursors = new Set<string>()
-        let cursor = ''
-        for (let page = 0; ; page++) {
-          if (page >= 100) throw new ArkmePluginError('team-members-incomplete', '团队成员未读取完整，请稍后重试', true, 502)
-          const data = await post('members/list', { team_id: id, limit: 50, ...(cursor ? { page_cursor: cursor } : {}) }, true)
-          if (!Array.isArray(data.items) || typeof data.has_more !== 'boolean' || data.items.some(raw => !recordOwnerId(obj(raw).user_id))) throw invalid()
-          for (const member of list(data.items)) members.add(String(recordOwnerId(member.user_id)))
-          if (!data.has_more) break
-          const next = str(data.next_page_cursor)
-          if (!next || cursors.has(next)) throw invalid()
-          cursors.add(next); cursor = next
-        }
-        if (operation === 'team.app.members.add') {
-          if (!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid)) || !Array.isArray(p.candidateRefs)
-            || p.candidateRefs.length < 1 || p.candidateRefs.length > 50) throw invalid()
-          const selected = new Set<number>()
-          for (const ref of p.candidateRefs) {
-            const value = await this.open('member-candidate', ref, actor), userId = num(value.user_id)
-            if (String(value.team_id) !== String(id) || userId <= 0 || num(value.expires) < Date.now() || selected.has(userId)) throw invalid()
-            if (userId === actor || members.has(String(userId))) throw new ArkmePluginError('team-already-member', '所选用户已经加入团队，请刷新候选列表', false, 409)
-            selected.add(userId)
-          }
-          // No backend direct-add contract is connected yet. Never repurpose a
-          // group membership mutation or report a successful team addition.
-          return { state: 'backend_pending' } satisfies TeamMemberAddResult
-        }
         if (!this.memberCandidates || !['contacts', 'conversations', 'group'].includes(str(p.source))) throw invalid()
         const source = p.source as TeamMemberCandidateSource, sourceRef = str(p.sourceRef)
         if (source === 'group' && !sourceRef) throw invalid()
@@ -713,10 +765,30 @@ export class TeamAppService {
         })
         if (data.hasMore && !data.nextCursor) throw invalid()
         const unique = new Map(data.items.map(item => [item.userId, item]))
+        const members = new Set<string>(), candidates = [...unique.values()]
+        // Only resolve the current candidate page; no full-roster scan.
+        for (let offset = 0; offset < candidates.length; offset += 50) {
+          const ids = candidates.slice(offset, offset + 50).map(row => {
+            if (!Number.isSafeInteger(row.userId) || row.userId <= 0) throw invalid()
+            return String(row.userId)
+          })
+          const state = await post('members/query', {team_id: id, user_ids: ids}, true)
+          if (state.can_add_members !== true || !Array.isArray(state.items) || state.items.length !== ids.length) throw invalid()
+          const seen = new Set<string>()
+          for (const raw of list(state.items)) {
+            const key = String(recordOwnerId(raw.user_id))
+            if (!ids.includes(key) || seen.has(key) || typeof raw.active !== 'boolean') throw invalid()
+            seen.add(key); if (raw.active) members.add(key)
+          }
+        }
+        if (!candidates.length) {
+          const state = await post('members/query', {team_id: id, user_ids: [String(actor)]}, true)
+          if (state.can_add_members !== true || !Array.isArray(state.items) || state.items.length !== 1) throw invalid()
+        }
         const items = await Promise.all([...unique.values()].map(async ({ userId, ...identity }) => {
           if (!Number.isSafeInteger(userId) || userId <= 0) throw invalid()
           return { ...identity, key: await this.key(`member-candidate:${id}:${userId}`, actor),
-            candidateRef: await this.ref('member-candidate', { team_id: id, user_id: userId, expires: Date.now() + 60 * 60_000 }, actor),
+            candidateRef: await this.ref('member-candidate', { team_id: id, user_id: userId, display_name: identity.displayName, expires: Date.now() + 60 * 60_000 }, actor),
             alreadyMember: members.has(String(userId)), isSelf: userId === actor }
         }))
         return { items, groups: data.groups ?? [], hasMore: data.hasMore,
@@ -902,12 +974,15 @@ export class TeamAppService {
         if (p.quote !== undefined && (!quote || !reply || quote.recordVersion !== num(p.replyRecordVersion))) throw invalid()
         try {
           const data = await post('conversations/messages/send', { ...context, client_message_uid: str(p.clientUid), expected_reply_seq: num(p.expectedReplySeq), content: await this.mentionContent(p.content,actor,context),
+            ...(p.metadataRef ? {record_metadata:await this.frozenMetadata(p.metadataRef,actor,context,str(p.clientUid),'send')} : {}),
             ...(reply ? {reply_to:reply.message_uid,...(num(p.replyRecordVersion)>0 ? {reply_record_version:num(p.replyRecordVersion)} : {}),...(quote ? {quote} : {})} : {}) })
+          requireFrozenMetadataSaved(data, !!p.metadataRef)
           return { message: await this.message(data, actor, context) }
         } catch (error) {
           if (!(error instanceof ArkmeUpstreamResponseError)) throw error
           const data = obj(error.responseData), pending = obj(data.operation)
           if (!pending.message_uid) throw error
+          requireFrozenMetadataSaved(pending, !!p.metadataRef)
           return { reason: str(data.reason), message: await this.message(pending, actor, context) }
         }
       }
@@ -918,6 +993,7 @@ export class TeamAppService {
       }
       case 'team.app.edit': {
         const m = await this.open('message', p.messageRef, actor), explicitMentions = obj(p.content).mentions !== undefined, content = await this.mentionContent(p.content,actor,m), payload = {...obj(content.content_payload)}
+        if (p.conversationRef) {const context=await conversation();if(context.conversation_uid!==m.conversation_uid||context.side!==m.side)throw invalid()}
         if (m.has_mentions === true && !explicitMentions) {
           const data = await post('conversations/messages/batch-get', {conversation_uid:m.conversation_uid,side:m.side,items:[{message_uid:m.message_uid,expected_record_version:num(p.version)}]}, true)
           const rows = list(data.messages), row = rows[0], original = obj(row?.record)
@@ -926,7 +1002,8 @@ export class TeamAppService {
           if (mentions) payload.mention_metadata = mentions
           if (Object.keys(payload).length) content.content_payload = {...payload, payload_kind:payload.payload_kind ?? 1, schema_version:1, text_state:1}
         }
-        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content})
+        return await post('conversations/messages/update', {message_uid:m.message_uid,side:m.side,expected_record_version:num(p.version),content,
+          ...(p.metadataRef ? await this.frozenMetadata(p.metadataRef,actor,m,str(p.revisionUid),'edit',m.message_uid) : p.revisionUid ? {revision_uid:str(p.revisionUid)} : {})})
       }
       case 'team.app.cancel': {
         if (p.conversationRef !== undefined) {
@@ -936,6 +1013,19 @@ export class TeamAppService {
         }
         const m = await message()
         return await post('conversations/messages/cancel', { message_uid: m.message_uid, side: m.side })
+      }
+      case 'team.app.recall': {
+        const context=await conversation(), m=await message()
+        if (m.conversation_uid!==context.conversation_uid || m.side!==context.side) throw invalid()
+        try {
+          const data=await post('conversations/messages/recall',{...context,message_uid:m.message_uid})
+          return {message:await this.message(data.message,actor,context),changed:data.changed===true}
+        } catch (error) {
+          signal?.throwIfAborted()
+          const current=await post('conversations/messages/send-status',{message_uid:m.message_uid,side:m.side})
+          if (current.state !== 'recalled') throw error
+          return {message:await this.message(current,actor,context),changed:false}
+        }
       }
       case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
       case 'team.app.notification-policy.get': {
@@ -992,7 +1082,9 @@ export class TeamAppService {
         if (!Array.isArray(data.items) || rows.length !== ids.length || byId.size !== ids.length || !Number.isSafeInteger(data.last_seq) || num(data.last_seq) < 0 || !Number.isSafeInteger(data.my_read_seq) || num(data.my_read_seq) < 0 || !Number.isSafeInteger(data.unread) || num(data.unread) < 0) throw invalid()
         return { items: await Promise.all(ids.map(async id => {
           const row = byId.get(id)
-          if (!row || typeof row.team_read !== 'boolean') throw invalid()
+          if (!row) throw invalid()
+          if (row.unavailable_reason === 'message_recalled') return {key:await this.key(id,actor),unavailableReason:'message_recalled'}
+          if (typeof row.team_read !== 'boolean') throw invalid()
           return { key: await this.key(id, actor), teamRead: row.team_read,
             ...(first.side === 'team' ? { summary: receiptCounts(row.summary), ...(typeof row.visitor_read === 'boolean' ? {visitorRead: row.visitor_read} : {}) } : {}) }
         })), lastSeq: num(data.last_seq), myReadSeq: num(data.my_read_seq), unread: num(data.unread) }
@@ -1070,7 +1162,7 @@ export class TeamAppService {
       if (!response.ok || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
       return { response, fileName: str(ref.file_name) || '附件', mimeType: str(ref.mime_type) || 'application/octet-stream', size: num(asset.size) }
     }
-    const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false }
+    const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false, ...(ref.private_snapshot === true ? {private_snapshot:true} : {}) }
     if (!this.runtime.config.teamBaseUrl) throw invalid()
     let session = initial
     const fetchMedia = () => this.runtime.fetchImpl(`${this.runtime.config.teamBaseUrl}/api/v1/team/conversations/messages/media`, {
@@ -1081,7 +1173,12 @@ export class TeamAppService {
     if (response.status === 401 || response.status === 403) { await response.body?.cancel(); session = await this.runtime.refreshAccessToken(session); response = await fetchMedia() }
     const current = await this.runtime.accountScopedSession()
     if (signal.aborted || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
-    if (!response.ok || response.headers.get('content-type')?.includes('application/json')) { await response.body?.cancel(); throw new ArkmePluginError('team-not_accessible', '附件已失效或无权访问，请刷新消息', false, 403) }
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const failure=obj(await response.json())
+      if(obj(failure.data).reason==='message_recalled') throw new ArkmePluginError('team-message_recalled','消息已撤回',false,409)
+      throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)
+    }
+    if (!response.ok) {await response.body?.cancel();throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)}
     return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream',size:num(ref.size) }
   }
   private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
