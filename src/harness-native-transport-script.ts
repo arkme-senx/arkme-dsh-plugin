@@ -27,7 +27,8 @@ function installNativeTransport(route: string): void {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(runtime) || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new Error('会话来源标识无效')
     return { runtime, id: value }
   }
-  const availability = () => surface.setAttribute('data-arkme-source-writable', String(!split(selected) || writable.get(split(selected)!.runtime) === true))
+  const canWrite = (id: string | undefined) => { const source = split(id); return !source || writable.get(source.runtime) === true }
+  const availability = () => surface.setAttribute('data-arkme-source-writable', String(canWrite(selected)))
   const scheduleFailure = (id: string | undefined, code?: string) => {
     if (id !== selected) return
     if (code) surface.setAttribute('data-arkme-schedule-error', code)
@@ -57,7 +58,8 @@ function installNativeTransport(route: string): void {
   }
   const events = new Set<ReturnType<typeof inbox>>(), controls = new Set<ReturnType<typeof inbox>>()
   const emit = (frame: Json) => { for (const queue of events) queue.push(frame) }
-  const control = (frame: Json) => { for (const queue of controls) queue.push(frame) }
+  // A baseline starts a new native control generation; never inject a second one.
+  const control = (frame: SessionControlFrame) => { for (const queue of controls) { if (frame.type === 'baseline') queue.end(); else queue.push(frame) } }
   const localRows = new Map<string, Json>(), folded = new Map<string, DshAccountSession>(), hiddenRemote = new Map<string, string>()
   const aliasCandidates = new Map<string, DshAccountSession[]>()
   let localRuntimeRef: string | undefined
@@ -79,8 +81,9 @@ function installNativeTransport(route: string): void {
         && cut !== undefined && cut.runtimeRef === localRuntimeRef
     })
     const row = matches.length === 1 ? matches[0] : undefined
-    // Do not move an active/selected local conversation when an upload completes.
-    return row && !row.archived && (local.running || selected === local.sessionId)
+    // A verified native journal stays executable even when idle. Cloud history
+    // must not displace its local owner after an upload or Runtime change.
+    return row && !row.archived
       ? { ...row, coveredLocalHistory: { ...row.coveredLocalHistory!, source: 'local' } } : row
   }
   const preferred = (row: DshAccountSession) => row.coveredLocalHistory?.source === 'local' ? row.sessionRef : identity(row.runtimeRef, row.sessionRef)
@@ -167,7 +170,7 @@ function installNativeTransport(route: string): void {
     },
     canonicalLocal(id: string) { const row = folded.get(id); return row && row.coveredLocalHistory?.source !== 'local' ? preferred(row) : undefined },
     preferredSession(id: string) { const row = folded.get(id); return row ? preferred(row) : hiddenRemote.get(id) },
-    writable(id: string) { const source = split(id); return !source || writable.get(source.runtime) === true },
+    writable(id: string) { return canWrite(id) },
     select(id: string | undefined) {
       const changed = selected !== id
       selected = id
@@ -270,6 +273,7 @@ function installNativeTransport(route: string): void {
       while (!signal.aborted) {
         const page = await request(runtime, { mode: 'pull', streamRef, ...(opening ? { endpoint, payload } : {}) }, signal) as Json
         opening = false
+        if (page.sourceWritable === false) throw new Error('源实例当前不可写')
         for (const value of page.items) { signal.throwIfAborted(); yield value }
         if (page.done) return
       }
@@ -327,6 +331,10 @@ function installNativeTransport(route: string): void {
       const pump = async (endpoint: string) => {
         while (!scoped.aborted) {
         try {
+          if (writable.get(runtime) !== true) { await new Promise<void>(resolve => {
+            const done = () => { clearTimeout(timer); scoped.removeEventListener('abort', done); resolve() }
+            const timer = setTimeout(done, 1000); scoped.addEventListener('abort', done, { once: true })
+          }); continue }
           for await (const frame of remoteStream(runtime, endpoint, { args: {} }, scoped)) {
             if (endpoint === '$events') {
               if (frame.type === 'ready') { (state as { clientId?: string }).clientId = frame.clientId; continue }
@@ -390,7 +398,7 @@ function installNativeTransport(route: string): void {
       if (event) {
         target.runtime = event.runtime; target.payload.args.eventId = event.id
         const clientId = sources.get(event.runtime)?.clientId
-        if (!clientId) throw new Error('源实例交互已结束')
+        if (!clientId) return Response.json({ type: 'server-response', rpcId: message.rpcId, result: failure('源实例交互已结束') })
         target.payload.args.clientId = clientId
       }
       if (!target.runtime) {
@@ -405,10 +413,11 @@ function installNativeTransport(route: string): void {
         return Response.json(envelope)
       }
       const endpoint = message.method
-      // Phase one: only actions with complete per-session routing are admitted.
-      const allowed = ['session/page', 'session/prompt', 'session/cancel', 'session/rename', 'session/updateQueue', 'session/attachment', 'messageFeedback/list', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', '$events/result', 'schedule/catalog', 'schedule/list', 'schedule/history', 'schedule/update', 'schedule/delete']
+      const reads = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history']
+      const writes = ['session/prompt', 'session/cancel', 'session/updateQueue', 'session/attachment', '$events/result']
+      const allowed = [...reads, ...(writable.get(target.runtime) === true ? writes : [])]
       let result: any
-      if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
+      if (!allowed.includes(endpoint)) result = failure('其他电脑的会话仅支持只读查看，请在对话所属电脑上执行。')
       else {
         try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined) }
         catch (error) {
@@ -430,9 +439,33 @@ function installNativeTransport(route: string): void {
     async *openStream(endpoint: string, payload: unknown, signal: AbortSignal) {
       const scoped = AbortSignal.any([signal, lifetime.signal]), target = addressed(payload)
       if (target.runtime) {
-        const release = retainSource(target.runtime, scoped)
-        try { for await (const frame of remoteStream(target.runtime, endpoint, target.payload, scoped)) yield nativeFrame(target.runtime, frame) }
-        finally { release() }
+        if (endpoint !== 'session/follow') throw Object.assign(new Error('不支持该远端订阅'), { code: 'CAPABILITY_UNSUPPORTED', details: {} })
+        // Keep an offline opening pending without polling the remote Host. The
+        // native journal owns reconnection after an accepted stream ends.
+        let accepted = false
+        while (!scoped.aborted) {
+          while (writable.get(target.runtime) !== true) {
+            scoped.throwIfAborted()
+            await new Promise<void>(resolve => {
+              const done = () => { clearTimeout(timer); scoped.removeEventListener('abort', done); resolve() }
+              const timer = setTimeout(done, 1000); scoped.addEventListener('abort', done, { once: true })
+            })
+          }
+          scoped.throwIfAborted()
+          const release = retainSource(target.runtime, scoped)
+          try {
+            for await (const frame of remoteStream(target.runtime, endpoint, target.payload, scoped)) {
+              accepted = true; yield nativeFrame(target.runtime, frame)
+            }
+            if (accepted) return
+            writable.set(target.runtime, false); availability()
+          } catch (error) {
+            if (scoped.aborted) throw error
+            writable.set(target.runtime, false); availability()
+            if (accepted) return // Native RemoteJournalStream opens a fresh generation.
+          } finally { release() }
+        }
+        scoped.throwIfAborted()
         return
       }
       if (endpoint !== '$events' && endpoint !== 'session/control') { yield* localStream(endpoint, payload, scoped); return }
@@ -443,8 +476,18 @@ function installNativeTransport(route: string): void {
         const pump = (async () => {
           try {
             for await (const frame of localStream(endpoint, payload, combined)) {
-              if (localFrame(frame as Json)) queue.push(frame)
-              if (endpoint === 'session/control' && (frame as Json).type === 'baseline') for (const source of sources.values()) for (const cached of source.frames.values()) queue.push(cached.value)
+              if (endpoint === 'session/control' && (frame as Json).type === 'baseline') {
+                const merged = structuredClone(frame) as Extract<SessionControlFrame, { type: 'baseline' }>
+                const projections = merged.value.projections as Record<string, any>
+                for (const source of sources.values()) for (const { value } of source.frames.values()) {
+                  if (value.type === 'baseline') Object.assign(projections, value.value.projections)
+                  else {
+                    const block = projections[value.sessionId] ??= { asOfSeq: value.seq, values: {} }
+                    block.asOfSeq = Math.max(block.asOfSeq, value.seq); block.values[value.key] = value.value
+                  }
+                }
+                if (localFrame(merged as Json)) queue.push(merged)
+              } else if (localFrame(frame as Json)) queue.push(frame)
               if (first) {
                 first = false; listeners.add(queue)
                 if (endpoint === '$events') for (const row of rows.values()) if (!hiddenRemote.has(identity(row.runtimeRef, row.sessionRef))) queue.push({ type: 'emit', event: 'api-session/added', args: [summary(row)] })

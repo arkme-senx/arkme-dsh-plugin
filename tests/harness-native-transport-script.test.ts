@@ -71,7 +71,7 @@ it('keeps local reminder reads on the native local API', async () => {
   await f.rpc('schedule/catalog', {}); await f.rpc('schedule/list', { request: { sessionId: 'local' } })
   expect(f.fetch.mock.calls.map(([url]) => String(url))).toEqual(['http://localhost:3000/api/schedule/catalog', 'http://localhost:3000/api/schedule/list'])
 })
-it('routes detail history and updates to their bound source without adding Session fields to native timing snapshots', async () => {
+it('routes foreign detail history to its bound source and blocks reminder updates', async () => {
   const f = fixture(); f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:linux:same')
   const expected = { id: 'task', kind: 'at', title: 'Reminder', prompt: 'Keep exact', scheduledAt: '2027-01-01T00:00:00Z' }
   f.fetch.mockImplementation(async (_url, init) => {
@@ -84,8 +84,8 @@ it('routes detail history and updates to their bound source without adding Sessi
   })
   await f.rpc('schedule/history', { request: { sessionId: 'arkme:windows:same', id: 'task', limit: 20 } })
   const request = { sessionId: 'arkme:windows:same', id: 'task', expected }
-  expect((await f.rpc('schedule/update', { request })).result.value.record).toEqual(expected)
-  expect(f.fetch).toHaveBeenCalledTimes(2)
+  expect((await f.rpc('schedule/update', { request })).result.ok).toBe(false)
+  expect(f.fetch).toHaveBeenCalledTimes(1)
 })
 it('distinguishes an offline store from a successfully empty list and preserves outer transport error codes', async () => {
   const f = fixture(); f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
@@ -185,74 +185,36 @@ it('updates activity through the native activity event and keeps unchanged direc
   expect((await stream.next()).value).toEqual({ type: 'emit', event: 'api-session/removed', args: ['arkme:windows:same'] })
   await stream.return()
 })
-it('routes writes by the addressed session, preserving text and in-flight target across selection changes', async () => {
+it('admits online conversation actions only, blocks offline and unsupported sources, and keeps routing exact', async () => {
   const f = fixture()
   f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
-  const result = f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same', text: 'arkme:linux:same' } })
-  f.directory.select('arkme:linux:same'); await result
-  expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body))).toMatchObject({ params: { runtimeRef: 'windows', body: { payload: { args: { request: { sessionId: 'same', text: 'arkme:linux:same' } } } } } })
+  for (const operation of ['session/rename', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', 'schedule/update', 'schedule/delete']) {
+    const result = await f.rpc(operation, { request: { sessionId: 'arkme:windows:same', text: 'arkme:linux:same' } })
+    expect(result.result.ok).toBe(false)
+  }
+  expect(f.fetch).not.toHaveBeenCalled(); expect(f.wire).not.toHaveBeenCalled()
   expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  expect(f.directory.writable('arkme:windows:same')).toBe(true); expect(f.directory.writable('local')).toBe(true)
+  for (const operation of ['session/prompt', 'session/cancel', 'session/updateQueue', 'session/attachment']) {
+    expect((await f.rpc(operation, { request: { sessionId: 'arkme:windows:same', content: [{ type: 'text', text: 'arkme:linux:same' }] } })).result.ok).toBe(true)
+    const { params } = JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body))
+    expect(params.runtimeRef).toBe('windows'); expect(params.body.payload.args.request.sessionId).toBe('same')
+    expect(params.body.payload.args.request.content[0].text).toBe('arkme:linux:same')
+  }
+  f.fetch.mockClear()
+  for (const extra of [{ presence: 'offline' }, { capabilities: [] }]) {
+    f.directory.publish([f.row('windows', extra)])
+    expect((await f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same' } })).result.ok).toBe(false)
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+  }
+  expect(f.fetch).not.toHaveBeenCalled()
   await expect(f.rpc('session/prompt', { agent: 'arkme:windows:same', request: { sessionId: 'arkme:linux:same' } })).rejects.toThrow('跨实例')
   await expect(f.rpc('session/prompt', { agent: 'local', request: { sessionId: 'arkme:linux:same' } })).rejects.toThrow('跨实例')
-  const calls = f.fetch.mock.calls.length
-  const unsupported = await f.rpc('session/selectModel', { request: { sessionId: 'arkme:windows:same', model: 'local-model' } })
-  expect(unsupported.result.ok).toBe(false); expect(f.fetch).toHaveBeenCalledTimes(calls)
 })
-it('routes native history with exact source identity, one remote socket and unchanged source events', async () => {
-  const f = fixture(), signal = new AbortController().signal
-  f.wire.mockImplementation(async (params: any) => ({ ok: true, value: params.body.endpoint === 'session/follow' ? {
-    items: [{ type: 'snapshot', header: { id: 'same' }, records: [{ type: 'event', event: { seq: 7, data: { text: 'same', sessionId: 'same' } } }] }], done: true,
-  } : { items: [], done: true } }) as any)
-  const stream = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, signal)[Symbol.asyncIterator]()
-  expect((await stream.next()).value).toMatchObject({ header: { id: 'arkme:windows:same' }, records: [{ event: { seq: 7, data: { sessionId: 'same' } } }] })
-  expect(f.wire.mock.calls.find(([p]) => p.body.endpoint === 'session/follow')![0]).toMatchObject({ runtimeRef: 'windows', body: { payload: { args: { request: { address: { sessionId: 'same' } } } } } })
-  expect(f.sockets).toHaveLength(1); expect(f.fetch).not.toHaveBeenCalled()
-  await stream.return(); f.listeners.get('pagehide')!(); expect(f.sockets[0]!.readyState).toBe(3)
-})
-it('keeps offline state scoped to the selected source and releases blocked streams on account disposal', async () => {
-  const f = fixture()
-  f.directory.publish([f.row('windows', { presence: 'offline' }), f.row('linux')])
-  f.directory.select('arkme:windows:same'); expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
-  f.directory.select('local'); expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
-  f.wire.mockImplementation(() => new Promise(() => {}))
-  const stream = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, new AbortController().signal)[Symbol.asyncIterator]()
-  const result = stream.next(); f.listeners.get('pagehide')!()
-  await expect(result).rejects.toMatchObject({ name: 'AbortError' })
-  expect(f.sockets.every(socket => socket.readyState === 3)).toBe(true)
-})
-it('replays current source baselines after local reconnects and clears only the released source', async () => {
-  const f = fixture(), abort = new AbortController()
-  const baseline = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'source-model' } } } } })
-  f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === 'session/control' ? [baseline]
-    : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, records: [] }] : [], done: true } }) as any)
-  const history = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
-  await history.next()
-  const openControl = () => f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  let control = openControl()
-  expect((await control.next()).value).toEqual(currentBaseline)
-  const forwarded = (await control.next()).value
-  expect(forwarded).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': baseline.value.projections.same } } })
-  await control.return(); control = openControl()
-  expect((await control.next()).value).toEqual(currentBaseline)
-  expect((await control.next()).value).toEqual(forwarded)
-  await history.return()
-  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 7, values: {} } } } })
-  await control.return()
-})
-it('returns interactive responses to the source event generation instead of the local client', async () => {
-  const f = fixture(), abort = new AbortController()
-  f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === '$events' ? [
-    { type: 'ready', clientId: 'source-client', host: { home: 'C:/' } },
-    { type: 'waterfall', event: 'question/ask', eventId: 'ask-1', agentId: 'same', request: { text: 'same' } },
-  ] : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, records: [] }] : [], done: true } }) as any)
-  const events = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator](); await events.next()
-  const history = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator](); await history.next()
-  const question = (await events.next()).value
-  expect(question).toMatchObject({ eventId: 'arkme:windows:ask-1', agentId: 'arkme:windows:same', request: { text: 'same' } })
-  await f.rpc('$events/result', { clientId: 'local-client', eventId: question.eventId, outcome: { kind: 'next' } })
-  expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body))).toMatchObject({ params: { runtimeRef: 'windows', body: { payload: { args: { eventId: 'ask-1', clientId: 'source-client' } } } } })
-  await history.return(); await events.return()
-})
+
+
+
+
 it('reopens only current local streams after carrier loss and keeps local RPC payloads unchanged', async () => {
   const f = fixture(), abort = new AbortController()
   const first = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator](); await first.next()
@@ -279,7 +241,7 @@ it('redirects a selected retired address after a complete canonical directory re
   expect(dispatchEvent).toHaveBeenCalledOnce()
 })
 
-it('keeps a single cloud entry while local and cloud metadata advance', async () => {
+it('keeps an idle native local entry executable while its cloud metadata advances', async () => {
   const f = fixture(), dispatchEvent = vi.fn()
   f.window.frameElement.parentElement.ownerDocument = { dispatchEvent, defaultView: { CustomEvent: class { constructor(public type: string, public init: unknown) {} } } }
   const local = { sessionId: 'same', updatedAt: 42, running: false, blank: false, projections: { asOfSeq: 3, values: { title: 'same' } } }
@@ -287,12 +249,16 @@ it('keeps a single cloud entry while local and cloud metadata advance', async ()
   const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3 } })
   await f.rpc('session/list', {})
   f.directory.publish([row], 'local-runtime')
-  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
+  expect(f.directory.canonicalLocal('same')).toBeUndefined()
   expect(dispatchEvent).not.toHaveBeenCalled()
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['same'])
+  expect(f.directory.preferredSession('arkme:canonical:same')).toBe('same')
+  await f.rpc('session/prompt', { request: { sessionId: 'same', prompt: '继续' } })
+  expect(f.fetch).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ body: expect.stringContaining('session/prompt') }))
+  expect(f.wire).not.toHaveBeenCalled()
   local.updatedAt = 43
-  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['arkme:canonical:same'])
-  expect(f.directory.canonicalLocal('same')).toBe('arkme:canonical:same')
+  expect((await f.rpc('session/list', {})).result.value.items.map((r: any) => r.sessionId)).toEqual(['same'])
+  expect(f.directory.canonicalLocal('same')).toBeUndefined()
 })
 it('never folds unverified, ambiguous, wrong-runtime or running local sources', async () => {
   const f = fixture()
@@ -337,25 +303,6 @@ it('does not resurrect a proven hidden cloud row on metadata refresh and restore
   expect((await f.rpc('session/list', {})).result.value.items).toHaveLength(2)
   await stream.return()
 })
-it('does not re-add a hidden cloud source through another remote session subscription', async () => {
-  const f = fixture(), abort = new AbortController()
-  f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', updatedAt: 42, running: false, projections: { asOfSeq: 3 } }] } } }))
-  await f.rpc('session/list', {})
-  const row = f.row('canonical', { previousRuntimeRefs: ['local-runtime'], coveredLocalHistory: { runtimeRef: 'local-runtime', updatedAt: 42, projectionAsOfSeq: 3, source: 'local' } })
-  f.directory.publish([row], 'local-runtime')
-  const wire = f.wire.getMockImplementation()!
-  f.wire.mockImplementation(async params => params.body.endpoint === '$events' ? { ok: true, value: { items: [
-    { type: 'ready', clientId: 'cloud' },
-    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'same' }] },
-    { type: 'emit', event: 'api-session/added', args: [{ sessionId: 'other' }] },
-  ], done: true } } : wire(params))
-  const events = f.hooks.openStream('$events', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  await events.next()
-  const follow = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:canonical:other' } } } }, abort.signal)[Symbol.asyncIterator]()
-  await follow.next()
-  expect((await events.next()).value).toMatchObject({ event: 'api-session/added', args: [{ sessionId: 'arkme:canonical:other' }] })
-  await follow.return(); await events.return(); abort.abort()
-})
 
 it('keeps an ongoing native selection through completion and hides an archived alias', async()=>{
  const f=fixture(),dispatchEvent=vi.fn()
@@ -377,10 +324,10 @@ it('keeps one account-owned entry while cold-start Host registration has no Runt
     if (selected) f.directory.select('same')
     f.fetch.mockImplementation(async () => Response.json({ result: { ok: true, value: { items: [{ sessionId: 'same', running, updatedAt: 1 }] } } }))
     f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })])
-    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual(['same'])
     // Registration enriches the identity; it must not insert a second row.
     f.directory.publish([f.row('cloud', { canonicalIdentity: true, coveredLocalHistory: { runtimeRef: 'restored', updatedAt: 1, projectionAsOfSeq: -1, source: 'cloud' } })], 'restored')
-    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual([running || selected ? 'same' : 'arkme:cloud:same'])
+    expect((await f.rpc('session/list', {})).result.value.items.map((item: any) => item.sessionId)).toEqual(['same'])
   }
 })
 
@@ -396,50 +343,69 @@ it('returns a cold-start cloud selection to its native owner when registration i
   expect(dispatchEvent).toHaveBeenCalledOnce()
 })
 
-it('keeps a remote source writable with the published DSH control baseline', async () => {
+
+
+it('waits offline without opening remote streams and resumes the journal when the source returns', async () => {
+  vi.useFakeTimers()
   const f = fixture(), abort = new AbortController()
-  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
-  const history = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
-  await history.next()
-  expect(currentBaseline.value).toEqual({ projections: {} })
-  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
-  abort.abort(); await history.return()
+  f.directory.publish([f.row('windows', { presence: 'offline' })]); f.directory.select('arkme:windows:same')
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  const next = journal.next()
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(f.wire).not.toHaveBeenCalled()
+  f.directory.publish([f.row()]); await vi.advanceTimersByTimeAsync(1000)
+  expect((await next).value.header.id).toBe('arkme:windows:same')
+  abort.abort(); await journal.return()
 })
 
-it('replaces a reconnected source baseline, replays newer deltas and keeps another source isolated', async () => {
-  const first = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'old' } } } }, retired: { asOfSeq: 5, values: { title: 'retired' } } })
-  const second = await publishedControlBaseline({ same: { asOfSeq: 9, values: { title: 'new' } } })
-  const other = await publishedControlBaseline({ same: { asOfSeq: 20, values: { title: 'other source' } } })
-  vi.useFakeTimers()
-  const f = fixture(), abort = new AbortController(), counts = new Map<string, number>()
-  const original = f.wire.getMockImplementation()!
-  f.wire.mockImplementation(async (params: any) => {
-    if (params.body.endpoint !== 'session/control') return original(params)
-    const count = (counts.get(params.runtimeRef) ?? 0) + 1; counts.set(params.runtimeRef, count)
-    const frames = params.runtimeRef === 'linux' ? [other] : count === 1
-      ? [first, { type: 'projection', sessionId: 'same', key: 'goal', value: { status: 'running' }, seq: 8 }] : [second]
-    return { ok: true, value: { items: frames, done: true } }
-  })
+it('starts a new combined control generation instead of appending a second baseline', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
   const control = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  await control.next()
-  const history = (runtime: string) => f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: `arkme:${runtime}:same` } } } }, abort.signal)[Symbol.asyncIterator]()
-  const windows = history('windows'); await windows.next()
-  expect((await control.next()).value.value.projections['arkme:windows:same']).toEqual(first.value.projections.same)
-  expect((await control.next()).value).toMatchObject({ type: 'projection', sessionId: 'arkme:windows:same', key: 'goal', seq: 8 })
-  const linux = history('linux'); await linux.next()
-  expect((await control.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
-  const warm = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
-  await warm.next()
-  expect((await warm.next()).value.value.projections['arkme:windows:same']).toEqual(first.value.projections.same)
-  expect((await warm.next()).value).toMatchObject({ type: 'projection', key: 'goal', seq: 8 })
-  expect((await warm.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
-  await warm.return()
-  await vi.advanceTimersByTimeAsync(1000)
-  const reconnected = (await control.next()).value
-  expect(reconnected).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': second.value.projections.same, 'arkme:windows:retired': { asOfSeq: 5, values: {} } } } })
-  expect((await control.next()).value.value.projections['arkme:linux:same']).toEqual(other.value.projections.same)
-  expect(counts).toEqual(new Map([['windows', 2], ['linux', 2]]))
-  await windows.return()
-  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 9, values: {} }, 'arkme:windows:retired': { asOfSeq: 5, values: {} } } } })
-  abort.abort(); await linux.return(); await control.return()
+  expect((await control.next()).value).toEqual(currentBaseline)
+  const baseline = await publishedControlBaseline({ same: { asOfSeq: 5, values: { modelSelection: { model: 'source-model' } } } })
+  f.wire.mockImplementation(async params => ({ ok: true, value: params.body.mode === 'close' ? { done: true } : {
+    items: params.body.endpoint === 'session/control' ? [baseline] : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] : [], done: true,
+  } }))
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await journal.next()).value.header.id).toBe('arkme:windows:same')
+  expect((await control.next()).done).toBe(true)
+  const renewed = f.hooks.openStream('session/control', { args: {} }, abort.signal)[Symbol.asyncIterator]()
+  const opening = (await renewed.next()).value
+  expect(opening.type).toBe('baseline')
+  expect(opening.value.projections['arkme:windows:same']).toEqual({ asOfSeq: 5, values: { modelSelection: { model: 'source-model' } } })
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  abort.abort(); await journal.return(); await renewed.return()
+})
+
+it('delivers an online prompt to its source and forwards the subsequent live journal event', async () => {
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  let resolveReply!: (value: any) => void
+  const reply = new Promise(resolve => { resolveReply = resolve })
+  let journalRef = ''
+  f.wire.mockImplementation(async params => {
+    const body = params.body
+    if (body.mode === 'close') return { ok: true, value: { done: true } }
+    if (body.endpoint === 'session/follow') {
+      journalRef = body.streamRef
+      return { ok: true, value: { sourceWritable: true, items: [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }], done: false } }
+    }
+    if (body.streamRef === journalRef) return reply
+    return { ok: true, value: { items: [], done: true } }
+  })
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  expect((await journal.next()).value.header.id).toBe('arkme:windows:same')
+  const live = journal.next()
+  f.fetch.mockImplementation(async (_url, init) => {
+    const { params } = JSON.parse(String(init.body))
+    expect(params.body.endpoint).toBe('session/prompt')
+    expect(params.runtimeRef).toBe('windows')
+    expect(params.body.payload.args.request.sessionId).toBe('same')
+    resolveReply({ ok: true, value: { sourceWritable: true, items: [{ type: 'event', event: { type: 'assistant/message', seq: 1, data: { text: 'response from source' } } }], done: false } })
+    return Response.json({ ok: true, value: { ok: true, value: { accepted: true }, sourceWritable: true } })
+  })
+  expect((await f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same', content: [{ type: 'text', text: 'hello' }] } })).result.value.accepted).toBe(true)
+  expect((await live).value.event.data.text).toBe('response from source')
+  abort.abort(); await journal.return()
 })
