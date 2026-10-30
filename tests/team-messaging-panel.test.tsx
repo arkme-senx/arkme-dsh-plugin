@@ -482,19 +482,28 @@ describe('Team send UI recovery', () => {
 
   it('recalls only after confirmation, retains the next draft and rejects a late published snapshot', async () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤回目标',template_kind:1},media:[]}
-    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? {message:{...mine,state:'recalled',revision:2},changed:true} : [])
+    const sibling: TeamMessage = {...mine,ref:'stable-ref',key:'stable',seq:2,content:{text_content:'其他消息保持可读',template_kind:1}}
+    let finishRecall!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine,sibling],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? new Promise(resolve=>{finishRecall=resolve}) : [])
     await mount()
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!
+    const stable=row('stable')
     const invalidated = vi.fn()
     const stop = subscribeTeamMessageChanges(invalidated)
-    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
+    await act(async () => row('own').props.onRecall())
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
     await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
+    await act(async () => {finishRecall({message:{...mine,state:'recalled',revision:2},changed:true});await tick()})
     expect(invalidated).toHaveBeenCalledWith('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:[conversation.key]})
     stop()
-    const shown = renderer!.root.findByType(TeamConversationMessage).props.message
+    const shown = row('own').props.message
     expect(shown.state).toBe('recalled')
     expect(shown.content).toBeUndefined()
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
   })
