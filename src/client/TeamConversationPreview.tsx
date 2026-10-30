@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamConversation, TeamTimeline } from '../team-app-contract.js'
 import { TeamMessageContent } from './TeamMessageContent.js'
@@ -23,7 +23,11 @@ const button = { border: 0, background: 'transparent', color: arkmeTheme.accent,
 export function TeamConversationPreview({ accountKey, target, onClose }: { accountKey: string; target: TeamEntryTarget; onClose(): void }) {
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
-  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? {...target.group, latest:withoutTeamConversationMaterial(target.group.latest), conversations:target.group.conversations.map(withoutTeamConversationMaterial)} : undefined
+  const retainFolderIdentity = (value: TeamConversation): TeamConversation => {
+    const retained = withoutTeamConversationMaterial(value)
+    return directory.hasLoaded && retained.visitor ? { ...retained, visitor: { ...retained.visitor, memberType: 'unknown' } } : retained
+  }
+  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? {...target.group, latest:retainFolderIdentity(target.group.latest), conversations:target.group.conversations.map(retainFolderIdentity)} : undefined
   const [chosen, setChosen] = useState<TeamConversation | undefined>(target.kind === 'conversation' ? target.conversation : undefined)
   const conversation = target.kind === 'conversation' ? target.conversation : chosen
   const [loadedConversation, setLoadedConversation] = useState<TeamConversation>()
@@ -72,13 +76,13 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
           {(directory.hasMore || directory.error) && <button style={button} disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, !directory.error) }}>{directory.loading ? '正在加载…' : directory.error ? '重试' : '加载更多对话'}</button>}
         </div>}
       <footer style={{ padding: '8px 16px', borderTop: `1px solid ${arkmeTheme.borderSoft}`, textAlign: 'right' }}>
-        <button style={button} onClick={() => { onClose(); openTeamMessages(conversation ? { kind: 'conversation', conversation } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
+        <button style={button} onClick={() => { onClose(); openTeamMessages(current ? { kind: 'conversation', conversation: current } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
       </footer>
     </div>
   </div>, document.body)
 }
 
-function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation(value: TeamConversation): void }) {
+function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation: Dispatch<SetStateAction<TeamConversation | undefined>> }) {
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
   const generation = useRef(0)
@@ -100,7 +104,14 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
         if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
         setPage(old => ({ ...value, messages: mergeTeamMessages(old?.messages??[],value.messages) }))
         onConversation(value.conversation)
-      }).catch(caught => { if (!controller.signal.aborted && token === generation.current) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
+      }).catch(caught => {
+        if (controller.signal.aborted || token !== generation.current) return
+        setError(caught instanceof Error ? caught.message : '加载失败，请重试')
+        onConversation(previous => {
+          const latest = previous?.key === conversation.key && previous.side === conversation.side ? previous : conversation
+          return latest.visitor ? { ...latest, visitor: { ...latest.visitor, memberType: 'unknown' } } : latest
+        })
+      })
       .finally(() => { if (!controller.signal.aborted && token === generation.current) setLoading(false) })
     return () => controller.abort()
   }, [accountKey, conversation.ref, request, onConversation])
