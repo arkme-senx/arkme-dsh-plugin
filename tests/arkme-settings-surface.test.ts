@@ -8,7 +8,7 @@ const adapterSource = readUiSource(new URL('../src/client/index.tsx', import.met
 const redesignCss = readUiSource(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
 
 describe('ArkmeSettingsSurface', () => {
-  it('keeps Arkme account and APP update capabilities with a read-only plugin version', () => {
+  it('keeps account capabilities and moves version display into the About product header', () => {
     expect(source).toContain("callArkme<ArkmeUserProfileSnapshot>('user.profile'")
     expect(source).toContain("callArkme<ArkmeAuthSnapshot>('auth.logout')")
     expect(source).toContain('退出登录')
@@ -21,9 +21,9 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).not.toContain('<SettingsRow title="外观"')
     expect(source).not.toContain('<SettingsRow title="模型与 API Key"')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
-    expect(source).toContain('arkmeAppUpdateStore')
-    expect(source).toContain('title="ArkME 客户端"')
-    expect(source).toContain('title="ArkME 插件"')
+    expect(source).not.toContain('arkmeAppUpdateStore')
+    expect(source).not.toContain('title="ArkME 客户端"')
+    expect(source).toContain('<ArkmeAboutProduct />')
     expect(source).toContain('className="arkme-account-profile-qr"')
     expect(source).toContain('aria-label="查看我的二维码"')
     expect(source).toContain('function WorldShareQrIcon')
