@@ -430,10 +430,12 @@ export class TeamAppService {
     }
     switch (operation) {
       case 'team.app.snapshot.capabilities': {
-        try { const data = await post('conversations/messages/metadata/capabilities', {}, true); return { schemaVersion: data.schema_version === 1 ? 1 : 0 } }
-        catch (error) { if (error instanceof ArkmePluginError && error.upstreamStatus === 404) return {schemaVersion: 0}; throw error }
+        try { const data = await post('conversations/messages/metadata/capabilities', {}, true); return { schemaVersion: data.schema_version === 1 ? 1 : 0, recordPropertiesVersion: data.schema_version === 1 && data.record_properties_version === 1 ? 1 : 0 } }
+        catch (error) { if (error instanceof ArkmePluginError && error.upstreamStatus === 404) return {schemaVersion: 0,recordPropertiesVersion:0}; throw error }
       }
       case 'team.app.snapshot.seal': {
+        const capability = obj(await this.dispatch('team.app.snapshot.capabilities',{},session,post,signal))
+        if (capability.recordPropertiesVersion !== 1) throw new ArkmePluginError('team-snapshot-unsupported','当前服务尚不支持完整快记属性',false,409)
         if(p.kind!=='send'&&p.kind!=='edit')throw invalid()
         const context = await conversation(), uid = str(p.operationUid), kind = p.kind === 'edit' ? 'edit' : 'send'
         if (!/^[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(uid) || !await this.runtime.stateStore.uniqueCode()) throw invalid()
@@ -452,7 +454,14 @@ export class TeamAppService {
           const data = await post('conversations/messages/edit-receipt/get', {...target, revision_uid:str(p.revisionUid)}, true)
           return {revisionUid:str(data.revision_uid), accepted:data.accepted===true, ...(num(data.accepted_version)>0?{acceptedVersion:num(data.accepted_version)}:{}), ...(num(data.current_version)>0?{currentVersion:num(data.current_version)}:{})}
         }
-        return decodeTeamMessageSnapshot(await post('conversations/messages/snapshot/get', target, true), str(p.messageRef))
+        const raw = await post('conversations/messages/snapshot/get', target, true)
+        const snapshot = decodeTeamMessageSnapshot(raw, str(p.messageRef))
+        const background = await this.mediaItems(Array.isArray(raw.background_sound) ? raw.background_sound.filter(file => obj(file).delivery_state === 1) : [], actor, {...target,private_snapshot:true}, snapshot.version)
+        if (background.length) {
+          snapshot.detail.backgroundSound = 'available'
+          snapshot.detail.backgroundSoundPlayback = {mediaRefs:[],mediaUrls:background.map(file => file.url),amplitudes:(Array.isArray(raw.background_sound_amplitudes) ? raw.background_sound_amplitudes : []).filter((n):n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1).slice(-4096)}
+        }
+        return snapshot
       }
 
       case 'team.app.external.mine': case 'team.app.external.share': {
@@ -1147,7 +1156,7 @@ export class TeamAppService {
       if (!response.ok || !current || current.userId !== initial.userId || current.refreshToken !== initial.refreshToken) { await response.body?.cancel(); throw invalid() }
       return { response, fileName: str(ref.file_name) || '附件', mimeType: str(ref.mime_type) || 'application/octet-stream', size: num(asset.size) }
     }
-    const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false }
+    const body = { message_uid: ref.message_uid, side: ref.side, file_asset_uid: ref.file_asset_uid, record_version: ref.record_version, preview: false, ...(ref.private_snapshot === true ? {private_snapshot:true} : {}) }
     if (!this.runtime.config.teamBaseUrl) throw invalid()
     let session = initial
     const fetchMedia = () => this.runtime.fetchImpl(`${this.runtime.config.teamBaseUrl}/api/v1/team/conversations/messages/media`, {

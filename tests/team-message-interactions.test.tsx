@@ -112,7 +112,7 @@ it('keeps whole-message commands permission gated and clears the menu after dele
   expect(copyText).toHaveBeenCalledWith(message.content!.text_content)
   await render({ ...message, own: true, canRecall:true, canEdit: true, canDelete: true })
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
-  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '重新编辑', '多选', '转发', '问 DSH', '消息详情', '查看阅读状态', '撤回'])
+  expect(labels(document.querySelector('[role="menu"]'))).toEqual(['表态', '复制', '复制链接', '延展', '重新编辑', '多选', '转发', '问 DSH', '查看阅读状态', '撤回', '详情'])
   await render({ ...message, contentStatus: 'deleted' })
   expect(document.querySelector('[role="menu"]')).toBeNull()
 })
@@ -173,7 +173,7 @@ it('routes own right-click details to the snapshot while body click stays in rea
   await mouse(host.querySelector('p')!, 'click')
   expect(detail).toHaveBeenCalledOnce(); expect(snapshot).not.toHaveBeenCalled()
   await mouse(host.querySelector('p')!, 'contextmenu', 2)
-  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '消息详情')!.click())
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(button => button.textContent === '详情')!.click())
   expect(snapshot).toHaveBeenCalledOnce(); expect(detail).toHaveBeenCalledOnce()
 })
 

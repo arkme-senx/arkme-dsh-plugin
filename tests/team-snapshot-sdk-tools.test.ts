@@ -5,7 +5,7 @@ import { teamMessageTools } from '../src/tools/business/conversation/team-messag
 
 it('routes typed SDK snapshot, freeze and exact edit operations through the Host owner',async()=>{
  const snapshot={schemaVersion:1,recorded:true,version:2,snapshotVersion:1,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',durationState:'complete'}}
- const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageSnapshot:1}}),teamSnapshotCapabilities:vi.fn(async()=>({schemaVersion:1})),freezeTeamMetadata:vi.fn(async()=>({metadataRef:'cipher'})),readTeamMessageSnapshot:vi.fn(async()=>snapshot),editTeamMessage:vi.fn(async()=>({version:2})),readTeamEditReceipt:vi.fn(async()=>({revisionUid:'stable',accepted:true,acceptedVersion:2}))}
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamMessageSnapshot:1}}),teamSnapshotCapabilities:vi.fn(async()=>({schemaVersion:1,recordPropertiesVersion:1})),freezeTeamMetadata:vi.fn(async()=>({metadataRef:'cipher'})),readTeamMessageSnapshot:vi.fn(async()=>snapshot),editTeamMessage:vi.fn(async()=>({version:2})),readTeamEditReceipt:vi.fn(async()=>({revisionUid:'stable',accepted:true,acceptedVersion:2}))}
  const fetchImpl=vi.fn(async(_path:unknown,init?:RequestInit)=>{const {operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params,init?.signal??undefined)}))}) as typeof fetch
  const sdk=new ArkmeSdk({fetchImpl}),metadata={send_at:1000,capture_context:{schema_version:1 as const,captured_at:1000,device_state:'unavailable' as const,location_state:'not_recorded' as const}}
  expect(await sdk.freezeTeamMetadata('conversation','stable',metadata)).toEqual({metadataRef:'cipher'})
@@ -34,3 +34,11 @@ it('exact edit Tool reconciles before writing and preserves attachment payload',
  await tool.execute({conversation_ref:'conversation',message_ref:'message',version:1,revision_uid:'11111111-1111-4111-8111-111111111111',text:'new'} as never,{signal:new AbortController().signal,callId:'stable-call'} as never)
  expect(edit).toHaveBeenCalledOnce();expect(preflight).toHaveBeenCalledOnce()
 })
+
+it('uses the same durable background-audio input through the explicitly granted Tool',async()=>{
+ const send=vi.fn(async command=>command),ref='arkme-file-v1.11111111-1111-4111-8111-111111111111';
+ const tool=teamMessageTools.find(m=>m.meta.toolName==='arkme_team_message_send')!.create({sendTeamMessage:send} as never);
+ await tool.execute({conversation_ref:'conversation',text:'typed',background_file_refs_json:JSON.stringify([ref]),background_amplitudes_json:'[0,0.5]'} as never,{signal:new AbortController().signal,callId:'authorized-opaque-write'} as never);
+ expect(send.mock.calls[0]![0]).toMatchObject({fileRefs:[ref],backgroundSound:{fileRefs:[ref],amplitudes:[0,0.5]}});
+ expect(send.mock.calls[0]![0]).not.toHaveProperty('metadataRef');
+});

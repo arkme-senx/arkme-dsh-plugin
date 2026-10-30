@@ -2008,6 +2008,8 @@ export interface ArkmeCalendarRecordLocation {
 
 /** Browser-safe playback projection for every segment of one background recording. */
 export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
+  /** Same-origin, author-scoped media routes for conversation-private audio. */
+  mediaUrls?: string[]
   mediaRefs: string[]
   amplitudes: number[]
   durationSeconds?: number

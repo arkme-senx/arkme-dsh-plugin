@@ -103,7 +103,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
   const locationText = detail?.locationLabel?.trim() || locationDetailLabel(locationCapture)
   const backgroundSoundAvailable = detail?.backgroundSound === 'available'
   const backgroundSoundPlayback = detail?.backgroundSoundPlayback
-  const backgroundSoundPlaylist = backgroundSoundPlayback?.mediaRefs
+  const backgroundSoundPlaylist = backgroundSoundPlayback?.mediaUrls ?? backgroundSoundPlayback?.mediaRefs
     .filter(value => value.trim() !== '')
     .map(arkmeVoiceMediaUrl) ?? []
   const backgroundSoundCanEnable = !metadataUnavailable && backgroundSoundSupported && backgroundSoundEligibilityReason === 'eligible'

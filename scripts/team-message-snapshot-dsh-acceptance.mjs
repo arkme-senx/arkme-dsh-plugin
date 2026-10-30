@@ -20,6 +20,12 @@ export function apply(ctx, config) {
       await agent.whenIdle()
       const names=ctx.tools.schemas(agent).map(tool=>tool.name)
       assert(names.includes('arkme_team_messages')&&names.includes('arkme_team_message_edit'))
+      const sendSchema=ctx.tools.schemas(agent).find(tool=>tool.name==='arkme_team_message_send')
+      assert(JSON.stringify(sendSchema).includes('background_file_refs_json'))
+      assert(JSON.stringify(sendSchema).includes('background_amplitudes_json'))
+      const blockedSend=await ctx.tools.execute({agent,name:'arkme_team_message_send',callId:randomUUID(),arguments:{conversation_ref:'opaque-conversation',text:'synthetic',background_file_refs_json:'["opaque-local-file"]',background_amplitudes_json:'[0,0.5]'},signal:AbortSignal.timeout(10000)})
+      assert(blockedSend.isError||JSON.stringify(blockedSend).includes('confirmation_required'))
+      assert(!calls.includes('team.app.send.enqueue'))
       const read=await ctx.tools.execute({agent,name:'arkme_team_messages',callId:randomUUID(),arguments:{snapshot:true,conversation_ref:'opaque-conversation',message_ref:'opaque-message'},signal:AbortSignal.timeout(10000)})
       assert(!read.isError,JSON.stringify(read))
       assert(JSON.stringify(read).includes('startAtMillis'))
@@ -27,7 +33,7 @@ export function apply(ctx, config) {
       const write=await ctx.tools.execute({agent,name:'arkme_team_message_edit',callId:randomUUID(),arguments:{conversation_ref:'opaque-conversation',message_ref:'opaque-message',version:1,revision_uid:randomUUID(),text:'synthetic edit'},signal:AbortSignal.timeout(10000)})
       assert(write.isError||JSON.stringify(write).includes('confirmation_required'))
       assert(!calls.includes('team.app.edit'))
-      const result={runtime:'official @deepseek-ai/dsh 0.2.1-rc.2',artifact:'packed tgz installed in isolated Profile',readSucceeded:true,modelOutputRedacted:true,unconfirmedEditBlocked:true,gatewayCalls:calls,businessAdapter:'synthetic public Team gateway; real owner HTTP/Mongo acceptance is separate'}
+      const result={runtime:'official @deepseek-ai/dsh 0.2.1-rc.2',artifact:'packed tgz installed in isolated Profile',backgroundSchemaVisible:true,unconfirmedBackgroundSendBlocked:true,readSucceeded:true,modelOutputRedacted:true,unconfirmedEditBlocked:true,gatewayCalls:calls,businessAdapter:'synthetic public Team gateway; real owner HTTP/Mongo acceptance is separate'}
       await writeFile(config.output,JSON.stringify(result,null,2)+'\n',{mode:0o600})
       console.log('T15_DSH_ACCEPTANCE '+JSON.stringify(result))
       process.exitCode=0
