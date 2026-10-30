@@ -21,10 +21,10 @@ it('retains bounded successful traces without bodies, isolates accounts, and flu
   })
   diagnostics.resetAccount('12')
   diagnostics.record('host_request_received', { user_id: '11', request_ref: 'old-account' })
-  diagnostics.record('wire_subscribe_finished', { user_id: '12', after_seq: 5861, server_seq: 1, duplicate: false })
+  diagnostics.record('wire_subscribe_finished', { user_id: '12', after_seq: 5861, server_seq: 1, duplicate: false, payload_bytes: 1060000, fragment_count: 33, frame_ack_max_ms: 300 })
   await diagnostics.close()
   expect(JSON.parse(await readFile(`${path}.trace.json`, 'utf8'))).toEqual([
-    expect.objectContaining({ phase: 'wire_subscribe_finished', after_seq: 5861, server_seq: 1, duplicate: false }),
+    expect.objectContaining({ phase: 'wire_subscribe_finished', after_seq: 5861, server_seq: 1, duplicate: false, payload_bytes: 1060000, fragment_count: 33, frame_ack_max_ms: 300 }),
   ])
 })
 

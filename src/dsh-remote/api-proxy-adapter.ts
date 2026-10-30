@@ -434,6 +434,7 @@ export class DshApiProxyAdapter {
 
   async sessions(input: {
     sessionId?: string
+    sessionIds?: readonly string[]
     workspaceId?: string
     limit?: number
     cursor?: string
@@ -444,11 +445,16 @@ export class DshApiProxyAdapter {
     items: DshRemoteSessionSummary[]
     nextCursor?: string
   }> {
-    const snapshot = input.sessionInventory ?? await this.sessionInventory(input.workspaceInventory)
-    const all = snapshot.filter(item =>
-      (input.sessionId === undefined || item.sessionId === input.sessionId)
-      && (input.includeUngrouped || item.workspaceId !== '')
-      && (input.workspaceId === undefined || item.workspaceId === input.workspaceId))
+    // Caller-scoped snapshot: paging a single observation must not enumerate
+    // and sort the native catalog again for every 50-row page.
+    let all = input.sessionInventory ?? await this.sessionInventory(input.workspaceInventory)
+    const selected = input.sessionIds === undefined ? undefined : new Set(input.sessionIds)
+    if (input.sessionId !== undefined || selected || input.workspaceId !== undefined || !input.includeUngrouped) {
+      all = all.filter(item => (input.sessionId === undefined || item.sessionId === input.sessionId)
+        && (selected === undefined || selected.has(item.sessionId))
+        && (input.includeUngrouped || item.workspaceId !== '')
+        && (input.workspaceId === undefined || item.workspaceId === input.workspaceId))
+    }
     const offset = readOffset(input.cursor)
     if (offset > all.length) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '分页游标超出会话投影')
     return pageByBytes({
@@ -473,7 +479,7 @@ export class DshApiProxyAdapter {
     return value.items.flatMap<DshRemoteSessionSummary>(item => {
       const workspaceId = workspaceBySession.get(item.sessionId) ?? ''
       const titleValue = item.projections?.values.title
-      return [{
+      return {
         sessionId: item.sessionId,
         workspaceId,
         ...(typeof titleValue === 'string' && titleValue.trim() !== '' ? { title: titleValue.trim().slice(0, 200) } : {}),
@@ -489,7 +495,7 @@ export class DshApiProxyAdapter {
         ...(item.projections !== undefined && Object.hasOwn(item.projections.values, 'goal')
           ? { goal: item.projections.values.goal }
           : {}),
-      }]
+      }
     }).sort((left, right) => right.updatedAt - left.updatedAt)
   }
 
@@ -860,6 +866,7 @@ export class DshApiProxyAdapter {
 
   async snapshot(input: { limit?: number; cursor?: string } = {}): Promise<DshRemoteSnapshot> {
     const workspaceInventory = await this.workspaceInventory()
+    const sessionInventory = await this.sessionInventory(workspaceInventory)
     const workspaces = workspaceInventory.items
     const sessions: DshRemoteSessionSummary[] = []
     let cursor: string | undefined
@@ -867,6 +874,7 @@ export class DshApiProxyAdapter {
       const page = await this.sessions({
         limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         workspaceInventory,
+        sessionInventory,
         ...(cursor === undefined ? {} : { cursor }),
       })
       sessions.push(...page.items)
