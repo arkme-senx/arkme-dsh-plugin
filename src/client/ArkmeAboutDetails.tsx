@@ -1,3 +1,5 @@
+import pluginManifest from '../../package.json' with { type: 'json' }
+import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeInvitationRewards } from '../types.js'
 import { callArkme } from './api.js'
@@ -21,7 +23,10 @@ export const aboutSocialLinks = [
 
 export function ArkmeAboutProduct() {
   const brand = useArkmeBrand()
-  return <div className="arkme-about-product"><img src={brand.about} alt={brand.name} /></div>
+  return <div className="arkme-about-product">
+    <img src={brand.about} alt={brand.name} />
+    <span className="arkme-about-version">{formatProductVersion(pluginManifest.version, currentClientVersionCode())}</span>
+  </div>
 }
 
 export function ArkmeAboutDetails({ accountScope }: { accountScope?: string | undefined }) {

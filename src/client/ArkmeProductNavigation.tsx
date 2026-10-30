@@ -1,3 +1,4 @@
+import { useNavigationVersion } from './use-navigation-version.js'
 import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
@@ -30,7 +31,6 @@ import { ArkmePersonalDayCalendar } from './ArkmePersonalDayCalendar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
-import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 import { ARKME_NAVIGATION_WIDTH, ARKME_PROFILE_AVATAR_SIZE } from './arkme-layout.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { directRecordingStore } from './recordings/direct-recording-store.js'
@@ -252,7 +252,7 @@ export function ArkmeProductNavigation({
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items.map(item => ({ ...item, label: tr(item.label) }))
-  const productVersion = formatProductVersion(pluginManifest.version, currentClientVersionCode())
+  const productVersion = useNavigationVersion(pluginManifest.version)
   const profileHint = `${tr("个人资料")} · ${membershipLabel(membership.state)}\n${membershipDescription(membership.state)}`
   useEffect(() => { navigationHint.hide() }, [navigationHint.hide, memberScope, activeId, isRecording, profileOpen, locked])
 

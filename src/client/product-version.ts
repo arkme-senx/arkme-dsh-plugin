@@ -2,7 +2,7 @@
 export function formatProductVersion(pluginVersion: string, clientVersionCode: unknown): string {
   return Number.isSafeInteger(clientVersionCode) && (clientVersionCode as number) > 0
     && (clientVersionCode as number) <= 2_147_483_647
-    ? `v${pluginVersion}+${clientVersionCode}`
+    ? `v${pluginVersion}(${clientVersionCode})`
     : `v${pluginVersion}`
 }
 
