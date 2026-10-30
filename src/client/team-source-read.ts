@@ -38,6 +38,49 @@ export function invalidateTeamMessageRead(message:TeamMessage,change:TeamMessage
   return message
 }
 
+/** Source invalidation can precede insertion of a delayed send ACK. These
+ * bounded fences suppress stale draft supplementation, never authorize reads. */
+export class TeamSendReadFence {
+  private changes = new Map<string, TeamMessageChangeHint>()
+  private operations = new Map<string, number>()
+  private generation = 0
+  constructor(private conversationKey: string) {}
+  begin(operationUid: string): void {
+    if (!this.operations.has(operationUid)) this.operations.set(operationUid, this.generation)
+    if (this.operations.size > 64) this.operations.delete(this.operations.keys().next().value!)
+  }
+  invalidate(change: TeamMessageChangeHint | undefined): void {
+    if (!teamChangeAffectsSource(change, {conversationKey: this.conversationKey})) return
+    if (change?.kind !== 'team.message.changed' || !change.messageKey) { this.generation++; return }
+    const previous = this.changes.get(change.messageKey)
+    if (previous && (!(previous.messageRevision! > 0) || (change.messageRevision! > 0 && previous.messageRevision! >= change.messageRevision!))) return
+    this.changes.delete(change.messageKey); this.changes.set(change.messageKey, change)
+    if (this.changes.size > 64) {
+      this.changes.delete(this.changes.keys().next().value!)
+      this.generation++
+    }
+  }
+  /** Only an authorized read past its stale-IO check may release a source fence. */
+  observeRead(message: TeamMessage): void {
+    const change = this.changes.get(message.key)
+    if (change && (!(change.messageRevision! > 0) || message.revision >= change.messageRevision!)) this.changes.delete(message.key)
+  }
+  projectAcknowledgement(candidate: TeamMessage, operationUid: string, known?: TeamMessage): TeamMessage {
+    const project = (message: TeamMessage) => [...this.changes.values()].reduce(
+      (current, change) => invalidateTeamMessageRead(current, change, this.conversationKey), message)
+    let result = project(candidate)
+    if ((this.operations.get(operationUid) ?? 0) !== this.generation) result = withoutTeamMessageMaterial(result)
+    this.operations.delete(operationUid)
+    if (known?.key === candidate.key && known.revision >= candidate.revision && known.version > 0 && known.version >= candidate.version && known.contentStatus === 'available') {
+      const current = project(known)
+      if (current.version > 0 && current.contentStatus === 'available') { this.observeRead(current); return current }
+    }
+    const own = this.changes.get(candidate.key)
+    if (own && (own.messageRevision ?? 0) > 0 && candidate.revision >= own.messageRevision!) this.changes.delete(candidate.key)
+    return result
+  }
+}
+
 /** One authority check lifetime, shared by frozen local references and independent previews. */
 export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void):()=>void {
   const controller=new AbortController()

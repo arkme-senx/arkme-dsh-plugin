@@ -1,12 +1,60 @@
 // @vitest-environment jsdom
 import {afterEach,expect,it,vi} from 'vitest'
-import {teamChangeAffectsSource,watchTeamSourceRead,invalidateTeamMessageRead} from '../src/client/team-source-read.js'
+import {teamChangeAffectsSource,watchTeamSourceRead,invalidateTeamMessageRead,TeamSendReadFence} from '../src/client/team-source-read.js'
 import type {TeamMessage} from '../src/team-app-contract.js'
 import {invalidateTeamMessages} from '../src/client/team-messaging-events.js'
 const call=vi.hoisted(()=>vi.fn())
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 const target={accountKey:'test:42',conversationRef:'conversation',conversationKey:'conversation-key',messageRef:'message',messageKey:'message-key',version:3}
 let stop:(()=>void)|undefined
+const sent:TeamMessage={key:'sent',ref:'sent-ref',seq:1,revision:2,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:3,contentStatus:'available',content:{text_content:'accepted body'},media:[]}
+it('fences early source changes without blanking same versions or unrelated bodies',()=>{
+ for(const revision of [1,2,3,0]){
+  const fence=new TeamSendReadFence('conversation-key');fence.begin('send')
+  fence.invalidate({kind:'team.message.changed',messageKey:sent.key,messageRevision:revision})
+  const projected=fence.projectAcknowledgement(sent,'send')
+  if(revision===1||revision===2)expect(projected).toBe(sent)
+  else expect(projected.content).toBeUndefined()
+ }
+ const fence=new TeamSendReadFence('conversation-key');fence.begin('send')
+ fence.invalidate({kind:'team.message.changed',messageKey:sent.key,messageRevision:3,conversationKeys:['other']})
+ fence.invalidate({kind:'team.message.changed',messageKey:'other',messageRevision:3})
+ expect(fence.projectAcknowledgement(sent,'send')).toBe(sent)
+})
+it('keeps unknown reconciliation fences on pending ACKs, allowing later sends and already authorized reads',()=>{
+ const fence=new TeamSendReadFence('conversation-key');fence.begin('old');fence.invalidate(undefined);fence.begin('new')
+ expect(fence.projectAcknowledgement(sent,'old').content).toBeUndefined()
+ expect(fence.projectAcknowledgement(sent,'new')).toBe(sent)
+ const covered=new TeamSendReadFence('conversation-key');covered.begin('send');covered.invalidate(undefined)
+ expect(covered.projectAcknowledgement(sent,'send',sent)).toBe(sent)
+})
+it('retains the strongest source fence and conservatively handles bounded eviction',()=>{
+ const fence=new TeamSendReadFence('conversation-key');fence.begin('send')
+ fence.invalidate({kind:'team.message.changed',messageKey:sent.key,messageRevision:3})
+ fence.invalidate({kind:'team.message.changed',messageKey:sent.key,messageRevision:1})
+ expect(fence.projectAcknowledgement(sent,'send').content).toBeUndefined()
+ fence.begin('old')
+ for(let i=0;i<64;i++)fence.invalidate({kind:'team.message.changed',messageKey:`other-${i}`,messageRevision:1})
+ expect(fence.projectAcknowledgement(sent,'old').content).toBeUndefined()
+ fence.begin('new');expect(fence.projectAcknowledgement(sent,'new')).toBe(sent)
+})
+it('does not blank ordinary sends after the bounded source history fills',()=>{
+ const fence=new TeamSendReadFence('conversation-key')
+ for(let i=0;i<130;i++){
+  const message={...sent,key:`sent-${i}`}
+  fence.begin(`op-${i}`)
+  fence.invalidate({kind:'team.message.changed',messageKey:message.key,messageRevision:2})
+  expect(fence.projectAcknowledgement(message,`op-${i}`)).toBe(message)
+ }
+})
+it('prefers an authorized body over metadata, but does not replace a newer Record body',()=>{
+ const fence=new TeamSendReadFence('conversation-key');fence.begin('send')
+ const {content,...identity}=sent
+ const denied={...identity,version:0,contentStatus:'unavailable'}
+ expect(fence.projectAcknowledgement(denied,'send',sent)).toBe(sent)
+ const newer={...sent,version:sent.version+1,content:{text_content:'newer body'}}
+ fence.begin('send2');expect(fence.projectAcknowledgement(newer,'send2',sent)).toBe(newer)
+})
 it('removes only the affected source or parent material, preserving an independent child body',()=>{
  const child:TeamMessage={key:'child',ref:'child-ref',seq:2,revision:1,side:'team',sender:{nickname:'作者'},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:4,contentStatus:'available',content:{text_content:'独立回复'},media:[],reply:{key:'parent',ref:'parent-ref',seq:1,version:3,state:'available',sender:{nickname:'父作者'},text:'父正文',title:'父标题',media:[]}}
  expect(invalidateTeamMessageRead(child,{kind:'team.message.changed',messageKey:'other'},'conversation-key')).toBe(child)

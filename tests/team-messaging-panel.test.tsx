@@ -170,6 +170,35 @@ describe('Team send UI recovery', () => {
     expect(row().props.message.contentStatus).toBe('revalidating')
   })
 
+  it('does not restore draft material when a newer source change arrives before the send ACK', async () => {
+    let sent=false, finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){sent=true;return new Promise(resolve=>{finish=resolve})}
+      return []
+    })
+    await mount();await send()
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    await act(async()=>{finish(accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}}));await tick()})
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('revalidating')
+  })
+  it('does not supplement an explicitly unavailable recovery ACK with the send draft', async () => {
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:3,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:'unavailable'}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('unavailable')
+  })
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
     const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}

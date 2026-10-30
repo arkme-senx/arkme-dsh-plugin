@@ -446,6 +446,16 @@ describe('Team App owner adapter', () => {
     expect(result.message).toMatchObject({own:true,state:'published',version:0,contentStatus:'',media:[]})
     expect(result.message!.content).toBeUndefined()
   })
+  it('preserves the existing Record denial shape on a committed send recovery', async () => {
+    const f=fixture((path,body)=>path.endsWith('/messages/send')
+      ? {message_uid:body.client_message_uid,seq:3,revision:3,state:'published',side:'external',own:true,record:{status:'unavailable',version:0,can_edit:false}}
+      : {channel,conversation,messages:[]})
+    const opened=await open(f)
+    const result=await f.service.execute('team.app.send',{conversationRef:opened.conversation!.ref,clientUid:'original',expectedReplySeq:0,content:{text_content:'old draft',template_kind:1}}) as TeamSendResult
+    expect(result.message).toMatchObject({state:'published',revision:3,contentStatus:'unavailable',version:0,media:[]})
+    expect(result.message!.content?.text_content ?? '').toBe('')
+    expect(JSON.stringify(result)).not.toContain('old draft')
+  })
 
   it('resolves Record origin under current Team authority and seals its navigation reference', async () => {
     const f = fixture(path => path.endsWith('/context')
