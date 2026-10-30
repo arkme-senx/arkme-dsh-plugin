@@ -1,4 +1,5 @@
 import { RecordingComparisonMenu } from './recordings/RecordingComparisonMenu.js'
+import { RecordingVoiceTriggerEntry } from './recordings/RecordingVoiceTriggers.js'
 import { RecordingProcessingSetting } from './recordings/RecordingProcessingSetting.js'
 import { recordingDayNeedsRefresh, recordingCaptureNotice } from '../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './recordings/useRecordingTranscriptPages.js'
@@ -1427,6 +1428,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <button data-arkme-feedback="neutral" type="button" style={styles.calendarActionButton}
           onClick={() => { tour.finish(false); arkmeUi.showVoiceprint() }}><Fingerprint size={16} aria-hidden />{tr("声纹管理")}<CaretRight size={12} aria-hidden /></button>
         <ArkmeRecordingImportTrigger fullWidth status={recordingImportStatus} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
+        <RecordingVoiceTriggerEntry style={styles.calendarActionButton} mediaPath={recordingMediaPath} />
       </>}</div>
       {workbenchEnabled && <RecordingProcessingSetting key={entityAccount} userId={auth.auth?.status === 'authenticated' ? auth.auth.userId ?? 0 : 0} active={active && ui.mode === 'recordings'} />}
       {workbenchEnabled && <RecordingTotalMetricsLoader account={entityAccount} active={active && workbenchEnabled && !tour.sample} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />}
