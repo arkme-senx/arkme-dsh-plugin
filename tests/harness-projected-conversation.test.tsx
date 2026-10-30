@@ -14,9 +14,9 @@ it('shadows only remote content, preserving native header/composer entries and r
     'conversation.session.header': { kind: 'single', scope: 'session' },
     'conversation.session.header.corner': { kind: 'single', scope: 'session' },
     'conversation.composer': { kind: 'single', scope: 'session' },
-    'conversation.view': { kind: 'list', scope: 'session' },
   } }, () => null)
-  for (const name of ['conversation.session', 'conversation.session.header', 'conversation.composer']) register({ name }, () => null)
+  register({ name: 'conversation.session', children: { 'conversation.view': { kind: 'list', scope: 'session' } } }, () => null)
+  for (const name of ['conversation.session.header', 'conversation.composer']) register({ name }, () => null)
   register({ name: 'conversation.view', id: 'chat', children: { 'conversation.chat.flow': { kind: 'single', scope: 'session' } } }, () => null)
   register({ name: 'conversation.chat.flow', children: { 'conversation.chat.node': { kind: 'keyed', scope: 'session' } } }, () => null)
   register({ name: 'conversation.chat.node', key: 'user' }, () => null)
@@ -36,11 +36,11 @@ it('shadows only remote content, preserving native header/composer entries and r
   expect(slots.entriesOfSlot('conversation.session')[0]).not.toBe(original)
   expect(slots.entries('conversation.session.header')).toBe(header)
   expect(slots.entries('conversation.composer')).toBe(composer)
-  expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.chat.flow')).toHaveLength(1)
-  expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.chat.flow.default.conversation.chat.node')).toHaveLength(1)
+  expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow')).toHaveLength(1)
+  expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow.default.conversation.chat.node')).toHaveLength(1)
   select('local')
   expect(slots.entriesOfSlot('conversation.session')[0]).toBe(original)
-  expect(slots.spec('arkme.projectedHistory.conversation.chat.flow')).toBeUndefined()
+  expect(slots.spec('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow')).toBeUndefined()
   select('arkme:runtime:remote')
   surface.setAttribute('data-arkme-visible', 'false'); await Promise.resolve()
   expect(slots.entriesOfSlot('conversation.session')[0]).toBe(original)
@@ -51,18 +51,21 @@ it('shadows only remote content, preserving native header/composer entries and r
 it('does not let a projected file path or fork action reach the local Host', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const slots = new SlotCore(), register = slots.register.bind(slots) as any
-  register({ name: 'root', children: { 'conversation.session': { kind: 'single', scope: 'session' },
-    'conversation.view': { kind: 'list', scope: 'session' } } }, () => null)
-  register({ name: 'conversation.session' }, () => null)
+  register({ name: 'root', children: { 'conversation.session': { kind: 'single', scope: 'session' } } }, () => null)
   let rendered: any
+  register({ name: 'conversation.session', children: { 'conversation.view': { kind: 'list', scope: 'session' } } },
+    (props: any) => { rendered = props; return createElement('div', { 'data-native-view-area': true }, props.renderSlot('conversation.view', {}, { only: props.view })) })
   register({ name: 'conversation.view', id: 'chat', children: { 'conversation.chat.flow': { kind: 'single', scope: 'session' } } },
-    (props: any) => { rendered = props; return null })
+    () => null)
   const id = 'arkme:runtime:remote', state = { byId: { [id]: { id, retainedBy: { mainView: 1 } } } }
   const stop = installProjectedConversation({ slots, sessions: { list: { getSnapshot: () => state, subscribe: () => () => {} }, subagentAddress: () => undefined } } as any, document.createElement('section'))
   const element = document.createElement('div'), root = createRoot(element), openFile = vi.fn(), forkAt = vi.fn()
+  const renderSlot = vi.fn(() => null)
   try {
     await act(async () => root.render(createElement(slots.entriesOfSlot('conversation.session')[0]!.component as any,
-      { sessionId: id, useSession: (select: any) => select({}), renderSlot: () => null, openFile, forkAt })))
+      { sessionId: id, useSession: (select: any) => select({}), renderSlot, openFile, forkAt })))
+    expect(element.querySelector('[data-native-view-area]')).not.toBeNull()
+    expect(renderSlot).toHaveBeenCalledWith('arkme.projectedHistory.conversation.view', {}, { only: 'chat' })
     await expect(rendered.openFile('/source/project.txt')).rejects.toThrow('所属实例或电脑')
     expect(rendered.forkAt).toBeUndefined()
     expect(openFile).not.toHaveBeenCalled(); expect(forkAt).not.toHaveBeenCalled()
