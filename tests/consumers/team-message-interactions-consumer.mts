@@ -47,8 +47,9 @@ await sdk.listTeamConversations('external', {limit: 20}, lifecycle.signal)
 await sdk.readTeamMessages('source-team', {personRef:'opaque-person',personMode:'mentioned',limit:20}, lifecycle.signal)
 await sdk.readTeamMessages('source-team', {messageRef: selections[0]!.messageRef}, lifecycle.signal)
 assert.equal((await sdk.readTeamExtensions('source-team', selections[0]!.messageRef, {limit: 20}, lifecycle.signal)).totalCount, 0)
-const send: TeamSendInput = {conversationRef: 'source-team', clientUid: 'stable-client', expectedReplySeq: 0, content: {text_content: '@人 引用回复', template_kind: 1, mentions:[{personRef:'opaque-person',displayName:'人',startIndex:0,length:2}]}, fileRefs: [], reply: {messageRef: selections[0]!.messageRef, messageKey: 'opaque-key', version: 3, text: '', senderName: ''}}
+const send: TeamSendInput = {conversationRef: 'source-team', clientUid: 'stable-client', expectedReplySeq: 0, content: {text_content: '@人 引用回复', template_kind: 1, mentions:[{personRef:'opaque-person',displayName:'人',startIndex:0,length:2}]}, fileRefs: ['staged-background'], backgroundSound:{fileRefs:['staged-background'],amplitudes:[0,0.5,1]}, reply: {messageRef: selections[0]!.messageRef, messageKey: 'opaque-key', version: 3, text: '', senderName: ''}}
 assert.equal((await sdk.sendTeamMessage(send, lifecycle.signal)).state, 'queued')
+assert.deepEqual((calls.find(call=>call.operation==='team.messages.send')?.params.command as TeamSendInput).backgroundSound,send.backgroundSound)
 await sdk.teamMessageTasks('source-team', lifecycle.signal)
 assert.equal((await sdk.updateTeamSend('source-team', 'stable-task', 'cancel', lifecycle.signal)).state, 'cancelled')
 assert.equal((await sdk.recallTeamMessage('source-team', selections[0]!.messageRef, lifecycle.signal)).message.state, 'recalled')

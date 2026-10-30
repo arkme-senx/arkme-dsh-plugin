@@ -1,3 +1,5 @@
+import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
+import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
 import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
 import type {TeamGroupIdentity,TeamRepresentationSelection} from '../team-group-contract.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
@@ -384,7 +386,6 @@ import {
   arkmeMicrophoneCaptureReady,
   arkmeSourceSupportsRecordInputCapture,
   subscribeArkmeBackgroundSoundCapturePreference,
-  type ArkmeBackgroundSoundFailure,
   type ArkmeBackgroundSoundRecorder,
   type ArkmeRecordInputCaptureResult,
 } from './record-input-capture.js'
@@ -393,17 +394,7 @@ export { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from './Arkm
 const ARKME_RECORD_REEDIT_AUTOSAVE_MILLIS = 10_000
 const ARKME_RECORD_REEDIT_HIGHLIGHT_MILLIS = 3_000
 
-export function arkmeBackgroundSoundCaptureFailureFeedback(
-  failure: ArkmeBackgroundSoundFailure | undefined,
-): string {
-  if (failure === 'permission-denied') return '未获得麦克风权限'
-  if (failure === 'unavailable') return '当前设备无法录制'
-  if (failure === 'start-failed') return '录音启动失败'
-  if (failure === 'stop-failed') return '录音结束失败'
-  if (failure === 'retention-evicted') return '切换会话较多，较早草稿的背景音已释放'
-  if (failure === 'limit-reached') return '录音达到上限且未生成可用片段'
-  return ''
-}
+export {arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 
 
 export interface ArkmeSurfaceProps {
@@ -919,21 +910,6 @@ function locationCaptureFeedback(result: ArkmeRecordLocationForSendResult): stri
   return result.state === 'failed' ? `消息已发送，但位置采集失败：${result.message}` : undefined
 }
 
-const ARKME_BACKGROUND_TRANSFER_TIMEOUT_MILLIS = 20_000
-
-async function boundedArkmeBackgroundTransfer<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  timeoutMillis = ARKME_BACKGROUND_TRANSFER_TIMEOUT_MILLIS,
-): Promise<T> {
-  const controller = new AbortController()
-  const timer = globalThis.setTimeout(() => { controller.abort(new Error('背景音处理超时')) }, timeoutMillis)
-  try {
-    return await operation(controller.signal)
-  } finally {
-    globalThis.clearTimeout(timer)
-  }
-}
-
 function relatedQuickNoteReferenceExpired(error: unknown): boolean {
   return error instanceof ArkmeClientError && error.body.code === 'related-quick-note-ref-expired'
 }
@@ -956,7 +932,6 @@ export function arkmeTimelineOccurrenceKey(item: ArkmeTimelineItem): string {
 const ARKME_MESSAGE_ACTION_MENU_LABELS = ['复制', '复制链接', '延展', '多选', '转发'] as const
 const ARKME_MESSAGE_REEDIT_ACTION_LABEL = '重新编辑'
 const ARKME_MESSAGE_REPORT_ACTION_LABEL = '举报'
-const ARKME_MESSAGE_ACTION_DETAIL_LABEL = '详情'
 
 export function arkmeMessageActionMenuLabels(): readonly string[] {
   return ARKME_MESSAGE_ACTION_MENU_LABELS
@@ -2026,69 +2001,9 @@ export function ArkmeSurface({
   const activeConversation = active && ui.calendarOpen !== true && source !== undefined
   const activeConversationRef = useRef(activeConversation)
   activeConversationRef.current = activeConversation
-  const [markdownQuickNotesEnabled, setMarkdownQuickNotesEnabled] = useState(false)
-  const [backgroundSoundSupported, setBackgroundSoundSupported] = useState(false)
-  const [backgroundSoundCapabilityKnown, setBackgroundSoundCapabilityKnown] = useState(false)
-  const [backgroundSoundEligibilityReason, setBackgroundSoundEligibilityReason] = useState<ArkmeBackgroundSoundEligibilityReason>('membership-unavailable')
-  const backgroundSoundAccountGenerationRef = useRef(0)
-  useEffect(() => {
-    const generation = backgroundSoundAccountGenerationRef.current + 1
-    backgroundSoundAccountGenerationRef.current = generation
-    setBackgroundSoundSupported(false)
-    setBackgroundSoundCapabilityKnown(false)
-    setBackgroundSoundEligibilityReason('membership-unavailable')
-    if (!activeConversation || authenticatedUserId === undefined || authenticatedAccountKey === undefined) return
-    const targetUserId = authenticatedUserId
-    const targetAccountKey = authenticatedAccountKey
-    let alive = true
-    let controller: AbortController | undefined
-    const refresh = () => {
-      const readToken = arkmeBackgroundSoundServerPreferenceRuntime.beginRead(targetAccountKey)
-      if (!arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)) return
-      controller?.abort()
-      const requestController = new AbortController()
-      controller = requestController
-      const sameAccount = () => {
-        const current = arkmeAuthStore.getSnapshot().auth
-        return alive
-          && !requestController.signal.aborted
-          && activeConversationRef.current
-          && backgroundSoundAccountGenerationRef.current === generation
-          && arkmeBackgroundSoundServerPreferenceRuntime.current(readToken)
-          && arkmeAuthenticatedAccountKey(current) === targetAccountKey
-      }
-      void Promise.all([
-        retryArkmeRead(
-          () => callArkme<ArkmeProviderCapabilities>('provider.capabilities', {}, requestController.signal),
-          { signal: requestController.signal, retryDelays: [250, 750] },
-        ).catch(() => undefined),
-        retryArkmeRead(
-          () => callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.get', undefined, requestController.signal),
-          { signal: requestController.signal, retryDelays: [250, 750] },
-        ).catch(() => undefined),
-      ]).then(([capabilities, preference]) => {
-        if (!sameAccount()) return
-        if (capabilities === undefined) return
-        setBackgroundSoundCapabilityKnown(true)
-        setMarkdownQuickNotesEnabled(capabilities.features.markdownQuickNotes === true)
-        const supported = capabilities.features.backgroundSound === true
-        setBackgroundSoundSupported(supported)
-        if (!supported) return
-        if (preference === undefined) {
-          return
-        }
-        applyArkmeBackgroundSoundOwnerSnapshot(targetAccountKey, preference, undefined, targetUserId)
-        setBackgroundSoundEligibilityReason(preference.eligibilityReason)
-      })
-    }
-    const unsubscribeRuntime = arkmeBackgroundSoundServerPreferenceRuntime.subscribe(targetAccountKey, refresh)
-    refresh()
-    return () => {
-      alive = false
-      controller?.abort()
-      unsubscribeRuntime()
-    }
-  }, [activeConversation, authenticatedAccountKey, authenticatedUserId])
+  const { markdownQuickNotesEnabled, backgroundSoundSupported, backgroundSoundCapabilityKnown,
+    backgroundSoundEligibilityReason, backgroundSoundCaptureEnabled } =
+      useArkmeRecordInputPolicy(authenticatedAccountKey, authenticatedUserId, activeConversation)
   const conversationOverlayKey = `${activeConversation ? 'active' : 'inactive'}:${conversationKey}:notification-${String(notificationActivationRevision)}`
   const conversationOverlayScopeRef = useRef({ key: conversationOverlayKey, generation: 0 })
   if (conversationOverlayScopeRef.current.key !== conversationOverlayKey) {
@@ -2312,14 +2227,6 @@ export function ArkmeSurface({
     recordInputCaptureOwner.activate()
     return () => { recordInputCaptureOwner.deactivate() }
   }, [recordInputCaptureOwner])
-  const backgroundSoundCaptureEnabled = useSyncExternalStore(
-    useCallback(
-      (listener: () => void) => subscribeArkmeBackgroundSoundCapturePreference(authenticatedAccountKey, listener),
-      [authenticatedAccountKey],
-    ),
-    useCallback(() => arkmeBackgroundSoundCaptureEnabled(authenticatedAccountKey), [authenticatedAccountKey]),
-    () => false,
-  )
   const visibleComposerText = activeRecordReeditComposer?.textContent ?? (directAdmission.blocked ? '' : draft)
   const visibleComposerAttachments = activeRecordReeditComposer === undefined ? attachments
     : activeRecordReeditComposer.attachments.map(attachment => {
@@ -7097,7 +7004,8 @@ export function ArkmeSurface({
     snapshotRequestRef.current?.abort()
     snapshotRequestRef.current = undefined
     const actionRef = arkmeTimelineMessageActionRef(item)
-    setSnapshot({ item, actionRef, loading: true })
+    const {captureContext: _context, locationCapture: _location, ...preview} = item
+    setSnapshot({ item: preview, actionRef, loading: true })
     if (source === undefined) {
       setSnapshot(current => current?.actionRef === actionRef
         ? { ...current, loading: false, loadError: '当前对话不可用，请刷新后重试' }
@@ -9358,7 +9266,7 @@ export function ArkmeSurface({
               },
             },
             arkmeCanReportTimelineMessage(source, messageMenuItem) && { id: 'report', label: ARKME_MESSAGE_REPORT_ACTION_LABEL, icon: <ArkmeMessageActionIcon kind="report" />, onSelect: () => openMessageReport(messageMenuItem) },
-            arkmeCanOpenMessageSnapshot(messageMenuItem) && { id: 'detail', label: ARKME_MESSAGE_ACTION_DETAIL_LABEL, onSelect: () => openMessageSnapshot(messageMenuItem) },
+            arkmeCanOpenMessageSnapshot(messageMenuItem) && { id: 'detail', onSelect: () => openMessageSnapshot(messageMenuItem) },
             arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && { type: 'separator', id: 'withdraw-divider' },
             arkmeCanWithdrawTimelineMessage(source, messageMenuItem, groupSelfRole) && { id: 'withdraw', label: '撤回', icon: <ArkmeMessageActionIcon kind="withdraw" />, danger: true, onSelect: () => openMessageWithdrawal(messageMenuItem) },
           ])}

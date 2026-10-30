@@ -1,3 +1,4 @@
+import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
 import {requireFrozenTeamSendTime} from './group-representation.js'
 import {GroupRepresentationCodec} from './group-representation.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
@@ -113,7 +114,7 @@ import { arkmeRecordCaptureContextPayload, RecordService } from './record-servic
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataFromRecord, arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
-import { arkmeRichBackgroundSound } from '../record-background-sound.js'
+import { arkmeRichBackgroundSound, arkmeBackgroundSoundContent } from '../record-background-sound.js'
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import {
   arkmeChatConversationPreview,
@@ -150,14 +151,7 @@ export function arkmeRichContentPayload(
       sort_order: index,
       file_name: asset.fileName,
     })),
-    ...(backgroundSound?.assets.map((asset, index) => ({
-      file_asset_uid: asset.fileAssetUid,
-      content_file_role: 4,
-      binding_type: 4,
-      render_role: 1,
-      sort_order: assets.length + index,
-      file_name: asset.fileName,
-    })) ?? []),
+    ...arkmeBackgroundSoundContent(backgroundSound, assets.length).refs,
   ]
   return {
     payload_kind: assets.length === 0 ? 1 : 2,
@@ -367,24 +361,7 @@ function firstSnapshotText(...values: unknown[]): string | undefined {
   return undefined
 }
 
-function snapshotDateLabel(value: number | undefined): string | undefined {
-  if (value === undefined) return undefined
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return undefined
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
-}
 
-function snapshotMovement(value: Record<string, unknown>): string | undefined {
-  const rawSpeed = value.speed ?? value.speed_mps ?? value.speedMetersPerSecond
-  const speed = numberValue(rawSpeed)
-  if (typeof rawSpeed === 'number' && Number.isFinite(rawSpeed)) {
-    const kmh = Math.round(speed * 3.6)
-    return kmh <= 2 ? '静止' : kmh <= 5 ? `缓慢移动（${String(kmh)}km/h）` : kmh <= 60 ? `移动（${String(kmh)}km/h）` : `高速移动（${String(kmh)}km/h）`
-  }
-  if (typeof value.activity !== 'number' || !Number.isFinite(value.activity)) return undefined
-  const activity = Math.trunc(value.activity)
-  return activity === 0 ? '静止' : activity === 1 ? '步行' : activity === 2 ? '跑步' : activity === 3 ? '骑行' : activity === 4 ? '驾车' : undefined
-}
 
 function snapshotLocationCapture(value: Record<string, unknown>): ArkmeRecordLocationCapture | undefined {
   const latitude = finiteNumberValue(value.lat ?? value.latitude)
@@ -402,23 +379,6 @@ function snapshotLocationCapture(value: Record<string, unknown>): ArkmeRecordLoc
   }
 }
 
-function snapshotWeatherText(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    const direct = stringValue(value).trim()
-    if (direct !== '') return direct
-    const weather = objectValue(value)
-    if (Object.keys(weather).length === 0) continue
-    const temperature = finiteNumberValue(weather.temp ?? weather.temperature)
-    const condition = firstSnapshotText(
-      weather.weather, weather.weatherText, weather.weather_text,
-      weather.condition_ch, weather.conditionCh, weather.condition,
-    )
-    if (temperature !== undefined || condition !== undefined) {
-      return `${temperature === undefined ? '' : `${String(Math.round(temperature))}°`}${temperature === undefined || condition === undefined ? '' : ' '}${condition ?? ''}`.trim()
-    }
-  }
-  return undefined
-}
 
 function snapshotLocationContext(value: unknown): Record<string, unknown> {
   const root = objectValue(value)
@@ -616,7 +576,9 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
   // Crucially, the detailed core wins over any same-named entry embedded in
   // payload/extra metadata; those entries are frequently zero or stale.
   const lifecycleSources = [recordCore, nestedRecord, raw, payload]
-  const startAtMillis = firstRecordEpochMillis(lifecycleSources, [
+  const frozen = objectValue(values.capture_context).schema_version === 1
+  const recordMillis = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0 && v <= 8640000000000000 ? v : undefined
+  const startAtMillis = frozen ? recordMillis(recordCore.record_started_at) : firstRecordEpochMillis(lifecycleSources, [
     // Match Flutter's canonical order exactly: create_at, then created_at,
     // then the send timestamp for older records that do not expose either.
     'create_at', 'created_at', 'createAt', 'createdAt', 'create_time', 'createTime',
@@ -634,32 +596,25 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
     'update_at', 'updated_at', 'updateAt', 'updatedAt', 'update_time_stamp', 'updateTimeStamp',
     'update_timestamp', 'updateTimestamp', 'update_at_ms', 'updateAtMillis',
   ])
-  const completeAtMillis = updatedAtMillis !== undefined && updatedAtMillis > (sendAtMillis ?? 0)
+  const completeAtMillis = frozen ? recordMillis(recordCore.send_at) : updatedAtMillis !== undefined && updatedAtMillis > (sendAtMillis ?? 0)
     ? updatedAtMillis
     : sendAtMillis
   // update time is completion, not synchronization. Flutter only renders a
   // concrete sync timestamp from the dedicated upload timestamp field.
-  const syncedAtMillis = firstRecordEpochMillis(lifecycleSources, [
+  const syncedAtMillis = frozen ? recordMillis(recordCore.server_synced_at) : firstRecordEpochMillis(lifecycleSources, [
     'upload_at', 'uploadAt', 'upload_timestamp', 'uploadTimeStamp', 'upload_time_stamp_v2',
     'uploadTimeStampV2', 'upload_at_v2', 'uploadAtV2', 'upload_at_ms', 'uploadAtMillis',
   ])
   const captureContext = timelineCaptureContext(values)
   const locationCapture = snapshotLocationCapture({ ...location, ...position, ...objectValue(values.position) })
   // Match Flutter PositionDetail's city/county names and its road + POI suffix.
-  const areaLabel = [
-    firstSnapshotText(position.city)?.replace(/市$/, ''),
-    firstSnapshotText(position.county)?.replace(/(区|县|市)$/, ''),
-  ].filter(Boolean).join('·')
-  const positionLabel = [
-    areaLabel,
-    firstSnapshotText(position.road), firstSnapshotText(position.poi, position.poi_name, position.poiName),
-  ].join('')
+  const positionLabel = snapshotPositionLabel(position)
   const locationLabel = firstSnapshotText(
     positionLabel, position.address,
     location.poi_name, location.poiName, location.address, location.name,
   )
   const weather = snapshotWeatherText(position.weather, position.weatherText, location.weather, values.weather)
-  const altitudeMeters = nonNegativeNumberValue(location.altitude, location.alt, position.altitude, position.alt)
+  const altitudeMeters = [location.altitude, location.alt, position.altitude, position.alt].map(finiteNumberValue).find(value => value !== undefined)
   const movement = snapshotMovement({ ...values, ...location, ...position })
   const backgroundSound = arkmeSnapshotBackgroundSoundState(values)
   const status = numberValue(values.status)
@@ -673,8 +628,8 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
     textFormat: arkmeRecordTextFormat(record.text_content !== undefined ? record : values),
     ...(recordDurationMillis === undefined ? {} : { recordDurationMillis }),
     ...(editDurationMillis === undefined ? {} : { editDurationMillis }),
-    ...(numberValue(values.view_times ?? values.viewTimes) > 0 ? { viewTimes: Math.trunc(numberValue(values.view_times ?? values.viewTimes)) } : {}),
-    ...(numberValue(values.share_times ?? values.shareTimes) > 0 ? { shareTimes: Math.trunc(numberValue(values.share_times ?? values.shareTimes)) } : {}),
+    ...(nonNegativeNumberValue(values.view_times, values.viewTimes) === undefined ? {} : {viewTimes:Math.trunc(nonNegativeNumberValue(values.view_times,values.viewTimes)!)}),
+    ...(nonNegativeNumberValue(values.share_times, values.shareTimes) === undefined ? {} : {shareTimes:Math.trunc(nonNegativeNumberValue(values.share_times,values.shareTimes)!)}),
     ...(captureContext === undefined ? {} : { captureContext }),
     backgroundSound,
     ...(locationLabel === undefined ? {} : { locationLabel }),
@@ -6347,6 +6302,23 @@ export class ChatService {
     return this.hydratedMessageSnapshotDetail(reference, session, options, chatRaw)
   }
 
+  private async recordCreationSnapshot(recordUid: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    let cursor = 0
+    for (;;) {
+      const page = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/revisions/query',
+        {record_uid:recordUid,limit:100,...(cursor ? {cursor_edit_at:cursor} : {})},session,signal)
+      if (typeof page.record_uid === 'string' && page.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
+      for (const row of listValue(page.items)) {
+        const item = objectValue(row)
+        if (typeof item.record_uid === 'string' && item.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
+        if (item.version === 1) return item
+      }
+      const next = numberValue(page.next_cursor_edit_at)
+      if (page.has_more !== true || next <= 0 || cursor > 0 && next >= cursor) return undefined
+      cursor = next
+    }
+  }
+
   private async hydratedMessageSnapshotDetail(
     reference: ArkmeMessageActionRefPayload,
     session: ArkmeSessionCredentials,
@@ -6423,20 +6395,37 @@ export class ChatService {
         },
       },
     }
+    let environmentRevisionUid: string | undefined
+    const needsOriginal = recordCore.has_manual_edit === true || recordCore.has_manual_edit === undefined && numberValue(recordCore.version) > 1
+    if (!options.includeAttachments && needsOriginal) {
+      const original = await this.recordCreationSnapshot(reference.recordUid,session,options.signal)
+      environmentRevisionUid = typeof original?.revision_uid === 'string' ? original.revision_uid : undefined
+      // Latest text stays visible. Only creation properties come from version 1;
+      // an absent original never inherits the latest edit's device or location.
+      raw = {record:{record_uid:reference.recordUid,text_content:recordCore.text_content,
+        text_format:recordCore.text_format,status:recordCore.status,
+        record_started_at:recordCore.record_started_at,send_at:recordCore.send_at,
+        server_synced_at:recordCore.server_synced_at,record_duration_millis:recordCore.record_duration_millis,
+        edit_duration_millis:recordCore.edit_duration_millis,create_at:recordCore.create_at,
+        view_times:recordCore.view_times,share_times:recordCore.share_times,
+        capture_context:objectValue(original?.edit_capture_context),
+        content_payload:objectValue(original?.content_payload),extra:objectValue(original?.template_extra)},
+        location:objectValue(objectValue(original?.edit_capture_context).automatic_location ?? listValue(original?.edit_locations)[0])}
+    }
     // Flutter obtains weather and resolved place context from this record
     // service endpoint after the core record has been read. `records/detail`
     // alone frequently contains the coordinates but not the weather that the
     // desktop detail dialog shows. This enrichment is optional for legacy
     // records: an unavailable context must not hide the otherwise complete
     // snapshot.
-    const locationContext = options.includeAttachments ? undefined : await this.runtime.authenticatedPost<Record<string, unknown>>(
+    const locationContext = options.includeAttachments || needsOriginal && !environmentRevisionUid ? undefined : await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/location/context/get',
-      { record_uid: reference.recordUid },
+      { record_uid: reference.recordUid, ...(environmentRevisionUid ? {revision_uid:environmentRevisionUid} : {}) },
       session,
       options.signal,
       {
         lane: 'interactive-read',
-        key: `message-snapshot-location-context:${reference.recordUid}`,
+        key: `message-snapshot-location-context:${reference.recordUid}:${environmentRevisionUid ?? 'current'}`,
         failureCooldownMs: 10_000,
       },
     ).catch(() => undefined)

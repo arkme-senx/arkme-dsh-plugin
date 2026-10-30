@@ -1,3 +1,5 @@
+import {ArkmeRecordInputCaptureOwner} from '../src/client/record-input-capture.js'
+import * as recordLocation from '../src/client/record-capture-location.js'
 import {ArkmeComposerTargetPreview} from '../src/client/ArkmeComposerTargetPreview.js'
 import {liveTeamSnapshotStack} from './fixtures/team-snapshot-live.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
@@ -440,9 +442,9 @@ describe('Team send UI recovery', () => {
     await mount()
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
     const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
-    expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
+    expect(snapshot.props.createdAtMillis).toBeUndefined()
     expect(snapshot.props.metadataUnavailable).toBeUndefined()
-    expect(snapshot.props.backgroundSoundSupported).toBe(false)
+    expect(snapshot.props.onEnableBackgroundSound).toBeTypeOf('function')
     expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.snapshot.read')).toBe(true)
     expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
     expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
@@ -863,7 +865,7 @@ describe('Team send UI recovery', () => {
     expect(JSON.parse(localStorage.getItem(storageKey)!).text).toBe('下一条')
   })
 
-  it('keeps staged image bytes visible when a minimal published ACK is followed by a failed refresh',async()=>{
+  it('keeps only staged visible media when a minimal published ACK is followed by a failed refresh',async()=>{
     const file={fileRef:'local-image',fileName:'image.png',mimeType:'image/png',fileKind:1,size:10}
     localStorage.setItem(storageKey,JSON.stringify({text:'图片',assets:[],localFiles:[file]}))
     let refreshFails=false
@@ -874,7 +876,7 @@ describe('Team send UI recovery', () => {
       }
       if(op==='team.app.send.enqueue'){
         refreshFails=true
-        return accepted({state:'sent',createdAtMillis:Date.now()-8*86400000,completedAtMillis:Date.now(),files:[file],message:{key:'image-ack',ref:'image-ack',seq:1,revision:1,side:'external',own:true,sender:{nickname:'我'},state:'published',createdAt:1,version:0,contentStatus:'',media:[]}})
+        return accepted({state:'sent',createdAtMillis:Date.now()-8*86400000,completedAtMillis:Date.now(),backgroundSound:{fileRefs:['private-recording'],amplitudes:[0,0.5]},files:[file,{fileRef:'private-recording',fileName:'private.webm',mimeType:'audio/webm',fileKind:2,size:10}],message:{key:'image-ack',ref:'image-ack',seq:1,revision:1,side:'external',own:true,sender:{nickname:'我'},state:'published',createdAt:1,version:0,contentStatus:'',media:[]}})
       }
       throw new Error(op)
     })
@@ -883,6 +885,8 @@ describe('Team send UI recovery', () => {
     expect(shown.contentStatus).toBe('available')
     expect(shown.content.text_content).toBe('图片')
     expect(shown.media[0].url).toBe('/local/local-image')
+    expect(shown.media).toHaveLength(1)
+    expect(JSON.stringify(shown)).not.toContain('private-recording')
   })
 
   it('retains the live editor DOM and selection on background invalidation', async () => {
@@ -1291,6 +1295,22 @@ describe('Team send UI recovery', () => {
       live.fixture.pcUIEndToEnd=true;await live.save()
     } finally {await act(async()=>renderer?.unmount());renderer=undefined;await live.close()}
   },30000)
+  it('freezes location before a slow background-file stage completes',async()=>{
+    const finish=vi.spyOn(ArkmeRecordInputCaptureOwner.prototype,'finishForSubmit').mockResolvedValue({schemaVersion:1,captureId:'frozen',completedAtMillis:1000,recordDurationMillis:0,captureContext:{clientName:'frozen device'},backgroundSound:{enabled:true,state:'ready',segments:[{blob:new Blob(['recorded']),fileName:'background.webm',amplitudes:[0,0.5]}],amplitudes:[0,0.5]}} as never);
+    const location=vi.spyOn(recordLocation,'captureArkmeRecordLocation').mockResolvedValue({latitude:30,longitude:114,capturedAtMillis:1000});
+    let release!:(v:unknown)=>void;
+    mocks.stage.mockImplementation(()=>new Promise(resolve=>release=resolve));
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.capabilities'?{schemaVersion:1,recordPropertiesVersion:1}:op==='team.app.snapshot.seal'?{metadataRef:'sealed'}:op==='team.app.send.enqueue'?accepted():[]);
+    try {
+      await mount();await send();
+      await vi.waitFor(()=>expect(mocks.stage).toHaveBeenCalled());
+      expect(location).toHaveBeenCalledOnce();
+      expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false);
+      await act(async()=>{release({fileRef:'background-local',fileName:'background.webm',mimeType:'audio/webm',size:8,fileKind:2});await tick()});
+      await vi.waitFor(()=>expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(true));
+      expect(mocks.call.mock.calls.find(([op])=>op==='team.app.send.enqueue')![1].backgroundSound.fileRefs).toEqual(['background-local']);
+    } finally {finish.mockRestore();location.mockRestore();mocks.stage.mockReset()}
+  });
   it('freezes the input only during metadata preparation and accepts the original send',async()=>{
     const reply={messageRef:'parent-ref',messageKey:'parent',version:1,text:'original parent',senderName:'同事'}
     localStorage.setItem(storageKey,JSON.stringify({text:'问题',assets:[],reply}))

@@ -14,7 +14,7 @@ const sdk=new ArkmeSdk({fetchImpl:async(_url,init)=>{
   init?.signal?.throwIfAborted()
   const request=JSON.parse(String(init?.body));calls.push(request)
   const value=request.operation==='provider.capabilities'?{contractVersion:1,features:{teamMessageSnapshot:supported?1:undefined}}
-    :request.operation==='team.messages.snapshot-capabilities'?{schemaVersion:1}
+    :request.operation==='team.messages.snapshot-capabilities'?{schemaVersion:1,recordPropertiesVersion:1}
       :request.operation==='team.messages.metadata-freeze'?{metadataRef:'opaque-account-bound-capture'}
         :request.operation==='team.messages.snapshot'?{schemaVersion:1,recorded:true,version:2,snapshotVersion:1,captureStates:{device:'unavailable',location:'permission_denied'},detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',durationState:'complete',recordDurationMillis:0,editDurationMillis:0}}
           :request.operation==='team.messages.edit'?{version:2}:{revisionUid:'stable-edit',accepted:true,acceptedVersion:2}

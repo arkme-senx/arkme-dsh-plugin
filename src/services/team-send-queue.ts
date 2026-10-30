@@ -1,3 +1,4 @@
+import {arkmeFileBackgroundSound,assertArkmeBackgroundSoundLocalFiles} from '../record-background-sound.js'
 import { readMessageQuote } from '../message-quote.js'
 import { randomUUID } from 'node:crypto'
 import { ArkmePluginError } from './service.js'
@@ -18,7 +19,7 @@ const fail = (code: string, message: string) => new ArkmePluginError(`team-${cod
 const publicTask = (task: TeamSendTask): TeamSendTask => {const view=structuredClone(task);delete view.metadataRef;delete view.metadataDigest;return view}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const transient = (error: unknown): boolean => error instanceof ArkmePluginError
-  ? error.retryable || ['arkme-network-error', 'arkme-timeout', 'team-dependency_unavailable', 'team-rate_limited', 'team-reply_conflict'].includes(error.code)
+  ? error.retryable || ['arkme-network-error', 'arkme-timeout', 'team-dependency_unavailable', 'team-rate_limited', 'team-reply_conflict', 'team-snapshot-unsupported'].includes(error.code)
   : error instanceof TypeError
 const reason = (error: unknown) => error instanceof ArkmePluginError ? error.code.replace(/^team-/, '') : 'network_unavailable'
 
@@ -70,6 +71,10 @@ export class TeamSendQueue {
     if (this.closed || this.epoch !== epoch || await this.ports.currentUser() !== user) throw fail('account-changed', '登录账号已变化')
     signal?.throwIfAborted()
   }
+  private async requireRecordProperties(signal: AbortSignal): Promise<void> {
+    const cap = await this.ports.execute('team.app.snapshot.capabilities',{},signal) as {recordPropertiesVersion?:number}
+    if (cap?.recordPropertiesVersion !== 1) throw fail('snapshot-unsupported','当前服务尚不支持完整快记属性，请稍后重试')
+  }
   async enqueue(input: TeamSendInput): Promise<TeamSendTask> {
     const user = await this.user(), epoch = this.epoch
     if (!uuid.test(input.clientUid) || !Number.isSafeInteger(input.expectedReplySeq) || input.expectedReplySeq < 0
@@ -88,13 +93,15 @@ export class TeamSendQueue {
     }
     const metadataDigest = input.metadataRef ? await this.ports.metadataDigest?.(input.conversationRef,input.clientUid,input.metadataRef,user) : undefined
     if (input.metadataRef && !metadataDigest) throw fail('capture-unavailable','无法核对发送快照，请保留原请求后重试')
+    const backgroundSound = arkmeFileBackgroundSound(input.backgroundSound,input.fileRefs)
     const files = await Promise.all(input.fileRefs.map(async ref => (await this.ports.files().readLocal(ref)).file))
     await this.guard(user, epoch)
-    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(input.metadataRef ? {metadataRef:input.metadataRef} : {}),...(reply ? {reply} : {})})
+    assertArkmeBackgroundSoundLocalFiles(backgroundSound,files)
+    const inputCopy: TeamSendInput = structuredClone({conversationRef:input.conversationRef,clientUid:input.clientUid,expectedReplySeq:input.expectedReplySeq,content:input.content,fileRefs:input.fileRefs,...(backgroundSound ? {backgroundSound} : {}),...(input.metadataRef ? {metadataRef:input.metadataRef} : {}),...(reply ? {reply} : {})})
     const tasks = await this.ports.files().mutateTeamSends(user, tasks => {
       const prior = tasks.find(task => task.clientUid === input.clientUid)
       if (prior) {
-        if (prior.metadataDigest !== metadataDigest || prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
+        if (JSON.stringify(prior.backgroundSound) !== JSON.stringify(backgroundSound) || prior.metadataDigest !== metadataDigest || prior.conversationKey !== conversationKey || prior.expectedReplySeq !== input.expectedReplySeq
           || JSON.stringify(prior.content) !== JSON.stringify(input.content) || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
           || JSON.stringify(prior.reply && {key:prior.reply.messageKey,version:prior.reply.version,quote:prior.reply.quote}) !== JSON.stringify(inputCopy.reply && {key:inputCopy.reply.messageKey,version:inputCopy.reply.version,quote:inputCopy.reply.quote})) {
           throw fail('idempotency_conflict', '同一发送请求的内容不一致，请核对发送结果')
@@ -251,6 +258,7 @@ export class TeamSendQueue {
         await this.save(user, task)
         return
       }
+      if (task.backgroundSound) await this.requireRecordProperties(controller.signal)
       const timeline = await this.ports.execute('team.app.timeline', { conversationRef: task.conversationRef, limit: 1 }, controller.signal) as TeamTimeline
       if (!task.sendContent && (!timeline.conversation.channel.enabled || timeline.conversation.blocked)) throw fail(timeline.conversation.blocked ? 'conversation_blocked' : 'channel_paused', '此对话暂时不能发送消息')
       if (!task.sendContent) {
@@ -264,7 +272,10 @@ export class TeamSendQueue {
         }) : []
         await this.guard(user, epoch, controller.signal)
         task.files = task.files.map((file, i) => ({ ...file, asset: assets[i]!, progress: { phase: 'ready', sentBytes: file.size, totalBytes: file.size } }))
-        task.sendContent = teamContentWithAssets(task.content, assets)
+        const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
+        const backgroundAssets = assets.filter((_,index) => backgroundRefs.has(task.fileRefs[index]!))
+        task.sendContent = teamContentWithAssets(task.content, assets.filter((_,index) => !backgroundRefs.has(task.fileRefs[index]!)),
+          backgroundAssets.length ? {assets:backgroundAssets,amplitudes:task.backgroundSound!.amplitudes} : undefined)
       }
       task.state = 'sending'; await this.save(user, task)
       await this.guard(user, epoch, controller.signal)

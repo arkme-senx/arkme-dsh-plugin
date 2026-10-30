@@ -5,6 +5,7 @@ import type { TeamContent, TeamMessage, TeamReplyTarget } from './team-app-contr
 export interface TeamSendInput {
   /** Account/operation-bound Host-sealed metadata, never raw coordinates. */
   metadataRef?: string
+  backgroundSound?: import('./file-transfer-contract.js').ArkmeFileBackgroundSoundInput
   conversationRef: string
   clientUid: string
   expectedReplySeq: number

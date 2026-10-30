@@ -4,7 +4,7 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset } from '../types.js'
 import type { TeamContent, TeamMessage, TeamReplyTarget, TeamMention } from '../team-app-contract.js'
 
-export type TeamDraft = { pendingEdit?: import('../team-snapshot-contract.js').TeamPendingEdit; mentions?: TeamMention[]; attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { metadataRef?: string; snapshotStatus?: string; uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
+export type TeamDraft = { pendingEdit?: import('../team-snapshot-contract.js').TeamPendingEdit; mentions?: TeamMention[]; attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { backgroundSound?: import('../file-transfer-contract.js').ArkmeFileBackgroundSoundInput; metadataRef?: string; snapshotStatus?: string; uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
 
 export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string, draft: TeamDraft): void {
   const { attachments: _transient, ...persisted } = draft
