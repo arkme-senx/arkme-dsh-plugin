@@ -232,7 +232,11 @@ export class DshSessionChannelHost {
       if (!this.commands.has(id) && this.commands.size + this.pending.size + this.running.size >= 128) return
       this.diagnostic('host_request_received', { request_ref: envelope.request_ref, operation: envelope.operation, transport_seq: metadata.transportSequence })
       this.commands.set(id, { runtimeRef: value.runtimeRef, envelope })
-      if (envelope.operation === 'session.history' && typeof session === 'string') {
+      if (typeof session === 'string' && (envelope.operation === 'session.history'
+        || envelope.operation === 'session.prompt' && envelope.body.mode === 'queue')) {
+        // A mobile queued prompt can be the first access after a desktop
+        // restart. Recover its writer through the same fenced opening as the
+        // native prompt, then execute this original request/ledger key once.
         this.recoverOpening(id, { runtimeRef: value.runtimeRef, sessionRef: session }, { ...envelope.body, operation: envelope.operation }, envelope.execute_before, () => { this.commands.delete(id) })
       }
       this.tick(); return

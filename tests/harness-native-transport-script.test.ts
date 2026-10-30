@@ -131,6 +131,23 @@ it('accepts the 0.2 relative unary RPC route and the legacy URL carrier', async 
   expect(f.fetch.mock.calls.at(-1)?.[0].pathname).toBe('/api/session/create')
 })
 
+it.each([false, true])('restores a named local blank through the local workspace API (directory ready: %s)', async ready => {
+  const f = fixture()
+  if (ready) f.directory.publish([f.row('creator', { local: true, localTakeover: true, blank: true })])
+  const request = { sessionId: 'same', workspaceId: 'work', agentPreset: 'standard' }
+  await f.rpc('session/create', { request })
+  expect(f.fetch).toHaveBeenCalledOnce()
+  expect(String(f.fetch.mock.calls[0]![0])).toBe('http://localhost:3000/api/session/create')
+  expect(JSON.parse(String(f.fetch.mock.calls[0]![1].body)).payload.args.request).toEqual(request)
+})
+
+it('still rejects a foreign blank mixed with a local workspace', async () => {
+  const f = fixture()
+  f.directory.publish([f.row('creator', { local: true, localTakeover: true, blank: true }), f.row('remote', { blank: true })])
+  await expect(f.rpc('session/create', { request: { sessionId: 'arkme:remote:same', workspaceId: 'work' } })).rejects.toThrow('跨实例')
+  expect(f.fetch).not.toHaveBeenCalled()
+})
+
 it('releases background remote sources while native sessions remain resident across more than eight selections', async () => {
   const f = fixture(), abort = new AbortController(), readers: any[] = [], waiting: Promise<unknown>[] = []
   const active = new Map<string, any>()
@@ -361,7 +378,7 @@ it('keeps offline state scoped to the selected source and releases blocked strea
   await expect(result).rejects.toMatchObject({ name: 'AbortError' })
   expect(f.sockets.every(socket => socket.readyState === 3)).toBe(true)
 })
-it('replays current source baselines after local reconnects and clears only the released source', async () => {
+it('replays current baselines after reconnects and keeps the control stream usable when a source is released', async () => {
   const f = fixture(), abort = new AbortController()
   const baseline = await publishedControlBaseline({ same: { asOfSeq: 7, values: { modelSelection: { next: { model: 'source-model' } } } } })
   f.wire.mockImplementation(async (params: any) => ({ ok: true, value: { items: params.body.endpoint === 'session/control' ? [baseline]
@@ -376,7 +393,11 @@ it('replays current source baselines after local reconnects and clears only the 
   expect((await control.next()).value).toEqual(forwarded)
   await history.return()
   await new Promise(resolve => setTimeout(resolve, 1))
-  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 7, values: {} } } } })
+  const mux = f.sockets.find(socket => String(socket.url).includes('remote.mux'))!
+  const opening = mux.frames.filter(frame => frame.endpoint === 'session/control').at(-1)
+  const update = { type: 'projection', sessionId: 'local', key: 'title', seq: 8, value: 'still live' }
+  mux.receive({ type: 'item', streamId: opening.streamId, value: update })
+  expect((await control.next()).value).toEqual(update)
   await control.return()
 })
 it('returns interactive responses to the source event generation instead of the local client', async () => {
@@ -683,7 +704,11 @@ it('replaces a reconnected source baseline, replays newer deltas and keeps anoth
   expect(await reopen()).toEqual({ 'arkme:windows:same': second.value.projections.same, 'arkme:linux:same': other.value.projections.same })
   expect(counts).toEqual(new Map([['windows', 4], ['linux', 4]]))
   await windows.return(); await vi.advanceTimersByTimeAsync(1)
-  expect((await control.next()).value).toEqual({ type: 'baseline', value: { projections: { 'arkme:windows:same': { asOfSeq: 9, values: {} } } } })
+  const mux = f.sockets.find(socket => String(socket.url).includes('remote.mux'))!
+  const opening = mux.frames.filter(frame => frame.endpoint === 'session/control').at(-1)
+  const update = { type: 'projection', sessionId: 'local', key: 'title', seq: 10, value: 'still live' }
+  mux.receive({ type: 'item', streamId: opening.streamId, value: update })
+  expect((await control.next()).value).toEqual(update)
   abort.abort(); await linux.return(); await control.return()
 })
 
@@ -786,6 +811,10 @@ it('uses the real DSH snapshot reader to replace complete control baselines whil
       'arkme:origin:two': baselines.two,
     })
     expect(updates.filter(value => value.key === 'later')).toHaveLength(2) // replay after the new baseline
+    await histories[0].return()
+    await new Promise(resolve => setTimeout(resolve, 5))
+    pending.get('two:session/control')!({ ok: true, value: { items: [{ type: 'projection', sessionId: 'two', key: 'later', value: 'after other source release', seq: 11 }] } })
+    await vi.waitFor(() => expect(updates.at(-1)?.value).toBe('after other source release'))
     expect(failures).toEqual([])
     expect(f.sockets.filter(value => String(value.url).includes('remote.mux'))).toHaveLength(1)
     expect(f.sockets.filter(value => String(value.url).includes('native-streams'))).toHaveLength(1)

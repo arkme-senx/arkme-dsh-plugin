@@ -641,6 +641,35 @@ it('does not resume cloud leases from a late ready after the account consumer is
   expect(resume).not.toHaveBeenCalled()
 })
 
+it.each(['exited', 'live'] as const)('routes a typed queued prompt once after checking the %s local writer', async state => {
+  const listeners = new Set<(payload: any, metadata: any) => void>()
+  const transport = {
+    subscribeDisconnect: () => () => {},
+    subscribe: async ({ onEvent }: any) => { listeners.add(onEvent); return () => { listeners.delete(onEvent) } },
+    publish: async ({ payload, direction }: any) => { for (const receive of [...listeners]) receive(payload, { senderRole: direction === 'request' ? 'controller' : 'host' }); return { sequence: 1 } },
+  } as unknown as DshRemoteRealtimeTransport
+  let epoch = -1
+  const recover = vi.fn(async () => { if (state === 'exited') epoch = 2 })
+  const command = vi.fn(async (_runtime, request) => ({ ...request, kind: 'response' as const, status: 'completed' as const, result: { accepted: true } }))
+  const liveCommand = vi.fn(command.getMockImplementation()!)
+  const options = { transport, target: { runtimeRef: 'successor', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 }, failed: vi.fn(), native: vi.fn() }
+  const host = new DshSessionChannelHost({ ...options, epoch: () => epoch, recover, command })
+  const liveHost = new DshSessionChannelHost({ ...options, epoch: () => state === 'live' ? 1 : undefined, command: liveCommand })
+  await host.start(); await liveHost.start()
+  const client = new DshSessionChannelClient(transport, async () => {}, vi.fn()), cancel = new AbortController()
+  const body = { session_ref: 'cold', mode: 'queue', content: { type: 'text', text: 'hello' } }
+  const envelope = { protocol: 'dsh.remote' as const, protocol_major: 1 as const, kind: 'request' as const, host_generation: 1,
+    request_ref: 'typed-once', issued_at: Date.now(), execute_before: Date.now() + 2000, operation: 'session.prompt' as const, body }
+  try {
+    const result = client.command('canonical', envelope, cancel.signal).catch(error => error)
+    expect(await Promise.race([result, new Promise(resolve => setTimeout(() => resolve('stalled'), 500))])).toEqual({ accepted: true })
+    expect(recover).toHaveBeenCalledExactlyOnceWith('canonical', 'cold', { ...body, operation: 'session.prompt' }, expect.any(AbortSignal))
+    expect(command).toHaveBeenCalledTimes(state === 'exited' ? 1 : 0)
+    expect(liveCommand).toHaveBeenCalledTimes(state === 'live' ? 1 : 0)
+    expect((host as any).commands.size).toBe(0)
+  } finally { cancel.abort(); client.close(); host.close(); liveHost.close() }
+})
+
 
 it.each(['exited', 'live'] as const)('opens a queued prompt only after proving its %s writer can execute', async state => {
   const listeners = new Set<(payload: any, metadata: any) => void>()

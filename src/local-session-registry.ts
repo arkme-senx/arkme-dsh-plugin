@@ -13,7 +13,7 @@ export default class LocalSessionRegistry extends AgentRegistry {
   private readonly releasing = new Map<SessionId, Promise<void>>()
   private readonly commands = new Map<SessionId, number>()
   private readonly acquisition = new AsyncLocalStorage<{ id: SessionId; commit: () => void }>()
-  private coordination: { ownership: LocalSessionOwnership; instance: string } | undefined
+  private coordination: { ownership: LocalSessionOwnership; instance: string; restore?: (id: SessionId, activate: () => Promise<AgentHandle>) => Promise<AgentHandle> } | undefined
 
   constructor(ctx: Context) {
     if (agentPackage.version !== '0.2.1-rc.2') throw new Error('本机接管需要已验证的 DSH Agent 0.2.1-rc.2')
@@ -29,15 +29,22 @@ export default class LocalSessionRegistry extends AgentRegistry {
   }
 
   override async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
+    const id = options.resumeSessionId, coordination = this.coordination
+    if (!this.acquisition.getStore() && !this.fences.has(id) && coordination?.restore) {
+      const owner = coordination.ownership.read(id)
+      if (owner && (owner.owner !== coordination.instance || owner.phase !== 'active')) {
+        return coordination.restore(id, () => this.resume(options))
+      }
+    }
     this.assertUnfenced(options.resumeSessionId)
     return this.remember(await super.resume({ ...options, setup: this.guardSetup(options.resumeSessionId, options.setup, options.parentAgent !== undefined) }))
   }
 
   /** Configure before any Agent is published in this Profile. */
-  coordinate(ownership: LocalSessionOwnership, instance: string): void {
+  coordinate(ownership: LocalSessionOwnership, instance: string, restore?: (id: SessionId, activate: () => Promise<AgentHandle>) => Promise<AgentHandle>): void {
     if (this.coordination || this.list().length) throw new Error('必须在会话启动之前装配接管协调器')
     if (!this.ctx.get('sessionPersistence')) throw new Error('接管协调器需要 DSH 持久化写锁')
-    this.coordination = { ownership, instance }
+    this.coordination = { ownership, instance, ...(restore ? { restore } : {}) }
   }
 
   async acquireOwned(id: SessionId, commit: () => void, activate: () => Promise<unknown>): Promise<AgentHandle> {

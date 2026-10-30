@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import type LocalSessionRegistry from './local-session-registry.js'
 import { LocalSessionOwnership, type LocalSessionOwner, type LocalSessionPeer } from './local-session-ownership.js'
 export { LocalSessionOwnership } from './local-session-ownership.js'
@@ -132,7 +133,7 @@ export class LocalSessionCoordinator {
     this.starting = true
     await this.options.authorize()
     this.lifetime.signal.throwIfAborted()
-    this.options.registry.coordinate(this.options.ownership, this.options.instance)
+    this.options.registry.coordinate(this.options.ownership, this.options.instance, (id, activate) => this.restoreExited(id, activate))
     await new Promise<void>((resolve, reject) => {
       const fail = (error: Error) => { this.server.off('listening', ready); reject(error) }
       const ready = () => { this.server.off('error', fail); resolve() }
@@ -143,6 +144,25 @@ export class LocalSessionCoordinator {
     const peer = { instance: this.options.instance, port: address.port, token: randomBytes(32).toString('hex') }
     try { this.lifetime.signal.throwIfAborted(); this.options.ownership.publishPeer(peer); this.peer = peer }
     catch (error) { await new Promise<void>(resolve => this.server.close(() => resolve())); throw error }
+  }
+
+  /** Native resume may recover an exited writer, but must never release a live
+   * one. The typed refusal also preserves native create's blank fallback. */
+  private async restoreExited(id: SessionId, activate: () => Promise<AgentHandle>): Promise<AgentHandle> {
+    const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(30_000)])
+    await this.options.authorize(); signal.throwIfAborted()
+    const owner = this.options.ownership.read(id)
+    if (!owner || owner.phase !== 'active' || owner.owner === this.options.instance) throw new SessionAlreadyOwnedError(id)
+    if (this.options.ownership.peer(owner.owner)) {
+      try {
+        await this.requestPeer(owner.owner, { sessionId: id, epoch: owner.epoch,
+          native: { mode: 'close', streamRef: randomBytes(16).toString('hex') } }, signal)
+        throw new SessionAlreadyOwnedError(id)
+      } catch (error) {
+        if (!(error instanceof DshRemoteError) || error.code !== 'RUNTIME_OFFLINE') throw error
+      }
+    }
+    return this.acquire(id, activate, signal, owner)
   }
 
   /** Activate through the original controller/registry composition. The registry

@@ -1512,7 +1512,7 @@ it('keeps the native carrier usable after the connection attempt completes, dedu
 
 
 it('uploads fresh sessions beside a rejected retired source without falsely completing the snapshot', async () => {
- const f = await fixture()
+ const f = await fixture({ sessionChannel: { epoch: () => 1, native: vi.fn() } })
  vi.spyOn(f.adapter, 'sessions').mockResolvedValue({ items: [
    { sessionId: 'session-01', title: 'old', updatedAt: 1000, running: false, blank: false, workspaceId: 'workspace-01' },
    { sessionId: 'fresh', title: 'new', updatedAt: 2000, running: false, blank: false, workspaceId: 'workspace-01' },
@@ -1527,6 +1527,36 @@ it('uploads fresh sessions beside a rejected retired source without falsely comp
    expect(send).toHaveBeenCalledWith(expect.objectContaining({ report_conflicts: true, items: expect.arrayContaining([expect.objectContaining({ session_ref: 'fresh' })]) }), expect.any(AbortSignal))
    expect(complete).not.toHaveBeenCalled()
    expect(f.diagnostics).toHaveBeenCalledWith('projection_sync_failed', expect.objectContaining({ session_items_acked: 1, server_completed: false, error_code: 'REMOTE_PROJECTION_CONFLICT' }))
+   const notices = () => f.realtime.published.filter(p => p.directoryChanged)
+   expect(notices()).toHaveLength(1)
+   expect(notices()[0]).not.toHaveProperty('directoryDelta')
+   expect(f.realtime.published.some(p => p.ready && p.sessionRef)).toBe(false)
+   await (f.host as unknown as { syncProjectionSnapshotSafely(force: boolean): Promise<void> }).syncProjectionSnapshotSafely(true)
+   expect(notices()).toHaveLength(1)
+ } finally { await f.host.stop() }
+})
+
+it('requests a deduplicated catalog read after a source-group failure without claiming unconfirmed writes', async () => {
+ const f = await fixture({ sessionChannel: { epoch: () => 1, native: vi.fn() } })
+ const inventory = vi.spyOn(f.adapter, 'sessions').mockResolvedValue({ items: [
+   { sessionId: 'fresh', title: 'first', updatedAt: 2000, running: false, blank: false, workspaceId: 'workspace-01' },
+ ] })
+ vi.spyOn(f.controlPlane, 'syncSessions').mockRejectedValue(new DshRemoteError('REMOTE_PROJECTION_CONFLICT', 'later source group rejected'))
+ const complete = vi.spyOn(f.controlPlane, 'completeProjectionSnapshot')
+ const sync = () => (f.host as unknown as { syncProjectionSnapshotSafely(force: boolean): Promise<void> }).syncProjectionSnapshotSafely(true)
+ try {
+   await f.host.start(); await (f.host as unknown as { backgroundProjectionFlight: Promise<void> }).backgroundProjectionFlight
+   await sync()
+   expect(f.realtime.published.filter(p => p.directoryChanged)).toHaveLength(1)
+   inventory.mockResolvedValue({ items: [
+     { sessionId: 'fresh', title: 'changed', updatedAt: 3000, running: false, blank: false, workspaceId: 'workspace-01' },
+   ] })
+   await sync()
+   const notices = f.realtime.published.filter(p => p.directoryChanged)
+   expect(notices).toHaveLength(2)
+   expect(notices.every(p => p.directoryDelta === undefined)).toBe(true)
+   expect(f.realtime.published.some(p => p.ready && p.sessionRef)).toBe(false)
+   expect(complete).not.toHaveBeenCalled()
  } finally { await f.host.stop() }
 })
 

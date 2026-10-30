@@ -26,6 +26,19 @@ function runPnpm(args: string[]) {
 }
 
 describe('published package contents', () => {
+  it('uses the consuming Harness Agent registry and scope identity for local takeover', () => {
+    runPnpm(['run', 'bundle'])
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { AgentRegistry } from '@deepseek-ai/dsh-agent';
+      import LocalSessionRegistry from './lib/local-session-registry.js';
+      if (Object.getPrototypeOf(LocalSessionRegistry) !== AgentRegistry) {
+        throw new Error('Local takeover must share the Harness Agent registry and its scope routing');
+      }
+      console.log('shared-agent-registry');
+    `], { cwd: projectRoot, encoding: 'utf8', timeout: packageCommandTimeout })
+    expect(output.trim()).toBe('shared-agent-registry')
+  }, packageTestTimeout)
+
   it('ships public docs without internal planning artifacts', () => {
     const output = runPnpm([
       'pack',

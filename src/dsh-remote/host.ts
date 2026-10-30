@@ -1787,6 +1787,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       diagnostic.stage = stage
       this.diagnostic('projection_sync_progress', { ...diagnostic, duration_ms: Math.round(performance.now() - startedAt) })
     }
+    let attemptedDirectoryProjection: string | undefined
     this.diagnostic('projection_sync_started', { ...diagnostic })
     try {
       progress('read_workspaces')
@@ -1900,6 +1901,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       let rejectedSessions = 0
       const acceptedSessions: DshDirectorySession[] = []
       let directoryDeltaComplete = true
+      // A managed upload can commit one source group before another rejects.
+      // Retain only a stable invalidation fingerprint, never an unconfirmed delta.
+      if (sessionItems.length) attemptedDirectoryProjection = createHash('sha256').update(JSON.stringify([
+        runtime.runtimeRef, runtime.hostGeneration,
+        sessionItems.map(({ projection_at: _revision, ...item }) => item)
+          .sort((left, right) => left.session_ref.localeCompare(right.session_ref)),
+      ])).digest('hex')
       for (let offset = 0; offset < sessionItems.length || offset === 0; offset += 100) {
         check()
         diagnostic.page_index = offset / 100
@@ -1930,6 +1938,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       }
       check()
       if (rejectedSessions) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', `有 ${rejectedSessions} 个旧来源未获写入许可；其他会话已同步`)
+      attemptedDirectoryProjection = undefined
       if (!delta) {
         progress('complete_snapshot')
         await this.options.controlPlane.completeProjectionSnapshot({
@@ -1976,6 +1985,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       const remote = asDshRemoteError(error)
       // Account/lifecycle cancellation is not an upload failure for the next account.
       const cancelled = generation !== this.accountGeneration || this.projectionController.signal.aborted
+      if (!cancelled && diagnostic.stage === 'upload_sessions' && attemptedDirectoryProjection !== undefined) {
+        // This is a read repair hint, not a snapshot/ownership ACK. Preserve
+        // advertised execution epochs and let readers fetch committed rows.
+        // directoryChanged deduplicates unchanged failed inventories, so an old
+        // conflict cannot force a full account read on every ordinary retry.
+        await this.sessionChannel?.directoryChanged([], `repair:${attemptedDirectoryProjection}`, undefined, true).catch(() => undefined)
+      }
       // Some rows may already be committed while their notification failed.
       // The next existing sync must invalidate the full catalog, not emit only
       // rows absent from the managed adapter's successful-write cache.

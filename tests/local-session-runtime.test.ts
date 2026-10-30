@@ -13,6 +13,20 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { DshNativeTransport } from '../src/dsh-remote/native-transport.js'
 import { controlFrames } from '../src/local-session-control.js'
 
+it('keeps named blank creation under native workspace and preset validation instead of forwarding it as an existing-session command', async () => {
+  const authorize = vi.fn(async () => {})
+  const requestPeer = vi.fn(), command = vi.fn()
+  const runtime = Object.assign(Object.create(LocalSessionRuntime.prototype) as LocalSessionRuntime, {
+    instance: 'new', lifetime: new AbortController(), incoming: new AsyncLocalStorage(),
+    start: async () => {}, authorize, registry: { command },
+    ownership: { read: () => ({ owner: 'exited', epoch: 1, phase: 'active' }) }, coordinator: { requestPeer },
+  })
+  const next = vi.fn(async () => ({ sessionId: 'blank', agentPreset: 'recorded' }))
+  expect(await runtime.invoke({ namespace: 'session', method: 'create', args: { request: { sessionId: 'blank', workspaceId: 'local-workspace', agentPreset: 'recorded' } } }, next)).toEqual({ sessionId: 'blank', agentPreset: 'recorded' })
+  expect(authorize).toHaveBeenCalledOnce(); expect(next).toHaveBeenCalledOnce()
+  expect(requestPeer).not.toHaveBeenCalled(); expect(command).not.toHaveBeenCalled()
+})
+
 it('publishes the executor after activation without delaying local sends on cloud I/O', async () => {
   const order: string[] = []
   let rejectPublication!: (error: Error) => void
@@ -225,7 +239,7 @@ it.each(['missing', 'refused'])('recovers a cold canonical session after its %s 
 })
 
 
-it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address', 'wrong-session'].flatMap(state => ['follow', 'prompt'].map(entry => [state, entry])))('does not recover a %s peer via %s', async (state, entry) => {
+it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address', 'wrong-session'].flatMap(state => ['follow', 'prompt', 'typed-prompt'].map(entry => [state, entry])))('does not recover a %s peer via %s', async (state, entry) => {
   const owner = { sessionId: 'cold', conversationRef: 'conversation', owner: 'old-process', epoch: 1, phase: 'active', target: null, transfer: null }
   const signal = new AbortController()
   if (state === 'cancelled') signal.abort()
@@ -241,7 +255,7 @@ it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address',
     ownership: { address: () => 'canonical', read: () => owner, peer: () => ({ instance: 'old-process' }) }, coordinator: { requestPeer },
   })
   const sessionId = state === 'wrong-session' ? 'other' : 'cold'
-  const body = entry === 'prompt'
+  const body = entry === 'typed-prompt' ? { operation: 'session.prompt', session_ref: sessionId, mode: 'queue' } : entry === 'prompt'
     ? { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId, mode: 'queue', requestId: 'once' } } } }
     : { mode: 'pull', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId } } } } }
   const outcome = runtime.recoverChannel(state === 'wrong-address' ? 'foreign' : 'canonical', 'cold', body, signal.signal)
@@ -251,7 +265,18 @@ it.each(['alive', 'timeout', 'unknown', 'changed', 'cancelled', 'wrong-address',
   expect(requestPeer).toHaveBeenCalledTimes(['wrong-address', 'wrong-session', 'cancelled'].includes(state) ? 0 : 1)
 })
 
-it.each([['missing', 'native'], ['refused', 'native'], ['missing', 'typed'], ['refused', 'typed'], ['missing', 'prompt'], ['refused', 'prompt']])('uses real private discovery and fenced acquisition for a %s cold owner via %s', async (state, entry) => {
+it.each(['steer', 'invalid'])('does not acquire a cold writer for a typed prompt in %s mode', async mode => {
+  const acquire = vi.fn(), requestPeer = vi.fn()
+  const runtime = Object.assign(Object.create(LocalSessionRuntime.prototype) as LocalSessionRuntime, {
+    instance: 'current', start: async () => {}, authorize: async () => {}, acquire,
+    ownership: { address: () => 'canonical', read: () => ({ owner: 'old-process', epoch: 1, phase: 'active' }), peer: () => undefined },
+    coordinator: { requestPeer },
+  })
+  await runtime.recoverChannel('canonical', 'cold', { operation: 'session.prompt', session_ref: 'cold', mode }, new AbortController().signal)
+  expect(acquire).not.toHaveBeenCalled(); expect(requestPeer).not.toHaveBeenCalled()
+})
+
+it.each(['missing', 'refused'].flatMap(state => ['native', 'typed', 'prompt', 'typed-prompt'].map(entry => [state, entry])))('uses real private discovery and fenced acquisition for a %s cold owner via %s', async (state, entry) => {
   const root = mkdtempSync(join(tmpdir(), 'arkme-cold-observer-')), scope = { accountId: '3016', environment: 'test' as const }
   const store = new LocalSessionOwnership(root, scope)
   const id = SessionId('cold'), initial = store.register(id, 'exited')
@@ -275,7 +300,8 @@ it.each([['missing', 'native'], ['refused', 'native'], ['missing', 'typed'], ['r
   })
   try {
     await coordinator.start()
-    await runtime.recoverChannel('canonical', 'cold', entry === 'prompt' ? { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'cold', mode: 'queue', requestId: 'once' } } } }
+    await runtime.recoverChannel('canonical', 'cold', entry === 'typed-prompt' ? { operation: 'session.prompt', session_ref: 'cold', mode: 'queue' }
+      : entry === 'prompt' ? { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'cold', mode: 'queue', requestId: 'once' } } } }
       : entry === 'typed' ? { operation: 'session.history', session_ref: 'cold' }
       : { mode: 'pull', endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: 'cold' } } } } }, AbortSignal.timeout(2000))
     expect(store.read(id)).toMatchObject({ owner: 'current', epoch: 2, conversationRef: initial.conversationRef })

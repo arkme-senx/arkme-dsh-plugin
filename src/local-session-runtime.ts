@@ -157,10 +157,11 @@ export default class LocalSessionRuntime {
     signal.throwIfAborted()
     if (!this.hasSession(runtimeRef, sessionRef)) return
     const history = body.operation === 'session.history' && body.session_ref === sessionRef
+    const typedQueuedPrompt = body.operation === 'session.prompt' && body.session_ref === sessionRef && body.mode === 'queue'
     const args = nativeRecord(nativeRecord(body.payload ?? {}).args ?? {})
     const follow = body.mode === 'pull' && body.endpoint === 'session/follow'
     const queuedPrompt = body.mode === 'call' && body.endpoint === 'session/prompt' && nativeRecord(args.request).mode === 'queue'
-    if (!history && !((follow || queuedPrompt) && localCommandSession(args) === sessionRef)) return
+    if (!history && !typedQueuedPrompt && !((follow || queuedPrompt) && localCommandSession(args) === sessionRef)) return
     const owner = this.ownership!.read(sessionRef)
     if (!owner || owner.owner === this.instance || owner.phase !== 'active') return
     if (this.ownership!.peer(owner.owner)) {
@@ -223,16 +224,19 @@ export default class LocalSessionRuntime {
   }
 
   async invoke(request: InvokeRemoteRequest, next: () => Promise<unknown>): Promise<unknown> {
+    if (request.namespace === 'session' && request.method === 'create') {
+      await this.start(); await this.authorize()
+      // A named blank is a reuse candidate, not a command to its old writer.
+      // Native create owns workspace/preset checks and may mint a different id.
+      return next()
+    }
     const id = localCommandSession(request.args)
     if (!id && request.namespace === 'session' && request.method === 'list' && !this.incoming.getStore()) {
       await this.ctx.arkmeData.accountScope.start()
       await this.start(); await this.authorize()
       return this.controls!.projectList(await next())
     }
-    if (!id) {
-      if (request.namespace === 'session' && request.method === 'create') { await this.start(); await this.authorize() }
-      return next()
-    }
+    if (!id) return next()
     await this.start(); await this.authorize()
     // The public page API is a read-only journal operation; a departed peer
     // must not make existing history unreadable before the next prompt.

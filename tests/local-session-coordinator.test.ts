@@ -10,6 +10,48 @@ import type LocalSessionRegistry from '../src/local-session-registry.js'
 import { DshNativeTransport } from '../src/dsh-remote/native-transport.js'
 import type { DshGatewayLike, DshConnectionLike } from '../src/dsh-remote/gateway-api.js'
 
+it.each(['missing', 'refused', 'alive', 'timeout', 'unknown', 'changed', 'writer-locked', 'closing'])('restores a native blank only after proving its old writer exited: %s', async state => {
+  const root = mkdtempSync(join(tmpdir(), 'arkme-blank-recovery-'))
+  const scope = { accountId: '3016', environment: 'test' as const }, store = new LocalSessionOwnership(root, scope), id = SessionId('blank')
+  const old = store.register(id, 'old')
+  let restore!: (id: SessionId, activate: () => Promise<AgentHandle>) => Promise<AgentHandle>
+  const handle = { agent: { id }, dispose: vi.fn() } as unknown as AgentHandle
+  const registry = { coordinate: (_store: unknown, _instance: string, recover: typeof restore) => { restore = recover },
+    acquireOwned: vi.fn(async (_id: string, commit: () => void, activate: () => Promise<unknown>) => {
+      if (state === 'writer-locked') throw new Error('official writer locked')
+      await activate(); commit(); return handle
+    }) }
+  const coordinator = new LocalSessionCoordinator({ ownership: store, registry: registry as any, instance: 'new', scope, authorize: async () => {} })
+  const fetchMock = vi.spyOn(globalThis, 'fetch')
+  const activate = vi.fn(async () => handle)
+  try {
+    await coordinator.start()
+    if (['refused', 'alive', 'timeout', 'unknown', 'changed'].includes(state)) store.publishPeer({ instance: 'old', port: 1, token: 'a'.repeat(64) })
+    if (state === 'alive') fetchMock.mockResolvedValue(Response.json({ done: true }))
+    if (state === 'timeout') fetchMock.mockRejectedValue(new DOMException('timeout', 'TimeoutError'))
+    if (state === 'unknown') fetchMock.mockRejectedValue(new Error('reset', { cause: { code: 'ECONNRESET' } }))
+    if (state === 'refused' || state === 'changed') fetchMock.mockImplementation(async () => {
+      if (state === 'changed') store.recovered(old, 'successor')
+      throw new Error('refused', { cause: { code: 'ECONNREFUSED' } })
+    })
+    if (state === 'closing') await coordinator.close()
+    if (state === 'missing' || state === 'refused') {
+      expect(await restore(id, activate)).toBe(handle)
+      expect(activate).toHaveBeenCalledOnce()
+      expect(store.read(id)).toMatchObject({ owner: 'new', epoch: 2, phase: 'active' })
+    } else {
+      const assertion = expect(restore(id, activate)).rejects
+      if (state === 'alive') await assertion.toMatchObject({ name: 'SessionAlreadyOwnedError' })
+      else await assertion.toThrow()
+      expect(activate).not.toHaveBeenCalled()
+      expect(store.read(id)).toMatchObject({ owner: state === 'changed' ? 'successor' : 'old' })
+    }
+    // Observation must never request release, even for an idle live peer.
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/native'))).toBe(true)
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(1)
+  } finally { fetchMock.mockRestore(); await coordinator.close(); store.close(); rmSync(root, { recursive: true }) }
+})
+
 it('does not retire discovery for timeout cancellation or authentication failure', async () => {
   const root = mkdtempSync(join(tmpdir(), 'arkme-peer-errors-'))
   const scope = { accountId: '3016', environment: 'test' as const }

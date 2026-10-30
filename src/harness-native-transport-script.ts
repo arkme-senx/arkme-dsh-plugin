@@ -364,11 +364,14 @@ function installNativeTransport(route: string): void {
     signal.throwIfAborted()
   }
   // Decode only declared routing fields. Never recursively rewrite user content.
-  function addressed(payload: unknown) {
+  function addressed(payload: unknown, localCreation = false) {
     const value = structuredClone(payload) as Json, args = value.args ?? {}, body = args.request ?? {}
     let runtime: string | undefined, sessionRef: string | undefined, local = false
     const decode = (owner: Json, key: string) => {
-      const source = split(owner[key]); if (!source) { if (typeof owner[key] === 'string') local = true; return }
+      // Native blank reuse belongs to the local workspace, even when its
+      // unqualified session id also has a stable account-channel address.
+      const source = localCreation && typeof owner[key] === 'string' && !owner[key].startsWith('arkme:') ? undefined : split(owner[key])
+      if (!source) { if (typeof owner[key] === 'string') local = true; return }
       if (runtime && runtime !== source.runtime) throw new Error('请求不能跨实例混用会话')
       runtime = source.runtime; owner[key] = source.id
       if (key !== 'workspaceId' && key !== 'childSessionId') sessionRef ??= source.id
@@ -387,23 +390,15 @@ function installNativeTransport(route: string): void {
       ...(frame.sessionId ? { sessionId: identity(runtime, frame.sessionId) } : {}) }
   }
   type ControlFrames = Map<string, { value: SessionControlFrame; bytes: number }>
-  const controlCuts = (frames: ControlFrames) => {
-    const cuts = new Map<string, number>()
-    for (const { value: frame } of frames.values()) {
-      if (frame.type === 'baseline') for (const [id, block] of Object.entries(frame.value.projections)) cuts.set(id, Math.max(cuts.get(id) ?? -1, block.asOfSeq))
-      else cuts.set(frame.sessionId, Math.max(cuts.get(frame.sessionId) ?? -1, frame.seq))
-    }
-    return cuts
-  }
-  const clearControl = (frames: ControlFrames) => control({ type: 'baseline', value: { projections: Object.fromEntries([...controlCuts(frames)].map(([id, asOfSeq]) => [id, { asOfSeq, values: {} }])) } })
   const sources = new Map<string, { runtime: string; sessionRef: string | undefined; users: number; abort: AbortController; clientId?: string; baseline: Json | undefined; releaseTimer: ReturnType<typeof setTimeout> | undefined; frames: ControlFrames; bytes: number; retryDelay: number; retry: Promise<void> | undefined }>()
   function releaseUnusedSource(key: string) {
     const owned = sources.get(key)
     if (!owned || owned.users) return
     clearTimeout(owned.releaseTimer); owned.abort.abort(); sources.delete(key)
-    const cuts = controlCuts(owned.frames)
-    for (const [id, block] of Object.entries(owned.baseline?.projections ?? {}) as Array<[string, { asOfSeq: number }]>) cuts.set(id, Math.max(cuts.get(id) ?? -1, block.asOfSeq))
-    control({ type: 'baseline', value: { projections: Object.fromEntries([...cuts].map(([id, asOfSeq]) => [id, { asOfSeq, values: {} }])) } })
+    // Releasing off-screen I/O is not an authoritative projection update.
+    // The native journal retains its cached values; reopening seeds a fresh
+    // baseline. Appending a clearing baseline here breaks the shared control
+    // stream's single-opening contract and stops updates for other sessions.
     owned.frames.clear()
   }
   async function selectedSource(runtime: string, sessionRef: string | undefined, signal: AbortSignal): Promise<AbortSignal> {
@@ -532,7 +527,7 @@ function installNativeTransport(route: string): void {
       if (!url.pathname.startsWith('/api/')) return fetch(url, init)
       const message = JSON.parse(String(init.body)) as Json
       if (url.pathname !== `/api/${message.method}`) throw new Error('原生传输入口不一致')
-      const target = addressed(message.payload)
+      const target = addressed(message.payload, message.method === 'session/create')
       const schedule = /^schedule\/(catalog|list|history|update|delete)$/.test(message.method)
       const selectionAtRequest = selected
       // Native task details read a Host catalogue rather than a Session list.
