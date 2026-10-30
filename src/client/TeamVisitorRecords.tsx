@@ -20,7 +20,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
   const personRef = target?.personRef
   // Signed refs rotate on refresh; only a different account/conversation/person resets paging.
   const scopeKey=JSON.stringify([accountKey,conversation.key,conversation.side,target?.personKey ?? personRef ?? 'external',mode])
-  const history=useTeamHistoryPage(conversation.ref,accountKey,'query',{...(personRef?{personRef,personMode:mode}:{}),limit:50},!!personRef,scopeKey,scopeKey,'full')
+  const history=useTeamHistoryPage(conversation.ref,accountKey,'query',{...(personRef?{personRef,personMode:mode}:{}),limit:50},!!personRef,{key:scopeKey,conversationKey:conversation.key},scopeKey,'full')
   const messages=history.page?.messages ?? [],loading=history.loading,hasMore=history.page?.hasMore ?? false,error=personRef?history.error:tr('发送者身份暂不可用，请重新打开')
   const [locating,setLocating]=useState(false),[locateError,setLocateError]=useState('')
   const controller=useRef(new AbortController())

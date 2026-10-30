@@ -3,6 +3,9 @@ import type { TeamHistoryAction, TeamHistoryOptions, TeamHistoryResponse } from 
 import type { TeamIdentity, TeamMessage } from '../team-app-contract.js'
 import { callArkme } from './api.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { teamChangeAffectsSource } from './team-source-read.js'
+
+interface HistoryReadScope { key: string; conversationKey: string }
 
 export function historyCall(conversationRef: string, accountKey: string, action: TeamHistoryAction, options: TeamHistoryOptions, signal: AbortSignal) {
   return callArkme<TeamHistoryResponse>('team.app.history', { conversationRef, expectedAccountKey: accountKey, action, options }, signal)
@@ -51,11 +54,11 @@ export function historyMonthWindow(month: string): TeamHistoryOptions {
 type PageState = { key: string; page?: TeamHistoryResponse; loading: boolean; error: string; windowed: boolean }
 /** A bounded cursor stream. The full presentation uses the existing authorized
  * batch-get only for the visible page; it never resumes a timeline body scan. */
-export function useTeamHistoryPage(conversationRef: string, accountKey: string, action: TeamHistoryAction, options: TeamHistoryOptions, enabled = true, scopeKey = conversationRef, optionsKey?: string, presentation: 'preview' | 'full' = 'preview') {
+export function useTeamHistoryPage(conversationRef: string, accountKey: string, action: TeamHistoryAction, options: TeamHistoryOptions, enabled = true, scope?: HistoryReadScope, optionsKey?: string, presentation: 'preview' | 'full' = 'preview') {
   const [revision, setRevision] = useState(0), [state, setState] = useState<PageState>({ key: '', loading: false, error: '', windowed: false })
   const active = useRef<AbortController>(), value = useRef<PageState>(), busy = useRef(false)
   const signature = optionsKey ?? JSON.stringify(options)
-  const key = JSON.stringify([scopeKey, accountKey, action, signature, revision, presentation])
+  const key = JSON.stringify([scope?.key ?? conversationRef, accountKey, action, signature, revision, presentation])
   const current = useRef({ options, conversationRef }); current.current = { options, conversationRef }
   const load = useCallback(async (more = false) => {
     if (!enabled || more && busy.current) return
@@ -108,12 +111,12 @@ export function useTeamHistoryPage(conversationRef: string, accountKey: string, 
     else { active.current?.abort(); value.current = undefined; busy.current = false; setState({ key, loading: false, error: '', windowed: false }) }
     return () => active.current?.abort()
   }, [load, enabled])
-  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
-    if (account !== accountKey || receiptOnly || !enabled) return
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly, change) => {
+    if (account !== accountKey || receiptOnly || !enabled || !teamChangeAffectsSource(change, { conversationKey: scope?.conversationKey })) return
     active.current?.abort(); busy.current = false
     const invalidated = { key, loading: false, error: '团队内容已更新，请刷新查询', windowed: false }
     value.current = invalidated; setState(invalidated)
-  }), [accountKey, key, enabled])
+  }), [accountKey, key, enabled, scope?.conversationKey])
   const pause = () => {
     active.current?.abort(); busy.current = false
     const paused = { ...(value.current?.key === key ? value.current : { key, windowed: false }), loading: false, error: '已暂停读取，当前结果不完整' }
@@ -125,9 +128,9 @@ export function useTeamHistoryPage(conversationRef: string, accountKey: string, 
 
 /** The original member select is populated automatically with identity metadata.
  * Pagination never becomes an extra user step or a scan of message bodies. */
-export function useTeamHistoryParticipants(conversationRef: string, accountKey: string, side: string, scope: string, revision: number) {
+export function useTeamHistoryParticipants(conversationRef: string, accountKey: string, side: string, scope: HistoryReadScope, revision: number) {
   const [state, setState] = useState<{ key: string; people: TeamIdentity[]; loading: boolean; error: string }>({ key: '', people: [], loading: false, error: '' })
-  const key = JSON.stringify([scope, accountKey, side, revision]), active = useRef<AbortController>()
+  const key = JSON.stringify([scope.key, accountKey, side, revision]), active = useRef<AbortController>()
   const reference = useRef(conversationRef); reference.current = conversationRef
   useEffect(() => {
     if (side !== 'team') { setState({ key, people: [], loading: false, error: '' }); return }
@@ -152,8 +155,8 @@ export function useTeamHistoryParticipants(conversationRef: string, accountKey: 
     })
     return () => controller.abort()
   }, [key, accountKey, side])
-  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
-    if (account === accountKey && !receiptOnly) { active.current?.abort(); setState({ key, people: [], loading: false, error: '团队内容已更新，请刷新查询' }) }
-  }), [accountKey, key])
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly, change) => {
+    if (account === accountKey && !receiptOnly && teamChangeAffectsSource(change, { conversationKey: scope.conversationKey })) { active.current?.abort(); setState({ key, people: [], loading: false, error: '团队内容已更新，请刷新查询' }) }
+  }), [accountKey, key, scope.conversationKey])
   return { ...(state.key === key ? state : { people: [], loading: side === 'team', error: '' }), pause: () => { active.current?.abort(); setState(old => ({ ...old, loading: false, error: '已暂停读取，当前结果不完整' })) } }
 }

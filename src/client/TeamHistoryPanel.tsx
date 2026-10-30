@@ -4,6 +4,7 @@ import type { TeamHistoryOptions, TeamHistoryResponse, TeamHistoryWord } from '.
 import type { ConversationActivitySelection } from '../conversation-activity.js'
 import { historyCall, historyMonthWindow, prepareHistory, useTeamHistoryPage, useTeamHistoryParticipants } from './team-history-client.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { teamChangeAffectsSource } from './team-source-read.js'
 import { ActivityChart, conversationActivityStyles } from './statistics/ConversationActivity.js'
 import { ConversationWordsCloud, conversationAnalysisStyles } from './statistics/ConversationAnalysis.js'
 import { teamHistoryDate, teamHistoryText } from './team-history-browser.js'
@@ -50,7 +51,7 @@ function TeamHistorySearch(props: Props) {
   const query = props.keyword.trim(), [debounced, setDebounced] = useState(query)
   useEffect(() => { const timer = setTimeout(() => setDebounced(query), 300); return () => clearTimeout(timer) }, [query])
   const enabled = !!query && query === debounced
-  const owner = useTeamHistoryPage(props.conversation.ref, props.accountKey, 'query', { keyword: debounced }, enabled, props.conversation.key)
+  const owner = useTeamHistoryPage(props.conversation.ref, props.accountKey, 'query', { keyword: debounced }, enabled, { key: props.conversation.key, conversationKey: props.conversation.key })
   const messages = enabled ? owner.page?.messages ?? [] : []
   return <>
     {query && <HistoryCoverage loading={owner.loading} complete={owner.page?.state === 'ready' && !owner.page.hasMore && !owner.windowed} count={messages.length} error={owner.error} onPause={owner.pause} onRefresh={owner.refresh} />}
@@ -68,7 +69,7 @@ function TeamHistoryAnalysis(props: Props) {
   const [tab, setTab] = useState<'activity' | 'words'>('activity'), [person, setPerson] = useState('all'), [month, setMonth] = useState(''), [weekly, setWeekly] = useState(false)
   const [bucket, setBucket] = useState<ConversationActivitySelection>(), [word, setWord] = useState<{ resultRef: string; value: TeamHistoryWord }>(), [view, setView] = useState<'cloud' | 'list'>('cloud')
   const [revision, setRevision] = useState(0), selectedPerson = useRef<TeamIdentity>()
-  const people = useTeamHistoryParticipants(conversation.ref, accountKey, conversation.side, scope, revision)
+  const people = useTeamHistoryParticipants(conversation.ref, accountKey, conversation.side, { key: scope, conversationKey: conversation.key }, revision)
   const names = useTeamPersonNames(conversation, accountKey, people.people)
   const personName = (person: TeamIdentity) => {
     const enriched = names(person)
@@ -95,13 +96,13 @@ function TeamHistoryAnalysis(props: Props) {
     })
     return () => controller.abort()
   }, [signature, accountKey, tab])
-  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly) => {
-    if (account === accountKey && !receiptOnly) { active.current?.abort(); setState({ signature, error: '团队内容已更新，请刷新查询' }) }
-  }), [accountKey, signature])
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly, change) => {
+    if (account === accountKey && !receiptOnly && teamChangeAffectsSource(change, { conversationKey: conversation.key })) { active.current?.abort(); setState({ signature, error: '团队内容已更新，请刷新查询' }) }
+  }), [accountKey, signature, conversation.key])
   const result = state.signature === signature && !people.error ? state.result : undefined
-  const words = useTeamHistoryPage(conversation.ref, accountKey, 'analysis/words', { resultRef: result?.resultRef ?? '', limit: 100 }, !!result && tab === 'words', scope)
+  const words = useTeamHistoryPage(conversation.ref, accountKey, 'analysis/words', { resultRef: result?.resultRef ?? '', limit: 100 }, !!result && tab === 'words', { key: scope, conversationKey: conversation.key })
   const selection = tab === 'words' ? word && result && word.resultRef === result.resultRef ? { sourceRef: word.value.sourceRef } : undefined : bucket ? { hour: bucket.hour, ...(bucket.weekday !== null ? { weekday: bucket.weekday } : {}) } : undefined
-  const sources = useTeamHistoryPage(conversation.ref, accountKey, 'analysis/sources', { resultRef: result?.resultRef ?? '', ...selection }, !!result && !!selection, scope)
+  const sources = useTeamHistoryPage(conversation.ref, accountKey, 'analysis/sources', { resultRef: result?.resultRef ?? '', ...selection }, !!result && !!selection, { key: scope, conversationKey: conversation.key })
   const error = (state.signature === signature ? state.error : '') || people.error || (selection ? sources.error : tab === 'words' ? words.error : '')
   const loading = !error && (!result || people.loading || (selection ? sources.loading : tab === 'words' && words.loading))
   const complete = !!result && !people.loading && !error && (tab === 'activity' || words.page?.state === 'ready')

@@ -1,5 +1,6 @@
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
 import { invalidateTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { teamChangeAffectsSource } from './team-source-read.js'
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -104,9 +105,9 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     return {days:page.days.map(day=>({bucketDate:day.date,count:day.count,protectedCount:0,hasRecords:day.count>0}))}
   }
   const calendarAnchors=useRef(new Map<string,TeamMessage>())
-  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly)=>{
-    if(account===accountKey&&!receiptOnly){calendarAnchors.current.clear();setCalendarRevision(n=>n+1)}
-  }),[accountKey])
+  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly,change)=>{
+    if(account===accountKey&&!receiptOnly&&teamChangeAffectsSource(change,{conversationKey:conversation.key})){calendarAnchors.current.clear();setCalendarRevision(n=>n+1)}
+  }),[accountKey,conversation.key])
   const locate = async (message: TeamMessage) => {
     if (locateLock.current) return
     locateLock.current = true; setOpening(message.key); setNotice('')
