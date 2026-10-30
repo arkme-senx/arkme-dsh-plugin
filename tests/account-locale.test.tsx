@@ -72,7 +72,7 @@ describe('account UI language and editing', () => {
     const host = document.createElement('div'); const root = createRoot(host)
     await act(async () => root.render(<><ArkmeAboutProduct /><ArkmeAboutDetails accountScope="prod:42" /></>))
     expect(host.querySelectorAll('.arkme-about-product img')).toHaveLength(1)
-    expect(host.querySelector('.arkme-about-product')?.textContent).toBe(`v${pluginManifest.version}`)
+    expect(host.querySelector('.arkme-about-product')?.textContent).toBe(`v3.${pluginManifest.version.split('.')[2]}`)
     expect(host.querySelectorAll('.arkme-about-social img')).toHaveLength(5)
     expect([...host.querySelectorAll('.arkme-about-social img')].every(img => img.getAttribute('alt') === '')).toBe(true)
     for (const text of ['鄂ICP备2024037215号', '鄂B2-20240478', '14519261', '森奇思(武汉)科技有限公司']) expect(host.textContent).toContain(text)

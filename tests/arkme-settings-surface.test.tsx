@@ -178,7 +178,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).not.toContain('>ArkME 插件<')
     expect(markup).not.toContain('>DeepSeek Harness<')
     expect(markup).not.toContain('aria-label="打开 APP 更新：ArkME 客户端"')
-    expect(aboutMarkup).toContain(`<span class="arkme-about-version">v${pluginManifest.version}</span>`)
+    expect(aboutMarkup).toContain(`<span class="arkme-about-version">v3.${pluginManifest.version.split('.')[2]}</span>`)
     expect(markup).not.toContain('aria-label="检查 ArkME 插件更新"')
     expect(markup).not.toContain('aria-label="检查 DeepSeek Harness更新"')
     expect(markup).toContain('>用户协议<')

@@ -1,4 +1,4 @@
-import { useNavigationVersion } from './use-navigation-version.js'
+import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
@@ -252,7 +252,7 @@ export function ArkmeProductNavigation({
     : 0
   const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
   const navigationItems = items.map(item => ({ ...item, label: tr(item.label) }))
-  const productVersion = useNavigationVersion(pluginManifest.version)
+  const productVersion = formatProductVersion(pluginManifest.version, currentClientVersionCode())
   const profileHint = `${tr("个人资料")} · ${membershipLabel(membership.state)}\n${membershipDescription(membership.state)}`
   useEffect(() => { navigationHint.hide() }, [navigationHint.hide, memberScope, activeId, isRecording, profileOpen, locked])
 
