@@ -148,6 +148,57 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(input)
   })
 
+  it('keeps a just-sent body for its publication/older hints, but invalidates a newer occurrence revision',async()=>{
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=()=>renderer!.root.findByType(TeamConversationMessage)
+    expect(row().props.message.content.text_content).toBe('问题')
+    for(const revision of [2,1,2]){
+      await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:revision,sequence:1});await tick()})
+      expect(row().props.message.content?.text_content).toBe('问题')
+    }
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    expect(row().props.message.content).toBeUndefined()
+    expect(row().props.message.contentStatus).toBe('revalidating')
+  })
+
+  it('does not restore draft material when a newer source change arrives before the send ACK', async () => {
+    let sent=false, finish!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){sent=true;return new Promise(resolve=>{finish=resolve})}
+      return []
+    })
+    await mount();await send()
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    await act(async()=>{finish(accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}}));await tick()})
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('revalidating')
+  })
+  it('does not supplement an explicitly unavailable recovery ACK with the send draft', async () => {
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:3,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:'unavailable'}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=renderer!.root.findByType(TeamConversationMessage)
+    expect(row.props.message.content).toBeUndefined()
+    expect(row.props.message.contentStatus).toBe('unavailable')
+  })
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
     const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}
@@ -460,19 +511,28 @@ describe('Team send UI recovery', () => {
 
   it('recalls only after confirmation, retains the next draft and rejects a late published snapshot', async () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤回目标',template_kind:1},media:[]}
-    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? {message:{...mine,state:'recalled',revision:2},changed:true} : [])
+    const sibling: TeamMessage = {...mine,ref:'stable-ref',key:'stable',seq:2,content:{text_content:'其他消息保持可读',template_kind:1}}
+    let finishRecall!:(value:unknown)=>void
+    mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? {conversation,messages:[mine,sibling],hasMore:false,beforeSeq:0} : op === 'team.app.recall' ? new Promise(resolve=>{finishRecall=resolve}) : [])
     await mount()
+    const row=(key:string)=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key===key)!
+    const stable=row('stable')
     const invalidated = vi.fn()
     const stop = subscribeTeamMessageChanges(invalidated)
-    await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
+    await act(async () => row('own').props.onRecall())
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(0)
     await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
     expect(mocks.call.mock.calls.filter(c=>c[0]==='team.app.recall')).toHaveLength(1)
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
+    await act(async () => {finishRecall({message:{...mine,state:'recalled',revision:2},changed:true});await tick()})
     expect(invalidated).toHaveBeenCalledWith('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:[conversation.key]})
     stop()
-    const shown = renderer!.root.findByType(TeamConversationMessage).props.message
+    const shown = row('own').props.message
     expect(shown.state).toBe('recalled')
     expect(shown.content).toBeUndefined()
+    expect(row('stable')).toBe(stable)
+    expect(row('stable').props.message.content).toBe(sibling.content)
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(renderer!.root.findAllByType(ArkmeConfirmDialog)).toHaveLength(0)
   })

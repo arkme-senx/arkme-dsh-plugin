@@ -6,6 +6,7 @@ export const ARKME_CHAT_SSE_PATH = '/api/v1/sse/chat/noty'
 export const ARKME_RUNTIME_INSTANCE_ID_HEADER = 'X-Jotmo-Runtime-Instance-Id'
 export const ARKME_SSE_IDENTITY_VERSION_HEADER = 'X-Jotmo-SSE-Identity-Version'
 export const ARKME_SSE_IDENTITY_VERSION = '2'
+export const ARKME_TEAM_HINT_VERSION_HEADER = 'X-Jotmo-Team-Hint-Version'
 export const ARKME_CHAT_RECEIVE_BIZ_TYPE = 17
 export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_CHAT_POLICY_UPDATED_BIZ_TYPE = 19
@@ -185,22 +186,25 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
 }
 
 export const ARKME_TEAM_NOTIFICATION_BIZ_TYPE = 28
-export interface ArkmeTeamChangeHint { kind:string; messageUid?:string; conversationUid?:string }
+export interface ArkmeTeamChangeHint { kind:string; messageUid?:string; conversationUid?:string; messageRevision?:number; sequence?:number; conversationRevision?:number }
 export interface ArkmeTeamPublicationHint { eventUid:string;conversationUid:string;messageUid:string;seq:number;publishedAt:number;expiresAt:number }
 export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number; receiptOnly: boolean; publication?:ArkmeTeamPublicationHint; change?:ArkmeTeamChangeHint } | undefined {
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
-  if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at'].includes(key))) return undefined
+  if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at','message_revision','reconcile'].includes(key))) return undefined
   if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.message.published'].includes(String(v.kind))) return undefined
   const eventUid=nonEmptyString(v.event_uid),eventAtMillis=positiveInteger(v.event_at)
   if(!eventUid||!eventAtMillis||!positiveInteger(v.revision))return undefined
+  if(v.message_revision!==undefined && (!Number.isSafeInteger(v.message_revision) || Number(v.message_revision)<0 || Number(v.message_revision)>0 && (v.kind!=='team.message.changed'||!nonEmptyString(v.message_uid)||!positiveInteger(v.seq))))return undefined
+  if(v.reconcile!==undefined && typeof v.reconcile!=='boolean' || v.reconcile===true && ['team.message.published','team.receipt.changed'].includes(String(v.kind)))return undefined
+  if(v.reconcile===true)return {eventUid,eventAtMillis,receiptOnly:false}
   if(v.kind==='team.message.published'){
     const conversationUid=nonEmptyString(v.conversation_uid),messageUid=nonEmptyString(v.message_uid),seq=positiveInteger(v.seq),expiresAt=positiveInteger(v.expires_at)
     if(!conversationUid||!messageUid||!seq||v.published_at!==eventAtMillis||!expiresAt||expiresAt-eventAtMillis!==3600000)return undefined
     return {eventUid,eventAtMillis,receiptOnly:false,publication:{eventUid,conversationUid,messageUid,seq,publishedAt:eventAtMillis,expiresAt}}
   }
   const messageUid=nonEmptyString(v.message_uid),conversationUid=nonEmptyString(v.conversation_uid)
-  return {eventUid,eventAtMillis,receiptOnly:v.kind==='team.receipt.changed',change:{kind:String(v.kind),...(messageUid&&messageUid.length<=256?{messageUid}:{}),...(conversationUid&&conversationUid.length<=256?{conversationUid}:{})}}
+  return {eventUid,eventAtMillis,receiptOnly:v.kind==='team.receipt.changed',change:{kind:String(v.kind),...(v.kind==='team.message.changed'?{conversationRevision:positiveInteger(v.revision)!}:{}),...(messageUid&&messageUid.length<=256?{messageUid}:{}),...(conversationUid&&conversationUid.length<=256?{conversationUid}:{}),...(v.kind==='team.message.changed'&&positiveInteger(v.message_revision)?{messageRevision:positiveInteger(v.message_revision)!}:{}),...(v.kind==='team.message.changed'&&positiveInteger(v.seq)?{sequence:positiveInteger(v.seq)!}:{})}}
 }
 
 export function decodeArkmeMemberJoinedDataLine(line: string): ArkmeMemberInvalidationHint | undefined {
@@ -635,6 +639,7 @@ export class ArkmeChatRealtimeRuntime {
           Authorization: `Bearer ${session.accessToken}`,
           'Content-Type': 'application/json',
           [ARKME_RUNTIME_INSTANCE_ID_HEADER]: ARKME_RUNTIME_INSTANCE_ID,
+          [ARKME_TEAM_HINT_VERSION_HEADER]: '2',
           Usersource: '3',
         },
         body: '{}',
@@ -662,6 +667,7 @@ export class ArkmeChatRealtimeRuntime {
       this.reportIdentityCapability(response)
       acceptedAtMillis = this.now()
       const responseDateMillis = Date.parse(response.headers.get('date') ?? '')
+      const scopedTeamHints = response.headers.get(ARKME_TEAM_HINT_VERSION_HEADER) === '2'
       const connectionStartedAtMillis = Number.isFinite(responseDateMillis) && responseDateMillis > 0
         ? responseDateMillis : undefined
       this.connected = true
@@ -682,10 +688,10 @@ export class ArkmeChatRealtimeRuntime {
         buffer += decoder.decode(next.value, { stream: true })
         const lines = buffer.split(/\r?\n/)
         buffer = lines.pop() ?? ''
-        for (const line of lines) this.acceptLine(line, session.userId, controller.signal, connectionStartedAtMillis)
+        for (const line of lines) this.acceptLine(line, session.userId, controller.signal, connectionStartedAtMillis, scopedTeamHints)
       }
       buffer += decoder.decode()
-      if (buffer !== '') this.acceptLine(buffer, session.userId, controller.signal, connectionStartedAtMillis)
+      if (buffer !== '') this.acceptLine(buffer, session.userId, controller.signal, connectionStartedAtMillis, scopedTeamHints)
       await reader.cancel().catch(() => undefined)
     } finally {
       controller.abort()
@@ -733,9 +739,14 @@ export class ArkmeChatRealtimeRuntime {
     connectionUserId: number,
     connectionSignal: AbortSignal,
     connectionStartedAtMillis?: number,
+    scopedTeamHints = false,
   ): void {
     if (connectionSignal.aborted) return
-    const teamNotification = decodeArkmeTeamNotificationDataLine(line)
+    const decodedTeam = decodeArkmeTeamNotificationDataLine(line)
+    // Legacy IM coalesces general hints across sources. Only an acknowledged
+    // v2 connection can claim that its locator covers the complete change.
+    const teamNotification = decodedTeam && !scopedTeamHints && decodedTeam.change
+      ? { ...decodedTeam, change: undefined } : decodedTeam
     const policyUpdated = decodeArkmeChatPolicyUpdatedDataLine(line)
     if (policyUpdated !== undefined && policyUpdated.userId !== connectionUserId) return
     const memberJoined = decodeArkmeMemberJoinedDataLine(line)

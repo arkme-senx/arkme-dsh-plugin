@@ -132,6 +132,9 @@ export class TeamAppService {
   }
   async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
     return {kind:hint.kind,
+      ...(hint.messageRevision?{messageRevision:hint.messageRevision}:{}),
+      ...(hint.conversationRevision?{conversationRevision:hint.conversationRevision}:{}),
+      ...(hint.sequence?{sequence:hint.sequence}:{}),
       ...(hint.messageUid?{messageKey:await this.key(hint.messageUid,actor)}:{}),
       ...(hint.conversationUid?{conversationKeys:await Promise.all(['team','external'].map(side=>this.key(`${hint.conversationUid}:${side}`,actor)))}:{})}
   }

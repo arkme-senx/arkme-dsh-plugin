@@ -60,7 +60,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
       const target = event.target instanceof Element ? event.target : null
       if (!target?.closest('[role="toolbar"], [role="menu"], [data-arkme-member-profile], [aria-modal="true"], [data-arkme-image-preview-viewport]')) onClose()
     }}>
-    {readable && current.reply && <TeamMessageMediaScope conversationRef={conversation.ref} conversationKey={conversation.key} message={{ ...current,ref:current.reply.ref,key:current.reply.key,version:current.reply.version,media: current.reply.media ?? [] }}>
+    {readable && current.reply && <TeamMessageMediaScope conversationRef={conversation.ref} conversationKey={conversation.key} message={{ ...current,ref:current.reply.ref,key:current.reply.key,revision:0,version:current.reply.version,media: current.reply.media ?? [] }}>
       <ArkmeExtensionParentPreview inline parent={teamReplyPresentation(current)!} isMe={current.own} onSelect={openParent} />
     </TeamMessageMediaScope>}
     {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(current.state==='recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : '内容当前不可用')}</p>}

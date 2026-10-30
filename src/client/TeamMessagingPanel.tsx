@@ -1,6 +1,6 @@
 import { TeamSourceReadScope } from './TeamSourceReadScope.js'
 import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial } from '../team-message-projection.js'
-import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
+import {invalidateTeamMessageRead,teamChangeAffectsConversationPreview,TeamSendReadFence} from './team-source-read.js'
 import {prepareTeamCapture} from './team-message-snapshot.js'
 import {useTeamMessageSnapshot} from './use-team-message-snapshot.js'
 import type {TeamEditReceipt} from '../team-snapshot-contract.js'
@@ -291,6 +291,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const paneHost = useRef<HTMLElement>(null)
   const historyWindow = useRef(0)
   const delivery = useTeamSendTasks(conversation.ref, accountKey)
+  const sendReadFence = useMemo(() => new TeamSendReadFence(conversation.key), [accountKey, conversation.key])
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
   const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false)
@@ -407,6 +408,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         for (const message of data.messages) messages.set(message.key, message)
       }
       if (ctrl.current.signal.aborted || token !== generation.current) return
+      for (const message of beforeSeq ? data.messages : messages.values()) sendReadFence.observeRead(message)
       data = { ...data, conversation: {...head,notificationPolicy:mergeTeamNotificationPolicy(latest.current?.conversation.notificationPolicy,head.notificationPolicy)}, messages: confirmed.current.merge(conversation.key, mergeTeamMessages(latest.current?.messages ?? [], [...messages.values()]).filter(message=>messages.has(message.key))) }
       if (scroller.current && old) viewport.current = arkmeConversationViewport(scroller.current)
       latest.current = data
@@ -460,6 +462,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     } finally { recovering.current = false }
   }, [refresh])
   useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly, change) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
+      sendReadFence.invalidate(change)
       generation.current++
       const old=latest.current
       if(old){
@@ -468,10 +471,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           if(row.own&&next!==row)confirmed.current.retain(conversation.key,next)
           return next
         })
-        const next={...old,conversation:teamChangeAffectsSource(change,{conversationKey:conversation.key})?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
+        const next={...old,conversation:teamChangeAffectsConversationPreview(change,old.conversation)?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
       }
       void recover()
-    } } }) }, [recover, accountKey, receiptStore])
+    } } }) }, [recover, accountKey, receiptStore, sendReadFence])
   useEffect(() => {
     const recoverOnline = () => { void recover() }
     window.addEventListener('focus', recoverOnline)
@@ -548,11 +551,13 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (task.message.state === 'recalled') { confirmed.current.retain(conversation.key,teamMessageProjection(task.message)); continue }
       // A minimal send ACK omits parent details. Keep the accepted reply until
       // an authorized timeline snapshot replaces this local presentation.
-      const reply = task.message.reply ?? teamPendingReply(task.reply)
-      confirmed.current.retain(conversation.key, { ...task.message, content: task.message.content ?? task.sendContent ?? task.content, contentStatus: task.message.contentStatus || 'available',
+      const readable = !task.message.contentStatus || task.message.contentStatus === 'available'
+      const reply = readable ? task.message.reply ?? teamPendingReply(task.reply) : undefined
+      const {content: _content, reply: _reply, ...identity} = task.message
+      confirmed.current.retain(conversation.key, sendReadFence.projectAcknowledgement({ ...identity, ...(readable ? {content: task.message.content ?? task.sendContent ?? task.content} : {}), contentStatus: task.message.contentStatus || 'available',
         ...(!task.message.contentStatus ? {own:true,side:conversation.side,createdAt:task.message.createdAt || task.createdAtMillis} : {}),
         ...(reply ? {reply} : {}),
-        media: task.message.contentStatus ? task.message.media : task.files.map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})) })
+        media: !readable ? [] : task.message.contentStatus ? task.message.media : task.files.map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})) }, task.clientUid, latest.current?.messages.find(row => row.key === task.message!.key)))
     }
     if (changed) {
       const old = latest.current
@@ -562,7 +567,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       }
       void refresh(); onChanged()
     }
-  }, [delivery.tasks, conversation.key, refresh, onChanged])
+  }, [delivery.tasks, conversation.key, refresh, onChanged, sendReadFence])
   const recall = async () => {
     if (!recallTarget || busy) return
     const scope=currentScope.current, target=recallTarget
@@ -608,6 +613,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     try { persistTeamDraft(localStorage, storageKey, acceptedDraft) } catch { setError(tr('无法保存发送请求，请释放本机存储后再发送')); return }
     sendBusy.current = true; draftRef.current = acceptedDraft; setDraft(acceptedDraft); setBusy(true); setError('')
     setOutgoing(outgoing ?? pendingTeamMessage(acceptedDraft, conversation, localMedia.current, timeline.messages.findLast(m => m.own)?.sender))
+    sendReadFence.begin(attempt.uid)
     try {
       const task = await callArkme<TeamSendTask>('team.app.send.enqueue', { conversationRef: conversation.ref, clientUid: attempt.uid, content: attempt.content, expectedReplySeq: attempt.expectedReplySeq, fileRefs: attempt.fileRefs ?? [], ...(attempt.metadataRef?{metadataRef:attempt.metadataRef}:{}), ...(attempt.reply ? {reply:attempt.reply} : {}) }, ctrl.current.signal)
       if (ctrl.current.signal.aborted) return
@@ -876,7 +882,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           } catch {setError(tr('无法保存核对结果，请保留当前编辑后重试'))}
         }}>{tr('关闭待核对项')}</button>
       </div>}
-      {editing && <TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={editing.message.ref} messageKey={editing.message.key} conversationKey={conversation.key} version={editing.message.version}>{readable=><ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={readable ? editing.latestText ?? editing.message.content?.text_content ?? '' : tr('引用内容当前不可用')} closeLabel={tr('关闭重新编辑')} disabled={capturePreparing || !detailReady || busy} onClose={() => {if(draftRef.current.pendingEdit){setError(tr('编辑结果待确认，请先点击保存核对'));return}setEditing(undefined);setError('')}} />}</TeamSourceReadScope>}
+      {editing && <TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={editing.message.ref} messageKey={editing.message.key} conversationKey={conversation.key} version={editing.message.version} revision={editing.message.revision}>{readable=><ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={readable ? editing.latestText ?? editing.message.content?.text_content ?? '' : tr('引用内容当前不可用')} closeLabel={tr('关闭重新编辑')} disabled={capturePreparing || !detailReady || busy} onClose={() => {if(draftRef.current.pendingEdit){setError(tr('编辑结果待确认，请先点击保存核对'));return}setEditing(undefined);setError('')}} />}</TeamSourceReadScope>}
       <ArkmeComposerCard ref={composer} className="arkme-conversation-composer-inner"
         focused={composerFocused} hasTarget={!!editing || detailReady && !!draft.reply} highlighted={resize.highlighted}>
         {resize.handle}
@@ -935,7 +941,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     </div>
   return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
+    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       onReply={(target,quote)=>{const message=timeline?.messages.find(m=>m.key===target.item.itemUid);if(message)chooseReply(message,quote)}}
