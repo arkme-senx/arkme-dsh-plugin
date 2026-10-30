@@ -29,6 +29,7 @@ const expectedPublicMethods = [
   'messageSyncStatus', 'retryMessageSync',
   'externalChats',
   'listTeamNotificationConversations', 'getTeamNotificationPolicy', 'setTeamNotificationPolicy',
+  'teamMemberManagement',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
   'readWorldRecord',
   'listOfficialNotifications', 'offlineContext', 'officialNotificationSummary', 'officialNotificationDetail', 'readOfficialNotifications',
@@ -180,7 +181,7 @@ const expectedServiceFiles = [
   'people-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
   'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
-  'team-service.ts', 'team-app-service.ts', 'team-send-queue.ts',
+  'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',
 ].sort()

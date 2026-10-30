@@ -3,6 +3,7 @@ export type * from '../data-management.js'
 export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 export type { TeamRecallResult } from '../team-message-contract.js'
+export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 export * from '../recording-strategy-contract.js'
 import type { RecordingFileImportInput, PublicRecordingImportJob } from '../recording-import-contract.js'
@@ -907,6 +908,13 @@ export class ArkmeSdk {
   }
   async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
+   * After applying a completed result, acknowledge its UID. On uncertain transport use recover/retry.
+   */
+  async teamMemberManagement(request: import('../team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('../team-member-add-contract.js').TeamMemberManagementResult> {
+    if ((await this.capabilities(signal)).features.teamMemberManagementV1 !== true) throw new Error('当前 Provider 不支持批量添加团队成员')
+    return this.call('team.members.manage', {request}, signal)
   }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */

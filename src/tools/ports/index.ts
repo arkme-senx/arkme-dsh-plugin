@@ -1,4 +1,5 @@
 import type { ArkmeRecordExportPort } from '../../data-management.js'
+import type {TeamMemberManagementPort} from '../../team-member-add-contract.js'
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
 import type { TeamNotificationPort } from '../../team-notification-contract.js'
@@ -32,6 +33,7 @@ import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admis
 
 export interface ArkmeCoreToolPorts extends
   ArkmeRecordExportPort,
+  TeamMemberManagementPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
