@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { harnessNativeTransportScript } from '../src/harness-native-transport-script.js'
@@ -795,28 +792,11 @@ it('uses the real DSH snapshot reader to replace complete control baselines whil
   } finally { abort.abort(); for (const history of histories) await history.return(); await reader.dispose(); f.listeners.get('pagehide')?.() }
 })
 
-// Opt-in against the unmodified installed DSH public Client bundle.
-// DSH_GATEWAY_PACKAGE is the directory containing its package.json.
-it.skipIf(!process.env.DSH_GATEWAY_PACKAGE)('recovers a real DSH RemoteStream across carrier loss and repeated opening failures', async () => {
-  const nativeRequire = createRequire(resolve(process.env.DSH_GATEWAY_PACKAGE!, 'package.json'))
-  let gateway: any
-  runInNewContext(readFileSync(nativeRequire.resolve('@deepseek-ai/dsh-api-gateway/client'), 'utf8'), {
-    window: { __ModuleLoader__: { load: (entry: any) => { gateway = entry.factory(nativeRequire) } } },
-    Error, AbortController, AbortSignal, crypto, setTimeout, clearTimeout, queueMicrotask,
-  })
-  const { Context } = nativeRequire('@deepseek-ai/cordis')
-  const ctx = new Context(), f = fixture(), original = f.wire.getMockImplementation()!
-  f.directory.select('arkme:windows:same')
-  let opens = 0, failOpen = 0
-  f.wire.mockImplementation(async params => {
-    if (params.body.endpoint === 'session/follow') {
-      opens++
-      if (failOpen > 0) { failOpen--; return { ok: false, error: { code: 'REMOTE_TRANSPORT_FAILED', retryable: true } } as any }
-      return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: opens, records: [] }] } } as any
-    }
-    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
-    return original(params)
-  })
+// Exercise the unmodified published Gateway, including its accepted-generation contract.
+async function officialFollow(f: ReturnType<typeof fixture>) {
+  const gateway = await import('@deepseek-ai/dsh-api-gateway/client')
+  const { Context } = await import('@deepseek-ai/cordis')
+  const ctx = new Context()
   ctx.provide('typert', { remotes: { register: () => () => {} } })
   ctx.provide('connection', {
     rpc: { open: (_prefix: string, endpoint: string, payload: unknown, signal: AbortSignal) => f.hooks.openStream(endpoint, payload, signal) },
@@ -836,6 +816,23 @@ it.skipIf(!process.env.DSH_GATEWAY_PACKAGE)('recovers a real DSH RemoteStream ac
     ended: () => new gateway.RemoteStreamCarrierError('ended'),
   })
   const iterator = stream[Symbol.asyncIterator]()
+  return { iterator, dispose: async () => { await stream.dispose(); await unmount(); await plugin.dispose(); f.listeners.get('pagehide')?.() } }
+}
+
+it('recovers a real DSH RemoteStream across carrier loss and repeated opening failures', async () => {
+  const f = fixture(), original = f.wire.getMockImplementation()!
+  f.directory.select('arkme:windows:same')
+  let opens = 0, failOpen = 0
+  f.wire.mockImplementation(async params => {
+    if (params.body.endpoint === 'session/follow') {
+      opens++
+      if (failOpen > 0) { failOpen--; return { ok: false, error: { code: 'REMOTE_TRANSPORT_FAILED', retryable: true } } as any }
+      return { ok: true, value: { items: [{ type: 'snapshot', header: { id: 'same' }, cursor: opens, records: [] }] } } as any
+    }
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    return original(params)
+  })
+  const { iterator, dispose } = await officialFollow(f)
   try {
     const first = (await iterator.next()).value
     first.accept(); expect(first.generation).toBe(1)
@@ -861,7 +858,7 @@ it.skipIf(!process.env.DSH_GATEWAY_PACKAGE)('recovers a real DSH RemoteStream ac
     expect(reopened.value.type).toBe('snapshot')
     expect(opens).toBe(5)
     expect(restored.signal.aborted).toBe(true)
-  } finally { await stream.dispose(); await unmount(); await plugin.dispose(); f.listeners.get('pagehide')?.() }
+  } finally { await dispose() }
 })
 
 it('keeps a writable session enabled during an official carrier generation restart', async () => {
@@ -917,4 +914,143 @@ it('keeps stable-session actions available while their creator is offline', asyn
   expect(f.directory.writable('arkme:windows:same')).toBe(true)
   expect((await f.rpc('session/selectModel', { request: { sessionId: 'arkme:windows:same', provider: 'deepseek', model: 'pro' } })).result.ok).toBe(true)
   expect(JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body)).params).toMatchObject({ runtimeRef: 'windows', sessionRef: 'same' })
+})
+
+it.each([false, true])('restores the official journal from read-only after directory hints (accepted baseline: %s) without polling', async (accepted) => {
+  vi.useFakeTimers()
+  const f = fixture(), original = f.wire.getMockImplementation()!
+  let online = accepted
+  const row = f.row('windows', { presence: 'offline', capabilities: ['session.native.channel'], contentRevision: '0' })
+  f.directory.publish([row]); f.directory.select('arkme:windows:same')
+  f.wire.mockImplementation(async params => {
+    if (params.body.mode === 'close') return original(params)
+    if (!online) return { ok: true, value: { sourceWritable: false, items: [], done: true } } as any
+    if (!params.body.endpoint) return await new Promise(() => {})
+    const value = await original(params)
+    return { ...value, value: { ...value.value, sourceWritable: true, done: false } }
+  })
+  const { iterator, dispose } = await officialFollow(f)
+  let pending: Promise<any> | undefined
+  try {
+    let first: any
+    if (accepted) {
+      first = (await iterator.next()).value; first.accept()
+      online = false
+    }
+    pending = iterator.next()
+    if (accepted) {
+      f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } }))
+      await f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+    }
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+    const paused = f.wire.mock.calls.length
+    for (let i = 0; i < 20; i++) f.directory.publish([{ ...row }, f.row('other', { updatedAt: i })])
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(f.wire).toHaveBeenCalledTimes(paused)
+    // Repeated hints while the executor is still absent must not exhaust DSH's
+    // pre-baseline generation retry budget or make the composer writable.
+    for (const contentRevision of ['1', '2']) {
+      f.directory.publish([{ ...row, contentRevision }])
+      expect(f.directory.writable('arkme:windows:same')).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(f.directory.writable('arkme:windows:same')).toBe(false)
+    }
+    online = true
+    f.directory.publish([{ ...row, contentRevision: '3' }])
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+    const restored = (await pending).value; restored.accept(); pending = undefined
+    expect(restored.value.type).toBe('snapshot')
+    expect(restored.generation).toBe(accepted ? 2 : 1)
+    expect(f.directory.writable('arkme:windows:same')).toBe(true)
+    expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+    if (first) expect(first.signal.aborted).toBe(true)
+    expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === 'session/follow')).toHaveLength(4)
+    expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === '$events')).toHaveLength(4)
+    expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === 'session/control')).toHaveLength(4)
+    expect(f.wire.mock.calls.every(([params]) => params.body.mode === 'pull' || params.body.mode === 'close')).toBe(true)
+  } finally { await dispose(); await pending?.catch(() => undefined); await vi.advanceTimersByTimeAsync(0); expect(vi.getTimerCount()).toBe(0) }
+})
+
+it.each([{ executorRuntimeRef: 'restored' }, { directoryVersion: [2, 3] }, { historyRevision: 'restored' }, { updatedAt: 43 }])('wakes only the selected read-only source on a recovery hint %j', async hint => {
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController(), original = f.wire.getMockImplementation()!
+  const row = f.row('windows', { presence: 'offline', capabilities: ['session.native.channel'] })
+  f.directory.publish([row]); f.directory.select('arkme:windows:same')
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } }))
+  await f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  f.wire.mockImplementation(async params => {
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    const response = await original(params)
+    return { ...response, value: { ...response.value, sourceWritable: true, done: false } }
+  })
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  const opening = journal.next()
+  try {
+    await vi.advanceTimersByTimeAsync(1); expect(f.wire).not.toHaveBeenCalled()
+    f.directory.select('local')
+    f.directory.publish([{ ...row, ...hint }])
+    await vi.advanceTimersByTimeAsync(600_000); expect(f.wire).not.toHaveBeenCalled()
+    f.directory.select('arkme:windows:same')
+    expect((await opening).value.type).toBe('snapshot')
+    expect(f.directory.writable('arkme:windows:same')).toBe(true)
+  } finally { abort.abort(); await opening.catch(() => undefined); await journal.return() }
+})
+
+it('does not let a delayed old observation override a recovered source, including an un-cancelled unary read', async () => {
+  const f = fixture()
+  const row = f.row('windows', { presence: 'offline', capabilities: ['session.native.channel'], contentRevision: '1' })
+  f.directory.publish([row]); f.directory.select('arkme:windows:same')
+  let finish!: (value: Response) => void
+  f.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const old = f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  f.directory.publish([{ ...row, contentRevision: '2' }])
+  await f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  finish(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } })); await old
+  expect(f.directory.writable('arkme:windows:same')).toBe(true)
+  // Older positive reads cannot undo a newer authoritative denial either.
+  f.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const earlier = f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } }))
+  await f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  finish(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: true } })); await earlier
+  expect(f.directory.writable('arkme:windows:same')).toBe(false)
+})
+
+it('cancels a read-only journal and all source streams when the account surface is disposed', async () => {
+  vi.useFakeTimers()
+  const f = fixture(), abort = new AbortController()
+  f.directory.publish([f.row('windows', { capabilities: ['session.native.channel'] })]); f.directory.select('arkme:windows:same')
+  f.wire.mockResolvedValue({ ok: true, value: { sourceWritable: false, items: [], done: true } } as any)
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  const opening = journal.next().catch((error: unknown) => error)
+  await vi.advanceTimersByTimeAsync(1)
+  f.listeners.get('pagehide')!()
+  expect(await opening).toMatchObject({ name: 'AbortError' })
+  await journal.return(); await vi.advanceTimersByTimeAsync(600_000)
+  expect(vi.getTimerCount()).toBe(0)
+  expect(f.sockets.every(socket => socket.readyState === 3)).toBe(true)
+})
+
+it('reopens a previously verified legacy source when presence returns without enabling writes before the Host confirms', async () => {
+  const f = fixture(), original = f.wire.getMockImplementation()!, row = f.row()
+  f.directory.publish([row]); f.directory.select('arkme:windows:same')
+  f.wire.mockImplementation(async params => {
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    const value = await original(params)
+    return { ...value, value: { ...value.value, sourceWritable: true, done: false } }
+  })
+  const { iterator, dispose } = await officialFollow(f)
+  let pending: Promise<any> | undefined
+  try {
+    const first = (await iterator.next()).value; first.accept()
+    f.directory.publish([{ ...row, presence: 'offline' }])
+    pending = iterator.next()
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+    f.directory.publish([row])
+    expect(f.directory.writable('arkme:windows:same')).toBe(false)
+    const restored = (await pending).value; restored.accept(); pending = undefined
+    expect(restored.generation).toBe(2)
+    expect(f.directory.writable('arkme:windows:same')).toBe(true)
+  } finally { await dispose(); await pending?.catch(() => undefined) }
 })
