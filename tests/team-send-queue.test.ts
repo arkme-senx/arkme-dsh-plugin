@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 const offline = () => new ArkmePluginError('arkme-network-error', '网络断开', true, 503)
 const input = (overrides: Partial<TeamSendInput> = {}): TeamSendInput => ({conversationRef:'42:conversation',clientUid:randomUUID(),expectedReplySeq:0,content:{text_content:'hello',template_kind:1},fileRefs:[],...overrides})
-async function fixture() {
+async function fixture(metadataDigest?: (ref:string)=>Promise<string>) {
   const directory = await mkdtemp(join(tmpdir(), 'arkme team delivery ')); directories.push(directory)
   let user = 42, online = true, paused = false, denied = false, lostAck = false
   const published = new Map<string, TeamMessage>(), cancelled = new Map<string, TeamMessage>()
@@ -55,7 +55,7 @@ async function fixture() {
     throw new Error(`unexpected ${op}`)
   })
   const createQueue = () => {
-    const queue = new TeamSendQueue({currentUser:async()=>user,files:()=>files,
+    const queue = new TeamSendQueue({...(metadataDigest?{metadataDigest:async(_conversation:string,_uid:string,ref:string)=>metadataDigest(ref)}:{}),currentUser:async()=>user,files:()=>files,
       identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},
       identifyReply:async(ref,message,actor)=>{if(!message.startsWith(`${ref}:reply:`)||!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-invalid_request','wrong conversation',false,409);return message.split('#')[0]!},execute})
     queues.push(queue);return queue
@@ -458,4 +458,24 @@ it.each(['replay','cancel'] as const)('finishes accepted delivery with recalled 
  else await f.queue.recover()
  expect(f.published.size).toBe(1)
  expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'sent',message:{state:'recalled'}})
+})
+
+it('keeps sealed metadata across restart without treating random nonces as intent',async()=>{
+  const f=await fixture(async ref=>ref==='cipher-changed'?'other-digest':'same-normalized-digest')
+  f.setOnline(false)
+  const command=input({metadataRef:'cipher-first'})
+  const task=await f.queue.enqueue(command)
+  expect(task.metadataRef).toBeUndefined();expect(task.metadataDigest).toBeUndefined()
+  await f.queue.enqueue({...command,metadataRef:'cipher-new-nonce'})
+  await expect(f.queue.enqueue({...command,metadataRef:'cipher-changed'})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+  f.restart();f.setOnline(true);f.loseAck();await f.queue.recover()
+  f.restart();vi.setSystemTime(Date.now()+10000);await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends=f.execute.mock.calls.filter(([op])=>op==='team.app.send')
+  expect(sends.length).toBeGreaterThanOrEqual(2)
+  expect(sends.every(([,body])=>body.metadataRef==='cipher-first')).toBe(true)
+  const persisted=JSON.parse(await readFile(join(f.directory,'42','state.json'),'utf8'))
+  expect(persisted.teamSends[0].metadataRef).toBeUndefined()
+  expect((await f.queue.list(command.conversationRef))[0]!.metadataDigest).toBeUndefined()
+  await expect(f.queue.enqueue(command)).resolves.toMatchObject({state:'sent'})
 })

@@ -126,3 +126,8 @@ it('keeps unavailable Team metadata unknown and distinguishes creation from comp
   expect(markup).toMatch(/完成时间<\/span><div[^>]*>未记录<\/div>/)
   expect(markup).toMatch(/终端<\/span><div[^>]*>未记录<\/div>/)
 })
+
+it('does not present a known initial duration as a complete total after an unmeasured edit',()=>{
+ const html=renderToStaticMarkup(<ArkmeMessageSnapshotDialogContent item={item} metadataUnavailable="未提供" detail={{itemUid:'opaque',textContent:'',backgroundSound:'unknown',recordDurationMillis:0,durationState:'partial'}} />)
+ expect(html).toContain('未完整记录')
+})

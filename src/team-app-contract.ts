@@ -8,6 +8,7 @@ import type { TeamMemberCodexSync } from './team-member-codex-sync.js'
 export type TeamAppOperation = `team.app.${
   'external.list' | 'external.mine' | 'external.share' | 'external.unshare' | 'external.page' | 'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
+  | 'snapshot.capabilities' | 'snapshot.seal' | 'snapshot.read' | 'snapshot.receipt'
   | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
@@ -49,6 +50,8 @@ export interface TeamMention { personRef: string; displayName: string; startInde
 export interface TeamContent { mentions?: TeamMention[]; text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
 export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
+  /** Verified author-only send acknowledgement; absent is unknown. */
+  metadataSaved?: boolean
  forwardRecords?: import('./types.js').ArkmeForwardRecordsPreview
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   canRecall?: boolean; recalledAt?: number
