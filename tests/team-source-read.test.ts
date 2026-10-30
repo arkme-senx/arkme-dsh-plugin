@@ -19,6 +19,16 @@ it('removes only the affected source or parent material, preserving an independe
  expect(own.contentStatus).toBe('revalidating')
 })
 afterEach(()=>{stop?.();stop=undefined;call.mockReset()})
+it('keeps an already-granted media reader for represented revisions and rechecks a newer change',async()=>{
+ call.mockResolvedValue([])
+ const listener=vi.fn();stop=watchTeamSourceRead({...target,revision:2},listener)
+ await vi.waitFor(()=>expect(listener).toHaveBeenLastCalledWith({status:'available'}))
+ for(const messageRevision of [2,1,2])invalidateTeamMessages(target.accountKey,false,{kind:'team.message.changed',messageKey:target.messageKey,conversationKeys:[target.conversationKey],messageRevision})
+ expect(call).toHaveBeenCalledTimes(1)
+ invalidateTeamMessages(target.accountKey,false,{kind:'team.message.changed',messageKey:target.messageKey,conversationKeys:[target.conversationKey],messageRevision:3})
+ expect(listener).toHaveBeenLastCalledWith({status:'checking'})
+ await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(2))
+})
 it.each(['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
  expect(teamChangeAffectsSource({kind},target)).toBe(false)
 })

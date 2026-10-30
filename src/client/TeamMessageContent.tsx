@@ -53,7 +53,7 @@ export function TeamMessageMediaScope({message,children,conversationRef,conversa
 function teamMessageMediaAccess(message:TeamMessage,urls:Map<string,string>,conversationRef:string|undefined,conversationKey:string|undefined):ArkmeMediaAccess {
  const auth=arkmeAuthStore.getSnapshot().auth
  const accountKey=auth?.status==='authenticated'?`${auth.environment}:${auth.userId}`:undefined
- return {url:block=>urls.get(block.mediaRef)??'',subscribeReadState:listener=>watchTeamSourceRead({accountKey,conversationRef,conversationKey,messageRef:message.ref,messageKey:message.key,version:message.version},listener)}
+ return {url:block=>urls.get(block.mediaRef)??'',subscribeReadState:listener=>watchTeamSourceRead({accountKey,conversationRef,conversationKey,messageRef:message.ref,messageKey:message.key,version:message.version,revision:message.revision},listener)}
 }
 
 export function teamPendingReply(reply: import('../team-app-contract.js').TeamReplyTarget | undefined) {

@@ -1,6 +1,6 @@
 import { TeamSourceReadScope } from './TeamSourceReadScope.js'
 import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial } from '../team-message-projection.js'
-import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
+import {invalidateTeamMessageRead,teamChangeAffectsConversationPreview} from './team-source-read.js'
 import {prepareTeamCapture} from './team-message-snapshot.js'
 import {useTeamMessageSnapshot} from './use-team-message-snapshot.js'
 import type {TeamEditReceipt} from '../team-snapshot-contract.js'
@@ -468,7 +468,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           if(row.own&&next!==row)confirmed.current.retain(conversation.key,next)
           return next
         })
-        const next={...old,conversation:teamChangeAffectsSource(change,{conversationKey:conversation.key})?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
+        const next={...old,conversation:teamChangeAffectsConversationPreview(change,old.conversation)?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
       }
       void recover()
     } } }) }, [recover, accountKey, receiptStore])
@@ -876,7 +876,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           } catch {setError(tr('无法保存核对结果，请保留当前编辑后重试'))}
         }}>{tr('关闭待核对项')}</button>
       </div>}
-      {editing && <TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={editing.message.ref} messageKey={editing.message.key} conversationKey={conversation.key} version={editing.message.version}>{readable=><ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={readable ? editing.latestText ?? editing.message.content?.text_content ?? '' : tr('引用内容当前不可用')} closeLabel={tr('关闭重新编辑')} disabled={capturePreparing || !detailReady || busy} onClose={() => {if(draftRef.current.pendingEdit){setError(tr('编辑结果待确认，请先点击保存核对'));return}setEditing(undefined);setError('')}} />}</TeamSourceReadScope>}
+      {editing && <TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={editing.message.ref} messageKey={editing.message.key} conversationKey={conversation.key} version={editing.message.version} revision={editing.message.revision}>{readable=><ArkmeComposerTargetPreview mode="reedit" label={tr('重新编辑:')} text={readable ? editing.latestText ?? editing.message.content?.text_content ?? '' : tr('引用内容当前不可用')} closeLabel={tr('关闭重新编辑')} disabled={capturePreparing || !detailReady || busy} onClose={() => {if(draftRef.current.pendingEdit){setError(tr('编辑结果待确认，请先点击保存核对'));return}setEditing(undefined);setError('')}} />}</TeamSourceReadScope>}
       <ArkmeComposerCard ref={composer} className="arkme-conversation-composer-inner"
         focused={composerFocused} hasTarget={!!editing || detailReady && !!draft.reply} highlighted={resize.highlighted}>
         {resize.handle}
@@ -935,7 +935,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     </div>
   return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
+    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       onReply={(target,quote)=>{const message=timeline?.messages.find(m=>m.key===target.item.itemUid);if(message)chooseReply(message,quote)}}

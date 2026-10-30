@@ -110,6 +110,9 @@ export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[];
 /** A scoped invalidation hint, never a read grant or raw backend locator. */
 export interface TeamMessageChangeHint {
   kind: string
+  messageRevision?: number
+  conversationRevision?: number
+  sequence?: number
   messageKey?: string
   conversationKeys?: string[]
 }

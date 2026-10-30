@@ -148,6 +148,28 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(input)
   })
 
+  it('keeps a just-sent body for its publication/older hints, but invalidates a newer occurrence revision',async()=>{
+    let sent=false
+    mocks.call.mockImplementation(async op=>{
+      if(op==='team.app.timeline')return sent?await new Promise(()=>{}):{conversation,messages:[],hasMore:false,beforeSeq:0}
+      if(op==='team.app.send.enqueue'){
+        sent=true
+        return accepted({state:'sent',message:{key:'own',ref:'own-ref',seq:1,revision:2,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,media:[],version:0,contentStatus:''}})
+      }
+      return []
+    })
+    await mount();await send()
+    const row=()=>renderer!.root.findByType(TeamConversationMessage)
+    expect(row().props.message.content.text_content).toBe('问题')
+    for(const revision of [2,1,2]){
+      await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:revision,sequence:1});await tick()})
+      expect(row().props.message.content?.text_content).toBe('问题')
+    }
+    await act(async()=>{invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'own',conversationKeys:['key'],messageRevision:3,sequence:1});await tick()})
+    expect(row().props.message.content).toBeUndefined()
+    expect(row().props.message.contentStatus).toBe('revalidating')
+  })
+
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
     const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}

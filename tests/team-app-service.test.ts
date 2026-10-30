@@ -49,8 +49,9 @@ it('projects realtime locators into the same opaque viewer keys used by current 
  const f=fixture(path=>path.endsWith('/open')?{channel,conversation}:{conversation,messages:[message]})
  const opened=await open(f),c=opened.conversation!
  const page=await f.service.execute('team.app.timeline',{conversationRef:c.ref}) as TeamTimeline
- const hint=await f.service.changeHint({kind:'team.message.changed',messageUid:message.message_uid,conversationUid:conversation.conversation_uid},90)
+ const hint=await f.service.changeHint({kind:'team.message.changed',messageUid:message.message_uid,conversationUid:conversation.conversation_uid,messageRevision:2,conversationRevision:99,sequence:message.seq},90)
  expect(hint).toMatchObject({messageKey:page.messages[0]!.key,conversationKeys:expect.arrayContaining([c.key])})
+ expect(hint).toMatchObject({messageRevision:2,conversationRevision:99,sequence:message.seq})
  expect(JSON.stringify(hint)).not.toContain(message.message_uid)
  expect(JSON.stringify(hint)).not.toContain(conversation.conversation_uid)
  expect((await f.service.changeHint({kind:'team.message.changed',messageUid:message.message_uid},91)).messageKey).not.toBe(hint.messageKey)
@@ -716,7 +717,7 @@ describe('Team App owner adapter', () => {
   })
   it('keeps Team notifications distinct from existing member events and rejects extra payload', () => {
     const event = { t: 28, event_uid: 'e', event_at: 100, revision: 2, kind: 'team.message.changed', conversation_uid: 'c' }
-    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: false, change:{kind:event.kind,conversationUid:'c'} })
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toEqual({ eventUid: 'e', eventAtMillis: 100, receiptOnly: false, change:{kind:event.kind,conversationUid:'c',conversationRevision:2} })
     expect(decodeArkmeMemberEventDataLine(`data: ${JSON.stringify(event)}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, t: 27 })}`)).toBeUndefined()
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({ ...event, text_content: 'private' })}`)).toBeUndefined()

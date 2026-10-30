@@ -1,6 +1,6 @@
 import {callArkme} from './api.js'
 import {subscribeTeamMessageChanges} from './team-messaging-events.js'
-import type {TeamMessage,TeamMessageChangeHint} from '../team-app-contract.js'
+import type {TeamMessage,TeamMessageChangeHint,TeamConversation} from '../team-app-contract.js'
 import {withoutTeamMessageMaterial} from '../team-message-projection.js'
 import type {ArkmeMediaReadState} from './media-access.js'
 
@@ -11,20 +11,26 @@ export interface TeamSourceReadTarget {
   messageRef: string
   messageKey?: string | undefined
   version: number
+  revision?: number
 }
 
 /** Delivery metadata is only a relevance hint. The existing Host preflight grants reads. */
-export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'>):boolean {
+export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'|'revision'>):boolean {
   if (!change) return true // Reconnects must recheck facts missed while disconnected.
   if (['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
   if (change.conversationKeys?.length && target.conversationKey && !change.conversationKeys.includes(target.conversationKey)) return false
   if (change.messageKey && target.messageKey && change.messageKey !== target.messageKey) return false
+  if(change.kind==='team.message.changed'&&change.messageKey===target.messageKey&&change.messageRevision&&change.messageRevision>0&&target.revision!==undefined&&target.revision>=change.messageRevision)return false
   return true
+}
+
+export function teamChangeAffectsConversationPreview(change:TeamMessageChangeHint|undefined,conversation:Pick<TeamConversation,'key'|'lastSeq'|'revision'>):boolean {
+  return teamChangeAffectsSource(change,{conversationKey:conversation.key}) && !(change?.kind==='team.message.changed' && ((change.sequence??0)>conversation.lastSeq || (change.conversationRevision??0)>0 && conversation.revision>=change.conversationRevision!))
 }
 
 /** Retain unrelated mounted readers; a parent hint only removes the parent material. */
 export function invalidateTeamMessageRead(message:TeamMessage,change:TeamMessageChangeHint|undefined,conversationKey:string):TeamMessage {
-  if(teamChangeAffectsSource(change,{conversationKey,messageKey:message.key}))return withoutTeamMessageMaterial(message)
+  if(teamChangeAffectsSource(change,{conversationKey,messageKey:message.key,revision:message.revision}))return withoutTeamMessageMaterial(message)
   if(message.reply&&teamChangeAffectsSource(change,{conversationKey,messageKey:message.reply.key})){
     const {title,media,quote,...identity}=message.reply
     return {...message,reply:{...identity,state:'unavailable',text:''}}
