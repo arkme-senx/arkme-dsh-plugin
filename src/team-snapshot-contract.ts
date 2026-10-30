@@ -85,8 +85,8 @@ export function decodeTeamMessageSnapshot(raw: unknown, messageRef: string): Tea
     ...(time(v.record_started_at) ? { startAtMillis: v.record_started_at } : {}), ...(time(v.send_at) ? { completeAtMillis: v.send_at } : {}), ...(time(v.server_synced_at) ? { syncedAtMillis: v.server_synced_at } : {}),
     ...(typeof c.client_name === 'string' && c.client_name ? { captureContext: { clientName: c.client_name } } : {}),
     ...(typeof l.lat === 'number' && typeof l.lon === 'number' && time(l.captured_at) ? { locationCapture: { latitude: l.lat, longitude: l.lon, capturedAtMillis: l.captured_at, ...(typeof l.accuracy_meters === 'number' ? { accuracyMeters: l.accuracy_meters } : {}) } } : {}),
-    ...(deviceState==='unavailable'?{captureUnavailable:'发送时设备信息不可用'}:deviceState==='failed'?{captureUnavailable:'发送时设备信息采集失败'}:{}),
-    ...(locationState==='unavailable'?{locationLabel:'发送时定位不可用'}:c.location_state === 'permission_denied' ? { locationLabel: '发送时未授权位置' } : c.location_state === 'disabled' ? { locationLabel: '发送时未开启定位' } : c.location_state === 'failed' ? { locationLabel: '发送时位置采集失败' } : {}) }
+    ...(deviceState==='unavailable'?{captureUnavailable:'发送时设备信息不可用'}:deviceState==='failed'?{captureUnavailable:'发送时设备信息采集失败'}:{})
+  }
   return { captureStates:{device:deviceState,location:locationState}, schemaVersion: 1, recorded: v.recorded === true, version: v.version, snapshotVersion: v.snapshot_version, detail }
 }
 

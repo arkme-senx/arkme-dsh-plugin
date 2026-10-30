@@ -17,6 +17,7 @@ export function useTeamMessageSnapshot(accountKey: string, conversationRef: stri
       setState({identity,loading:true})
       void callArkme<TeamMessageSnapshot>('team.app.snapshot.read',{conversationRef,messageRef:message.ref,expectedAccountKey:accountKey},controller.signal).then(value=>{
         if(value?.schemaVersion!==1||!value.detail)throw new Error('记忆快照响应无效，请重试')
+        if(value.version!==message.version)throw new Error('消息已更新，请关闭后重新打开详情')
         if(!disposed&&!controller.signal.aborted&&generation===current&&document.visibilityState!=='hidden')setState({identity,value,loading:false})
       }).catch(error=>{
         if(disposed||controller.signal.aborted||generation!==current)return

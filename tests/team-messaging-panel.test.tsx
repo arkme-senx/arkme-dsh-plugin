@@ -390,7 +390,8 @@ describe('Team send UI recovery', () => {
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
     const snapshot = renderer!.root.findByType(ArkmeMessageSnapshotDialog)
     expect(snapshot.props.createdAtMillis).toBe(own.createdAt)
-    expect(snapshot.props.metadataUnavailable).toContain('未提供')
+    expect(snapshot.props.metadataUnavailable).toBeUndefined()
+    expect(snapshot.props.backgroundSoundSupported).toBe(false)
     expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.snapshot.read')).toBe(true)
     expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(0)
     expect(mocks.call.mock.calls.some(([op]) => op === 'source.message-snapshot.detail')).toBe(false)
@@ -1305,6 +1306,16 @@ describe('Team send UI recovery', () => {
     vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden')
     await act(async()=>finish({schemaVersion:1,detail:{captureContext:{clientName:'private-hidden-device'}}}))
     expect(renderer!.root.findByType(ArkmeMessageSnapshotDialog).props.detail).toBeUndefined()
+  })
+
+  it('rejects snapshot facts for a newer version than the displayed message',async()=>{
+    const own:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,state:'published',createdAt:1000,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{template_kind:1,text_content:'version one preview'},media:[]}
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[own],hasMore:false,beforeSeq:0}:op==='team.app.snapshot.read'?{schemaVersion:1,version:2,snapshotVersion:1,recorded:true,detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',captureContext:{clientName:'newer-private-device'}}}:[])
+    await mount();await act(async()=>renderer!.root.findByType(TeamConversationMessage).props.onSnapshot())
+    const snapshot=renderer!.root.findByType(ArkmeMessageSnapshotDialog)
+    expect(snapshot.props.detail).toBeUndefined()
+    expect(snapshot.props.loadError).toContain('消息已更新')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('newer-private-device')
   })
 
 })

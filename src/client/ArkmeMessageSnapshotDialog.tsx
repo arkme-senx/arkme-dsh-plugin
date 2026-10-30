@@ -90,7 +90,8 @@ function SnapshotBackgroundWaveform({ amplitudes }: { amplitudes: readonly numbe
 }
 
 export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, metadataUnavailable, createdAtMillis, loading = false, loadError, backgroundSoundEnabled = false, backgroundSoundSupported = true, backgroundSoundEligibilityReason = 'eligible', onEnableBackgroundSound, onRetry }: { item: ArkmeTimelineItem; detail?: ArkmeMessageSnapshotDetail; previewText?: string; metadataUnavailable?: string | undefined; createdAtMillis?: number | undefined; loading?: boolean; loadError?: string; backgroundSoundEnabled?: boolean; backgroundSoundSupported?: boolean; backgroundSoundEligibilityReason?: ArkmeBackgroundSoundEligibilityReason; onRetry?: () => void; onEnableBackgroundSound?: () => void }) {
-  const text = detail?.textContent.trim() || item.textContent.trim() || item.title.trim() || '暂无内容'
+  const recordedText = detail?.textContent.trim() || item.textContent.trim() || item.title.trim()
+  const text = recordedText || '暂无内容'
   const error = loadError?.trim()
   if (error !== undefined && error !== '') return <>
     <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
@@ -99,7 +100,7 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
   const durationMillis = Math.max(0, detail?.recordDurationMillis ?? item.recordDurationMillis ?? 0) + Math.max(0, detail?.editDurationMillis ?? item.editDurationMillis ?? 0)
   const context = detail?.captureContext ?? item.captureContext
   const locationCapture = detail?.locationCapture ?? item.locationCapture
-  const locationText = detail?.locationLabel ?? locationDetailLabel(locationCapture) ?? (metadataUnavailable ? '未记录' : '暂无详细位置信息')
+  const locationText = detail?.locationLabel?.trim() || locationDetailLabel(locationCapture)
   const backgroundSoundAvailable = detail?.backgroundSound === 'available'
   const backgroundSoundPlayback = detail?.backgroundSoundPlayback
   const backgroundSoundPlaylist = backgroundSoundPlayback?.mediaRefs
@@ -119,34 +120,41 @@ export function ArkmeMessageSnapshotDialogContent({ item, detail, previewText, m
         : backgroundSoundEligibilityReason === 'membership-required' ? '免费版暂不支持背景音'
           : backgroundSoundEligibilityReason === 'membership-unavailable' ? '暂时无法确认会员权益'
             : backgroundSoundEnabled ? '未录制背景音' : '未开启背景音'
-  const rows: Array<{ icon: ReactNode; label: string; value: ReactNode; action?: boolean }> = [
-    { icon: <Ear size={19} weight="light" />, label: '背景音', value: backgroundSoundValue, action: backgroundSoundCanEnable && !backgroundSoundAvailable && !backgroundSoundEnabled },
-    { icon: <Cloud size={19} weight="light" />, label: '天气', value: detail?.weather ?? '未记录' },
-    { icon: <Mountains size={19} weight="light" />, label: '海拔', value: numberLabel(detail?.altitudeMeters, 'm') },
-    { icon: <PersonSimpleWalk size={19} weight="light" />, label: '移动状态', value: detail?.movement ?? '未记录' },
-    { icon: <Desktop size={19} weight="light" />, label: '终端', value: context?.clientName ?? detail?.captureUnavailable ?? '未记录' },
-    { icon: <BatteryHigh size={19} weight="light" />, label: '设备电量', value: batteryLabel(context) },
-    { icon: <Globe size={19} weight="light" />, label: '网络', value: context?.networkName ?? '未记录' },
-    { icon: <CalendarBlank size={19} weight="light" />, label: '归属日期', value: detail?.belongDate ?? (metadataUnavailable ? '未记录' : new Date(epochMillis(item.sendAtMillis)).toLocaleDateString(arkmeIntlLocale())) },
-    { icon: <Clock size={19} weight="light" />, label: '开始时间', value: detailTimeLabel(detail?.startAtMillis) },
-    { icon: <Clock size={19} weight="light" />, label: '完成时间', value: detailTimeLabel(detail?.completeAtMillis ?? (metadataUnavailable ? undefined : item.sendAtMillis)) },
-    { icon: <CloudArrowUp size={19} weight="light" />, label: '同步时间', value: detail?.syncedAtMillis === undefined ? (detail?.syncState === 'syncing' ? '同步中' : detail?.syncState === 'failed' ? '同步失败' : detail?.syncState === 'synced' ? '已同步' : '未记录') : detailTimeLabel(detail.syncedAtMillis) },
+  const recordedNumber = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v) && v >= 0
+  const recordedTime = (v: number | undefined) => recordedNumber(v) && v > 0
+  const rows = [
+    { icon: <Ear size={19} weight="light" />, label: '背景音', value: backgroundSoundValue, action: backgroundSoundCanEnable && !backgroundSoundAvailable && !backgroundSoundEnabled,
+      visible: backgroundSoundAvailable || !metadataUnavailable && backgroundSoundSupported && (detail?.backgroundSound !== undefined && detail.backgroundSound !== 'unknown' || backgroundSoundEnabled || onEnableBackgroundSound !== undefined) },
+    { icon: <Cloud size={19} weight="light" />, label: '天气', value: detail?.weather, visible: !!detail?.weather?.trim() },
+    { icon: <Mountains size={19} weight="light" />, label: '海拔', value: numberLabel(detail?.altitudeMeters, 'm'), visible: detail?.altitudeMeters !== undefined && Number.isFinite(detail.altitudeMeters) },
+    { icon: <PersonSimpleWalk size={19} weight="light" />, label: '移动状态', value: detail?.movement, visible: !!detail?.movement?.trim() },
+    { icon: <Desktop size={19} weight="light" />, label: '终端', value: context?.clientName, visible: !!context?.clientName?.trim() },
+    { icon: <BatteryHigh size={19} weight="light" />, label: '设备电量', value: batteryLabel(context), visible: recordedNumber(context?.electric) },
+    { icon: <Globe size={19} weight="light" />, label: '网络', value: context?.networkName, visible: !!context?.networkName?.trim() },
+    { icon: <Clock size={19} weight="light" />, label: '创建时间', value: detailTimeLabel(createdAtMillis), visible: recordedTime(createdAtMillis) },
+    { icon: <CalendarBlank size={19} weight="light" />, label: '归属日期', value: detail?.belongDate, visible: !!detail?.belongDate?.trim() },
+    { icon: <Clock size={19} weight="light" />, label: '开始时间', value: detailTimeLabel(detail?.startAtMillis), visible: recordedTime(detail?.startAtMillis) },
+    { icon: <Clock size={19} weight="light" />, label: '完成时间', value: detailTimeLabel(detail?.completeAtMillis), visible: recordedTime(detail?.completeAtMillis) },
+    { icon: <CloudArrowUp size={19} weight="light" />, label: '同步时间', value: detail?.syncedAtMillis === undefined ? (detail?.syncState === 'syncing' ? '同步中' : detail?.syncState === 'failed' ? '同步失败' : '已同步') : detailTimeLabel(detail.syncedAtMillis), visible: recordedTime(detail?.syncedAtMillis) || ['syncing', 'failed', 'synced'].includes(detail?.syncState ?? '') },
+  ].filter(row => row.visible)
+  const hasDuration = detail?.durationState !== 'not-recorded' && [detail?.recordDurationMillis, item.recordDurationMillis, detail?.editDurationMillis, item.editDurationMillis].some(recordedNumber)
+  const stats = [
+    { label: '字数', value: String(Array.from(recordedText).length) },
+    ...(hasDuration ? [{ label: '记录时长', value: detail?.durationState === 'partial' ? tr('未完整记录') : arkmeMessageSnapshotDurationLabel(durationMillis) }] : []),
+    ...(recordedNumber(detail?.viewTimes) ? [{ label: '查阅/回顾', value: `${detail.viewTimes}${tr('次')}` }] : []),
+    ...(recordedNumber(detail?.shareTimes) ? [{ label: '分享', value: `${detail.shareTimes}${tr('次')}` }] : []),
   ]
-  if (createdAtMillis !== undefined) rows.splice(7, 0, { icon: <Clock size={19} weight="light" />, label: '创建时间', value: detailTimeLabel(createdAtMillis > 0 ? createdAtMillis : undefined) })
   return <>
     <p style={styles.preview}><ArkmeRichText text={previewText ?? text} presentation="preview" /></p>
-    <div style={styles.stats} aria-label={tr("快记统计")}>
-      <div style={styles.stat}><span style={styles.statLabel}>{tr("字数")}</span><strong style={styles.statValue}>{String(Array.from(text).length)}</strong></div>
-      <div style={styles.stat}><span style={styles.statLabel}>{tr("记录时长")}</span><strong style={styles.statValue}>{detail?.durationState === 'partial' ? tr('未完整记录') : detail?.durationState === 'not-recorded' ? tr('未记录') : metadataUnavailable && detail?.recordDurationMillis === undefined && item.recordDurationMillis === undefined && detail?.editDurationMillis === undefined && item.editDurationMillis === undefined ? tr('未记录') : arkmeMessageSnapshotDurationLabel(durationMillis)}</strong></div>
-      <div style={styles.stat}><span style={styles.statLabel}>{tr("查阅/回顾")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.viewTimes === undefined ? tr('未记录') : `${String(detail?.viewTimes ?? 0)}${tr('次')}`}</strong></div>
-      <div style={styles.stat}><span style={styles.statLabel}>{tr("分享")}</span><strong style={styles.statValue}>{metadataUnavailable && detail?.shareTimes === undefined ? tr('未记录') : `${String(detail?.shareTimes ?? 0)}${tr('次')}`}</strong></div>
+    <div style={{ ...styles.stats, gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }} aria-label={tr("快记统计")}>
+      {stats.map(stat => <div key={stat.label} style={styles.stat}><span style={styles.statLabel}>{tr(stat.label)}</span><strong style={styles.statValue}>{stat.value}</strong></div>)}
     </div>
-    <div style={styles.location} title={locationText}><SnapshotGlyph><MapPin size={19} weight="fill" /></SnapshotGlyph><span style={styles.locationText}>{locationText}</span></div>
+    {locationText && <div style={styles.location} title={locationText}><SnapshotGlyph><MapPin size={19} weight="fill" /></SnapshotGlyph><span style={styles.locationText}>{locationText}</span></div>}
     {metadataUnavailable && <p style={styles.loading} role="status">{metadataUnavailable}</p>}
     {loading ? <p style={styles.loading}>{tr("正在补全记忆快照…")}</p> : null}
-    <div style={styles.rows} aria-label={tr("记忆快照")}>
+    {rows.length > 0 && <div style={styles.rows} aria-label={tr("记忆快照")}>
       {rows.map(row => <div key={row.label} style={styles.row}><SnapshotGlyph>{row.icon}</SnapshotGlyph><span style={styles.rowLabel}>{row.label}</span><div title={typeof row.value === 'string' ? row.value : undefined} style={styles.rowValue}>{row.value}{row.action ? <button data-arkme-feedback="neutral" type="button" style={styles.backgroundAction} onClick={onEnableBackgroundSound} disabled={onEnableBackgroundSound === undefined}>{tr("去开启›")}</button> : null}</div></div>)}
-    </div>
+    </div>}
   </>
 }
 

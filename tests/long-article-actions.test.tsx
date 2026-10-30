@@ -42,7 +42,8 @@ it('does not grant received articles deletion and reads metadata only through th
   await mount(detail('one', false)); expect(button('删除长文')).toBeUndefined()
   await act(async () => button('详情').click())
   expect(mocks.call).toHaveBeenCalledWith('source.message-snapshot.detail', { sourceRef: 'self-one', actionRef: 'action-one', includeAttachments: true }, expect.any(AbortSignal))
-  expect(document.querySelector('[aria-label=记忆快照]')?.textContent).toContain('设备电量')
+  expect(document.querySelector('[role=status]')?.textContent).toContain('原作者的私人位置与设备信息不公开')
+  expect(document.body.textContent).not.toContain('设备电量')
 })
 it('switching articles discards the old menu target; links use the new signed action', async () => {
   mocks.call.mockResolvedValue({ url: 'https://example.com/shared' })
