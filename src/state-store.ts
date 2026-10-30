@@ -33,6 +33,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingVoiceDrafts?: unknown
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
@@ -392,6 +393,7 @@ function parseState(raw: string): PersistedState {
     recordingToolBatches: source.recordingToolBatches,
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
+    recordingVoiceDrafts: source.recordingVoiceDrafts,
   }
 }
 
@@ -467,6 +469,27 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('./recording-voice-trigger-contract.js').RecordingVoiceDraft> {
+    const { defaultRecordingVoiceRule, recordingVoiceRules } = await import('./recording-voice-trigger-contract.js')
+    if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('语音触发账号无效')
+    const access = (state: PersistedState) => {
+      const root = state.recordingVoiceDrafts ?? {}
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('语音触发配置损坏，已保留原数据')
+      const entries = root as Record<string, import('./recording-voice-trigger-contract.js').RecordingVoiceDraft>
+      const prior = entries[scope] ?? { revision: 0, rules: [defaultRecordingVoiceRule()] }
+      if (!Number.isSafeInteger(prior.revision) || prior.revision < 0) throw new Error('语音触发配置损坏，已保留原数据')
+      const rules = recordingVoiceRules(prior.rules)
+      if (!change) return { revision: prior.revision, rules }
+      if (change.revision !== prior.revision) throw new Error('规则已在其他窗口修改，请重新读取后保存')
+      const next = { revision: prior.revision + 1, rules: recordingVoiceRules(change.rules) }
+      entries[scope] = next; state.recordingVoiceDrafts = entries
+      return structuredClone(next)
+    }
+    if (!change) return this.read(access)
+    let result!: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft
+    await this.update(state => { result = access(state) })
+    return result
+  }
   private readonly boardCache: ArrangementBoardCacheStore
   private readonly path: string
   private state: PersistedState | undefined
