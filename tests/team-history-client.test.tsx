@@ -11,7 +11,7 @@ const message=(n:number)=>({key:`m${n}`,ref:`r${n}`,version:1}) as TeamMessage
 const page=(start:number,size=1,more=false,cursor=''):TeamHistoryResponse=>({state:'ready',messages:Array.from({length:size},(_,i)=>message(start+i)),words:[],days:[],participants:[],hasMore:more,cursor})
 let host:HTMLDivElement,root:Root,owner:ReturnType<typeof useTeamHistoryPage>
 function Query({keyword='old',enabled=true,account='prod:1'}:{keyword?:string;enabled?:boolean;account?:string}){
- owner=useTeamHistoryPage('conversation',account,'query',{keyword},enabled,'conversation')
+ owner=useTeamHistoryPage('conversation',account,'query',{keyword},enabled,{key:'conversation',conversationKey:'conversation'})
  return <>{owner.page?.messages.map(m=><span key={m.key}>{m.key}</span>)}{owner.error}</>
 }
 beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);call.mockReset();host=document.createElement('div');document.body.append(host);root=createRoot(host)})
@@ -62,4 +62,19 @@ it('uses independent local month boundaries when DST skips midnight on the first
   expect(range.untilAt).toBe(new Date(2017,10,1).getTime())
   expect(new Date(range.untilAt!).getHours()).toBe(0)
  }finally{vi.unstubAllEnvs()}
+})
+
+it('keeps history for nonmaterial and unrelated notifications but invalidates changed content',async()=>{
+ call.mockResolvedValue(page(1));await act(async()=>root.render(<Query/>))
+ const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+ for(const change of [
+  {kind:'team.receipt.changed'}, {kind:'team.message.published'},
+  {kind:'team.message.changed',conversationKeys:['other']},
+ ]){
+  await act(async()=>invalidateTeamMessages('prod:1',false,change))
+  expect(host.textContent).toBe('m1')
+ }
+ await act(async()=>invalidateTeamMessages('prod:1',false,{kind:'team.message.changed',conversationKeys:['conversation'],messageKey:'m1',messageRevision:2}))
+ expect(host.querySelector('span')).toBeNull()
+ expect(host.textContent).toContain('团队内容已更新')
 })
