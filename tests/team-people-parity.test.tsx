@@ -81,7 +81,7 @@ it('clears old account presentation immediately and ignores late results',async(
   expect(host.textContent).toBe('同事昵称')
 })
 it('uses the common author/time layout, no redundant title, resizable shell and source location',async()=>{
-  await act(async()=>root.render(<TeamMessageDetail message={message('detail',{...person,nickname:'宏顺'})} conversation={conversation} avatar={<button>头像</button>} onClose={onClose} onLocate={onLocate}/>))
+  await act(async()=>root.render(<TeamMessageDetail accountKey="test:11" message={message('detail',{...person,nickname:'宏顺'})} conversation={conversation} avatar={<button>头像</button>} onClose={onClose} onLocate={onLocate}/>))
   expect(host.querySelector('[data-arkme-detail-author]')?.textContent).toContain('宏顺')
   expect(host.querySelector('[data-arkme-detail-author]')?.textContent).toContain('2026')
   expect(host.querySelector('h2')?.textContent).not.toBe('消息详情')

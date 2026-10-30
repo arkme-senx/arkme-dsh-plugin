@@ -129,6 +129,25 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
   })
 
+  it('retains the open detail and independent replies while its timeline source is revalidating', async () => {
+    const source:TeamMessage={key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
+    const child={...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'独立子回复'}}
+    mocks.extensions.mockResolvedValue({message:source,items:[child],totalCount:1,hasMore:false,nextSeq:2,throughSeq:2})
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?{conversation,messages:[source],hasMore:false,beforeSeq:0}:[])
+    await mount()
+    await act(async()=>{renderer!.root.findByType(TeamConversationMessage).props.onDetail();await tick()})
+    const detail=renderer!.root.findByType(TeamMessageDetail)
+    const reply=renderer!.root.findByProps({'data-team-extension-item':'child'})
+    const input=renderer!.root.findByType(ArkmeRichComposerInput)
+    mocks.extensions.mockImplementation(()=>new Promise(()=>{}))
+    mocks.call.mockImplementation(async op=>op==='team.app.timeline'?await new Promise(()=>{}):[])
+    await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.message.changed',messageKey:'source',conversationKeys:['key']}))
+    expect(renderer!.root.findAllByType(TeamMessageDetail)).toHaveLength(1)
+    expect(renderer!.root.findByType(TeamMessageDetail)).toBe(detail)
+    expect(renderer!.root.findByProps({'data-team-extension-item':'child'})).toBe(reply)
+    expect(renderer!.root.findByType(ArkmeRichComposerInput)).toBe(input)
+  })
+
   it('binds the focused nested extension when sending from its detail composer', async () => {
     const source: TeamMessage = {key:'source',ref:'source-ref',seq:1,revision:1,side:'external',sender:{nickname:'访客'},own:false,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原文'}}
     const child = {...source,key:'child',ref:'child-ref',seq:2,content:{template_kind:1,text_content:'子层正文'}}

@@ -14,7 +14,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 
 /** Team keeps its own authorization; only the visual detail primitives are shared. */
-export function TeamMessageDetail({ message, conversation, avatar, footer, onClose, onLocate, onExtend, displayIdentity }: {
+export function TeamMessageDetail({ accountKey, message, conversation, avatar, footer, onClose, onLocate, onExtend, displayIdentity }: {
+  accountKey: string
   message: TeamMessage
   conversation: TeamConversation
   avatar: ReactNode
@@ -30,7 +31,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
   const body = useRef<HTMLDivElement>(null)
   const scrollPositions = useRef(new Map<string, number>())
   const focus = trail.at(-1) ?? message
-  const extensions = useTeamExtensions(conversation.ref, focus)
+  const extensions = useTeamExtensions(accountKey, conversation, focus)
   const raw = extensions.page?.message ?? focus
   const current = displayIdentity ? { ...raw, sender: displayIdentity(raw.sender) } : raw
   const saveScroll = () => { scrollPositions.current.set(focus.key, body.current?.scrollTop ?? 0) }
@@ -69,7 +70,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
     {readable && onExtend && <div style={{ marginTop: 24 }}><button type="button" onClick={() => onExtend(current)} style={styles.extensionContextRetry}>{tr('延展回复')}</button></div>}
     {extensions.loading && <div role="status" style={styles.extensionContextStatus}>{tr('正在加载延展…')}</div>}
     {extensions.error && <div role="alert" style={styles.extensionContextStatus}>{extensions.error}<button type="button" style={styles.extensionContextRetry} onClick={extensions.retry}>{tr('重试')}</button></div>}
-    {extensions.page && !extensions.invalidated && (readable || current.state==='recalled') && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
+    {extensions.page && !extensions.invalidated && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
       <div data-arkme-note-extension-count="true" style={styles.extensionContextTitle}>{tr('共')}{extensions.page.totalCount}{tr('条延展')}</div>
       <div style={styles.extensionContextList}>{extensions.page.items.map(rawReply => {
         const reply = displayIdentity ? { ...rawReply, sender: displayIdentity(rawReply.sender) } : rawReply
