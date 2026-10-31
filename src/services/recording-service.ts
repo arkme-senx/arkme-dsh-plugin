@@ -1,6 +1,6 @@
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
-import { recordingStrategy } from '../recording-strategy-contract.js'
+import { recordingStrategy, type RecordingStrategy } from '../recording-strategy-contract.js'
 import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
@@ -19,6 +19,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   recordingImportCanonicalMimeType,
+  validRecordingImportTaskId,
   sameRecordingImportIdentity,
   isUnresolvedRecordingImportJob,
   toPublicRecordingImportJob,
@@ -1297,6 +1298,29 @@ export class RecordingService {
     return job ? toPublicRecordingImportJob(job, await this.recordingImportRef(job)) : null
   }
 
+  async registerRecordingImportStrategies(tasks: unknown, expectedUserId: number, signal?: AbortSignal): Promise<void> {
+    this.assertWorkbenchEnabled()
+    await this.requireRecordingImportSession(expectedUserId)
+    if (!Array.isArray(tasks) || tasks.length === 0 || tasks.length > 10_000
+      || tasks.some(task => !task || !validRecordingImportTaskId(task.taskId) || typeof task.strategy !== 'string' || task.strategy === '')
+      || new Set(tasks.map(task => task.taskId)).size !== tasks.length) {
+      throw new ArkmePluginError('recording-import-task-invalid', '录音导入任务或策略无效', false, 400)
+    }
+    const registrations = tasks.map(task => ({ taskId: task.taskId as string, strategy: recordingStrategy(task.strategy) }))
+    const jobs = await this.runtime.stateStore.listRecordingImportJobs(expectedUserId)
+    for (const task of registrations) {
+      const receipt = jobs.find(job => job.clientTaskId === task.taskId)
+      if (receipt && recordingStrategy(receipt.strategy) !== task.strategy) {
+        throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试', false, 409)
+      }
+    }
+    if (!this.runtime.stateStore.recordingImportStrategies) throw new ArkmePluginError('recording-import-strategy-unavailable', '录音导入策略暂不可保存，请重试', true, 503)
+    await this.requireRecordingImportSession(expectedUserId)
+    signal?.throwIfAborted()
+    await this.runtime.stateStore.recordingImportStrategies(`${this.runtime.config.environment}:${expectedUserId}`, registrations, signal)
+    await this.requireRecordingImportSession(expectedUserId)
+  }
+
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
@@ -1330,9 +1354,16 @@ export class RecordingService {
     }
     const currentJobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     const receipt = metadata.clientTaskId ? currentJobs.find(job => job.clientTaskId === metadata.clientTaskId) : undefined
+    const registeredStrategy: RecordingStrategy | undefined = metadata.clientTaskId && this.runtime.stateStore.recordingImportStrategies
+      ? (await this.runtime.stateStore.recordingImportStrategies(`${this.runtime.config.environment}:${expectedUserId}`, [{ taskId: metadata.clientTaskId }], signal))[metadata.clientTaskId]
+      : undefined
     const selectedStrategy = metadata.strategy !== undefined ? recordingStrategy(metadata.strategy)
       : receipt ? recordingStrategy(receipt.strategy)
+      : registeredStrategy !== undefined ? registeredStrategy
       : recordingStrategy((await this.recordingStrategies({ action: 'preference', expectedUserId }, signal) as { strategy: string }).strategy)
+    if (registeredStrategy !== undefined && selectedStrategy !== registeredStrategy) {
+      throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试', false, 409)
+    }
     const identity = {
       strategy: selectedStrategy,
       userId: session.userId,

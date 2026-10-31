@@ -181,6 +181,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.import.history'
   | 'recordings.workflow'
   | 'recordings.import.preflight'
+  | 'recordings.import.strategies.register'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'
