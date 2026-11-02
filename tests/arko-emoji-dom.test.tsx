@@ -400,7 +400,6 @@ describe('Arko emoji input and send boundary', () => {
       return currentApi(method, input, signal)
     })
     await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(node => node.textContent?.includes('Model B'))!)
-    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(node => node.textContent === '使用此模型')!)
     expect(trigger!.textContent).toBe('Model B')
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     ask.mockImplementation(() => new Promise(() => {}))
@@ -416,7 +415,7 @@ describe('Arko emoji input and send boundary', () => {
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]'))
     expect(items).toHaveLength(2)
     expect(items[0]!.getAttribute('aria-selected')).toBe('true')
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('搜索模型、渠道或版本')
+    expect(document.activeElement).toBe(items[0])
     items[0]!.focus()
     await act(async () => { items[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
     expect(document.activeElement).toBe(items[1])
@@ -438,10 +437,9 @@ describe('Arko emoji input and send boundary', () => {
     const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')!
     await click(trigger)
     await click(document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]!)
-    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(node => node.textContent === '使用此模型')!)
     expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe('模型切换失败')
     expect(trigger.textContent).toBe('Model A')
-    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain('Model B')
+    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain('Model A')
   })
 
   it('undoes and redoes text and rich emoji using the existing editor history', async () => {

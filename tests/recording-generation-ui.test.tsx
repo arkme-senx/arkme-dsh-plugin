@@ -253,7 +253,7 @@ describe('recording summary and timeline generation', () => {
     expect(renderedText(renderer.root)).toContain('模型请求失败，请稍后重试或选择其他模型。')
     expect(renderedText(renderer.root)).toContain('模型：DeepSeek V4 Flash')
     await act(async () => { button(renderer, '选择模型并重试').props.onClick(); await tick() })
-    await act(async () => { button(renderer, '取消').props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '关闭模型面板' }).props.onClick(); await tick() })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.generate' || op === 'recordings.summary-model-config.set')).toHaveLength(0)
     await act(async () => { button(renderer, '选择模型并重试').props.onClick(); await tick() })
     const options = renderer.root.findByProps({ 'aria-label': '全部已接入模型' })

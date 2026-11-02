@@ -46,7 +46,6 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkoModelCache } from './arko-model-cache.js'
 import { ArkoModelMenu } from './ArkoModelMenu.js'
-import { ModelBalanceShortcut } from './UnifiedModelPicker.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import {
   readArkoPendingTurn,
@@ -1559,7 +1558,6 @@ export function ArkmeArkoSurface() {
           disabled={interactionLocked || clearing || selectingModel}
           onClick={event => { toggleModelMenu(event.currentTarget) }}
         ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
-        <ModelBalanceShortcut/>
         {activeRun === undefined ? <ArkmeComposerSendButton
           ariaLabel={tr("发送")}
           shortcutHint={attachmentPreparationHint(draftSnapshot.attachments) ?? "Enter"}

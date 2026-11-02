@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ModelChoice } from '../model-directory.js'
-import { ModelBalanceShortcut, UnifiedModelPicker } from './UnifiedModelPicker.js'
+import { UnifiedModelPicker } from './UnifiedModelPicker.js'
 import css from './arkme-model-select.css?inline'
 
 /** DSH remains the selection owner; the shared panel only adapts its public directory. */
@@ -37,11 +37,11 @@ export function ArkmeModelSelect({ directory, locked, available }: { directory: 
   const currentId = JSON.stringify(['dsh', state.current?.provider, state.current?.model]), model = models.find(item => item.id === currentId)
   const effort = state.current?.reasoningEffort ?? model?.reasoning?.defaultEffort
   const effortName = model?.reasoning?.efforts.find(item => item.id === effort)?.name ?? effort
-  return <div className="arkme-unified-model-seat"><style>{css}</style>
+  return <div className="arkme-model-select"><style>{css}</style>
     <button ref={trigger} type="button" className="arkme-model-trigger" disabled={locked} aria-label={tr('选择模型：{v0}', { v0: model?.name ?? tr('选择模型') })}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(value => !value); reload() }}>
       <span>{model?.name ?? state.current?.model ?? tr('选择模型')}</span>{effortName && <small> · {effortName}</small>}<span aria-hidden>⌄</span>
-    </button><ModelBalanceShortcut/>
+    </button>
     {open && <UnifiedModelPicker scene="dsh" scopeLabel="当前 DSH 对话" models={models} currentId={currentId} currentEffort={state.current?.reasoningEffort ?? undefined}
       anchor={trigger.current ?? undefined} busy={locked || state.status === 'selecting'}
       error={[state.error, ...state.failures.map(failure => `${failure.name}：${failure.message}`)].filter(Boolean).join('；')}
