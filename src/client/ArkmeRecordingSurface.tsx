@@ -10,7 +10,6 @@ import { RecordingTranscriptSelectionBar } from './recordings/RecordingTranscrip
 import { useTranscriptInteractions, type TranscriptInteractionRow } from './TranscriptInteractions.js'
 import { AnalysisDropdown as RecordingAnalysisDropdown, AnalysisModelDialog } from './AnalysisModelDialog.js'
 import { recordingModelChoices } from '../model-directory.js'
-import { ModelBalanceShortcut } from './UnifiedModelPicker.js'
 import { RecordingSpeechStatistics, type SpeechSource } from './recordings/RecordingSpeechStatistics.js'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
 import { RecordingEntityPanel } from './recordings/RecordingEntityPanel.js'
@@ -548,7 +547,6 @@ function VersionPicker({ kind, versions, selectedId, generating, regenerateAvail
       onChange={onChange}
     />
     </div>
-    <ModelBalanceShortcut/>
     <button data-arkme-feedback="neutral" type="button" aria-label={`重新生成${kind === 'summary' ? tr("总结") : tr("时间轴")}`} disabled={disabled} style={{ ...styles.regenerateButton, flex: 'none', ...(disabled ? { opacity: .5, cursor: 'default' } : {}) }} onClick={onGenerate}>{generating && <ArrowCounterClockwise size={14} aria-hidden />}{tr("重新生成")}</button>
     </>}
     <Tooltip label={tr('导出')} side="top" delayMs={200}>

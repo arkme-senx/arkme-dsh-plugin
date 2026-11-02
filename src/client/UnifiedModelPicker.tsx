@@ -1,29 +1,20 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { Check } from '@phosphor-icons/react/dist/icons/Check'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
 import { mergeModelChoices, type ModelChoice, type ModelScene } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
+import { ThinkingEffortSlider } from './ThinkingEffortSlider.js'
 import { useUnifiedModels } from './use-unified-models.js'
 import { tr, useArkmeLocale } from './locale.js'
 import css from './unified-model-picker.css?inline'
 import usageCss from './account-usage.css?inline'
 
-export function ModelBalanceShortcut() {
-  const data = useUnifiedModels()
-  const [usage, setUsage] = useState(false)
-  if (!data.scope) return null
-  return <ArkmeBillingSettings key={data.scope} active={false} modal onCreditsChanged={() => { void data.refresh() }} renderTrigger={({ onOpen }) => <>
-    <style>{css}</style>
-    <span className="arkme-model-balance-shortcut">
-      <button type="button" title={tr('积分与用量明细')} onClick={() => setUsage(true)}>{data.account ? `Arkme ${formatAiPoints(data.account.availablePoints)} ${tr('积分')}` : tr(data.accountError ? '积分读取失败' : '积分加载中…')}</button>
-      <button type="button" onClick={onOpen}>{tr('充值')}</button>
-    </span>
-    {usage && <UnifiedModelPicker scene="arko" scopeLabel="积分与用量" models={[]} currentId="" initialView="usage" onApply={async () => false} onClose={() => setUsage(false)} />}
-  </>} />
-}
-
-export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, error = '', confirmLabel = '使用此模型', initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
+export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, error = '', confirmLabel = '确认并生成', initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
   scene: ModelScene; scopeLabel: string; models: readonly ModelChoice[]; currentId: string; currentEffort?: string | undefined
   anchor?: HTMLButtonElement | undefined; busy?: boolean; error?: string; confirmLabel?: string; initialView?: 'models' | 'usage'
   onApply(model: ModelChoice, effort?: string): Promise<boolean>
@@ -32,42 +23,90 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   onClose(): void
 }) {
   useArkmeLocale()
-  const data = useUnifiedModels(), panel = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), title = useId()
-  const [view, setView] = useState(initialView), [query, setQuery] = useState(''), [selectedId, setSelectedId] = useState(currentId)
-  const [effort, setEffort] = useState(currentEffort ?? ''), [notice, setNotice] = useState(''), [applying, setApplying] = useState(false)
+  const data = useUnifiedModels(), panel = useRef<HTMLElement>(null), title = useId()
+  const [view, setView] = useState<'models' | 'usage' | 'pricing'>(initialView)
+  const [selectedId, setSelectedId] = useState(currentId), [effort, setEffort] = useState(currentEffort ?? '')
+  const [notice, setNotice] = useState(''), [applying, setApplying] = useState(false)
+  const applyingRef = useRef(false), mounted = useRef(true), latestScope = useRef(data.scope)
+  latestScope.current = data.scope
   const [position, setPosition] = useState<CSSProperties>({ visibility: anchor ? 'hidden' : 'visible' })
   const choices = mergeModelChoices(data.catalog?.models ?? [], localModels)
   const selected = choices.find(model => model.id === selectedId)
-  const supported = selected?.[scene] !== undefined
-  const filtered = choices.filter(model => `${model.name} ${model.channel} ${model.identifier}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-  useEffect(() => { void data.refresh() }, [])
-  useEffect(() => { setSelectedId(currentId); setEffort(currentEffort ?? '') }, [currentId, currentEffort])
-  useLayoutEffect(() => { panel.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' }) }, [selectedId, data.catalog?.observedAt])
+  const requiresConfirmation = scene === 'recording'
+  const checkedId = requiresConfirmation ? selectedId : currentId
+  const groups = [...choices.reduce((groups, model) => {
+    const group = groups.get(model.channel) ?? []
+    group.push(model); groups.set(model.channel, group); return groups
+  }, new Map<string, ModelChoice[]>())].sort((a, b) => {
+    const rank = (models: ModelChoice[]) => models.some(model => model.billing === 'arkme-points') ? 0 : models.some(model => model.billing === 'provider-account') ? 1 : 2
+    return rank(a[1]) - rank(b[1])
+  })
+  const hasReadError = !!(data.catalogError || data.accountError || data.catalog?.failures.length)
+  const restoreSelection = () => { setSelectedId(currentId); setEffort(currentEffort ?? '') }
+  useEffect(() => { mounted.current = true; void data.refresh(); return () => { mounted.current = false } }, [])
+  useEffect(() => { restoreSelection() }, [currentId, currentEffort])
   useLayoutEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     const place = () => {
       if (!anchor) return
-      const rect = anchor.getBoundingClientRect(), width = Math.min(420, window.innerWidth - 24)
+      const rect = anchor.getBoundingClientRect(), width = Math.min(400, window.innerWidth - 24)
       const above = rect.top - 16, below = window.innerHeight - rect.bottom - 16, upwards = above >= below
       setPosition({ position: 'fixed', width, left: Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)),
-        ...(upwards ? { bottom: window.innerHeight - rect.top + 8 } : { top: rect.bottom + 8 }), maxHeight: Math.max(120, Math.min(600, upwards ? above : below)) })
+        ...(upwards ? { bottom: window.innerHeight - rect.top + 8 } : { top: rect.bottom + 8 }), maxHeight: Math.max(120, Math.min(560, upwards ? above : below)) })
     }
-    place(); search.current?.focus()
+    place()
     window.addEventListener('resize', place); window.addEventListener('scroll', place, true)
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); (anchor ?? previous)?.focus({ preventScroll: true }) }
   }, [anchor])
-  const apply = async () => {
-    if (!selected || busy || applying) return
-    if (!supported) { setNotice('此模型在当前场景的执行路由尚未接通，请选择已支持的模型。'); return }
-    setApplying(true); setNotice('')
-    try { if (await onApply(selected, effort || undefined)) onClose() }
-    catch (error) { setNotice(error instanceof Error ? error.message : '模型切换失败，请重试') }
-    finally { setApplying(false) }
+  useLayoutEffect(() => {
+    const option = view === 'models' ? panel.current?.querySelector<HTMLElement>('[aria-selected="true"]') ?? panel.current?.querySelector<HTMLElement>('[role="option"]') : undefined
+    option?.scrollIntoView?.({ block: 'nearest' })
+    ;(option ?? panel.current)?.focus({ preventScroll: true })
+  }, [view])
+  const apply = async (model: ModelChoice, nextEffort?: string, closeOnSuccess = true) => {
+    if (busy || applyingRef.current) return
+    if (!model[scene]) { setNotice('此模型在当前场景的支持情况待确认'); return }
+    const scope = data.scope
+    applyingRef.current = true; setApplying(true); setNotice('')
+    try {
+      const accepted = await onApply(model, nextEffort || undefined)
+      if (!mounted.current || latestScope.current !== scope) return
+      if (accepted) { if (closeOnSuccess) onClose() }
+      else {
+        restoreSelection()
+        if (!closeOnSuccess) setNotice('思考强度保存失败，请重试')
+      }
+    } catch (error) {
+      if (mounted.current && latestScope.current === scope) {
+        restoreSelection(); setNotice(error instanceof Error ? error.message : '模型切换失败，请重试')
+      }
+    } finally {
+      applyingRef.current = false
+      if (mounted.current) setApplying(false)
+      if (!closeOnSuccess) window.requestAnimationFrame?.(() => {
+        if (mounted.current && latestScope.current === scope && document.activeElement === document.body)
+          panel.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus({ preventScroll: true })
+      })
+    }
   }
+  const choose = (model: ModelChoice) => {
+    if (busy || applyingRef.current) return
+    const nextEffort = model.id === currentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''
+    setSelectedId(model.id); setEffort(nextEffort); setNotice('')
+    if (!model[scene]) { setNotice('此模型在当前场景的支持情况待确认'); return }
+    if (!requiresConfirmation) {
+      if (model.id === currentId) onClose()
+      else void apply(model, nextEffort)
+    }
+  }
+  const retry = () => { setNotice(''); void Promise.all([data.refresh(), onRefresh?.()]).catch(() => setNotice('暂时无法更新，请稍后重试')) }
+  const balanceText = data.account ? tr('Arkme 积分') + ' ' + formatAiPoints(data.account.availablePoints)
+    : tr(data.accountError ? 'Arkme 积分暂不可用' : data.scope ? 'Arkme 积分加载中…' : '登录后查看 Arkme 积分')
+  const billingHint = tr(selected?.billing === 'arkme-points' ? '使用 Arkme 积分' : selected?.billing === 'provider-account' ? '外部账户结算' : '计费归属待确认')
   const body = <ArkmeBillingSettings key={data.scope ?? 'guest'} active={false} modal onCreditsChanged={() => { void data.refresh() }} renderTrigger={({ onOpen }) =>
-    <div className={`arkme-unified-model-backdrop${anchor ? ' is-anchored' : ''}`} onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
-      <section ref={panel} className="arkme-unified-model-panel" style={position} role="dialog" aria-modal="true" aria-label={ariaLabel} aria-labelledby={ariaLabel ? undefined : title}
+    <div className={'arkme-unified-model-backdrop' + (anchor ? ' is-anchored' : '')} onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
+      <section ref={panel} tabIndex={-1} className="arkme-unified-model-panel" style={position} role="dialog" aria-modal="true" aria-label={ariaLabel} aria-labelledby={ariaLabel ? undefined : title}
         onKeyDown={event => {
           if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); onClose() }
           if (event.target instanceof Element && event.target.closest('[role="listbox"]') && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -76,49 +115,75 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
             event.preventDefault(); options[next]?.focus()
           }
           if (event.key === 'Tab') {
-            const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, select, summary') ?? [])]
+            const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? [])]
             const first = controls[0], last = controls.at(-1)
             if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
           }
         }}>
-        <header className="arkme-unified-model-header"><strong id={title}>{tr(view === 'usage' ? '积分与用量明细' : '选择模型')}</strong><button type="button" aria-label={tr('关闭模型面板')} onClick={onClose}>×</button></header>
-        <div className="arkme-unified-model-account">
-          <div><span>{tr('Arkme 可用积分')}</span><strong>{data.account ? formatAiPoints(data.account.availablePoints) : tr(data.accountError ? '读取失败' : data.scope ? '加载中…' : '登录后查看')}</strong>
-            {data.account && <small>{tr('已预占')} {formatAiPoints(data.account.reservedPoints)} {tr('积分')}</small>}</div>
-          <div><button type="button" disabled={!data.scope} onClick={onOpen}>{tr('充值')}</button><button type="button" disabled={!data.scope} onClick={() => setView(view === 'usage' ? 'models' : 'usage')}>{tr(view === 'usage' ? '返回模型' : '用量明细')}</button></div>
-        </div>
-        {view === 'usage' ? <div className="arkme-unified-model-list">{data.scope && <ArkmePointsConsumption scope={data.scope} revision={data.catalog?.observedAt ?? 0}/>}</div> : <>
-          <div className="arkme-unified-model-search"><input ref={search} aria-label={tr('搜索模型、渠道或版本')} placeholder={tr('搜索模型、渠道或版本')} value={query} onChange={event => setQuery(event.target.value)} />
-            <button type="button" disabled={data.loading} onClick={() => { void Promise.all([data.refresh(), onRefresh?.()]).catch(error => setNotice(error instanceof Error ? error.message : '刷新失败')) }}>{tr(data.loading ? '刷新中…' : '刷新')}</button></div>
-          <div className="arkme-unified-model-list" role="listbox" aria-label={tr('全部已接入模型')}>
-            {filtered.map(model => <button key={model.id} type="button" role="option" aria-selected={model.id === selectedId} className="arkme-unified-model-option"
-              onClick={() => { setSelectedId(model.id); setEffort(model.id === currentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''); setNotice('') }}>
-              <span><strong>{model.name}</strong><small>{model.channel}{model.images ? ` · ${tr('支持图片')}` : ''}<span className={model[scene] ? 'is-supported' : ''}>{tr(model[scene] ? '当前场景可用' : '支持待确认')}</span></small></span><span aria-hidden>{model.id === selectedId ? '✓' : ''}</span>
-            </button>)}
-            {!filtered.length && <p role="status">{tr(data.loading ? '正在读取模型目录…' : query ? '未找到匹配模型' : '模型目录暂不可用，请刷新')}</p>}
+        <header className="arkme-unified-model-header">
+          {view !== 'models' && initialView === 'models' && <button type="button" aria-label={tr('返回模型')} onClick={() => setView('models')}><ArrowLeft size={18}/></button>}
+          <strong id={title}>{tr(view === 'usage' ? 'Arkme 积分与用量' : view === 'pricing' ? '计费详情' : '选择模型')}</strong>
+          <button type="button" aria-label={tr('关闭模型面板')} onClick={onClose}><X size={18}/></button>
+        </header>
+        {view === 'models' ? <>
+          <div className="arkme-unified-model-list" role="group" aria-label={tr('全部已接入模型')} aria-busy={applying}>
+            {groups.map(([channel, models]) => <div key={channel} role="group" aria-label={channel} className="arkme-unified-model-group">
+              <div className="arkme-unified-model-group-title">
+                <span>{channel}</span>
+                {channel === 'Arkme 托管' && <div className="arkme-unified-model-account" role="group" aria-label={tr('Arkme 积分账户')}>
+                  <button type="button" className="arkme-unified-model-balance" aria-label={balanceText} title={tr('Arkme 可用积分')} disabled={!data.scope} onClick={() => setView('usage')}>
+                    {data.account ? `· ${formatAiPoints(data.account.availablePoints)} ${tr('积分')}` : balanceText}
+                  </button>
+                  <button type="button" aria-label={tr('充值 Arkme 积分')} title={tr('充值 Arkme 积分')} disabled={!data.scope} onClick={onOpen}>{tr('充值')}</button>
+                  <button type="button" aria-label={tr('Arkme 积分用量')} disabled={!data.scope} onClick={() => setView('usage')}>{tr('用量')}</button>
+                </div>}
+              </div>
+              <div role="listbox" aria-label={channel}>
+              {models.map(model => <button key={model.id} type="button" role="option" aria-selected={model.id === checkedId} disabled={busy || applying}
+                className="arkme-unified-model-option" onClick={() => choose(model)}>
+                <span className="arkme-unified-model-name">{model.name}</span>
+                {!model[scene] && <small>{tr('支持待确认')}</small>}
+                <span className="arkme-unified-model-check" aria-hidden>{model.id === checkedId && <Check size={16} weight="bold"/>}</span>
+              </button>)}
+              </div>
+            </div>)}
+            {!choices.length && <p className="arkme-unified-model-empty" role="status">{tr(data.loading ? '正在读取模型…' : '模型暂不可用')}</p>}
           </div>
           <footer className="arkme-unified-model-footer">
-            {selected && <><strong>{selected.name}</strong><small>{tr('渠道')}：{selected.channel} · {tr('具体版本')}：{selected.version ?? tr('目录尚未提供')}</small>
-              <small>{tr('计费账户')}：{selected.billing === 'arkme-points' ? tr('Arkme 积分') : selected.billing === 'provider-account' ? `${selected.channel} · ${tr('按该渠道账户结算')}` : tr('待服务端确认')}</small>
-              <p>{selected.pricing || tr('该模型的积分报价尚未提供，费用待确认。')}</p>
-              <details><summary>{tr('模型详情')}</summary><p>{selected.identifier}</p>
-                {selected.catalogRevision && <p>{tr('目录版本')}：{selected.catalogRevision}</p>}
-                {selected.offeringRevision && <p>{tr('模型配置版本')}：{selected.offeringRevision}</p>}
-                {selected.supplierCode && <p>{tr('供应渠道标识')}：{selected.supplierCode}</p>}
-                <p>{tr('计费账户与场景能力以服务端返回为准。')}</p></details>
-              {selected.reasoning && <label>{tr('思考强度')} <select aria-label={tr('思考强度')} value={effort} onChange={event => setEffort(event.target.value)}><option value="">{tr('默认')}</option>{selected.reasoning.efforts.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>}
-              {!supported && <p className="arkme-unified-model-notice">{tr('当前场景尚未提供此模型的执行路由。')}</p>}
-              {data.account && pointsUnits(data.account.availablePoints) === 0n && <p className="arkme-unified-model-notice">{tr('可用积分为 0，可在上方充值后继续。')}</p>}</>}
-            <small>{tr('生效范围')}：{tr(scopeLabel)}</small>
-            <small>{tr('任务费用尚无预估结果；是否可启动以服务端校验为准。')}</small>
-            {(notice || error) && <p role="alert">{notice || error}</p>}
-            <div className="arkme-unified-model-apply"><span>{data.catalog ? `${tr('目录更新')} ${new Date(data.catalog.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span><button type="button" onClick={onClose}>{tr('取消')}</button><button type="button" disabled={!selected || busy || applying} onClick={() => { void apply() }}>{tr(applying || busy ? '正在应用…' : confirmLabel)}</button></div>
+            {selected?.reasoning && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
+              disabled={busy || applying || !selected[scene]} onPreview={setEffort} onCommit={value => {
+                setNotice('')
+                if (!requiresConfirmation && value !== (currentEffort ?? '')) void apply(selected, value, false)
+              }}/>}
+            {selected && <button type="button" className="arkme-unified-model-info" aria-label={tr('计费详情')} onClick={() => setView('pricing')}>
+              <span>{billingHint}</span><span className="arkme-unified-model-info-link">{tr('详情')}<CaretRight size={14}/></span>
+            </button>}
+            {(notice || error) && <p className="arkme-unified-model-notice" role="alert">{notice || error}</p>}
+            {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr(data.catalogError || data.catalog?.failures.length ? '部分模型信息暂不可用' : '积分暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr(data.loading ? '重试中…' : '重试')}</button></div>}
+            {requiresConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected?.[scene] || busy || applying}
+              onClick={() => { if (selected) void apply(selected, effort) }}>{tr(applying || busy ? '正在提交…' : confirmLabel)}</button>}
           </footer>
-        </>}
-        {(data.catalogError || data.accountError || data.catalog?.failures.length) ? <div className="arkme-unified-model-errors" role="status">
-          {[data.catalogError, data.accountError, ...(data.catalog?.failures.map(failure => `${failure.source}：${failure.message}`) ?? [])].filter(Boolean).join('；')}
-        </div> : null}
+        </> : <div className="arkme-unified-model-content">
+          {view === 'usage' ? <>
+            {data.account && <div className="arkme-unified-model-usage-balance"><span>{balanceText}</span>
+              {pointsUnits(data.account.reservedPoints) > 0n && <span>{tr('已预占')} {formatAiPoints(data.account.reservedPoints)} {tr('积分')}</span>}</div>}
+            {data.scope && <ArkmePointsConsumption scope={data.scope} revision={data.catalog?.observedAt ?? 0}/>}
+          </> : selected && <>
+            <h3>{selected.name}</h3><p className="arkme-unified-model-muted">{selected.channel}</p>
+            <p className="arkme-unified-model-muted">{tr(selected.billing === 'arkme-points'
+              ? '本模型使用 Arkme 积分，充值增加的是 Arkme 积分账户余额。'
+              : selected.billing === 'provider-account' ? '本模型由外部账户结算，充值 Arkme 积分不会增加该账户余额。'
+                : '当前目录尚未明确本模型的计费账户，不能据 Arkme 积分余额判断是否可用。')}</p>
+            <dl><dt>{tr('计费账户')}</dt><dd>{selected.billing === 'arkme-points' ? tr('Arkme 积分') : selected.billing === 'provider-account' ? selected.channel : tr('待确认')}</dd>
+              <dt>{tr('具体版本')}</dt><dd>{selected.version ?? tr('待确认')}</dd>
+              <dt>{tr('生效范围')}</dt><dd>{tr(scopeLabel)}</dd>
+              {selected.images && <><dt>{tr('图片输入')}</dt><dd>{tr('支持')}</dd></>}</dl>
+            <p className="arkme-unified-model-price">{selected.pricing || tr(selected.billing === 'provider-account' ? '按该渠道账户结算。' : '该模型的报价待确认。')}</p>
+            {selected.billing !== 'provider-account' && <p className="arkme-unified-model-muted">{tr('实际费用按用量结算，是否可启动以服务端校验为准。')}</p>}
+          </>}
+          {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr('部分信息暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr('重试')}</button></div>}
+        </div>}
       </section>
     </div>} />
   return <><style>{css}{usageCss}</style>{typeof document === 'undefined' ? body : createPortal(body, document.body)}</>

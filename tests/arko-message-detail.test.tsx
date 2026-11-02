@@ -490,7 +490,6 @@ it('keeps model switching isolated from the open detail and preserves the draft'
   await click(host.querySelector('footer [aria-label="选择模型"]')!)
   const modal = document.querySelector('.arkme-unified-model-panel')!
   await click([...modal.querySelectorAll('[role="option"]')].find(b => b.textContent?.includes('模型B'))! as HTMLElement)
-  await click([...modal.querySelectorAll('button')].find(b => b.textContent === '使用此模型')!)
   expect((host.querySelector('[aria-label="发送"]') as HTMLButtonElement).disabled).toBe(true)
   await act(async () => { finish({ ...models, effectiveRouteKey: 'b' }) })
   expect(detail()).toBe(originalPanel)
