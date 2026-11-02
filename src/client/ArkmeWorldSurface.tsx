@@ -1,5 +1,8 @@
 import { worldPublishSourceLabel } from '../world-publish-source.js'
 import { WorldPublishGuide } from './WorldPublishGuide.js'
+import { PublicSocialDirectory, PublicWorldGroups } from './PublicSocialDirectory.js'
+import { ArkmeGroupCreateDialog } from './ArkmeQuickAdd.js'
+import type { PublicSocialTab } from '../public-social-contract.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -1301,9 +1304,11 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore }: {
+export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore, onSelectPublicTab, publicGroupsSlot }: {
   state: ArkmeWorldViewState
   scope: WorldScope
+  onSelectPublicTab?(tab: PublicSocialTab): void
+  publicGroupsSlot?: import('react').ReactNode
   target?: ArkmeWorldViewTarget
   catalogOwnerUserId?: number
   catalogOwnerName?: string
@@ -1404,11 +1409,13 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
       <nav style={styles.tabs} aria-label={tr("世界范围")}>
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>{tr("世界")}</button>
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>{tr("我的世界")}</button>
+        {onSelectPublicTab && <><button data-arkme-feedback="neutral" type="button" style={styles.tab} onClick={() => onSelectPublicTab('groups')}>{tr('公开群聊')}</button><button data-arkme-feedback="neutral" type="button" style={styles.tab} onClick={() => onSelectPublicTab('people')}>{tr('找人聊聊')}</button></>}
       </nav>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
       <div key={scope} ref={bindScrollRoot} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
         <div style={styles.feed} data-world-content-stack="true">
+        {publicGroupsSlot}
         {catalogOwnerUserId !== undefined && <WorldExtensionShelf
           ownerUserId={catalogOwnerUserId}
           ownerName={catalogOwnerName ?? target?.displayName ?? '我'}
@@ -1789,11 +1796,12 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, onBackToWorld, onSourceActivated }: {
+export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, accountScope, onBackToWorld, onSourceActivated }: {
   notificationRef?: string
   target?: ArkmeWorldViewTarget
   initialScope?: WorldScope
   currentUserId?: number
+  accountScope?: string | undefined
   actorName?: string | undefined
   actorAvatarRef?: string | undefined
   onBackToWorld?(): void
@@ -1802,6 +1810,10 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   useArkmeLocale()
   const [notificationTarget, setNotificationTarget] = useState(notificationRef)
   const [scope, setScope] = useState<WorldScope>(initialScope)
+  const [publicTab, setPublicTab] = useState<PublicSocialTab>()
+  const [profileGroupView, setProfileGroupView] = useState<{ uid?: string }>()
+  const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  useEffect(() => { setProfileGroupView(undefined) }, [target?.userId, scope])
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
@@ -1960,7 +1972,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     return () => controller.abort()
   }, [notificationTarget])
   useEffect(loadNotification, [loadNotification])
-  useEffect(() => { if (!notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget])
+  useEffect(() => { if (!publicTab && !profileGroupView && !notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget, publicTab, profileGroupView])
   useEffect(() => {
     if (target === undefined) return
     setInteractionRecordRef(undefined)
@@ -2015,7 +2027,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     else if (target === undefined) load(scope, 0, true)
     else loadUser(target, 0, true)
   }
-  const selectScope = (next: WorldScope) => { setNotificationTarget(undefined); setLoaded({ all: false, mine: false }); setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
+  const selectScope = (next: WorldScope) => { setPublicTab(undefined); setProfileGroupView(undefined); setNotificationTarget(undefined); setLoaded({ all: false, mine: false }); setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
   const toggleInteractions = (item: ArkmeWorldFeedItem) => {
     setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
   }
@@ -2157,8 +2169,18 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     finally { setInviteSending(false) }
   }
 
+  const profileUserId = target?.userId ?? (scope === 'mine' ? currentUserId : undefined)
   return <WorldNotificationFocus.Provider value={notificationTarget}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
-    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
+    {accountScope && (profileGroupView || publicTab && target === undefined) ? <PublicSocialDirectory
+      key={`${accountScope}:${profileGroupView ? profileUserId : 'all'}:${publicTab ?? 'groups'}`}
+      accountScope={accountScope} currentUserId={currentUserId} mode={profileGroupView ? 'groups' : publicTab ?? 'groups'}
+      {...(profileGroupView && profileUserId ? { profileUserId, profileName: target?.displayName ?? tr('我'), initialGroupUid: profileGroupView.uid, onBack: () => setProfileGroupView(undefined) } : {})}
+      onTabChange={next => { if (next === 'all' || next === 'mine') selectScope(next); else setPublicTab(next) }}
+      onCreateGroup={() => setCreateGroupOpen(true)} onSourceActivated={onSourceActivated}
+      onOpenWorld={person => { setPublicTab(undefined); setProfileGroupView(undefined); arkmeUi.showUserWorld({ userId: person.userId, displayName: person.displayName || tr('即我用户') }) }}
+    /> : <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
+      {...(accountScope ? { onSelectPublicTab: (tab: PublicSocialTab) => { stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setPublicTab(tab) } } : {})}
+      {...(accountScope && profileUserId ? { publicGroupsSlot: <PublicWorldGroups accountScope={accountScope} userId={profileUserId} onOpen={uid => setProfileGroupView(uid ? { uid } : {})} /> } : {})}
       {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : target === undefined && scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
       {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
       voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
@@ -2173,7 +2195,8 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
         else loadUser(target, state.nextOffset)
       }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
       onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
-      onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
+      onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />}
+    {createGroupOpen && accountScope && <ArkmeGroupCreateDialog key={accountScope} accountScope={accountScope} onClose={() => setCreateGroupOpen(false)} onSourceCreated={async source => { await onSourceActivated?.(source); setCreateGroupOpen(false) }} />}
     {composerOpen && <WorldPublishGuide onClose={() => { setComposerOpen(false) }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
     {authorCardItem !== undefined && <ArkmeMemberProfileCard

@@ -157,6 +157,8 @@ import { CommunityService } from './services/community-service.js'
 import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './services/extension-review-service.js'
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
+import { PublicSocialService } from './services/public-social-service.js'
+import type { PublicGroupQuery, PublicPeopleQuery } from './public-social-contract.js'
 import { CommonGroupService } from './services/common-group-service.js'
 import { SharePreviewService } from './services/share-preview-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
@@ -471,6 +473,7 @@ export class ArkmeService {
   private readonly recordExport: RecordExportService
   private readonly arko: ArkoService
   private readonly group: GroupService
+  private readonly publicSocial: PublicSocialService
   private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
@@ -805,6 +808,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         )
       },
     }, () => { void this.realtime.refreshAttentionSummary() })
+    this.publicSocial = new PublicSocialService(this.runtime, this.source, this.group)
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
@@ -2137,10 +2141,22 @@ arkoImagesV1:true,
   async createGroup(
     title: string,
     clientMutationId: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; isPublic?: boolean; introduction?: string; accountScope?: string } = {},
   ): Promise<ArkmeSourceItem> {
     return await this.group.createGroup(title, clientMutationId, options)
   }
+
+  async queryPublicGroups(input: PublicGroupQuery, signal?: AbortSignal) { return await this.publicSocial.queryGroups(input, signal) }
+  async readPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.readGroup(uid, scope, signal) }
+  async queryPublicPeople(input: PublicPeopleQuery, signal?: AbortSignal) { return await this.publicSocial.queryPeople(input, signal) }
+  async readPublicPerson(userId: number | undefined, scope: string, signal?: AbortSignal) { return await this.publicSocial.readPerson(userId, scope, signal) }
+  async setPublicPerson(scope: string, listed: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setPerson(scope, listed, introduction, signal) }
+  async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
+  async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
+  async openPublicPerson(userId: number, scope: string, signal?: AbortSignal) { return await this.publicSocial.openPerson(userId, scope, signal) }
+  async publicGroupSettings(sourceRef: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.groupSettings(sourceRef, scope, signal) }
+  async setPublicGroup(sourceRef: string, scope: string, isPublic: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setGroup(sourceRef, scope, isPublic, introduction, signal) }
+  async setPublicGroupShowcase(sourceRef: string, scope: string, isShown: boolean, signal?: AbortSignal) { return await this.publicSocial.setShowcase(sourceRef, scope, isShown, signal) }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {
     return await this.group.groupSettings(sourceRef, signal)
