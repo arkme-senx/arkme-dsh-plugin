@@ -114,6 +114,42 @@ describe('Codex conversation reader', () => {
     expect(label.nextElementSibling?.classList.contains('is-assistant')).toBe(true)
     await click('复制回答');expect(mocks.writeText).toHaveBeenLastCalledWith('真实回答')
   })
+  it('renders one clock for a completed turn whose progress messages carry the same timing',async()=>{
+    const timing={state:'finished' as const,startedAt:1000,completedAt:3249437,durationMs:3248437,observedAt:3249437}
+    const items=[event(1,'提问','UserPromptSubmit'),event(2,'过程一','Progress'),event(3,'过程二','Progress'),event(4,'最终回答')]
+      .map(item=>({...item,turnId:'same-turn',timing}))
+    mocks.callArkme.mockResolvedValue({items})
+    await render()
+    expect(host.querySelectorAll('[data-event-kind="Progress"]')).toHaveLength(2)
+    const clocks=host.querySelectorAll('.arkme-codex-turn-duration')
+    expect(clocks).toHaveLength(1)
+    expect(clocks[0]?.textContent).toContain('用时 54分钟 8秒')
+    expect(clocks[0]?.nextElementSibling?.getAttribute('data-event-kind')).toBe('Stop')
+  })
+  it('keeps one clock after live progress and leaves unverified timing absent',async()=>{
+    const startedAt=Date.now()-5000
+    const timing={state:'working' as const,startedAt,observedAt:Date.now(),live:true}
+    const items=[event(1,'提问','UserPromptSubmit'),event(2,'过程一','Progress'),event(3,'过程二','Progress')]
+      .map(item=>({...item,turnId:'same-turn',timing}))
+    mocks.callArkme.mockResolvedValue({items})
+    await render({...task,state:'working',currentInput:{turnId:'same-turn',text:'提问',at:1000}})
+    expect(host.querySelectorAll('.arkme-codex-turn-duration')).toHaveLength(1)
+    expect(host.textContent).toContain('已处理 5秒')
+    mocks.callArkme.mockResolvedValue({items:items.map(({timing:_,...item})=>item)})
+    await render({...task,id:'no-clock',state:'working'})
+    expect(host.querySelector('.arkme-codex-turn-duration')).toBeNull()
+  })
+  it('renders one interrupted clock without putting it on earlier progress',async()=>{
+    const timing={state:'interrupted' as const,startedAt:1000,completedAt:6000,durationMs:5000,observedAt:6000}
+    const items=[event(1,'提问','UserPromptSubmit'),event(2,'过程','Progress'),event(3,'','Interrupt')]
+      .map(item=>({...item,turnId:'same-turn',timing}))
+    mocks.callArkme.mockResolvedValue({items})
+    await render({...task,state:'interrupted'})
+    const clocks=host.querySelectorAll('.arkme-codex-turn-duration')
+    expect(clocks).toHaveLength(1)
+    expect(clocks[0]?.textContent).toContain('已中断 · 用时 5秒')
+    expect(clocks[0]?.nextElementSibling?.getAttribute('data-event-kind')).toBe('Interrupt')
+  })
   it('cleans cached and refreshed questions for both display and copy without rewriting history',async()=>{
     const raw=wrappedCodexPrompt('24mm 和 26mm，统一起来对比。')
     const reading={...newCodexReadingState(),loaded:true,items:[event(1,raw,'UserPromptSubmit')]}

@@ -229,7 +229,8 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
   const currentPrompt = current ? visiblePrompt(current.text) : undefined
   const interactions=useCodexMessageInteractions({teamRef,task,events:visibleItems,account,userId})
   const latest=visibleItems.at(-1)
-  const workingTiming=task.state==='working' && latest?.kind==='UserPromptSubmit'
+  const workingTiming=task.state==='working' && latest?.timing?.state==='working'
+    && (latest.kind==='UserPromptSubmit'||latest.kind==='Progress')
     && (!task.currentInput || task.currentInput.turnId===latest.turnId) ? latest.timing : undefined
   return <div className="arkme-codex-transcript-wrap" data-codex-source={interactions.sourceRef}>
     <style>{arkmeMarkdownStyles}</style>
@@ -241,7 +242,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {!items.length && !current && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence} data-codex-row={String(event.eventId??event.sequence)}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
-          {event.kind!=='UserPromptSubmit' && event.timing && <CodexTurnDuration timing={event.timing} task={task}/>}
+          {((event.kind==='Stop'&&event.timing?.state==='finished')||(event.kind==='Interrupt'&&event.timing?.state==='interrupted')) && <CodexTurnDuration timing={event.timing!} task={task}/>}
           <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
             {interactions.check(event)}<div style={{minWidth:0}}>
             <CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
