@@ -111,7 +111,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
     }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
     )
     if (focusable === undefined || focusable.length === 0) {
       event.preventDefault()

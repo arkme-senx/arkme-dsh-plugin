@@ -13,6 +13,7 @@ import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
+import { PublicSocialDirectory } from './PublicSocialDirectory.js'
 import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -119,6 +120,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onStartCall, on
 }
 
 export function ArkmeQuickAddButton({
+  accountScope,
   onContactAdd,
   onSourceCreated,
   onBotCreated,
@@ -128,6 +130,7 @@ export function ArkmeQuickAddButton({
   notificationActivationRevision = 0,
   onBlockingOverlayChange,
 }: {
+  accountScope?: string | undefined
   onContactAdd(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
@@ -262,6 +265,8 @@ export function ArkmeQuickAddButton({
       setDialogKind(undefined)
     }} />}
     {dialogKind === 'group' && <ArkmeGroupCreateDialog
+      key={accountScope ?? recordingAccountKey ?? longArticleAccountKey}
+      accountScope={accountScope ?? recordingAccountKey ?? longArticleAccountKey}
       onClose={() => {
         pendingNotificationDismissRef.current = false
         setDialogBusy(false)
@@ -284,18 +289,28 @@ export function ArkmeQuickAddButton({
   </div>
 }
 
-function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
+export function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange, accountScope }: {
+  accountScope?: string | undefined
   onClose(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBusyChange?(busy: boolean): void
 }) {
   useArkmeLocale()
   const [name, setName] = useState('')
+  const [isPublic, setPublic] = useState(true), [introduction, setIntroduction] = useState(''), [browsing, setBrowsing] = useState(false)
+  const requestUid = useRef(crypto.randomUUID()), submitting = useRef(false), active = useRef(true)
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const firstInput = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { firstInput.current?.focus() }, [])
+  useEffect(() => {
+    const previous = typeof document === 'undefined' ? null : document.activeElement
+    return () => { if (typeof HTMLElement !== 'undefined' && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }) }
+  }, [])
+  useEffect(() => { if (browsing) dialogRef.current?.querySelector<HTMLInputElement>('input')?.focus(); else firstInput.current?.focus() }, [browsing])
+  useEffect(() => { if (busy) dialogRef.current?.focus({ preventScroll: true }) }, [busy])
   useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -308,20 +323,25 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
 
   const submit = async () => {
     const normalizedName = name.trim()
-    if (busy || normalizedName === '') return
+    if (submitting.current || normalizedName === '' || Array.from(introduction).length > 500) return
+    submitting.current = true
     setBusy(true)
     setError('')
     try {
       const source = await callArkme<ArkmeSourceItem>('group.create', {
         title: normalizedName,
-        clientMutationId: crypto.randomUUID(),
+        clientMutationId: requestUid.current,
+        isPublic, introduction,
+        ...(accountScope ? { accountScope } : {}),
       })
+      if (!active.current) return
       await onSourceCreated(source)
       onClose()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (active.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setBusy(false)
+      submitting.current = false
+      if (active.current) setBusy(false)
     }
   }
 
@@ -330,7 +350,16 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
     role="presentation" style={style.overlay}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}
   >
-    <div role="dialog" aria-modal="true" aria-labelledby="arkme-quick-add-title" style={style.dialog}>
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={browsing ? undefined : 'arkme-quick-add-title'} aria-label={browsing ? tr('浏览公开群聊') : undefined} style={browsing ? { ...style.dialog, width: 960, height: 'min(720px, calc(100vh - 48px))', display: 'flex', flexDirection: 'column', padding: 0 } : { ...style.dialog, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' }} onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); return }
+      if (event.key !== 'Tab') return
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')
+      const first = focusable?.[0], last = focusable?.[focusable.length - 1]
+      if (!first) { event.preventDefault(); dialogRef.current?.focus(); return }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }}>
+      {browsing && accountScope ? <PublicSocialDirectory accountScope={accountScope} mode="groups" onBack={() => setBrowsing(false)} backLabel="返回创建群聊" onSourceActivated={async source => { await onSourceCreated(source); onClose() }} /> : <>
       <div style={style.dialogHeader}>
         <h2 id="arkme-quick-add-title" style={style.heading}>{tr("创建群聊")}</h2>
         <button data-arkme-feedback="neutral" type="button" style={style.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose}>×</button>
@@ -342,14 +371,20 @@ function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange }: {
           onKeyDown={event => { if (event.key === 'Enter') void submit() }}
         />
       </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0', fontSize: 14 }}><input type="checkbox" checked={isPublic} disabled={busy} onChange={event => setPublic(event.currentTarget.checked)} />{tr('公开群聊')}</label>
+      <p style={{ ...style.label, marginBottom: 12 }}>{tr('公开群可以被其他用户发现，并显示在你创建的公开群中。')}</p>
+      <label style={style.label}>{tr('群介绍（选填）')}<textarea aria-label={tr('群介绍')} value={introduction} disabled={busy} maxLength={1000} style={{ ...style.input, height: 84, padding: '9px 12px', resize: 'vertical' }} onChange={event => setIntroduction(event.currentTarget.value)} /></label>
+      <p style={{ ...style.label, textAlign: 'right' }}>{Array.from(introduction).length}/500</p>
+      {accountScope && <button type="button" data-arkme-feedback="neutral" style={{ ...style.button, marginTop: 4 }} disabled={busy} onClick={() => setBrowsing(true)}>{tr('浏览公开群聊')}</button>}
       {error !== '' && <div role="alert" style={style.error}>{error}</div>}
       <div style={style.actions}>
         <button data-arkme-feedback="neutral" type="button" style={style.button} disabled={busy} onClick={onClose}>{tr("取消")}</button>
         <button data-arkme-feedback="primary"
-          type="button" style={{ ...style.button, ...style.primary }} disabled={busy || name.trim() === ''}
+          type="button" style={{ ...style.button, ...style.primary }} disabled={busy || name.trim() === '' || Array.from(introduction).length > 500}
           onClick={() => { void submit() }}
         >{busy ? tr("处理中…") : tr("确认")}</button>
       </div>
+      </>}
     </div>
   </div>
 }

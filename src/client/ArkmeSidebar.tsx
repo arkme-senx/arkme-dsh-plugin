@@ -8790,6 +8790,7 @@ export function ArkmeSurface({
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
             onBack={() => arkmeUi.backFromWorld()} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
+            accountScope={authenticatedAccountKey}
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
