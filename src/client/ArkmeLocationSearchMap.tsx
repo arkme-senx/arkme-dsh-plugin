@@ -2,7 +2,7 @@ import { darkLocationMapStyle } from './location-map-theme.js'
 import { useEffect, useRef, useState } from 'react'
 import { Crosshair } from '@phosphor-icons/react/dist/icons/Crosshair'
 import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
-import type { LocationMarker, LocationViewport } from '../location-search.js'
+import type { LocationBounds, LocationMarker, LocationViewport } from '../location-search.js'
 import { loadBaiduMaps, convertBaiduPoints, type BaiduMaps, type BaiduMap, type BaiduPoint } from './baidu-map.js'
 import { locationQueryBounds } from './location-map-coordinates.js'
 import { tr } from './locale.js'
@@ -20,9 +20,10 @@ function currentLocationError(reason: unknown): string {
   return '暂时无法定位到当前位置，请重试'
 }
 
-export function ArkmeLocationSearchMap({ account, browserAk, markers, initialViewport, selectedKey, onViewport, onSelect, scope = 'all', fitWhileLoading = false }: {
+export function ArkmeLocationSearchMap({ account, browserAk, markers, initialViewport, selectedKey, onViewport, onSelect, scope = 'all', fitWhileLoading = false, fitBounds }: {
   account: string; browserAk: string; markers: LocationMarker[]; initialViewport: LocationViewport; selectedKey?: string
   scope?: string; fitWhileLoading?: boolean
+  fitBounds?: LocationBounds
   onViewport(viewport: LocationViewport): void; onSelect(marker: LocationMarker): void
 }) {
   const canvas = useRef<HTMLDivElement>(null)
@@ -125,21 +126,26 @@ export function ArkmeLocationSearchMap({ account, browserAk, markers, initialVie
       return point ? [[marker.key, point] as const] : []
     })))
     void convertBaiduPoints(runtime.sdk, markers.map(marker => ({ lng: marker.longitude, lat: marker.latitude })), retained.points, controller.signal)
-      .then(converted => {
+      .then(async converted => {
         if (controller.signal.aborted) return
         setPoints(new Map(markers.map((marker, i) => [marker.key, converted[i]!])) )
         while (retained.points.size > 1000) retained.points.delete(retained.points.keys().next().value!)
-        if ((!retained.fitted || fitWhileLoading) && !retained.interacted && converted.length) {
+        const fitPoints = fitBounds ? await convertBaiduPoints(runtime.sdk, [
+          { lng: fitBounds.swLon, lat: fitBounds.swLat },
+          ...(fitBounds.swLat === fitBounds.neLat && fitBounds.swLon === fitBounds.neLon ? [] : [{ lng: fitBounds.neLon, lat: fitBounds.neLat }]),
+        ], retained.points, controller.signal) : converted
+        if (controller.signal.aborted) return
+        if ((!retained.fitted || fitWhileLoading) && !retained.interacted && fitPoints.length) {
           retained.fitted = true
           if (initial.current.bounds.swLon === -180 && initial.current.bounds.neLon === 180) {
-            if (converted.length === 1) runtime.map.centerAndZoom(converted[0]!, 14)
-            else runtime.map.setViewport(converted, { margins: [60,50,65,50], enableAnimation: false })
+            if (fitPoints.length === 1) runtime.map.centerAndZoom(fitPoints[0]!, 14)
+            else runtime.map.setViewport(fitPoints, { margins: [60,50,65,50], enableAnimation: false })
           }
         }
       })
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '位置坐标转换失败') })
     return () => controller.abort()
-  }, [runtime, markers, fitWhileLoading])
+  }, [runtime, markers, fitWhileLoading, fitBounds])
   const locate = async () => {
     const retained = session.current
     if (!runtime || !retained || retained.disposed || retained.account !== account || locationRequest.current) return

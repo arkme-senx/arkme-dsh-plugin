@@ -16,6 +16,7 @@ import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
+import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeConversationMemberItem,
@@ -1219,6 +1220,7 @@ function GroupSettingsMenu(props: {
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onError: (message: string) => void
   onExport: () => void
+  onLocation?: () => void
   exportBusy: boolean
   exportProcessed: number
 }) {
@@ -1404,6 +1406,7 @@ function GroupSettingsMenu(props: {
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
+    ...(props.onLocation ? [{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden /> }] : []),
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
       : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
@@ -1432,6 +1435,7 @@ function GroupSettingsMenu(props: {
       if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
       if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'message-dnd') {
         close()
@@ -1711,6 +1715,7 @@ export function ArkmeGroupChatControls(props: {
   onStatus?: (message: string) => void
   onError: (message: string) => void
   onExport?: () => void
+  onLocation?: () => void
   exportBusy?: boolean
   exportProcessed?: number
 } & GroupBotActions) {
@@ -1802,6 +1807,7 @@ export function ArkmeGroupChatControls(props: {
         onMessageDndUpdated={props.onMessageDndUpdated}
         onError={reportError}
         onExport={() => { props.onExport?.() }}
+        {...(props.onLocation ? { onLocation: props.onLocation } : {})}
         exportBusy={props.exportBusy === true}
         exportProcessed={props.exportProcessed ?? 0}
       />

@@ -12,6 +12,7 @@ export type TeamAppOperation = `team.app.${
   | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
+  | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'people.remarks' | 'outbound.open'
@@ -33,6 +34,7 @@ export interface TeamIdentity {
   memberType?: 'free' | 'vip' | 'svip' | 'unknown'
 }
 export interface TeamChannel {
+  entryKey?: string
   avatar?: ArkmeTeamAvatar
   teamRef: string; name: string; jotmoId: string; imageRef?: string; imageKey?: string; publicRef: string
   link: string; enabled: boolean; revision: number; canManage: boolean
@@ -40,6 +42,7 @@ export interface TeamChannel {
   canPause?: boolean
 }
 export interface TeamConversation {
+  entryKey?: string
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
   notificationPolicy?: TeamNotificationPolicy; attentionUnread?: number
@@ -48,7 +51,7 @@ export interface TeamConversation {
 }
 export interface TeamMention { personRef: string; displayName: string; startIndex: number; length: number }
 export interface TeamContent { mentions?: TeamMention[]; text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
-export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
+export interface TeamMedia { inlineRef?: string; ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
   /** Verified author-only send acknowledgement; absent is unknown. */
   metadataSaved?: boolean

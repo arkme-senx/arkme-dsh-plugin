@@ -1225,6 +1225,21 @@ export interface ArkmeSearchAssetItem {
 }
 
 /** Browser-safe image projection used by the desktop search image library. */
+/** Current-account owned resources selectable by a composer. */
+export interface ArkmeComposerResource {
+  key: string
+  recordUid: string
+  asset: ArkmeUploadedAsset
+  mediaRef?: string
+  thumbnailRef?: string
+  sendAtMillis: number
+}
+export interface ArkmeComposerResourcePage {
+  items: ArkmeComposerResource[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
 export interface ArkmeImageSearchItem {
   itemKey: string
   mediaRef: string
@@ -1527,6 +1542,7 @@ arkoImagesV1?:true
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
     teamPersonMentions?: 1
+    teamEntryPreferencesV1?: true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
@@ -2596,6 +2612,7 @@ export interface ArkmeRecordReeditDraft {
   baseContentFingerprint: string
   editDurationMillis: number
   updatedAtMillis: number
+  capture?: import('./record-reedit-contract.js').ArkmeRecordReeditCapture
 }
 
 export type ArkmeMessageReportType = 1 | 2 | 3 | 4
@@ -2629,6 +2646,8 @@ export interface ArkmeMessageCopyLinkExtendResult {
 
 /** Extension state for a message authorized by its source-scoped action reference. */
 export interface ArkmeSourceMessageExtensionContext extends ArkmeMessageCopyLinkRecordContext {
+  /** Account, conversation and original-message scoped cursor; absent when complete. */
+  nextCursor?: string
   parentRecordUid: string
   /** Immediate source of the opened note, independent of its current topic. */
   extensionParent?: ArkmeTimelineExtensionParent
@@ -2699,6 +2718,11 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 }
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
+  /** Server-validated partial quotation on this comment's own parent edge. */
+  quote?: import('./message-quote.js').ArkmeMessageQuote
+  quoteState?: 'available' | 'edited' | 'unavailable'
+  relationUid?: string
+  sequence?: number
   /** Protected shells must never receive locally cached presentation metadata. */
   protectedContent?: true
   recordUid: string
@@ -3607,6 +3631,17 @@ export interface ArkmeRecordingTranscriptPageOptions {
   signal?: AbortSignal | undefined
 }
 
+export type ArkmeRecordingOverviewItem = Pick<ArkmeRecordingWorkbenchItem,
+  'itemId' | 'itemRef' | 'startAtMillis' | 'endAtMillis' | 'speakerKey' | 'speakerLabel' | 'speakerColorIndex' | 'speakerAvatarRef' | 'isBackground' | 'recordingBelongsToViewer'> & {
+    textPreview?: string
+    textCount?: number
+  }
+export interface ArkmeRecordingDayOverview {
+  viewRef: string
+  items: ArkmeRecordingOverviewItem[]
+  metrics?: ArkmeRecordingDailyMetrics & { speakerTextCounts: Readonly<Record<string, number>> }
+}
+
 /** Recording coverage is independent of ASR: silence and pending ASR still have audio. */
 export interface ArkmeRecordingCoverageInterval {
   startAtMillis: number
@@ -4230,6 +4265,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'composer.resources.list'
+  | 'composer.document.prepare'
   | 'team.app.outbound.open'
   | 'team.app.group.context'
   | 'team.app.public-card'
@@ -4336,6 +4373,7 @@ export type ArkmePluginOperation =
   | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
+  | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
@@ -4361,6 +4399,7 @@ export type ArkmePluginOperation =
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'
+  | 'models.directory'
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
@@ -4733,6 +4772,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.day.review'
+  | 'recordings.day.overview'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -4772,6 +4813,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'
+  | 'search.conversation-locations'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'
@@ -4830,6 +4872,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
   | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

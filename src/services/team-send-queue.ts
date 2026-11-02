@@ -1,3 +1,4 @@
+import { resolveLongArticleContent } from '../long-article-content.js'
 import {arkmeFileBackgroundSound,assertArkmeBackgroundSoundLocalFiles} from '../record-background-sound.js'
 import { readMessageQuote } from '../message-quote.js'
 import { randomUUID } from 'node:crypto'
@@ -78,8 +79,8 @@ export class TeamSendQueue {
   async enqueue(input: TeamSendInput): Promise<TeamSendTask> {
     const user = await this.user(), epoch = this.epoch
     if (!uuid.test(input.clientUid) || !Number.isSafeInteger(input.expectedReplySeq) || input.expectedReplySeq < 0
-      || !input.content || typeof input.content.text_content !== 'string' || input.content.text_content.length > 20_000
-      || !Array.isArray(input.fileRefs) || input.fileRefs.length > 9 || new Set(input.fileRefs).size !== input.fileRefs.length
+      || !input.content || typeof input.content.text_content !== 'string' || input.content.text_content.length > (input.content.display_kind === 1 ? 40000 : 20000)
+      || !Array.isArray(input.fileRefs) || input.fileRefs.length + (Array.isArray(input.content.content_payload?.media_refs) ? input.content.content_payload.media_refs.length : 0) > 9 || new Set(input.fileRefs).size !== input.fileRefs.length
       || input.fileRefs.some(ref => typeof ref !== 'string')
       || JSON.stringify(input.content).length > 128_000) throw fail('invalid_request', '发送内容或附件无效')
     if (input.reply && (typeof input.reply.messageRef !== 'string' || !input.reply.messageRef || !Number.isSafeInteger(input.reply.version) || input.reply.version <= 0
@@ -274,7 +275,9 @@ export class TeamSendQueue {
         task.files = task.files.map((file, i) => ({ ...file, asset: assets[i]!, progress: { phase: 'ready', sentBytes: file.size, totalBytes: file.size } }))
         const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
         const backgroundAssets = assets.filter((_,index) => backgroundRefs.has(task.fileRefs[index]!))
-        task.sendContent = teamContentWithAssets(task.content, assets.filter((_,index) => !backgroundRefs.has(task.fileRefs[index]!)),
+        const content = task.content.display_kind === 1 ? { ...task.content, text_content: resolveLongArticleContent(task.content.text_content,
+          task.fileRefs.map((fileRef, index) => ({ fileRef, fileAssetUid: assets[index]!.fileAssetUid }))) } : task.content
+        task.sendContent = teamContentWithAssets(content, assets.filter((_,index) => !backgroundRefs.has(task.fileRefs[index]!)),
           backgroundAssets.length ? {assets:backgroundAssets,amplitudes:task.backgroundSound!.amplitudes} : undefined)
       }
       task.state = 'sending'; await this.save(user, task)

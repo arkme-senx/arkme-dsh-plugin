@@ -16,7 +16,7 @@ import type { TeamAppOperation } from './team-app-contract.js'
 import type { RecordAppOperation } from './record-app-contract.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { DSH_DIRECTORY_DELTA_MAX_BYTES, parseDshDirectoryDelta, type DshDirectoryDelta } from './dsh-remote/account-session-directory.js'
-import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
+import { parseArkmeRecordReeditMentions, parseArkmeRecordReeditCapture } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readDirectoryPage } from './directory-reader.js'
@@ -83,7 +83,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
-  if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+  if (operation === 'recordings.transcript.page' || operation === 'recordings.day.overview' || operation === 'recordings.day.review') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
@@ -1298,6 +1298,9 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
     case 'team.messages.task-update':return await service.updateTeamSend(stringParam(params,'conversationRef'),stringParam(params,'taskRef'),params.action as 'retry'|'cancel',requestSignal)
+    case 'team.entries.list': return await service.listTeamEntryPreferences(stringParam(params, 'cursor'), requestSignal)
+    case 'team.entries.query': return await service.queryTeamEntryPreferences(params.entries as import('./team-entry-preference-contract.js').TeamEntryReference[], requestSignal)
+    case 'team.entries.change': return await service.changeTeamEntryPreferences(params.command as import('./team-entry-preference-contract.js').TeamEntryPreferenceCommand, requestSignal)
     case 'team.notifications.list':return await service.listTeamNotificationConversations(stringParam(params,'side') as 'team'|'external',stringParam(params,'cursor'),requestSignal)
     case 'team.notifications.get':return await service.getTeamNotificationPolicy(stringParam(params,'conversationRef'),requestSignal)
     case 'team.notifications.set': {
@@ -1384,6 +1387,7 @@ export async function dispatchArkmeHostOperation(
     case 'remote.getStatus': return requireRemoteHost(remoteHost, remoteUnavailableReason).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
+    case 'models.directory': return await service.modelDirectory(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
@@ -1611,6 +1615,8 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
+    case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.transcript.page': {
       const source = params.source ?? 'system'
       if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
@@ -1904,6 +1910,8 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
     })
     case 'search.locations': return await service.searchLocations(params as unknown as import('./location-search.js').LocationQuery, requestSignal)
+    case 'search.conversation-locations': return await service.searchConversationLocations({ sourceRef: stringParam(params, 'sourceRef'),
+      ...(params?.cursor !== undefined ? { cursor: stringParam(params, 'cursor') } : {}) }, requestSignal)
     case 'articles.list': return await service.searchScene({ scene: 'long_article', articleScope: (typeof params.scope === 'string' ? params.scope : 'recent') as import('./types.js').ArkmeLongArticleBrowseScope, limit: typeof params.limit === 'number' ? params.limit : 30, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'search.scene': {
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
@@ -2422,6 +2430,9 @@ export async function dispatchArkmeHostOperation(
     case 'source.record-edit-history': return await service.recordEditHistoryPage(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorEditAt', 0), requestSignal,
     )
+    case 'source.record-revision-snapshot': return await service.recordRevisionSnapshot(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), stringParam(params, 'revisionUid'), requestSignal,
+    )
     case 'source.related-quick-note.detail': return await service.relatedQuickNoteDetail(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
       requiredRelatedQuickNoteParam(params, 'relatedRef'),
@@ -2510,7 +2521,9 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        ...(params.paginated === true ? { paginated: true } : {}),
+        ...(stringParam(params, 'pageCursor') ? { pageCursor: stringParam(params, 'pageCursor') } : {}) },
     )
     case 'source.message-extension.extend': {
       const quote = readMessageQuote(params.quote)
@@ -2523,6 +2536,7 @@ export async function dispatchArkmeHostOperation(
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
         ...richSendParam(params),
+        ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
         ...(quote === undefined ? {} : { quote }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
@@ -2828,6 +2842,17 @@ export async function dispatchArkmeHostOperation(
     case 'files.local.open-folder': return await service.fileOpenLocalFolder(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.open': return await service.fileOpenLocal(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.remove': await service.fileRemove(stringParam(params, 'fileRef')); return { removed: true }
+    case 'composer.document.prepare': return await service.prepareComposerDocument({
+      expectedUserId: numberParam(params, 'expectedUserId', 0), kind: stringParam(params, 'kind') as 'new' | 'existing',
+      itemUid: stringParam(params, 'itemUid'), version: numberParam(params, 'version', 0), title: stringParam(params, 'title'),
+      textContent: stringParam(params, 'textContent'), ...(params.textFormat === 'markdown' ? { textFormat: 'markdown' } : { textFormat: 'plain' }),
+      ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
+    }, requestSignal)
+    case 'composer.resources.list': return await service.composerResources({
+      kind: stringParam(params, 'kind') as 'file' | 'gallery', query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30),
+      expectedUserId: numberParam(params, 'expectedUserId', 0), ...(stringParam(params, 'cursor') ? { cursor: stringParam(params, 'cursor') } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
+    })
     case 'files.search': return await service.fileSearch({ query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30), cursor: stringParam(params, 'cursor') })
     case 'files.send.tasks': return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
     case 'files.send.retry': return await service.fileSendRetry(stringParam(params, 'taskRef'))
@@ -2843,6 +2868,7 @@ export async function dispatchArkmeHostOperation(
       return await service.fileSend({
         sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
         fileRefs,
+        ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
         ...(expectedUserId === undefined ? {} : { expectedUserId }),
         ...(backgroundSound === undefined ? {} : { backgroundSound }),
         ...(location === undefined ? {} : { location }),
@@ -2975,6 +3001,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.record-reedit.submit':
     case 'source.record-reedit.update': {
       const input = {
+        ...(params.capture === undefined ? {} : { capture: parseArkmeRecordReeditCapture(params.capture) }),
         sourceRef: stringParam(params, 'sourceRef'),
         itemUid: stringParam(params, 'itemUid'),
         ...(params.newText === undefined ? {} : { newText: stringParam(params, 'newText') }),

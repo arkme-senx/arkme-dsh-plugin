@@ -4,7 +4,7 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeUploadedAsset } from '../types.js'
 import type { TeamContent, TeamMessage, TeamReplyTarget, TeamMention } from '../team-app-contract.js'
 
-export type TeamDraft = { pendingEdit?: import('../team-snapshot-contract.js').TeamPendingEdit; mentions?: TeamMention[]; attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { backgroundSound?: import('../file-transfer-contract.js').ArkmeFileBackgroundSoundInput; metadataRef?: string; snapshotStatus?: string; uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
+export type TeamDraft = { document?: { article: import('./composer-article-store.js').ComposerArticle; uid: string; sending?: boolean; error?: string; prepared?: import('../services/composer-document.js').PreparedComposerDocument }; pendingEdit?: import('../team-snapshot-contract.js').TeamPendingEdit; mentions?: TeamMention[]; attachments?: readonly ArkmeComposerAttachment[]; text: string; startedAtMillis?: number | undefined; assets: ArkmeUploadedAsset[]; localFiles?: ArkmeLocalFile[]; reply?: TeamReplyTarget; attempt?: { backgroundSound?: import('../file-transfer-contract.js').ArkmeFileBackgroundSoundInput; metadataRef?: string; snapshotStatus?: string; uid: string; reply?: TeamReplyTarget; content: TeamContent; expectedReplySeq: number; createdAt?: number; startedAtMillis?: number | undefined; fileRefs?: string[]; message?: TeamMessage; reason?: string } }
 
 export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string, draft: TeamDraft): void {
   const { attachments: _transient, ...persisted } = draft
@@ -14,7 +14,7 @@ export function persistTeamDraft(storage: Pick<Storage, 'setItem'>, key: string,
 export function loadTeamDraft(storage: Pick<Storage, 'getItem'>, key: string): TeamDraft {
   try {
     const value: unknown = JSON.parse(storage.getItem(key) || 'null')
-    if (value && typeof value === 'object' && 'text' in value && typeof value.text === 'string' && 'assets' in value && Array.isArray(value.assets)) return value as TeamDraft
+    if (value && typeof value === 'object' && 'text' in value && typeof value.text === 'string' && 'assets' in value && Array.isArray(value.assets)) return { ...value as TeamDraft, ...((value as TeamDraft).document ? { document: { ...(value as TeamDraft).document!, sending: false } } : {}) }
   } catch {}
   return { text: '', assets: [] }
 }

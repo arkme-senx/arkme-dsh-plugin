@@ -31,6 +31,28 @@ describe('speaker evidence review', () => {
   const choose = async (index: number) => { await act(async () => { const input = renderer.root.findAllByType('input').filter(node => String(node.props['aria-label']).startsWith('选择 '))[index]!; input.props.onChange({ target: { checked: true } }); await tick() }) }
   const writes = () => mocks.call.mock.calls.filter(([op]) => op === 'recordings.speaker.correction.apply')
 
+  it('loads complete same-day candidates independently of the visible main transcript prefix', async () => {
+    const pending = Promise.withResolvers<readonly ArkmeRecordingWorkbenchItem[]>()
+    const loadItems = vi.fn(() => pending.promise)
+    await act(async () => { renderer = create(<ArkmeRecordingSpeakerReview item={item(0)} items={[item(0)]} loadItems={loadItems} options={[]} onClose={onClose} onUpdated={onUpdated} />) })
+    expect(JSON.stringify(renderer.toJSON())).toContain('正在读取当天完整核对片段')
+    expect(renderer.root.findAllByType('table')).toHaveLength(0)
+    await act(async () => { pending.resolve([item(0), item(1), item(2)]); await tick() })
+    expect(renderer.root.findByType('tbody').findAllByType('tr')).toHaveLength(3)
+    expect(JSON.stringify(renderer.toJSON())).toContain('当天完整候选范围')
+    expect(loadItems).toHaveBeenCalledOnce()
+  })
+
+  it('cancels complete candidate loading when the review closes', async () => {
+    const pending = Promise.withResolvers<readonly ArkmeRecordingWorkbenchItem[]>()
+    const loadItems = vi.fn(() => pending.promise)
+    await act(async () => { renderer = create(<ArkmeRecordingSpeakerReview item={item(0)} items={[item(0)]} loadItems={loadItems} options={[]} onClose={onClose} onUpdated={onUpdated} />) })
+    const signal = loadItems.mock.calls[0]![0] as AbortSignal
+    await act(async () => { renderer.unmount(); pending.resolve([item(0), item(1)]); await tick() })
+    expect(signal.aborted).toBe(true)
+    expect(onUpdated).not.toHaveBeenCalled()
+  })
+
   it('starts with group consistency and deviations without requiring A/B references', async () => {
     mocks.consistency.mockResolvedValue({ supported: true, groups: [{ anchorRef: 'ref-0', score: 86, state: 'partial', analyzedCount: 8, totalCount: 10, reviewCount: 2,
       version: 'v1', modelVersion: 'model', scoreDefinition: 'calibrated-v1', referenceMethod: 'robust-group',

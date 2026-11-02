@@ -18,7 +18,17 @@ export type ArkmeComposerAttachment = (
   | { asset: ArkmeUploadedAsset; localFile?: never; preparation?: never }
   | { localFile: ArkmeLocalFile; asset?: never; preparation?: never }
   | { preparation: ArkmeAttachmentPreparation; asset?: never; localFile?: never }
-) & { previewUrl?: string; clientId?: string }
+) & { previewUrl?: string; resourceMediaRef?: string; clientId?: string }
+
+function durableComposerAttachment(item: ArkmeComposerAttachment): ArkmeComposerAttachment | undefined {
+  const file = item?.localFile
+  const media = typeof item?.resourceMediaRef === 'string' && item.resourceMediaRef.length < 10000 ? { resourceMediaRef: item.resourceMediaRef } : {}
+  if (file && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(file.fileRef) && typeof file.fileName === 'string' && typeof file.mimeType === 'string' && Number.isSafeInteger(file.size) && file.size >= 0) return { localFile: file, ...media }
+  const asset = item?.asset
+  if (asset && typeof asset.fileAssetUid === 'string' && asset.fileAssetUid.length > 0 && typeof asset.fileName === 'string'
+    && typeof asset.mimeType === 'string' && Number.isSafeInteger(asset.size) && asset.size >= 0 && [1, 2, 3, 4].includes(asset.fileKind)) return { asset, ...media }
+  return undefined
+}
 
 export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.clientId ?? item.preparation?.id ?? item.localFile?.fileRef ?? item.asset!.fileAssetUid }
 export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): Omit<ArkmeLocalFile, 'fileRef'> { return item.preparation ?? item.localFile ?? item.asset! }
@@ -391,9 +401,7 @@ export class ArkmeComposerDraftStore {
         const draft = entry[1] as ArkmeComposerDraftSnapshot
         const maxTextLength = /^arkme-composer:\d+:arko$/.test(entry[0]) ? 60 * 1024 : 20_000
         if (typeof draft?.text !== 'string' || draft.text.length > maxTextLength || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
-        const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
-          && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
-          .slice(0, 9).map(item => ({ localFile: item.localFile! }))
+        const attachments = draft.attachments.flatMap(item => { const value = durableComposerAttachment(item); return value ? [value] : [] }).slice(0, 9)
         const extensionTarget = readComposerExtensionTarget(draft.extensionTarget)
         if (draft.extensionTarget !== undefined && extensionTarget === undefined) continue
         if (attachments.length > 0 || draft.markdown?.document?.type === 'doc' || extensionTarget !== undefined) {
@@ -756,11 +764,11 @@ export class ArkmeComposerDraftStore {
     const keys = key === undefined ? new Set([...this.persisted.keys(), ...this.drafts.keys()]) : [key]
     for (const changedKey of keys) {
       const draft = this.drafts.get(changedKey)
-      if (draft === undefined || (draft.extensionTarget === undefined && draft.markdown === undefined && !draft.attachments.some(item => item.localFile !== undefined))) {
+      if (draft === undefined || (draft.extensionTarget === undefined && draft.markdown === undefined && !draft.attachments.some(item => item.localFile !== undefined || item.asset !== undefined))) {
         this.persisted.delete(changedKey)
       } else {
         this.persisted.set(changedKey, JSON.stringify([changedKey, { ...draft,
-          attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]),
+          attachments: draft.attachments.flatMap(item => { const value = durableComposerAttachment(item); return value ? [value] : [] }),
         }]))
       }
     }

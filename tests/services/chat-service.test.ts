@@ -62,7 +62,7 @@ function messageActionPayload(actionRef: string): Record<string, unknown> {
 function chatMemberRef(
   viewerUserId: number,
   chatSessionUid: string,
-  targetUserId: number,
+  targetUserId: number | string,
   signingKey = 'member-signing-key',
 ): string {
   const payload = Buffer.from(JSON.stringify({
@@ -1777,6 +1777,8 @@ describe('ChatService', () => {
   })
 
   it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {
+    const quote = { version: 1, projection: 'arkme-text-v1', sourceDigest: 'a'.repeat(64), start: 0, end: 3,
+      text: '原快记', prefix: '', suffix: '' }
     const worldPost = vi.fn(async () => { throw new Error('chat detail must not use the public-record extension list') })
     const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
       if (path !== '/api/v1/chats/extensions/tree/page') throw new Error(`unexpected chat path: ${path}`)
@@ -1795,6 +1797,7 @@ describe('ChatService', () => {
             chat_session_uid: 'chat-1', parent_record_owner_user_id: 42, parent_record_uid: 'record-snapshot-1',
             child_record_owner_user_id: 17, child_record_uid: 'extension-record-1',
             root_record_owner_user_id: 42, root_record_uid: 'record-snapshot-1', source_mode: 1,
+            quote_reply: quote, quote_reply_state: 'available',
             created_at: 1_787_735_200_000, updated_at: 1_787_735_200_000,
           },
           item: {
@@ -1856,6 +1859,7 @@ describe('ChatService', () => {
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
         contentBlocks, senderMemberRef: expect.any(String), senderIsMe: false,
         senderAvatarUrl: 'current-extension-avatar',
+        quote, quoteState: 'available', relationUid: 'rel-extension-1', sequence: 10,
       })],
     })
     expect(profile.sealProfileImageRef).toHaveBeenCalledWith(42, 7)
@@ -3890,3 +3894,20 @@ it.each([true,false])('ordinary details keep version-1 environment after editing
  if(found)expect(detail.captureContext?.electric).toBe(0);
  expect(authenticatedPost.mock.calls.some(([path])=>path.endsWith('/context/get'))).toBe(found);
 });
+
+
+it('preserves adjacent int64 member refs through paging, presentation and live target resolution',async()=>{
+ const ids=['9007199254740992','9007199254740993'],session={userId:42,accessToken:'fixture',refreshToken:'fixture'}
+ const rows=ids.map((user_id,i)=>({user_id,role:3,status:1,display_name_snapshot:`客户${i}`}))
+ const read=vi.fn(async(path:string,body:Record<string,unknown>)=>path.endsWith('/members/page')?{chat_session_uid:'chat',items:body.after_user_id?rows.slice(1):rows.slice(0,1),has_more:!body.after_user_id,next_user_id:body.after_user_id?ids[1]:ids[0],self_role:3}:{chat_session_uid:'chat',items:path.endsWith('/by-user-ids')?rows.filter(v=>(body.user_ids as string[]).includes(v.user_id)):rows})
+ const runtime={config:{chatMemberJoinEventsEnabled:false},stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
+ const source={openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'}),sourceItem:async()=>({sourceRef:'source',kind:'group_chat'})}
+ const profile={publicProfileSummariesByUserIds:vi.fn(async()=>new Map())}
+ const chat=new ChatService(runtime as never,source as never,profile as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const first=await chat.pageSourceMembers('source',{limit:1}),second=await chat.pageSourceMembers('source',{limit:1,cursor:first.nextCursor!})
+ expect(read.mock.calls[1]![1].after_user_id).toBe(ids[0])
+ const ref=second.items[0]!.memberRef
+ expect((await chat.sourceMembersPresentation('source',[ref])).items[0]!.displayName).toBe('客户1')
+ expect(await chat.memberWorldTarget('source',ref)).toEqual({userId:ids[1]})
+ expect(ref).not.toBe(first.items[0]!.memberRef)
+})

@@ -47,7 +47,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toContain('免费版暂不支持背景音')
     expect(source).toContain('暂时无法确认会员权益')
     expect(source).not.toContain("actionLabel: '授权本机'")
-    expect(source).not.toContain('requestArkmeBackgroundSoundPermission')
+    expect(source).toContain('requestArkmeBackgroundSoundPermission')
     expect(source).not.toContain('title="位置记录"')
     expect(source).not.toContain('LocationPermissionDialog')
     expect(source).not.toContain('只有你点击提示后，才会记录该条消息的位置')

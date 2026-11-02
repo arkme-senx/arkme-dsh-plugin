@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { FunnelSimple } from '@phosphor-icons/react/dist/icons/FunnelSimple'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import { locationSources, type LocationMarker, type LocationSource, type LocationViewport } from '../location-search.js'
+import { locationSources, type LocationBounds, type LocationMarker, type LocationSource, type LocationViewport } from '../location-search.js'
 import { ArkmeLocationSearchMap } from './ArkmeLocationSearchMap.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
@@ -16,6 +16,7 @@ export function ArkmeLocationMapFrame(props: {
   sources: LocationSource[]; onSourcesChange(sources: LocationSource[]): void; availableSources?: readonly LocationSource[]
   toolbar?: ReactNode; summary: ReactNode; recordTitle?: string; recordCount?: number; children?: ReactNode
   onCloseRecords(): void; recordPanelRef?: RefObject<HTMLElement>; fitWhileLoading?: boolean
+  fitBounds?: LocationBounds
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filter = useRef<HTMLDivElement>(null), fallbackPanel = useRef<HTMLElement>(null)
@@ -37,6 +38,7 @@ export function ArkmeLocationMapFrame(props: {
     <div className="arkme-location-stage">
       <ArkmeLocationSearchMap account={props.account} browserAk={props.browserAk} markers={props.markers} initialViewport={props.initialViewport}
         {...(props.scope ? { scope: props.scope } : {})} {...(props.fitWhileLoading ? { fitWhileLoading: true } : {})}
+        {...(props.fitBounds ? { fitBounds: props.fitBounds } : {})}
         {...(props.selectedKey ? { selectedKey: props.selectedKey } : {})} onViewport={props.onViewport}
         onSelect={marker => { setFiltersOpen(false); props.onSelect(marker); requestAnimationFrame(() => panel.current?.focus({ preventScroll: true })) }} />
       <div className="arkme-location-toolbar">

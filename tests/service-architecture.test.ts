@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
   'dataExport',
+  'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
@@ -30,6 +32,7 @@ const expectedPublicMethods = [
   'relationPage', 'relationRecords', 'peopleList', 'peopleOpenChat', 'exploreEnrich', 'recordingImportReceipt', 'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
   'messageSyncStatus', 'retryMessageSync',
   'externalChats',
+  'listTeamEntryPreferences', 'queryTeamEntryPreferences', 'changeTeamEntryPreferences',
   'listTeamNotificationConversations', 'getTeamNotificationPolicy', 'setTeamNotificationPolicy',
   'teamMemberManagement',
   'getTeamProfile','updateTeamProfile','uploadTeamAvatar','uploadTeamAvatarFile','abortTeamAvatar',
@@ -77,7 +80,7 @@ const expectedPublicMethods = [
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingEntityFeedback', 'undoRecordingEntityFeedback', 'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences',
-  'recordingDay', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
+  'recordingDay', 'recordingDayOverview', 'recordingDayReview', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
@@ -135,6 +138,9 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'model-directory-service.ts',
+  'composer-document.ts',
+  'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
   'record-export-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
@@ -184,7 +190,7 @@ const expectedServiceFiles = [
   'people-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
   'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
-  'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-send-queue.ts',
+  'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-entry-preference-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',
 ].sort()

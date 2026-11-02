@@ -303,6 +303,26 @@ describe('RecordingService', () => {
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
 
+  it('serves a complete compact day overview bound to the same account, date and transcript snapshot', async () => {
+    const fixture = await speakerCacheFixture(), date = new Date(2026, 9, 8).getTime()
+    fixture.state.ownerRecordings = [{ startAt: date, items: [{ text: '汉🎙'.repeat(15000), start: 1000, end: 2000 }] },
+      { id: '345678901234567890123456', startAt: date + 3600000, items: [{ text: '后半天', start: 1000, end: 2000 }] }]
+    try {
+      const day = await fixture.service.recordingDay(date)
+      expect(day.transcript.nextCursor).not.toBe('')
+      const value = await fixture.service.recordingDayOverview(date, day.transcript.viewRef, day.transcript.nextCursor)
+      expect(value.viewRef).toBe(day.transcript.viewRef)
+      expect(value.items).toHaveLength(2)
+      expect(value.items.every(item => !('text' in item))).toBe(true)
+      expect(value.metrics?.textCount).toBe(30003)
+      const review = await fixture.service.recordingDayReview(date, day.transcript.viewRef, day.transcript.nextCursor)
+      expect(review.items.map(item => item.text)).toEqual(['汉🎙'.repeat(15000), '后半天'])
+      expect(review.items.map(item => item.itemId)).toEqual(value.items.map(item => item.itemId))
+      await expect(fixture.service.recordingDayOverview(date + 86400000, day.transcript.viewRef, day.transcript.nextCursor)).rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+      await expect(fixture.service.recordingDayOverview(date, 'wrong-view', day.transcript.nextCursor)).rejects.toMatchObject({ code: 'recording-view-changed' })
+    } finally { await fixture.close() }
+  })
+
   it('resolves complete entity evidence through the paged owner without speaker or profile requests', async () => {
     const profiles = vi.fn(async () => new Map())
     const fixture = await speakerCacheFixture({ profile: { publicProfileSummariesByUserIds: profiles, sealProfileImageRef: async () => 'unused' } })

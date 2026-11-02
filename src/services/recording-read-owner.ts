@@ -1,7 +1,7 @@
 import { parseRecordingAsrInputMetrics, addRecordingAsrInputMetrics, type RecordingAsrInputMetrics } from '../recording-asr-input-metrics.js'
 import type { ArkmeRecordingCoverage } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import { addRecordingStorageMetrics, parseRecordingStorageMetrics, type RecordingStorageMetrics } from '../recording-daily-metrics.js'
+import { addRecordingStorageMetrics, parseRecordingStorageMetrics, recordingTextCount, type RecordingStorageMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from './service.js'
 
@@ -71,6 +71,9 @@ export interface RecordingOwnerDayPage {
   coverage: RecordingOwnerCoverage
   captureCoverage?: { receiving: number; interrupted: number }
   next?: RecordingDayReadCursor
+}
+export interface RecordingOwnerDayOverview extends Omit<RecordingOwnerDayPage, 'items' | 'next'> {
+  items: Array<Omit<RecordingOwnerFragment, 'text'> & { textCount: number; textPreview: string }>
 }
 
 const objectID = /^(?!0{24}$)[a-f0-9]{24}$/
@@ -373,6 +376,73 @@ export class RecordingReadOwner {
       totalDurationMillis: state.positions.reduce((sum, position) => sum + Math.max(0, Math.min(window.endAt, position.fact.end_at) - Math.max(window.startAt, position.fact.start_at)), 0),
       ...(state.positions.every(position => position.done) ? {} : { next: state }),
     }
+  }
+
+  /** Scan each recording once rather than revalidating every recording for each
+   * merged UI page. Return compact navigation facts and revalidate the complete
+   * snapshot before publishing; no whole-day transcript body is retained. */
+  async dayOverview(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials,
+    snapshot: RecordingDayReadCursor, signal?: AbortSignal, onFragment?: (item: RecordingOwnerFragment) => void): Promise<RecordingOwnerDayOverview> {
+    validateWindow(window)
+    if (snapshot.startAt !== window.startAt || snapshot.endAt !== window.endAt || snapshot.source !== source) return stale()
+    const items = new Map<string, RecordingOwnerDayOverview['items'][number]>()
+    const storage: RecordingStorageMetrics = { bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+    const asrInput: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
+    const total = emptyCoverage()
+    const controller = new AbortController()
+    const readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const parallel = async (read: (position: RecordingDayPosition) => Promise<void>) => {
+      let next = 0
+      const lanes = Array.from({ length: Math.min(2, snapshot.positions.length) }, async () => {
+        for (;;) { const position = snapshot.positions[next++]; if (!position) return; readSignal.throwIfAborted(); await read(position) }
+      })
+      try { await Promise.all(lanes) }
+      catch (error) { controller.abort(); await Promise.allSettled(lanes); throw error }
+    }
+    await parallel(async position => {
+      let cursor = '', first = true, previous: Omit<RecordingOwnerFragment, 'text'> | undefined
+      const cursors = new Set<string>()
+      do {
+        const page = await this.transcript(position.fact.recording_uid, source, window, session, { cursor, limit: 100, revision: position.revision }, readSignal)
+        if (first) {
+          addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(asrInput, page.asrInput)
+          for (const key of Object.keys(total) as Array<keyof RecordingOwnerCoverage>) total[key] += page.coverage[key]
+          first = false
+        }
+        for (const item of page.items) {
+          if (previous) follows(previous, item)
+          else if (item.textStart !== 0) return invalid()
+          onFragment?.(item)
+          const { text: body, ...metadata } = item
+          const key = `${item.recordingId}:${item.index}`, existing = items.get(key)
+          items.set(key, { ...metadata, textStart: existing?.textStart ?? metadata.textStart,
+            recordingBelongsToViewer: position.fact.memoryOwnerUserId === session.userId,
+            textCount: (existing?.textCount ?? 0) + recordingTextCount(body),
+            textPreview: Array.from((existing?.textPreview ?? '') + body).slice(0, 80).join('') })
+          previous = metadata
+        }
+        cursor = page.nextCursor
+        if (cursor && cursors.has(cursor)) return invalid()
+        cursors.add(cursor)
+      } while (cursor)
+      if (previous && previous.textEnd !== previous.textTotal) return invalid()
+    })
+    // Detect additions, removals, ownership and range changes, then validate every
+    // recording revision again to reject a mix produced by concurrent ASR/edits.
+    const facts = await this.recordings(window, session, readSignal)
+    const identities = (values: RecordingOwnerFact[]) => JSON.stringify(values.toSorted((a,b) => a.recording_uid.localeCompare(b.recording_uid)))
+    if (identities(facts) !== identities(snapshot.positions.map(position => position.fact))) return stale()
+    await parallel(async position => {
+      await this.transcript(position.fact.recording_uid, source, window, session, { limit: 1, revision: position.revision }, readSignal)
+    })
+    readSignal.throwIfAborted()
+    const captures = snapshot.positions.filter(position => position.fact.capture_state !== '')
+    return { items: [...items.values()].sort((a,b) => a.startAt - b.startAt || a.recordingId.localeCompare(b.recordingId) || a.index - b.index),
+      storage, asrInput, coverage: total,
+      views: snapshot.positions.map(position => ({ recording_uid: position.fact.recording_uid, revision: position.revision, source })),
+      totalDurationMillis: snapshot.positions.reduce((sum,position) => sum + Math.max(0,Math.min(window.endAt,position.fact.end_at)-Math.max(window.startAt,position.fact.start_at)),0),
+      ...(captures.length ? { captureCoverage: { receiving: captures.filter(position => position.fact.capture_state === 'receiving').length,
+        interrupted: captures.filter(position => position.fact.capture_state === 'interrupted').length } } : {}) }
   }
 
   /** Explicit full-content consumer. No caller can mistake an initial page for
