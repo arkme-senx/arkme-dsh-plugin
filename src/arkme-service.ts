@@ -158,6 +158,8 @@ import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './s
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { PublicSocialService } from './services/public-social-service.js'
+import { PrivateGroupCreateService } from './services/private-group-create-service.js'
+import type { PrivateGroupRequest, PrivateGroupSelection, PrivateGroupCreateInput } from './private-group-create-contract.js'
 import type { PublicGroupQuery, PublicPeopleQuery } from './public-social-contract.js'
 import { CommonGroupService } from './services/common-group-service.js'
 import { SharePreviewService } from './services/share-preview-service.js'
@@ -474,6 +476,7 @@ export class ArkmeService {
   private readonly arko: ArkoService
   private readonly group: GroupService
   private readonly publicSocial: PublicSocialService
+  private readonly privateGroupCreate: PrivateGroupCreateService
   private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
@@ -896,6 +899,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.contactDirectory = new ContactDirectoryService(
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
+    this.privateGroupCreate = new PrivateGroupCreateService(this.runtime, this.source, this.group, this.contactDirectory)
     const recordingImportGateway = new AudioRecordingImportGateway(this.runtime)
     this.recording = new RecordingService(this.runtime, {
       recordingImportGateway,
@@ -2153,6 +2157,10 @@ arkoImagesV1:true,
   async setPublicPerson(scope: string, listed: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setPerson(scope, listed, introduction, signal) }
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
+  async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
+  async privateGroupPeople(input: PrivateGroupRequest & { cursor?: string }, signal?: AbortSignal) { return await this.privateGroupCreate.people(input, signal) }
+  async privateGroupMatches(input: PrivateGroupSelection, signal?: AbortSignal) { return await this.privateGroupCreate.matches(input, signal) }
+  async createGroupFromPrivate(input: PrivateGroupCreateInput, signal?: AbortSignal) { return await this.privateGroupCreate.create(input, signal) }
   async openPublicPerson(userId: number, scope: string, signal?: AbortSignal) { return await this.publicSocial.openPerson(userId, scope, signal) }
   async publicGroupSettings(sourceRef: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.groupSettings(sourceRef, scope, signal) }
   async setPublicGroup(sourceRef: string, scope: string, isPublic: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setGroup(sourceRef, scope, isPublic, introduction, signal) }

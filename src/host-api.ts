@@ -1571,6 +1571,10 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'clientMutationId'),
       { ...(params.isPublic === undefined ? {} : { isPublic: requiredBooleanParam(params, 'isPublic') }), ...(params.introduction === undefined ? {} : { introduction: stringParam(params, 'introduction') }), ...(params.accountScope === undefined ? {} : { accountScope: stringParam(params, 'accountScope') }), ...(requestSignal ? { signal: requestSignal } : {}) },
     )
+    case 'group.private.context': return await service.privateGroupContext({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope') }, requestSignal)
+    case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
+    case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
+    case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
     case 'social.groups.query': {
       const userId = optionalPositiveIntegerParam(params, 'userId')
       const relation = params.relation
