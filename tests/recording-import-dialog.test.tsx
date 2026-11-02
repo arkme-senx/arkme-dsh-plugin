@@ -1,5 +1,6 @@
 import { cloneElement, createRef, useLayoutEffect, useRef, type ReactElement, type Ref } from 'react'
 import { FileAudio } from '@phosphor-icons/react/dist/icons/FileAudio'
+import { recordingImportBatchID } from '../src/recording-workflow-contract.js'
 import { UploadSimple } from '@phosphor-icons/react/dist/icons/UploadSimple'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +19,7 @@ vi.mock('../src/client/api.js', () => ({
 }))
 vi.mock('../src/client/recordings/recording-import-selection.js', () => ({
   inspectArkmeRecordingSelection: mocks.inspectArkmeRecordingSelection,
+  registerNativeRecordingFile: vi.fn(),
 }))
 
 vi.mock('../src/client/recordings/recording-import-journal.js', async importOriginal => ({
@@ -156,6 +158,58 @@ describe('recording import dialog behavior', () => {
     expect(browserPicker).not.toHaveBeenCalled()
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+  })
+
+  it('registers native strategies before upload and keeps the original v1 desktop header contract through retry', async () => {
+    const journal = memoryJournal()
+    const ids = [recordingImportBatchID(), recordingImportBatchID()]
+    for (const [index, id] of ids.entries()) journal.records.set(id, {
+      id, accountKey: 'prod:42', fileName: `native-${index}.wav`, fileSize: 1, lastModified: 1, mimeType: 'audio/wav',
+      source: { kind: 'desktop', token: String(index) }, selected: true, startAt: '2024-08-30T00:00', ownership: 'self', error: '',
+    })
+    const original = mocks.callArkme.getMockImplementation()!
+    let registered = false, fail = true
+    const register = vi.fn(async () => { registered = true })
+    register.mockRejectedValueOnce(new Error('策略登记保存失败'))
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'recordings.import.strategies.register') return register()
+      return original(operation, ...args)
+    })
+    // Frozen v1 desktop whitelist: any newly added header must fail this test.
+    const allowed = new Set(['content-type', 'x-arkme-file-name', 'x-arkme-start-at', 'x-arkme-belong-user', 'x-arkme-recording-kind', 'x-arkme-import-batch', 'x-arkme-import-task'])
+    const upload = vi.fn(async (_token: string, request: { headers: Record<string, string> }) => {
+      expect(registered).toBe(true)
+      expect(Object.keys(request.headers).every(key => allowed.has(key.toLowerCase()))).toBe(true)
+      if (fail) throw new Error('网络中断')
+      return { ...await mocks.uploadArkmeRecording.getMockImplementation()!(), fileName: `native-${_token}.wav`, importRef: `native-${_token}` }
+    })
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { arkmeDesktop: { recordingImports: {
+      version: 1, upload, stat: async (token: string) => ({ name: `native-${token}.wav`, size: 1, lastModified: 1 }),
+    } } }))
+    await remount(journal)
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(upload).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('策略登记保存失败')
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(upload).toHaveBeenCalledTimes(2)
+    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
+    const saved = [...journal.records.values()]
+    expect(saved.every(row => row.strategy === 'system-sd-asr/v1')).toBe(true)
+    fail = false; registered = false
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'recordings.strategies') throw new Error('restored tasks must not reread settings')
+      if (operation === 'recordings.import.strategies.register') return register()
+      return original(operation, ...args)
+    })
+    await remount(journal)
+    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(upload).toHaveBeenCalledTimes(4)
+    await act(async () => { await vi.waitFor(() => expect(journal.records.size, JSON.stringify([...journal.records.values()].map(row => row.error))).toBe(0)) })
+    expect(mocks.callArkme.mock.calls.filter(([name]) => name === 'recordings.import.strategies.register').map(([, params]) => params)).toEqual([
+      { expectedUserId: 42, tasks: ids.map(taskId => ({ taskId, strategy: 'system-sd-asr/v1' })) },
+      { expectedUserId: 42, tasks: ids.map(taskId => ({ taskId, strategy: 'system-sd-asr/v1' })) },
+      { expectedUserId: 42, tasks: ids.map(taskId => ({ taskId, strategy: 'system-sd-asr/v1' })) },
+    ])
   })
 
   it('surfaces native picker failures without opening a competing browser chooser', async () => {

@@ -6,6 +6,7 @@ import {ArkmeSettingsSurface} from '../src/client/ArkmeSettingsSurface.js'
 import {ArkmeMarketplace,ExtensionCard} from '../src/client/ArkmeMarketplace.js'
 import {arkmeAuthStore} from '../src/client/auth-store.js'
 import {callArkme} from '../src/client/api.js'
+import pluginManifest from '../package.json' with { type: 'json' }
 vi.mock('../src/client/api.js',async importOriginal=>({...await importOriginal<object>(),callArkme:vi.fn()}))
 afterEach(()=>vi.restoreAllMocks())
 function setChannel(mas:boolean){
@@ -13,14 +14,19 @@ function setChannel(mas:boolean){
  const snapshot={...current,config:{...current.config,hostPolicy:{distribution:mas?'mas':'website',capabilities:{clientSelfUpdate:!mas,runtimeSelfUpdate:!mas,executableExtensionInstall:!mas}}}}
  vi.spyOn(arkmeAuthStore,'getSnapshot').mockReturnValue(snapshot as ReturnType<typeof arkmeAuthStore.getSnapshot>)
 }
-it('hides only the app update action and feedback in MAS About',()=>{
+it('keeps the unified About version without legacy update rows in both channels',()=>{
  setChannel(true)
  const mas=renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
- expect(mas).not.toContain('打开 APP 更新');expect(mas).toContain('DeepSeek Harness');expect(mas).toContain('ArkME 插件')
+ expect(mas).not.toContain('打开 APP 更新')
+ const masDocument = new DOMParser().parseFromString(mas, 'text/html')
+ expect(masDocument.querySelector('.arkme-about-version')?.textContent).toBe(`v3.${pluginManifest.version.split('.')[2]}`)
+ expect(mas).not.toContain('DeepSeek Harness');expect(mas).not.toContain('ArkME 插件')
  vi.restoreAllMocks();setChannel(false)
  const website = renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
  const document = new DOMParser().parseFromString(website, 'text/html')
- expect([...document.querySelectorAll('button')].filter(button => button.textContent === '打开 APP 更新')).toHaveLength(1)
+ expect(document.querySelector('.arkme-about-version')?.textContent).toBe(`v3.${pluginManifest.version.split('.')[2]}`)
+ expect([...document.querySelectorAll('button')].filter(button => button.textContent === '打开 APP 更新')).toHaveLength(0)
+ expect(website).not.toContain('DeepSeek Harness');expect(website).not.toContain('ArkME 插件')
 })
 it('keeps marketplace installation button but shows website-only message without starting installation',async()=>{
  setChannel(true)

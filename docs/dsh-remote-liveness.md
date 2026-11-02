@@ -76,3 +76,15 @@ DSH 0.2.1 的进程内调用必须显式携带 Peer。插件通过公共 Connect
 历史投影识别当前 `tool/ptc-dispatch-start` / `tool/ptc-dispatch`，并保留历史 `tool/code-dispatch*` 回放。子调用开始和结束归入原根工具节点，携带原事件顺序、结果及来源序号，父工具结算后继续保留子调用。手机端原始事件回放需采用同一事件词汇。
 
 回归辅助器通过已发布 DSH 的公共 `SessionController.control()` 取得控制基线，通过公共 Tools 的 `run_code` 管线执行无副作用的 echo 子调用并取得真实日志；仅将时钟和结果消息的不透明标识固定为确定值。插件逐次对照该生产者校验 `published-0.2.1-rc.2-ptc.json`，手机端消费相同夹具，覆盖完整回放、增量开始/结束、父工具结算、重复与补页及旧名称兼容。
+
+## 原生远程订阅与交互回复（2026-09-21）
+
+控制端由 `DshAccountSessions` 持有逻辑订阅的连接引用，同一 Runtime 的连续 pull 和并发订阅共享一条 Realtime 连接。账号内最多 8 条 Runtime 连接、64 条原生订阅；close、done、失败和账号退出释放引用，丢失 close 时按源 Host 同样的 45 秒空闲期限回收。并发路由发现共用一个 flight，单个调用取消只移除自己，最后一个调用退出才取消底层请求。存活连接的路由结果最多复用 5 秒，断开及 Host generation/lease 失效立即废弃；每次实际请求仍由 Realtime 和 Host 校验归属及精确租约。
+
+Browser 将传输中断标记为 DSH 官方 `dshRemoteStreamFailure.kind=carrier`，业务拒绝保留错误码并终止。原生和云端订阅过期属于可重试错误。首帧前失败在当前 opener 内恢复；已经交付快照后交还官方 `RemoteStream` 开启新 generation，避免同一代重复 opening cursor。每个 Runtime 共用一个 250 毫秒起步、5 秒封顶并附加至多 25% 抖动的重试时钟；取消和 pagehide 停止重试，close 最多等待 3 秒。该恢复只作用于订阅，不自动重放写命令。
+
+Host ChannelManager 使用两个有界 FIFO 通道，最多同时等待两个帧 ACK：历史、native pull/page、投影事件沿原 bulk 队列发送；不超过 32 KiB 的交互回复使用保留通道。每通道最多 64 个逻辑载荷，两通道待发原始 JSON 合计最多 64 MiB，超限显式失败。各载荷的分片顺序、重试 ID 和三次发送上限保持不变；事件之间仍按原顺序发布。现有 `queue_ms` / `publish_ack_ms` 分别记录排队与发送时间。
+
+回归覆盖连续拉取连接次数、并发调用独立取消、45 秒回收、换账号、Host 换代、重复断流、鉴权拒绝、发送积压上限和关闭后的排队清理。可选的官方兼容测试通过 `DSH_GATEWAY_PACKAGE=<已安装 dsh-api-gateway 的包目录>` 运行 `tests/harness-native-transport-script.test.ts`，实际装配未修改的官方 Client Gateway 与 RemoteStream，验证传输断开且连续两次重开失败后仍能在下一代恢复。
+
+Tools/SDK 继续使用既有账号 owner，无新增业务入口；UI 只修改既有传输恢复。客户端、后端与 Realtime 服务契约不变。以上确定性测试和官方包兼容测试不等同于双电脑、睡眠唤醒、长时间弱网或 Windows/Linux 实机验收；桌面生效还需正式插件制品被客户端消费。

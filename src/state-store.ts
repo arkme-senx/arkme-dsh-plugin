@@ -17,6 +17,8 @@ import type {
 } from './types.js'
 import {
   sameRecordingImportIdentity,
+  validRecordingImportTaskId,
+  RecordingImportContractError,
   isUnresolvedRecordingImportJob,
   type RecordingImportAdmission,
   type RecordingImportJob,
@@ -34,7 +36,11 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingVoiceDrafts?: unknown
+ teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
+  teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
+  recordingImportStrategiesByAccount?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
  offlineContextJournal?: unknown
@@ -380,6 +386,7 @@ function parseState(raw: string): PersistedState {
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     offlineContextJournal:source.offlineContextJournal,
+ ...(source.teamOutboundByAccount === undefined ? {} : {teamOutboundByAccount:source.teamOutboundByAccount as NonNullable<PersistedState['teamOutboundByAccount']>}),
     pendingByUser,
     longArticleDraftsByUser,
     recordReeditDraftsByUser,
@@ -391,7 +398,10 @@ function parseState(raw: string): PersistedState {
         : source.recordReeditDraftRevision,
     recordingImportJobsByUser,
     recordingToolBatches: source.recordingToolBatches,
+    recordingImportStrategiesByAccount: source.recordingImportStrategiesByAccount,
     dayReviewPending: source.dayReviewPending ?? {},
+    teamMemberAdditions: source.teamMemberAdditions,
+    recordingVoiceDrafts: source.recordingVoiceDrafts,
   }
 }
 
@@ -467,6 +477,27 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('./recording-voice-trigger-contract.js').RecordingVoiceDraft> {
+    const { defaultRecordingVoiceRule, recordingVoiceRules } = await import('./recording-voice-trigger-contract.js')
+    if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('语音触发账号无效')
+    const access = (state: PersistedState) => {
+      const root = state.recordingVoiceDrafts ?? {}
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('语音触发配置损坏，已保留原数据')
+      const entries = root as Record<string, import('./recording-voice-trigger-contract.js').RecordingVoiceDraft>
+      const prior = entries[scope] ?? { revision: 0, rules: [defaultRecordingVoiceRule()] }
+      if (!Number.isSafeInteger(prior.revision) || prior.revision < 0) throw new Error('语音触发配置损坏，已保留原数据')
+      const rules = recordingVoiceRules(prior.rules)
+      if (!change) return { revision: prior.revision, rules }
+      if (change.revision !== prior.revision) throw new Error('规则已在其他窗口修改，请重新读取后保存')
+      const next = { revision: prior.revision + 1, rules: recordingVoiceRules(change.rules) }
+      entries[scope] = next; state.recordingVoiceDrafts = entries
+      return structuredClone(next)
+    }
+    if (!change) return this.read(access)
+    let result!: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft
+    await this.update(state => { result = access(state) })
+    return result
+  }
   private readonly boardCache: ArrangementBoardCacheStore
   private readonly path: string
   private state: PersistedState | undefined
@@ -529,6 +560,25 @@ export class ArkmeStateStore {
   async arkoFileRefs(userId: number): Promise<string[]> {
     return this.read(state => Object.values(this.arkoTurns(state, userId))
       .flatMap(value => value.turn.images?.map(file => file.fileRef) ?? []))
+  }
+
+  async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) {
+    const access = (state: PersistedState) => {
+      const raw = state.teamMemberAdditions ?? {}
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('成员添加恢复记录损坏，已保留原记录')
+      state.teamMemberAdditions = raw
+      const values = raw as Record<string, import('./team-member-add-contract.js').TeamMemberAdditionAttempt>
+      const key = JSON.stringify([scope, teamId]), previous = values[key]
+      if (change && 'put' in change) {
+        if (previous && JSON.stringify(previous) !== JSON.stringify(change.put)) throw new Error('请先核对原批次的添加结果')
+        values[key] = structuredClone(change.put)
+      } else if (change && previous?.requestUid === change.ack) delete values[key]
+      return structuredClone(values[key])
+    }
+    if (!change) return this.read(access)
+    let result: import('./team-member-add-contract.js').TeamMemberAdditionAttempt | undefined
+    await this.update(state => { result = access(state) })
+    return result
   }
 
   private reviewPending(state: PersistedState): Record<string, unknown> {
@@ -753,6 +803,43 @@ export class ArkmeStateStore {
       .map(cloneRecordingImportJob))
   }
 
+  /** Freeze native UI strategies without extending the desktop upload headers. */
+  async recordingImportStrategies(scope: string, tasks: Array<{ taskId: string; strategy?: RecordingStrategy }>, signal?: AbortSignal): Promise<Record<string, RecordingStrategy>> {
+    if (!/^(prod|test):[1-9][0-9]*$/.test(scope) || tasks.length > 10_000
+      || new Set(tasks.map(task => task.taskId)).size !== tasks.length
+      || tasks.some(task => !validRecordingImportTaskId(task.taskId)
+        || task.strategy !== undefined && !RECORDING_STRATEGIES.some(value => value.id === task.strategy))) {
+      throw new RecordingImportContractError('recording-import-task-invalid', '录音导入任务或策略无效')
+    }
+    const access = (state: PersistedState): Record<string, RecordingStrategy> => {
+      const root = state.recordingImportStrategiesByAccount === undefined ? {} : state.recordingImportStrategiesByAccount
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+      const accounts = root as Record<string, unknown>
+      const stored = accounts[scope] === undefined ? {} : accounts[scope]
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+      const entries: Record<string, RecordingStrategy> = {}
+      for (const [taskId, strategy] of Object.entries(stored)) {
+        if (!RECORDING_STRATEGIES.some(value => value.id === strategy)) throw new Error('录音导入策略记录损坏，已保留恢复信息')
+        if (validRecordingImportTaskId(taskId)) entries[taskId] = strategy as RecordingStrategy
+      }
+      for (const task of tasks) if (task.strategy !== undefined) {
+        if (entries[task.taskId] !== undefined && entries[task.taskId] !== task.strategy) {
+          throw new RecordingImportContractError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试')
+        }
+        entries[task.taskId] = task.strategy
+      }
+      if (tasks.some(task => task.strategy !== undefined)) {
+        accounts[scope] = entries
+        state.recordingImportStrategiesByAccount = accounts
+      }
+      return Object.fromEntries(tasks.flatMap(task => entries[task.taskId] === undefined ? [] : [[task.taskId, entries[task.taskId]!]]))
+    }
+    if (!tasks.some(task => task.strategy !== undefined)) return await this.read(access)
+    let result: Record<string, RecordingStrategy> = {}
+    await this.update(state => { result = access(state) }, signal)
+    return result
+  }
+
   async planRecordingToolBatch(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('./recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal) {
     const { planRecordingToolBatch } = await import('./recording-tool-batch.js')
     let members: Record<string, import('./recording-tool-batch.js').RecordingToolBatchMember> = {}
@@ -882,6 +969,19 @@ export class ArkmeStateStore {
       } else {
         state.pendingByUser[key] = next
       }
+    })
+  }
+
+  async teamOutboundTarget(scope: string, requestUid: string): Promise<import('./team-outbound-contract.js').TeamOutboundRecovery | undefined> {
+    return this.read(state => { const entries=state.teamOutboundByAccount?.[scope]; const value=entries && Object.hasOwn(entries,requestUid) ? entries[requestUid] : undefined; return value ? structuredClone(value) : undefined })
+  }
+  async retainTeamOutboundTarget(scope: string, requestUid: string, value: import('./team-outbound-contract.js').TeamOutboundRecovery): Promise<void> {
+    await this.update(state => {
+      const entries=(state.teamOutboundByAccount??={})[scope]??={}
+      const old=Object.hasOwn(entries,requestUid)?entries[requestUid]:undefined
+      if(old && (old.teamId!==value.teamId || old.targetId!==value.targetId || old.selection!==value.selection))throw new Error('同一打开请求不能更换客户')
+      Object.defineProperty(entries,requestUid,{value:structuredClone(value),writable:true,enumerable:true,configurable:true})
+      while(Object.keys(entries).length>64)delete entries[Object.keys(entries)[0]!]
     })
   }
 

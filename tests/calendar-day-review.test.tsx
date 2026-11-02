@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DAY_REVIEW_SOURCES, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState } from '../src/calendar-day-review.js'
 import { ArkmeCalendarDayReview } from '../src/client/ArkmeCalendarDayReview.js'
 import { callArkme } from '../src/client/api.js'
+import { ArkmeClientError } from '../src/sdk/index.js'
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/explore/ExploreSurface.js', () => ({ ExploreRecordingSource: () => null }))
 vi.mock('../src/client/ArkmeNoteDetails.js', () => ({ ArkmeTimelineDetailDrawer: () => null }))
@@ -51,6 +52,25 @@ const mount = async () => act(async () => { view = create(<ArkmeCalendarDayRevie
 beforeEach(() => { vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.models' ? modelCatalog : current()) })
 afterEach(() => { act(() => view?.unmount()); view = undefined; vi.useRealTimers() })
 describe('calendar review interaction', () => {
+  it('labels insufficient balance as the previous failure rather than the current balance', async () => {
+    vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState({ ...rawState(), result: null, job: { id: 'original', status: 'failed', failure_code: 'insufficient_balance', message: 'AI 积分不足，补充额度后可继续原任务', resumable: true } }, query))
+    await mount()
+    expect(content()).toContain('上次生成因积分不足中断')
+    expect(content()).toContain('已完成步骤会复用，剩余步骤仍消耗积分')
+    expect(button('继续生成').props.disabled).toBe(false)
+    expect(vi.mocked(callArkme).mock.calls.some(x => ['calendar.day-review.create', 'calendar.day-review.resume'].includes(x[0]))).toBe(false)
+  })
+  it('does not enter reconciliation when the confirmation window was blocked before submission', async () => {
+    await mount()
+    await act(async () => button('更新回顾').props.onClick())
+    vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code: 'day-review-human-required', message: '确认页未打开，本次操作尚未提交', retryable: false }))
+    await act(async () => button('确认').props.onClick())
+    expect(content()).toContain('本次操作尚未提交')
+    expect(content()).not.toContain('提交结果尚未确认')
+    expect(content()).not.toContain('核对提交')
+    expect(vi.mocked(callArkme).mock.calls.some(x => x[0] === 'calendar.day-review.reconcile')).toBe(false)
+    expect(button('更新回顾').props.disabled).toBe(false)
+  })
   it.each([['source_revoked', '旧结果的来源权限已变化'], ['source_changed', '原始资料已更正']])('hides %s content but preserves new generation and active progress', async (code, message) => {
     const revoked = { ...rawState(), result: null, result_error: code, freshness: 'unknown' }
     vi.mocked(callArkme).mockResolvedValueOnce(parseDayReviewState(revoked, query))

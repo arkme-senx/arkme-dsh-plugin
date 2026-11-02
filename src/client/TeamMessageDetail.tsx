@@ -14,7 +14,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 
 /** Team keeps its own authorization; only the visual detail primitives are shared. */
-export function TeamMessageDetail({ message, conversation, avatar, footer, onClose, onLocate, onExtend, displayIdentity }: {
+export function TeamMessageDetail({ accountKey, message, conversation, avatar, footer, onClose, onLocate, onExtend, displayIdentity }: {
+  accountKey: string
   message: TeamMessage
   conversation: TeamConversation
   avatar: ReactNode
@@ -30,7 +31,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
   const body = useRef<HTMLDivElement>(null)
   const scrollPositions = useRef(new Map<string, number>())
   const focus = trail.at(-1) ?? message
-  const extensions = useTeamExtensions(conversation.ref, focus)
+  const extensions = useTeamExtensions(accountKey, conversation, focus)
   const raw = extensions.page?.message ?? focus
   const current = displayIdentity ? { ...raw, sender: displayIdentity(raw.sender) } : raw
   const saveScroll = () => { scrollPositions.current.set(focus.key, body.current?.scrollTop ?? 0) }
@@ -45,7 +46,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
       side:current.side,sender:parent.sender,own:false,state:'published',createdAt:0,
       canEdit:false,canDelete:false,contentStatus:'unavailable',media:[]})
   }
-  const readable = !extensions.invalidated && current.contentStatus === 'available'
+  const readable = !!extensions.page && !extensions.invalidated && current.contentStatus === 'available'
   const source = conversation.side === 'team'
     ? `${conversation.channel.name} · ${conversation.visitor?.nickname ?? tr('外部联系人')}`
     : conversation.channel.name
@@ -59,17 +60,17 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
       const target = event.target instanceof Element ? event.target : null
       if (!target?.closest('[role="toolbar"], [role="menu"], [data-arkme-member-profile], [aria-modal="true"], [data-arkme-image-preview-viewport]')) onClose()
     }}>
-    {readable && current.reply && <TeamMessageMediaScope message={{ ...current, media: current.reply.media ?? [] }}>
+    {readable && current.reply && <TeamMessageMediaScope conversationRef={conversation.ref} conversationKey={conversation.key} message={{ ...current,ref:current.reply.ref,key:current.reply.key,revision:0,version:current.reply.version,media: current.reply.media ?? [] }}>
       <ArkmeExtensionParentPreview inline parent={teamReplyPresentation(current)!} isMe={current.own} onSelect={openParent} />
     </TeamMessageMediaScope>}
-    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} presentation="detail" /> : <p>{tr('内容当前不可用')}</p>}
+    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(current.state==='recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : '内容当前不可用')}</p>}
     <button type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }} aria-label={tr('所在对话：{v0}', { v0: source })} onClick={() => onLocate(current)}>
       <span aria-hidden>↗</span><span>{source}</span>
     </button>
     {readable && onExtend && <div style={{ marginTop: 24 }}><button type="button" onClick={() => onExtend(current)} style={styles.extensionContextRetry}>{tr('延展回复')}</button></div>}
     {extensions.loading && <div role="status" style={styles.extensionContextStatus}>{tr('正在加载延展…')}</div>}
     {extensions.error && <div role="alert" style={styles.extensionContextStatus}>{extensions.error}<button type="button" style={styles.extensionContextRetry} onClick={extensions.retry}>{tr('重试')}</button></div>}
-    {extensions.page && readable && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
+    {extensions.page && !extensions.invalidated && <section style={styles.extensionContext} aria-label={tr('团队消息延展列表')}>
       <div data-arkme-note-extension-count="true" style={styles.extensionContextTitle}>{tr('共')}{extensions.page.totalCount}{tr('条延展')}</div>
       <div style={styles.extensionContextList}>{extensions.page.items.map(rawReply => {
         const reply = displayIdentity ? { ...rawReply, sender: displayIdentity(rawReply.sender) } : rawReply
@@ -79,7 +80,7 @@ export function TeamMessageDetail({ message, conversation, avatar, footer, onClo
           <ArkmeUserAvatar avatarRef={reply.sender.imageRef} imageKey={reply.sender.imageKey} imagePort={teamAvatarImages} label={reply.sender.nickname} size={32} />
           <div style={styles.extensionContextBody}>
             <div style={styles.extensionContextHead}><span style={styles.extensionContextName}>{reply.sender.nickname}</span><span style={styles.extensionContextTime}>{timeLabel(reply.createdAt)}</span></div>
-            {reply.contentStatus === 'available' ? <TeamMessageContent message={reply} conversationRef={conversation.ref} presentation="detail" /> : <p>{tr('内容当前不可用')}</p>}
+            {reply.contentStatus === 'available' ? <TeamMessageContent message={reply} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr('内容当前不可用')}</p>}
           </div>
         </div>
       })}</div>

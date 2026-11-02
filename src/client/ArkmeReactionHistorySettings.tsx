@@ -3,16 +3,19 @@ import type { ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reac
 import { callArkme } from './api.js'
 import { useReactionHistory } from './use-reaction-history.js'
 import { ReactionLabel } from './ReactionLabel.js'
+import { ArkmeSettingsToggleRow } from './ArkmeSettingsToggleRow.js'
+import { tr, useArkmeLocale } from './locale.js'
 
 export function ArkmeReactionHistoryLock({ scope }: { scope: string }) {
+  useArkmeLocale()
   const [policy, setPolicy] = useState<ReactionHistoryPolicy>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const controller = useRef<AbortController>()
   const load = async () => {
-    controller.current?.abort(); const abort = new AbortController(); controller.current = abort; setBusy(true); setError('')
+    controller.current?.abort(); const abort = new AbortController(); controller.current = abort; setBusy(true); setError(''); setPolicy(undefined)
     try { const result = await callArkme<ReactionHistoryPolicy>('reactions', { action: 'history-policy-query', accountKey: scope }, abort.signal); if (!abort.signal.aborted) setPolicy(result) }
-    catch (error) { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : '读取失败') }
+    catch (error) { if (!abort.signal.aborted) setError(error instanceof Error ? error.message : tr('读取失败')) }
     finally { if (!abort.signal.aborted) setBusy(false) }
   }
   useEffect(() => { void load(); return () => controller.current?.abort() }, [scope])
@@ -24,14 +27,17 @@ export function ArkmeReactionHistoryLock({ scope }: { scope: string }) {
       if (signal.aborted) return
       setPolicy(result.policy)
       window.dispatchEvent(new CustomEvent('arkme-reaction-policy-changed', { detail: scope }))
-      if (result.outcome === 'revision_conflict') setError('设置已在其他设备更新，请重新操作')
-    } catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : '保存失败') }
+      if (result.outcome === 'revision_conflict') setError(tr('设置已在其他设备更新，请重新操作'))
+    } catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : tr('保存失败')) }
     finally { if (!signal.aborted) setBusy(false) }
   }
-  return <div className="arkme-data-panel"><label><input type="checkbox" checked={policy?.locked ?? false} disabled={!policy || busy} onChange={event => void change(event.target.checked)} /> 锁定表态操作记录</label>
-    <p>锁定后，操作记录不在数据管理、时间轴及 AI 查询中展示。</p>
-    {error && <p role="alert">{error} <button type="button" onClick={() => void load()}>重试</button></p>}
-  </div>
+  return <ArkmeSettingsToggleRow title={tr('表态记录隐私锁')}
+    description={tr('开启后，在数据管理、时间轴和 AI 查询中隐藏你的表态操作记录，不影响消息上的表态。')}
+    checked={policy?.locked ?? false} busy={busy} disabled={!policy}
+    status={busy ? tr(policy ? '正在保存…' : '读取中…') : undefined}
+    feedback={error ? <div className="arkme-settings-toggle-error" role="alert"><span>{error}</span>
+      <button type="button" disabled={busy} onClick={() => void load()}>{tr('重试')}</button></div> : undefined}
+    onChange={locked => { void change(locked) }} />
 }
 function HistoryMonth({ scope, month }: { scope: string; month: string }) {
   const [year, number] = month.split('-').map(Number)

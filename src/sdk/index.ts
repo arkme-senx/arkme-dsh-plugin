@@ -3,6 +3,12 @@ export type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
 export type{CodexWatchRequest,CodexReadRequest,CodexWriteRequest,CodexWorkRequest,CodexWorkResult,CodexTaskLocator}from'../codex-work-records-port.js'
 export type{TeamCodexState,TeamCodexTask,TeamCodexTaskSummary,CodexTaskPosition,CodexTaskPage,TeamCodexEvent,TeamCodexEventPage,TeamCodexTurnTiming,TeamCodexQueueSnapshot}from'../team-codex-contract.js'
+import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
+export type * from '../data-management.js'
+export type { ArkmeRecordingPlayback } from '../types.js'
+export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
+export type { TeamRecallResult } from '../team-message-contract.js'
+export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 
 export * from '../recording-strategy-contract.js'
@@ -39,7 +45,8 @@ import type { ArkmeArkoAskOptions, ArkmeArkoPendingTurn } from '../arko-turn-con
 import type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoHistoryPage,ArkmeArkoRunStatus } from '../types.js'
 export type { ArkmeArkoAskOptions,ArkmeArkoPendingTurn } from '../arko-turn-contract.js'
 export type { ArkmeArkoAskResult,ArkmeArkoModelCatalog,ArkmeArkoModelOption,ArkmeArkoImageInput,ArkmeArkoHistoryPage,ArkmeArkoHistoryItem,ArkmeArkoRunStatus } from '../types.js'
-export type { DayReviewModels } from '../calendar-day-review.js'
+export { projectDayReviewRecordingSection } from '../calendar-day-review-projection.js'
+export type { DayReviewDetails, DayReviewCoverageDetails, DayReviewPoint, DayReviewEvent, DayReviewCoverage, DayReviewSource, DayReviewModels } from '../calendar-day-review.js'
 import type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { DayReviewQuery, DayReviewCreateInput, DayReviewState, DayReviewResult, DayReviewEvidenceQuery, DayReviewOriginalEvidence } from '../calendar-day-review.js'
 export type { ReviewPromptSupport, ReviewPromptConfig } from '../calendar-day-review-prompts.js'
@@ -47,8 +54,8 @@ import type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage,
 export type { ArkmeArkoHistoryQuery, ArkmeArkoSearchQuery, ArkmeArkoMessagePage, ArkmeArkoSearchMatch, ArkmeArkoSearchPage, ArkmeArkoContextQuery, ArkmeArkoContextWindow, ArkmeArkoExport, ArkmeArkoExportProgress, ArkmeArkoHistoryPort } from '../arko-history-contract.js'
 import type { ArkmeCapabilitySettings, ArkmeCapabilityUpdate } from '../capabilities.js'
 export type { ArkmeCapabilitySettings, ArkmeCapabilitySetting, ArkmeCapabilityUpdate, AutomaticCapabilityKey } from '../capabilities.js'
-import type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
-export type { ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+import type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
+export type { ArkmeRecordingSpeakerCorrectionPreview, ArkmeRecordingSpeakerCorrectionContext, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingSpeakerCorrectionResultQuery } from '../types.js'
 import type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityQuery, RecordingEntityDay, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences } from '../recording-entity-contract.js'
 export type { RecordingPersonReferencesQuery, RecordingPersonReferences, RecordingPersonReference, RecordingEntityStartQuery, RecordingEntityStartResult, RecordingEntityTranscriptHealth, RecordingEntityQuery, RecordingEntityDay, RecordingEntityItem, RecordingEntityOccurrenceQuery, RecordingEntityOccurrences, RecordingEntityOccurrence, RecordingEntityTarget, RecordingEntityPort } from '../recording-entity-contract.js'
 import type { OfflineContextRequest,OfflineContextPort } from '../offline-context-contract.js'
@@ -75,6 +82,8 @@ export type { ArkmeAiPointsAccount, ArkmeAiPointsPage, ArkmeAiPointsQuery, Arkme
 import { observeDshAccountSession } from '../dsh-remote/account-session-observer.js'
 import type { ArkmeCommonGroupPage } from '../common-groups.js'
 export type { ArkmeCommonGroupPage } from '../common-groups.js'
+import type { DshDirectoryDelta } from '../dsh-remote/account-session-directory.js'
+export type { DshDirectoryDelta, DshDirectorySession } from '../dsh-remote/account-session-directory.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
@@ -619,6 +628,21 @@ export class ArkmeSdk {
     await this.requireArkoLifecycle(signal)
     return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
   }
+  private readonly exportLifetime = new AbortController()
+  /** Releases exports started by this SDK instance. Other subscriptions return their own disposers. */
+  dispose(): void { this.exportLifetime.abort() }
+  async recordExportPreflight(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
+    signal = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    if ((await this.capabilities(signal)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
+    return this.call('data.export.preflight', { expectedAccountScope }, signal)
+  }
+  async exportRecords(options: ArkmeRecordExportOptions, signal?: AbortSignal, onProgress?: (value: ArkmeRecordExportProgress) => void): Promise<ArkmeRecordExport> {
+    const scoped = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    if ((await this.capabilities(scoped)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
+    const result = await this.exportWithProgress<ArkmeRecordExport>('data.export', { ...options }, scoped, onProgress)
+    if (result.accountScope !== options.expectedAccountScope || typeof result.quotaFinalized !== 'boolean') throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应无效', retryable: false })
+    return result
+  }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }
@@ -636,9 +660,12 @@ export class ArkmeSdk {
   }
   async arkoExport(signal?: AbortSignal, onProgress?: (progress: ArkmeArkoExportProgress) => void): Promise<ArkmeArkoExport> {
     await this.requireArkoHistory(signal)
-    if (!onProgress) return this.call('arko.export', {}, signal)
+    return this.exportWithProgress<ArkmeArkoExport>('arko.export', {}, signal, onProgress)
+  }
+  private async exportWithProgress<T extends ArkmeArkoExport>(operation: 'arko.export' | 'data.export', params: Record<string, unknown>, signal?: AbortSignal, onProgress?: (value: ArkmeArkoExportProgress) => void): Promise<T> {
+    if (!onProgress) return this.call(operation, params, signal)
     const response = await this.fetchImpl(this.route, { method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation: 'arko.export', params: {} }), ...(signal ? { signal } : {}) })
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation, params }), ...(signal ? { signal } : {}) })
     const invalid = () => new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应不完整，请重试', retryable: true })
     if (!response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
       let failure: ArkmePluginResponse<unknown>
@@ -674,7 +701,7 @@ export class ArkmeSdk {
         if (pending.length > 16 * 1024) throw invalid()
       }
       if (decoder.decode() !== '' || pending !== '' || !result) throw invalid()
-      return result
+      return result as T
     } catch (error) {
       if (error instanceof ArkmeClientError || signal?.aborted) throw error
       throw invalid()
@@ -775,6 +802,18 @@ export class ArkmeSdk {
     return await this.call('recordings.speaker.options', {}, signal)
   }
 
+  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingPlayback> {
+    return this.call('recordings.playback.open', { itemRef }, signal)
+  }
+
+  async recordingSpeakerEvidenceQuery(query: import('../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../recording-evidence-contract.js').RecordingEvidenceResult> {
+    return this.call('recordings.speaker.evidence.query', { ...query }, signal)
+  }
+
+  async previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCorrectionPreview> {
+    return this.call('recordings.speaker.correction.preview', { ...input }, signal)
+  }
+
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../types.js').ArkmeRecordingWorkbenchItem[] }> {
     return this.call('recordings.speaker.correction.items', { ...query }, signal)
   }
@@ -858,10 +897,23 @@ export class ArkmeSdk {
   private async requireTeamMessages(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageInteractions!==1)throw new Error('当前 Provider 不支持 Team 消息交互，请升级')}
   async forwardTeamMessages(input:import('../team-message-contract.js').TeamForwardInput,signal?:AbortSignal):Promise<import('../types.js').ArkmeSourceSendResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.forward',{input},signal)}
   async createTeamMessageCopyLink(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../types.js').ArkmeMessageCopyLinkResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.copy-link',{conversationRef,selections},signal)}
+  async recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamRecallResult>{
+    if (!conversationRef.trim() || !messageRef.trim()) throw new TypeError('Team recall requires conversation and message references')
+    if ((await this.capabilities(signal)).features.teamMessageRecall!==1) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持团队消息撤回，请升级',retryable:false})
+    return await this.call('team.messages.recall',{conversationRef,messageRef},signal)
+  }
   async reportTeamMessage(conversationRef:string,messageRef:string,version:number,reason:import('../team-message-contract.js').TeamReportReason,description='',signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamReportResult>{await this.requireTeamMessages(signal);return await this.call('team.messages.report',{conversationRef,messageRef,version,reason,description},signal)}
   async preflightTeamMessages(conversationRef:string,selections:{messageRef:string;version:number}[],signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamMessage[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.preflight',{conversationRef,selections},signal)}
   async readTeamMarks(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRefs:string[],signal?:AbortSignal):Promise<{actionRef:string;snapshot:import('../message-annotations.js').MessageUnderlineSnapshot}[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-read',{conversationRef,audience,markRefs},signal)}
   async changeTeamMark(conversationRef:string,audience:import('../team-message-contract.js').TeamMarkAudience,markRef:string,change:import('../message-annotations.js').MessageUnderlineChange,signal?:AbortSignal):Promise<import('../message-annotations.js').MessageUnderlineSnapshot>{await this.requireTeamMessages(signal);return await this.call('team.messages.marks-change',{conversationRef,audience,markRef,change},signal)}
+  async editTeamMessage(command:import('../team-snapshot-contract.js').TeamEditCommand,signal?:AbortSignal):Promise<{version:number}>{if((await this.teamSnapshotCapabilities(signal)).schemaVersion!==1)throw new Error('当前服务不支持准确编辑回执');return await this.call('team.messages.edit',{command},signal)}
+  async readTeamEditReceipt(conversationRef:string,messageRef:string,revisionUid:string,signal?:AbortSignal):Promise<import('../team-snapshot-contract.js').TeamEditReceipt>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.edit-receipt',{conversationRef,messageRef,revisionUid},signal)}
+  async freezeTeamEditMetadata(conversationRef:string,messageRef:string,metadata:import('../team-snapshot-contract.js').TeamEditMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>{if((await this.teamSnapshotCapabilities(signal)).recordPropertiesVersion!==1)throw new Error('当前服务不支持团队采集保存');return await this.call('team.messages.edit-metadata-freeze',{conversationRef,messageRef,metadata},signal)}
+  private async requireTeamSnapshot(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamMessageSnapshot!==1)throw new Error('当前 Provider 不支持团队记忆快照，请升级')}
+  async teamSnapshotCapabilities(signal?:AbortSignal):Promise<{schemaVersion:0|1;recordPropertiesVersion:0|1}>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.snapshot-capabilities',{},signal)}
+  /** Only forward actual origin capture; automation must not manufacture human input time. */
+  async freezeTeamMetadata(conversationRef:string,operationUid:string,metadata:import('../team-snapshot-contract.js').TeamRecordMetadata,signal?:AbortSignal):Promise<{metadataRef:string}>{if((await this.teamSnapshotCapabilities(signal)).recordPropertiesVersion!==1)throw new Error('当前服务尚不支持团队采集保存');return await this.call('team.messages.metadata-freeze',{conversationRef,operationUid,metadata},signal)}
+  async readTeamMessageSnapshot(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('../team-snapshot-contract.js').TeamMessageSnapshot>{await this.requireTeamSnapshot(signal);return await this.call('team.messages.snapshot',{conversationRef,messageRef},signal)}
   async listTeamConversations(side:TeamSide,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<TeamPage<TeamConversation>>{await this.requireTeamMessages(signal);return await this.call('team.messages.conversations',{side,options},signal)}
   async readTeamExtensions(conversationRef:string,messageRef:string,options:import('../team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('../team-app-contract.js').TeamExtensionPage>{
     if((await this.capabilities(signal)).features.teamMessageExtensions!==1)throw new Error('当前 Provider 不支持团队延展浏览，请升级')
@@ -882,6 +934,13 @@ export class ArkmeSdk {
   }
   async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
+   * After applying a completed result, acknowledge its UID. On uncertain transport use recover/retry.
+   */
+  async teamMemberManagement(request: import('../team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('../team-member-add-contract.js').TeamMemberManagementResult> {
+    if ((await this.capabilities(signal)).features.teamMemberManagementV1 !== true) throw new Error('当前 Provider 不支持批量添加团队成员')
+    return this.call('team.members.manage', {request}, signal)
   }
   private async requireTeamProfiles(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamProfiles!==true)throw new Error('当前 Provider 不支持团队资料编辑')}
   /** Read joined Team profile by its exact directory jotmoId; returns an account-scoped profileRef. */
@@ -2327,6 +2386,10 @@ export class ArkmeSdk {
     if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持群内团队身份')
     return await this.call('team.app.group.context',{sourceRef},signal)
   }
+  async teamOutboundOpen(teamRef:string,recipient:import('../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../team-outbound-contract.js').TeamOutboundOpenResult>{
+    if((await this.capabilities(signal)).features.teamOutboundReception!==1)throw new Error('当前 Provider 不支持主动团队接待，请升级')
+    return await this.call('team.app.outbound.open',{teamRef,recipient,requestUid},signal)
+  }
   async teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamPublicCard>{
     if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持公开团队名片')
     return await this.call('team.app.public-card',{jotmoId},signal)
@@ -2748,7 +2811,7 @@ export class ArkmeSdk {
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
   }
   localFileUrl(fileRef: string, download = false): string {
-    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-generated-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef) && !/^arkme-(?:generated|record-export)-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(fileRef)) throw new TypeError('Invalid local file reference')
     return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
   }
 
@@ -2842,13 +2905,64 @@ export class ArkmeSdk {
   }
 
   /** Read a device-location fact using a short-lived capability from the personal calendar. */
+  /** Call synchronously from a human click; the Host confirms the frozen intent. */
+  private async confirmDayReview(action: 'create' | 'resume' | 'reconcile', input: Record<string, unknown>, signal?: AbortSignal): Promise<DayReviewState> {
+    signal?.throwIfAborted()
+    if (typeof window === 'undefined' || globalThis.navigator?.userActivation?.isActive !== true) throw new ArkmeClientError({ code: 'day-review-human-required', message: '请通过当前的人类点击发起生成', retryable: false })
+    const id = crypto.randomUUID(), url = new URL(this.route, window.location.href)
+    url.searchParams.set('dayReviewConfirmation', id)
+    url.searchParams.set('intent', JSON.stringify(input))
+    url.searchParams.set('action', action)
+    if (typeof document !== 'undefined') url.searchParams.set('theme', document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light')
+    if (!window.open(url.href, '_blank')) throw new ArkmeClientError({ code: 'day-review-human-required', message: '确认页未打开，本次操作尚未提交。请允许弹窗，或更新桌面客户端后重试。', retryable: false })
+    if ((await this.capabilities(signal)).features.calendarDayReviewHumanConfirmation !== true) throw new Error('当前 Provider 不支持日回顾宿主确认，请升级；仍可读取已有结果')
+    const deadline = Date.now() + 5 * 60_000, initialDeadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      signal?.throwIfAborted()
+      await new Promise<void>((resolve, reject) => {
+        const done = () => { signal?.removeEventListener('abort', abort); resolve() }
+        const timer = setTimeout(done, 1000)
+        const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason ?? new Error('已取消等待')) }
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+      let status: { status: string; result?: DayReviewState; message?: string; error?: ArkmePluginErrorBody }
+      try { status = await this.call('calendar.day-review.confirmation', { confirmationId: id }, signal) }
+      catch (error) { if (error instanceof ArkmeClientError && error.body.code === 'day-review-human-required' && Date.now() < initialDeadline) continue; throw error }
+      if (status.status === 'ready' && status.result) return status.result
+      if (status.status === 'failed') throw status.error ? new ArkmeClientError(status.error) : new Error(status.message ?? '提交未确认，请查询状态后手动重试')
+    }
+    throw new Error('确认已过期，请重新发起；不会自动生成')
+  }
+
+  /** Subscribe by bounded reads only; disposing aborts the current read. */
+  subscribeDayReview(query: DayReviewQuery, listener: (state: DayReviewState) => void, options: ArkmeSubscribeOptions = {}): () => void {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const interval = typeof options.intervalMs === 'number' && Number.isFinite(options.intervalMs)
+      ? Math.min(60000, Math.max(3000, options.intervalMs)) : undefined
+    let nextRead = interval ?? 5000
+    const poll = async () => {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { nextRead = 60000; return }
+        const state = await this.dayReviewState(query, controller.signal)
+        nextRead = interval ?? (state.job && state.job.status !== 'failed' ? 5000 : 60000)
+        if (!controller.signal.aborted) listener(state)
+      }
+      catch (error) { nextRead = Math.min(60000, nextRead * 2); if (!controller.signal.aborted) options.onError?.(error) }
+      finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, nextRead) }
+    }
+    if (options.immediate === false) timer = setTimeout(() => { void poll() }, nextRead)
+    else void poll()
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
+  }
+
   private async requireDayReview(signal?: AbortSignal) {
     if ((await this.capabilities(signal)).features.calendarDayReview !== true) throw new Error('当前 Provider 不支持完整日回顾')
   }
   async dayReviewState(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.state', { ...query }, signal) }
-  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.create', { ...input }, signal) }
-  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.reconcile', { ...query }, signal) }
-  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { await this.requireDayReview(signal); return this.call('calendar.day-review.resume', { ...query }, signal) }
+  async createDayReview(input: DayReviewCreateInput, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('create', { ...input }, signal) }
+  async reconcileDayReview(query: DayReviewQuery, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('reconcile', { ...query }, signal) }
+  async resumeDayReview(query: DayReviewQuery & { jobId: string }, signal?: AbortSignal): Promise<DayReviewState> { return this.confirmDayReview('resume', { ...query }, signal) }
   async dayReviewResult(query: DayReviewQuery & { resultId: string }, signal?: AbortSignal): Promise<DayReviewResult> { await this.requireDayReview(signal); return this.call('calendar.day-review.result', { ...query }, signal) }
   async dayReviewModels(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review.js').DayReviewModels> { await this.requireDayReview(signal); return this.call('calendar.day-review.models', { ...query }, signal) }
   async dayReviewPrompts(query: DayReviewQuery, signal?: AbortSignal): Promise<import('../calendar-day-review-prompts.js').ReviewPromptSupport> { await this.requireDayReview(signal); return this.call('calendar.day-review.prompts', { ...query }, signal) }
@@ -2979,7 +3093,7 @@ export class ArkmeSdk {
     }
   }
 
-  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
+  async listDshAccountSessions(options: { cursor?: DshAccountSessionCursor; limit?: number; includeDeleted?: boolean } = {}, signal?: AbortSignal): Promise<DshAccountSessionPage> {
     const result = await this.call<DshAccountSessionPage>('remote.sessions.list', options, signal)
     if (result.contractVersion !== 1) throw new Error('账号会话协议版本不受支持')
     return result
@@ -2993,7 +3107,11 @@ export class ArkmeSdk {
     return await this.call('remote.session.command', options, signal)
   }
 
-  /** Event-driven invalidation only. Abort or dispose closes the Host subscription. */
+  /** A committed delta when available; otherwise refresh the authoritative directory. */
+  observeDshAccountSessions(changed: (delta?: DshDirectoryDelta) => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
+    return observeDshAccountSession(this.route, this.fetchImpl, undefined, changed, options)
+  }
+
   observeDshAccountSession(target: { runtimeRef: string; sessionRef: string }, changed: () => void, options: { signal?: AbortSignal; onError?: (error: unknown) => void } = {}): () => void {
     return observeDshAccountSession(this.route, this.fetchImpl, target, changed, options)
   }
@@ -3077,6 +3195,9 @@ export async function callArkme<T>(
   params?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (operation === 'calendar.day-review.create') return await defaultSdk.createDayReview(params as unknown as DayReviewCreateInput, signal) as T
+  if (operation === 'calendar.day-review.resume') return await defaultSdk.resumeDayReview(params as unknown as DayReviewQuery & { jobId: string }, signal) as T
+  if (operation === 'calendar.day-review.reconcile') return await defaultSdk.reconcileDayReview(params as unknown as DayReviewQuery, signal) as T
   return await defaultSdk.call<T>(operation, params, signal)
 }
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
@@ -3092,3 +3213,6 @@ export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contr
 export type {TeamMention} from '../team-app-contract.js'
 
 export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
+
+export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
+export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'

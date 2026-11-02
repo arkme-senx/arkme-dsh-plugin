@@ -3,12 +3,13 @@ import type { ArkmeMenuAction } from './ArkmeDshMenu.js'
 import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { ReactionAddIcon } from './ArkmeReactionPreview.js'
 import { AskDshIcon } from './AskDshIcon.js'
+import { Info } from '@phosphor-icons/react/dist/icons/Info'
 import { Checks } from '@phosphor-icons/react/dist/icons/Checks'
 import { tr } from './locale.js'
 
 /** One presentation contract for Chat and Team. Callers still own permissions and transport. */
-const order = ['reaction', 'copy', 'link', 'extend', 'edit', 'assign', 'select', 'forward', 'world', 'ask-dsh', 'report', 'detail', 'receipts', 'withdraw-divider', 'withdraw']
-const labels: Record<string, string> = { reaction: '表态', copy: '复制', link: '复制链接', extend: '延展', edit: '重新编辑', assign: '指定主题', select: '多选', forward: '转发', 'ask-dsh': '问 DSH', report: '举报', detail: '消息详情', receipts: '查看阅读状态', withdraw: '撤回' }
+const order = ['reaction', 'copy', 'link', 'extend', 'edit', 'assign', 'select', 'forward', 'world', 'ask-dsh', 'report', 'receipts', 'withdraw-divider', 'withdraw', 'detail']
+const labels: Record<string, string> = { reaction: '表态', copy: '复制', link: '复制链接', extend: '延展', edit: '重新编辑', assign: '指定主题', select: '多选', forward: '转发', 'ask-dsh': '问 DSH', report: '举报', detail: '详情', receipts: '查看阅读状态', withdraw: '撤回' }
 type Command = Omit<Extract<ArkmeMenuAction, { onSelect(): void }>, 'label'> & { label?: ReactNode; disabledReason?: string }
 export function conversationMessageMenu(actions: readonly (Command | Extract<ArkmeMenuAction, { type: string }> | false | undefined)[]): ArkmeMenuAction[] {
   return actions.filter((action): action is Command | Extract<ArkmeMenuAction, { type: string }> => !!action)
@@ -24,6 +25,7 @@ function conversationMessageIcon(id: string): ReactNode {
   if (id === 'reaction') return <ReactionAddIcon />
   if (id === 'extend') return <ArkmeDesktopExtensionIcon />
   if (id === 'ask-dsh') return <AskDshIcon size={20} />
+  if (id === 'detail') return <Info />
   if (id === 'receipts') return <Checks />
   if (id === 'assign') return <ArkmeSelectActionIcon kind="assign" size={16} />
   if (['copy', 'link', 'select', 'forward', 'report', 'withdraw', 'edit'].includes(id)) return <ArkmeMessageActionIcon kind={id as Parameters<typeof ArkmeMessageActionIcon>[0]['kind']} />

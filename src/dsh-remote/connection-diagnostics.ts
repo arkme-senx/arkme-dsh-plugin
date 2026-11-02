@@ -13,7 +13,7 @@ const allowed = new Set([
   'workspace_count', 'session_count', 'workspace_items_acked', 'session_items_acked',
   'page_index', 'item_count', 'projection_at', 'server_completed',
   'workspace_list_supported', 'session_list_supported',
-  'queue_ms', 'publish_ack_ms', 'completed',
+  'queue_ms', 'publish_ack_ms', 'frame_ack_max_ms', 'completed',
   'after_seq', 'server_seq', 'last_transport_seq', 'target_lease_generation',
   'command_id', 'frame_type', 'sender_role', 'listener_ready', 'duplicate',
   'channel_count', 'last_channel_event_age_ms', 'fragment_index', 'fragment_count', 'transfer_ref',

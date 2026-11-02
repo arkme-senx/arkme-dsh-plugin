@@ -1,13 +1,13 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { installHarnessHistoryConversation } from './harness-history-conversation.js'
 import { installHarnessAccountSessions } from './harness-account-sessions.js'
 import { installHarnessSessionListDefault } from './harness-session-list-default.js'
 import { installHarnessSessionDropdown } from './harness-session-dropdown.js'
 import { installHarnessSessionSummary } from './harness-session-summary.js'
+import { installProjectedConversation } from './harness-projected-conversation.js'
 import { installHarnessActivityReporter } from './harness-activity-reporter.js'
 
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'sessions']
 
 /** The outer Arkme shell owns authentication and the avatar settings entry. */
 export function apply(ctx: ClientContext): void {
@@ -30,10 +30,10 @@ export function apply(ctx: ClientContext): void {
         }, () => null))
         restoreDefault = installHarnessSessionListDefault(ctx)
         restoreAccountSessions = installHarnessAccountSessions(ctx, surface)
-        restoreHistory = installHarnessHistoryConversation(ctx, surface)
         restoreSummary = installHarnessSessionSummary(ctx, surface)
         restoreActivity = installHarnessActivityReporter(ctx, surface)
         restoreDropdown = installHarnessSessionDropdown(document)
+        restoreHistory = installProjectedConversation(ctx, surface)
       } else if (!authenticated) {
         restoreHistory?.(); restoreHistory = undefined
         restoreAccountSessions?.()

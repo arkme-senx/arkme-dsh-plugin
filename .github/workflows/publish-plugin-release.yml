@@ -256,27 +256,6 @@ jobs:
           RELEASE_INTEGRITY: ${{ steps.pack.outputs.integrity }}
           VERSION: ${{ steps.npm.outputs.version }}
         run: node .github/scripts/wait-for-npm-release.mjs
-      - name: 创建 Git Tag 与 GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
-          VERSION: ${{ steps.npm.outputs.version }}
-        run: |
-          tag="v${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git rev-parse "$tag^{commit}" >/dev/null 2>&1; then
-            if [ "$(git rev-parse "$tag^{commit}")" != "$RELEASE_SHA" ]; then
-              echo "$tag 已指向其他提交，拒绝覆盖。" >&2
-              exit 1
-            fi
-          else
-            git tag -a "$tag" "$RELEASE_SHA" -m "Release ${tag}"
-            git push origin "$tag"
-          fi
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$RELEASE_SHA" --title "$tag" --generate-notes
-          fi
 
   dispatch-runtime-publish:
     name: 派发 Arkme 生产 Runtime 发布

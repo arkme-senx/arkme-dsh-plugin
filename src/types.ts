@@ -1506,6 +1506,7 @@ export interface ArkmeProviderCapabilities {
     /** Current-account profile settings support Arkme ID, personal QR, and phone binding flows. */
     accountSettings?: true
     calendarDayReview?: true
+    calendarDayReviewHumanConfirmation?: true
     analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
@@ -1520,16 +1521,21 @@ arkoImagesV1?:true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     arkoLifecycleV1?: true
+    recordExportV1?: true
     arkoHistoryReadsV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamMessageInteractions?: 1
+    teamMessageRecall?: 1
+    teamMessageSnapshot?: 1
     teamPersonMentions?: 1
     teamNotificationPoliciesV1?: true
+    teamOutboundReception?: 1
     teamGroupRepresentation?: 1
     teamProfiles?: true
+    teamMemberManagementV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -2008,12 +2014,17 @@ export interface ArkmeCalendarRecordLocation {
 
 /** Browser-safe playback projection for every segment of one background recording. */
 export interface ArkmeMessageSnapshotBackgroundSoundPlayback {
+  /** Same-origin, author-scoped media routes for conversation-private audio. */
+  mediaUrls?: string[]
   mediaRefs: string[]
   amplitudes: number[]
   durationSeconds?: number
 }
 
 export interface ArkmeMessageSnapshotDetail {
+  /** Explicit coverage; omitted retains existing consumer semantics. */
+  durationState?: 'complete' | 'partial' | 'not-recorded'
+  captureUnavailable?: string
   /** Included only when explicitly requesting the full attachment snapshot. */
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: boolean
@@ -3431,11 +3442,24 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   version: string
   maxItems: number
   soundSource: ArkmeRecordingSoundSource
+  /** optionKey is empty for an excluded person no longer present in the directory. */
   excludedSpeakers: Array<{ optionKey: string; label: string }>
   undoRef?: string
 }
 
+export interface ArkmeRecordingSpeakerCorrectionPreview {
+  affectedCount: number
+  intentToken: string
+  expiresAt: number
+  selectionVersion: string
+  evidenceVersion: string
+}
+
 export interface ArkmeRecordingSpeakerCorrectionInput {
+  intentToken?: string
+  /** Offsets within the explicitly selected parent rows; Host resolves storage coordinates. */
+  selections?: import('./recording-evidence-contract.js').RecordingEvidenceSelection[]
+  target?: { kind: 'unknown' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
   itemRef: string
   itemRefs: string[]
   expectedVersion: string
@@ -3443,6 +3467,7 @@ export interface ArkmeRecordingSpeakerCorrectionInput {
   rejectedSpeakerRef?: string
   rejectCurrent?: boolean
   soundSource?: ArkmeRecordingSoundSource
+  /** Clear the assignment; must be false when assigning an existing or new target. */
   detach: boolean
 }
 
@@ -3454,6 +3479,7 @@ export interface ArkmeRecordingSpeakerCorrectionUndoInput {
 }
 
 export interface ArkmeRecordingSpeakerCorrectionResult {
+  learningStateAtCommit?: 'not_requested' | 'ineligible' | 'awaiting_evidence' | 'reference_ready' | 'reconciled'
   affectedCount: number
   version: string
   undoRef?: string
@@ -4088,6 +4114,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'team-invalidated'
   revision: number
+  change?: import('./team-app-contract.js').TeamMessageChangeHint
   receiptOnly?: boolean
 } | {
   type: 'directory-update'
@@ -4210,12 +4237,15 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'team.app.outbound.open'
+  | 'team.app.group.context'
+  | 'team.app.public-card'
+  | 'recordings.voice-triggers'
+  | 'recordings.voice-triggers.rules.set'
+  | 'recordings.voice-triggers.decide'
  | 'codex.image.read'
  | 'codex.work-records'
  | 'codex.copy-link'
-  | 'team.app.group.context'
-  | 'team.app.public-card'
-
   | 'recordings.strategies'
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'
@@ -4238,7 +4268,10 @@ export type ArkmePluginOperation =
   | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.workflow'
+  | 'recordings.playback.open'
   | 'recordings.speaker.options'
+  | 'recordings.speaker.evidence.query'
+  | 'recordings.speaker.correction.preview'
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
@@ -4308,10 +4341,13 @@ export type ArkmePluginOperation =
   | 'openapi.mcp.status'
   | 'openapi.mcp.retry'
   | 'team.external'
-  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.report' | 'team.messages.preflight'
+  | 'team.messages.forward' | 'team.messages.copy-link' | 'team.messages.recall' | 'team.messages.report' | 'team.messages.preflight'
   | 'team.messages.marks-read' | 'team.messages.marks-change'
+  | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
+  | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
+  | 'team.members.manage'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'
@@ -4325,6 +4361,7 @@ export type ArkmePluginOperation =
   | 'team.create'
   | 'team.join-by-jotmo-id'
   | 'remote.sessions.list'
+  | 'remote.sessions.observe'
   | 'remote.session.read'
   | 'remote.session.native'
   | 'remote.session.command'
@@ -4350,6 +4387,7 @@ export type ArkmePluginOperation =
   | 'account.usage.token.calls'
   | 'data.deleted'
   | 'data.export.preflight'
+  | 'data.export'
   | 'data.recover'
   | 'billing.order.create'
   | 'billing.order.status'
@@ -4415,6 +4453,7 @@ export type ArkmePluginOperation =
   | 'recordings.speech-statistics.occurrences'
   | 'recordings.speech-statistics.source'
   | 'calendar.day-review.state'
+  | 'calendar.day-review.confirmation'
   | 'calendar.day-review.create'
   | 'calendar.day-review.result'
   | 'calendar.day-review.source'
@@ -4708,6 +4747,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
+  | 'recordings.voice-triggers'
+  | 'recordings.voice-triggers.rules.set'
+  | 'recordings.voice-triggers.decide'
   | 'recordings.strategies'
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'
@@ -4718,6 +4760,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.summary-model-config.set'
   | 'recordings.generate'
   | 'recordings.import.preflight'
+  | 'recordings.import.strategies.register'
   | 'recordings.import.list'
   | 'recordings.import.history'
   | 'recordings.import.cancel'

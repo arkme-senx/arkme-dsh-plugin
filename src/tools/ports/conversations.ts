@@ -12,6 +12,8 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+ teamOutboundOpen(teamRef:string,recipient:import('../../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../../team-outbound-contract.js').TeamOutboundOpenResult>
+
   groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamGroupContext>
   teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamPublicCard>
   personRecordsPage(sourceRef: string, memberRef: string, options?: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal }): Promise<import('../../person-records.js').PersonRecordsPage>

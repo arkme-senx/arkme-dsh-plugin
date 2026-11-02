@@ -566,6 +566,21 @@ span.arkme-forward-search {
   text-align: left;
   text-decoration: none;
 }
+.arkme-settings-toggle-row { min-height: 76px; padding-top: 14px; padding-bottom: 14px; }
+.arkme-settings-toggle-copy { min-width: 0; }
+.arkme-settings-toggle-copy > strong { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
+.arkme-settings-toggle-copy > p { margin: 5px 0 0; color: var(--dsw-alias-label-secondary, #858992); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.arkme-settings-toggle-copy > small { display: block; margin-top: 5px; color: var(--dsw-alias-label-secondary, #858992); font-size: 12px; }
+.arkme-settings-switch { position: relative; width: 40px; height: 23px; padding: 0; border: 0; border-radius: 999px; background: #d7d9dd; cursor: pointer; transition: background .16s ease; }
+.arkme-settings-switch[aria-checked="true"] { background: #00b96b; }
+.arkme-settings-switch > span { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #14182038; transition: transform .16s ease; }
+.arkme-settings-switch[aria-checked="true"] > span { transform: translateX(17px); }
+.arkme-settings-switch:disabled { cursor: default; opacity: .55; }
+.arkme-settings-switch:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 3px; }
+body[data-ds-dark-theme] .arkme-settings-switch[aria-checked="false"] { background: var(--dsw-alias-border-l2, #55585f); }
+.arkme-settings-toggle-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; color: var(--dsw-alias-state-error-primary, #b54841); font-size: 12px; line-height: 1.6; }
+.arkme-settings-toggle-error > button { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .arkme-settings-switch, .arkme-settings-switch > span { transition: none; } }
 .arkme-redesign-setting-row:last-child { border-bottom: 0; }
 button.arkme-redesign-setting-row, a.arkme-redesign-setting-row { cursor: pointer; }
 button.arkme-redesign-setting-row:not([data-arkme-feedback]):hover, a.arkme-redesign-setting-row:hover { color: #53617d; }

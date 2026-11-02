@@ -20,7 +20,8 @@ export function useTeamMessageSelection(input: {
   const available = input.messages.filter(message => teamMessageSelectable(message) && keeps(message))
   const selected = available.filter(message => ids?.has(message.key))
   useEffect(() => {
-    const keys = new Set(available.map(message => message.key))
+    // Preserve selection identity while a change notification revalidates material.
+    const keys = new Set(input.messages.filter(message => (teamMessageSelectable(message) || message.state === 'published' && message.contentStatus === 'revalidating') && keeps(message)).map(message => message.key))
     setIds(previous => previous && [...previous].some(key => !keys.has(key)) ? new Set([...previous].filter(key => keys.has(key))) : previous)
   }, [input.messages, removed])
   useEffect(() => {
@@ -43,7 +44,8 @@ export function useTeamMessageSelection(input: {
     if (lock.current || !available.some(message => message.key === key)) return
     setIds(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next })
   }
-  const canDelete = selected.length > 0 && selected.length <= 100 && selected.every(message => message.canDelete)
+  const ready = !!ids?.size && selected.length === ids.size
+  const canDelete = ready && selected.length > 0 && selected.length <= 100 && selected.every(message => message.canDelete)
   const remove = async () => {
     if (lock.current || !confirm?.length) return
     // A refreshed version/permission must be reviewed again, not silently substituted.
@@ -84,7 +86,7 @@ export function useTeamMessageSelection(input: {
       if (!input.signal.aborted) setBusy(false)
     }
   }
-  return { ids, selected, available, keeps, busy, status, error, confirm, canDelete, enter, toggle, remove,
+  return { ids, selected, ready, available, keeps, busy, status, error, confirm, canDelete, enter, toggle, remove,
     exit: () => { if (!lock.current) setIds(undefined) },
     requestDelete: () => { if (!lock.current && canDelete) { setError(''); setConfirm([...selected]) } },
     closeConfirm: () => setConfirm(undefined), clearStatus: () => { setStatus(''); setError('') } }

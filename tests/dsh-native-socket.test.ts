@@ -69,3 +69,11 @@ it('bounds pending requests and rejects duplicate ids without overwriting their 
   expect((await closed)[0]).toBe(1008)
   await vi.waitFor(() => expect(signals.every(signal => signal.aborted)).toBe(true))
 })
+
+it('preserves retryability across the browser carrier boundary', async () => {
+  const f = await fixture(), client = new WebSocket(f.url, { origin: f.origin })
+  await once(client, 'open')
+  f.native.mockRejectedValueOnce(new DshRemoteError('HOST_GENERATION_STALE', 'host restarted', true))
+  const message = once(client, 'message'); client.send(request('retry'))
+  expect(JSON.parse(String((await message)[0]))).toMatchObject({ ok: false, error: { code: 'HOST_GENERATION_STALE', retryable: true } })
+})

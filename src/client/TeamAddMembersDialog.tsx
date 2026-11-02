@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import type { TeamMemberCandidate, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
+import type { TeamMemberCandidate, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult, TeamMemberAdditionRecovery } from '../team-member-add-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
-import { TeamGroupPendingNotice } from './TeamGroupControls.js'
 
-type Props = { accountKey: string; teamRef: string; teamName: string; onClose(): void }
+type Props = { accountKey: string; teamRef: string; teamName: string; onClose(): void; onChanged?(): void }
 type PageState = { data?: TeamMemberCandidatePage; loading?: boolean; error?: string }
 const errorText = (error: unknown) => error instanceof Error ? error.message : tr('加载失败，请重试')
 
@@ -16,13 +15,16 @@ export function TeamAddMembersDialog(props: Props) {
   return <ScopedDialog key={`${props.accountKey}:${props.teamRef}`} {...props} />
 }
 
-function ScopedDialog({ accountKey, teamRef, teamName, onClose }: Props) {
+function ScopedDialog({ accountKey, teamRef, teamName, onClose, onChanged }: Props) {
   useArkmeLocale()
   const [source, setSource] = useState<'contacts' | 'conversations'>('contacts')
   const [query, setQuery] = useState(''), [pages, setPages] = useState<Record<string, PageState>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<Map<string, TeamMemberCandidate>>(new Map())
-  const [busy, setBusy] = useState(false), [pending, setPending] = useState(false), [error, setError] = useState('')
+  const [busy, setBusy] = useState(true), [pending, setPending] = useState(false), [error, setError] = useState('')
+  const [result, setResult] = useState<TeamMemberAddResult>()
+  const refreshCandidates = useRef<() => void>()
+  const changed = useRef(onChanged); changed.current = onChanged
   const cache = useRef(pages), requests = useRef(new Map<string, AbortController>())
   const submission = useRef<AbortController>(), requestUid = useRef(''), body = useRef<HTMLDivElement>(null)
   const publish = useCallback((key: string, value: PageState) => {
@@ -30,6 +32,31 @@ function ScopedDialog({ accountKey, teamRef, teamName, onClose }: Props) {
   }, [])
   useEffect(() => () => { for (const controller of requests.current.values()) controller.abort(); submission.current?.abort() }, [])
   useEffect(() => { if (busy || pending) body.current?.focus({ preventScroll: true }) }, [busy, pending])
+
+  const applyResult = useCallback(async (value: TeamMemberAddResult, signal: AbortSignal) => {
+    if (value.state !== 'completed' || !Array.isArray(value.items)) throw new Error(tr('添加结果返回异常，请核对原批次'))
+    setResult(value)
+    const joined = new Set(value.items.filter(item => item.status !== 'rejected').map(item => item.key))
+    setSelected(current => new Map([...current].filter(([key]) => !joined.has(key))))
+    changed.current?.()
+    await callArkme('team.app.members.add-ack', {expectedAccountKey: accountKey, teamRef, requestUid: value.requestUid}, signal)
+    requestUid.current = ''; setPending(false)
+    refreshCandidates.current?.()
+  }, [accountKey, teamRef, publish])
+  useEffect(() => {
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const value = await callArkme<TeamMemberAdditionRecovery>('team.app.members.add-recover', {expectedAccountKey: accountKey, teamRef}, controller.signal)
+        if (controller.signal.aborted) return
+        if (value.state === 'completed') await applyResult(value, controller.signal)
+        else if (value.state === 'unresolved') { requestUid.current = value.requestUid; setPending(true) }
+        else if (value.state !== 'none') throw new Error(tr('原批次状态异常，请重试核对'))
+      } catch (caught) { if (!controller.signal.aborted) { setPending(true); setError(errorText(caught)) } }
+      finally { if (!controller.signal.aborted) setBusy(false) }
+    })()
+    return () => controller.abort()
+  }, [accountKey, teamRef, applyResult])
 
   const load = useCallback(async (key: string, kind: TeamMemberCandidateSource, sourceRef?: string, restart = false) => {
     if (requests.current.has(key)) return
@@ -60,7 +87,16 @@ function ScopedDialog({ accountKey, teamRef, teamName, onClose }: Props) {
     } catch (caught) { if (!controller.signal.aborted) publish(key, { ...previous, loading: false, error: errorText(caught) }) }
     finally { if (requests.current.get(key) === controller) requests.current.delete(key) }
   }, [accountKey, teamRef, publish])
-  useEffect(() => { if (!cache.current[source]) void load(source, source) }, [source, load])
+  refreshCandidates.current = () => {
+    for (const request of requests.current.values()) request.abort()
+    requests.current.clear(); cache.current = {}; setPages({})
+    void load(source, source, undefined, true)
+    if (source === 'conversations') for (const ref of expanded) void load(ref, 'group', ref, true)
+  }
+  useEffect(() => {
+    if (!cache.current[source]) void load(source, source)
+    if (source === 'conversations') for (const ref of expanded) if (!cache.current[ref]) void load(ref, 'group', ref)
+  }, [source, expanded, load])
 
   // Search advances the active source, preserving rendered rows and selection.
   // Group member reads remain explicit: only expanded groups are searched.
@@ -79,28 +115,33 @@ function ScopedDialog({ accountKey, teamRef, teamName, onClose }: Props) {
 
   const reset = () => { setPending(false); setError(''); requestUid.current = '' }
   const toggle = (item: TeamMemberCandidate) => {
-    if (busy || item.alreadyMember || item.isSelf) return
+    if (busy || pending || item.alreadyMember || item.isSelf) return
     if (!selected.has(item.key) && selected.size >= 50) { setError(tr('每次最多选择 50 人')); return }
     reset(); setSelected(current => { const next = new Map(current); if (next.has(item.key)) next.delete(item.key); else next.set(item.key, item); return next })
   }
   const submit = async () => {
-    if (!selected.size || submission.current || pending) return
+    if ((!selected.size && !pending) || submission.current) return
     const controller = new AbortController(); submission.current = controller
     requestUid.current ||= crypto.randomUUID(); setBusy(true); setError('')
     try {
-      const result = await callArkme<TeamMemberAddResult>('team.app.members.add', {
-        expectedAccountKey: accountKey, teamRef, candidateRefs: [...selected.values()].map(item => item.candidateRef), requestUid: requestUid.current,
+      if (pending) {
+        const recovered = await callArkme<TeamMemberAdditionRecovery>('team.app.members.add-recover', {expectedAccountKey: accountKey, teamRef}, controller.signal)
+        if (controller.signal.aborted) return
+        if (recovered.state === 'completed') { await applyResult(recovered, controller.signal); return }
+        if (recovered.state === 'none') { setPending(false); requestUid.current = ''; return }
+      }
+      const value = await callArkme<TeamMemberAddResult>(pending ? 'team.app.members.add-retry' : 'team.app.members.add', {
+        expectedAccountKey: accountKey, teamRef, ...(pending ? {} : {candidateRefs: [...selected.values()].map(item => item.candidateRef), requestUid: requestUid.current}),
       }, controller.signal)
       if (controller.signal.aborted) return
-      if (result.state !== 'backend_pending') throw new Error(tr('添加结果返回异常，请重试'))
-      setPending(true)
-    } catch (caught) { if (!controller.signal.aborted) setError(errorText(caught)) }
+      await applyResult(value, controller.signal)
+    } catch (caught) { if (!controller.signal.aborted) setPending(true); setError(errorText(caught)) }
     finally { if (submission.current === controller) submission.current = undefined; if (!controller.signal.aborted) setBusy(false) }
   }
   const needle = query.trim().toLocaleLowerCase()
   const matches = (item: TeamMemberCandidate) => [item.displayName, item.nickname, item.accountName].some(value => value?.toLocaleLowerCase().includes(needle))
   const row = (item: TeamMemberCandidate) => <button type="button" className="arkme-team-add-person" key={item.key}
-    role="checkbox" aria-checked={selected.has(item.key)} aria-label={item.displayName} disabled={busy || item.alreadyMember || item.isSelf}
+    role="checkbox" aria-checked={selected.has(item.key)} aria-label={item.displayName} disabled={busy || pending || item.alreadyMember || item.isSelf}
     onClick={() => toggle(item)}>
     <ArkmeUserAvatar {...(item.avatarRef ? { avatarRef: item.avatarRef } : {})} {...(item.avatarFallback ? { fallback: item.avatarFallback } : {})} size={36} label={item.displayName} />
     <span className="arkme-team-add-person-copy"><strong>{item.displayName}</strong>{item.accountName && <small>@{item.accountName}</small>}</span>
@@ -118,19 +159,21 @@ function ScopedDialog({ accountKey, teamRef, teamName, onClose }: Props) {
   const page = pages[source], visiblePeople = page?.data?.items.filter(matches) ?? []
   return <TeamFeatureDialog title={tr('添加成员')} teamName={teamName} className="arkme-team-add-dialog" onClose={onClose}
     footer={<div className="arkme-team-add-footer">
-      {selected.size > 0 && <div className="arkme-team-add-selected" aria-label={tr('已选成员')}>{[...selected.values()].map(item => <button type="button" key={item.key} title={tr('取消选择 {v0}', { v0: item.displayName })} aria-label={tr('取消选择 {v0}', { v0: item.displayName })} disabled={busy} onClick={() => toggle(item)}>
+      {selected.size > 0 && <div className="arkme-team-add-selected" aria-label={tr('已选成员')}>{[...selected.values()].map(item => <button type="button" key={item.key} title={tr('取消选择 {v0}', { v0: item.displayName })} aria-label={tr('取消选择 {v0}', { v0: item.displayName })} disabled={busy || pending} onClick={() => toggle(item)}>
         <ArkmeUserAvatar {...(item.avatarRef ? { avatarRef: item.avatarRef } : {})} {...(item.avatarFallback ? { fallback: item.avatarFallback } : {})} size={30} label={item.displayName} /><span aria-hidden="true">×</span>
       </button>)}</div>}
-      <div className="arkme-team-add-submit"><span>{tr('已选 {v0} 人', { v0: selected.size })}</span><button type="button" disabled={!selected.size || busy || pending} onClick={() => { void submit() }}>{busy ? tr('正在检查…') : tr('确认添加（{v0}）', { v0: selected.size })}</button></div>
+      <div className="arkme-team-add-submit"><span>{tr('已选 {v0} 人', { v0: selected.size })}</span><button type="button" disabled={(!selected.size && !pending) || busy} onClick={() => { void submit() }}>{busy ? tr('正在处理…') : pending ? tr('核对并重试原批次') : tr('确认添加（{v0}）', { v0: selected.size })}</button></div>
     </div>}>
     <div ref={body} tabIndex={-1} className="arkme-team-add-body">
       <div className="arkme-team-add-controls"><input type="search" aria-label={tr('搜索成员')} placeholder={tr('搜索姓名、备注或即我号')} value={query} onChange={event => setQuery(event.target.value)} />
         <div className="arkme-team-add-sources" role="group" aria-label={tr('选人来源')}>{(['contacts', 'conversations'] as const).map(kind => <button type="button" key={kind} aria-pressed={source === kind} onClick={() => setSource(kind)}>{tr(kind === 'contacts' ? '联系人' : '最近对话与群聊')}</button>)}</div>
       </div>
       {(pending || error) && <div className="arkme-team-add-feedback">
-        {pending && <TeamGroupPendingNotice>{tr('尚未添加成员，已保留本次选择。')}</TeamGroupPendingNotice>}
-        {error && <div role="alert" className="arkme-team-add-error">{error}<button onClick={() => { reset(); void load(source, source, undefined, true) }}>{tr('刷新候选列表')}</button></div>}
+        {pending && <p role="status">{tr('原批次结果待核对，已保留请求。请核对后再选择下一批。')}</p>}
+        {error && <div role="alert" className="arkme-team-add-error">{error}<button onClick={() => { void load(source, source, undefined, true) }}>{tr('刷新候选列表')}</button></div>}
       </div>}
+      <div className="arkme-team-add-feedback"><p className="arkme-team-add-hint">{tr('同事将直接加入团队，并可访问团队已有的共享内容。')}</p></div>
+      {result && <div className="arkme-team-add-feedback" role="status"><p>{tr('批次完成时团队共 {v0} 人', {v0: result.memberCount})}</p><ul>{result.items.map((item, index) => <li key={item.key}>{item.displayName ?? tr('同事 {v0}', {v0: index + 1})}：{tr(item.status === 'added' ? '已添加' : item.status === 'already_member' ? '已在团队' : '账号不可用，未添加')}</li>)}</ul></div>}
       <div className="arkme-team-add-list">
         {visiblePeople.map(row)}
         {source === 'conversations' && page?.data?.groups.map(group => {

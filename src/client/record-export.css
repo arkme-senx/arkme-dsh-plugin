@@ -1,0 +1,61 @@
+.arkme-data-settings[data-export="true"] { max-width: 640px; container-type: inline-size; }
+.arkme-data-settings[data-export="true"] h2 { margin-bottom: 0; font-size: 22px; font-weight: 650; letter-spacing: -.4px; }
+.arkme-record-export { --export-muted: var(--dsw-alias-label-secondary, #68707c); --export-line: var(--dsw-alias-border-l2, #e1e3e6); }
+.arkme-export-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 7px 0 26px; }
+.arkme-export-intro p { color: var(--export-muted); margin: 0; font-size: 13px; }
+.arkme-record-export .arkme-export-refresh { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--export-muted); }
+.arkme-record-export .arkme-export-refresh:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #00000008); }
+.arkme-export-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 24px 0; border: 1px solid var(--export-line); border-radius: 12px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); }
+.arkme-export-summary > div { display: flex; flex-direction: column; gap: 5px; padding: 0 24px; min-width: 0; }
+.arkme-export-summary > div + div { border-left: 1px solid var(--export-line); }
+.arkme-export-summary strong { font-size: 28px; line-height: 1.2; font-weight: 550; letter-spacing: -.6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.arkme-export-summary span { color: var(--export-muted); font-size: 12px; }
+.arkme-export-options { margin-top: 16px; }
+.arkme-export-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 0; border-bottom: 1px solid var(--export-line); box-sizing: border-box; }
+.arkme-export-option > span:first-child { flex: none; font-weight: 500; }
+.arkme-export-option-value { text-align: right; }
+.arkme-export-option-value small { display: block; color: var(--export-muted); font-size: 11px; margin-top: 2px; }
+.arkme-export-format { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; font-size: 12px; }
+.arkme-export-format > span { color: var(--export-muted); }
+.arkme-export-order { display: flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-export-order label { position: relative; border-radius: 7px; padding: 5px 12px; color: var(--export-muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
+.arkme-export-order label.is-selected { color: var(--dsw-alias-label-primary, #17191c); background: var(--dsw-alias-bg-layer-3, #fff); box-shadow: 0 1px 3px #0000000c; }
+.arkme-export-order input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.arkme-export-order label:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 1px; }
+.arkme-export-order label:has(input:disabled) { cursor: default; opacity: .6; }
+.arkme-export-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 28px; }
+.arkme-export-footer p, .arkme-export-footer small { margin: 0; color: var(--export-muted); font-size: 11px; }
+.arkme-export-footer small { display: block; margin-top: 4px; }
+.arkme-record-export .arkme-export-primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; box-sizing: border-box; padding: 8px 15px; flex: none; border: 0; border-radius: 9px; background: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); text-decoration: none; font-size: 13px; line-height: 20px; }
+.arkme-export-primary:hover:not(:disabled) { opacity: .85; }
+.arkme-export-error, .arkme-export-notice { margin: 16px 0 0; font-size: 12px; line-height: 1.7; }
+.arkme-export-error { color: var(--dsw-alias-state-error-primary, #c2413b); }
+.arkme-export-notice { color: var(--export-muted); }
+.arkme-export-progress { margin-top: 26px; }
+.arkme-export-progress > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.arkme-export-progress > div > span:last-child { color: var(--export-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.arkme-export-progress progress { appearance: none; display: block; width: 100%; height: 4px; margin: 14px 0 10px; border: 0; border-radius: 9px; overflow: hidden; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-export-progress progress::-webkit-progress-bar { background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-export-progress progress::-webkit-progress-value { background: var(--dsw-alias-button-primary-fill, #17191c); border-radius: 9px; }
+.arkme-export-progress progress::-moz-progress-bar { background: var(--dsw-alias-button-primary-fill, #17191c); }
+.arkme-export-progress-footer small { font-size: 11px; color: var(--export-muted); }
+.arkme-export-progress-footer button { border: 0; padding: 4px 0; background: transparent; color: var(--export-muted); font-size: 12px; }
+.arkme-export-result { margin-top: 26px; }
+.arkme-export-result-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.arkme-export-result-title svg { color: var(--dsw-alias-state-success-primary, #52c41a); }
+.arkme-export-result-title strong { font-weight: 500; }
+.arkme-export-result-title > span { margin-left: auto; color: var(--export-muted); font-size: 12px; }
+.arkme-export-file { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--export-line); border-radius: 12px; }
+.arkme-export-file > svg { color: var(--export-muted); flex: none; }
+.arkme-export-file > div { flex: 1; min-width: 0; }
+.arkme-export-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.arkme-export-file small { display: block; color: var(--export-muted); font-size: 11px; margin-top: 4px; }
+@keyframes arkme-export-refresh { to { transform: rotate(360deg); } }
+.arkme-export-refresh .is-spinning { animation: arkme-export-refresh 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .arkme-export-refresh .is-spinning { animation: none; } }
+@container (max-width: 400px) {
+  .arkme-export-summary > div { padding: 0 14px; }
+  .arkme-export-summary strong { font-size: 24px; }
+  .arkme-export-file { flex-wrap: wrap; }
+  .arkme-export-file > a { margin-left: auto; }
+}

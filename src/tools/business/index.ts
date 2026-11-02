@@ -1,5 +1,8 @@
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
+import { recordExportToolModules } from './records/export.js'
+import {teamOutboundToolModule} from './conversation/team-outbound.js'
+import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
@@ -73,7 +76,8 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
-  groupIdentitiesToolModule,teamPublicCardToolModule,
+  ...recordExportToolModules,
+  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,
   realtimeDictationTool,
   ...nativeAnnotationTools,
   ...messageSyncToolModules,
@@ -81,6 +85,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...officialNotificationToolModules,
   directoryReadToolModule,
   ...teamProfileTools,
+  ...teamMemberTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
   ...codexWorkRecordTools,

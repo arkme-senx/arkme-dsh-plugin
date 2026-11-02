@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createSessionInput } from './helpers/session-input.js'
+import { ToolCallId as CallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -103,8 +104,8 @@ it.skipIf(!process.env.JOTMO_CONTACT_E2E_DIR)('real plugin UI and SDK â†’ Host â
       searchContact: service.searchContact.bind(service), joinContactTeam: service.joinContactTeam.bind(service),
     } as ArkmeToolPorts), {inject:['tools','systemPrompt']}))
     const toolSession = Session.create(SessionId('contact-http-session'))
-    const inbox = new Inbox(toolSession,{inserted(){},discarded(){},claimed(){}})
-    const agent = {id:toolSession.id,session:toolSession,inbox} as Agent
+    const inbox = createSessionInput(toolSession)
+    const agent = {ctx,id:toolSession.id,session:toolSession,inbox} as unknown as Agent
     let seq = 0
     const invoke = async (name:string,args:Record<string,unknown>) => {
       const callId = CallId(`contact-http-${++seq}`)

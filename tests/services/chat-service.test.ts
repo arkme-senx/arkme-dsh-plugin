@@ -62,7 +62,7 @@ function messageActionPayload(actionRef: string): Record<string, unknown> {
 function chatMemberRef(
   viewerUserId: number,
   chatSessionUid: string,
-  targetUserId: number,
+  targetUserId: number | string,
   signingKey = 'member-signing-key',
 ): string {
   const payload = Buffer.from(JSON.stringify({
@@ -3393,6 +3393,17 @@ describe('ChatService', () => {
     expect(createBody).not.toHaveProperty('extra')
   })
 
+  it('keeps an authorized large person ID exact through the actual create-private wire adapter',async()=>{
+    const {stringifyOwnerJson}=await import('../../src/record-owner-id.js')
+    let wire=''
+    const runtime={stateStore:{},requireSession:vi.fn(async()=>({userId:42,accessToken:'access',refreshToken:'refresh'})),authenticatedChatPost:vi.fn(async(_path:string,body:Record<string,unknown>)=>{wire=stringifyOwnerJson(body);return {session:{chat_session_uid:'large-person',last_seq:0},unread_snapshot:{unread_count:0}}})}
+    const source={cachedChatSource:vi.fn(),sealSourceRef:vi.fn(async()=> 'large-source'),chatDirectorySourceKey:vi.fn(async()=> 'large-key'),setChatSourceByKey:vi.fn()}
+    const profile={publicProfileSummariesByUserIds:vi.fn()}
+    const chat=new ChatService(runtime as never,source as never,profile as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+    expect(await chat.openPrivateChatFromUser('9007199254740993',{presentationDisplayName:'客户'})).toMatchObject({source:{sourceRef:'large-source',displayName:'客户'}})
+    expect(wire).toContain('"peer_user_id":9007199254740993');expect(wire).not.toContain('9007199254740992');expect(profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
+
   it('keeps the existing viewer-bound private-chat projection when create-private reuses a session', async () => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const existingSource = {
@@ -3862,3 +3873,37 @@ it('preserves global person order when two sessions reuse the same relation uid'
  expect(result.items.map(item=>item.sendAtMillis)).toEqual([300,200,100]);
  expect(new Set(result.items.map(item=>item.eventRef)).size).toBe(3);
 });
+
+it.each([true,false])('ordinary details keep version-1 environment after editing, original=%s',async found=>{
+ const authenticatedPost=vi.fn(async(path:string)=>{
+  if(path.endsWith('/revisions/query'))return {record_uid:'record-snapshot-1',items:found?[{record_uid:'record-snapshot-1',version:1,revision_uid:'creation',edit_capture_context:{schema_version:1,captured_at:1000,client_name:'original device',network_name:'original network',electric:0,charge:0},content_payload:{},template_extra:{}}]:[],has_more:false};
+  if(path.endsWith('/context/get'))return {};
+  return {record_core:{record_uid:'record-snapshot-1',version:2,has_manual_edit:true,text_content:'latest text',capture_context:{schema_version:1,captured_at:3000,client_name:'later edit device',electric:100}}};
+ });
+ const runtime={stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'},requireSession:async()=>({userId:42,accessToken:'access',refreshToken:'refresh'}),authenticatedPost,authenticatedChatPost:async()=>({item:{relation:{record_uid:'record-snapshot-1'},record:{record_uid:'record-snapshot-1'}}})};
+ const source={openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat-1'})};
+ const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never);
+ const detail=await chat.messageSnapshotDetail('opaque-source',snapshotActionRef());
+ expect(detail.textContent).toBe('latest text');
+ expect(detail.captureContext?.clientName).toBe(found?'original device':undefined);
+ expect(JSON.stringify(detail)).not.toContain('later edit device');
+ if(found)expect(detail.captureContext?.electric).toBe(0);
+ expect(authenticatedPost.mock.calls.some(([path])=>path.endsWith('/context/get'))).toBe(found);
+});
+
+
+it('preserves adjacent int64 member refs through paging, presentation and live target resolution',async()=>{
+ const ids=['9007199254740992','9007199254740993'],session={userId:42,accessToken:'fixture',refreshToken:'fixture'}
+ const rows=ids.map((user_id,i)=>({user_id,role:3,status:1,display_name_snapshot:`客户${i}`}))
+ const read=vi.fn(async(path:string,body:Record<string,unknown>)=>path.endsWith('/members/page')?{chat_session_uid:'chat',items:body.after_user_id?rows.slice(1):rows.slice(0,1),has_more:!body.after_user_id,next_user_id:body.after_user_id?ids[1]:ids[0],self_role:3}:{chat_session_uid:'chat',items:path.endsWith('/by-user-ids')?rows.filter(v=>(body.user_ids as string[]).includes(v.user_id)):rows})
+ const runtime={config:{chatMemberJoinEventsEnabled:false},stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
+ const source={openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'}),sourceItem:async()=>({sourceRef:'source',kind:'group_chat'})}
+ const profile={publicProfileSummariesByUserIds:vi.fn(async()=>new Map())}
+ const chat=new ChatService(runtime as never,source as never,profile as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const first=await chat.pageSourceMembers('source',{limit:1}),second=await chat.pageSourceMembers('source',{limit:1,cursor:first.nextCursor!})
+ expect(read.mock.calls[1]![1].after_user_id).toBe(ids[0])
+ const ref=second.items[0]!.memberRef
+ expect((await chat.sourceMembersPresentation('source',[ref])).items[0]!.displayName).toBe('客户1')
+ expect(await chat.memberWorldTarget('source',ref)).toEqual({userId:ids[1]})
+ expect(ref).not.toBe(first.items[0]!.memberRef)
+})

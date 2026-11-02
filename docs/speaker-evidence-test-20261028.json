@@ -1,0 +1,114 @@
+{
+  "baseline": "1a9b86bc243097ff9d37d6a30634893b7fdbb20b",
+  "dshVersion": "0.2.1-rc.2",
+  "environment": "TEST",
+  "account": 3016,
+  "artifactSha256": "70a220b674d967721ae9a1c69f503f043aab4de8ba25a3aa2fcc1d420806b151",
+  "checks": [
+    {
+      "name": "real-test-capabilities"
+    },
+    {
+      "name": "empty-fixture-day",
+      "dateStamp": 1772812800000
+    },
+    {
+      "name": "owned-fixture-admitted",
+      "index": 0
+    },
+    {
+      "name": "owned-fixture-admitted",
+      "index": 1
+    },
+    {
+      "name": "owned-fixture-admitted",
+      "index": 2
+    },
+    {
+      "name": "real-refactored-transcript-import",
+      "intervals": 3
+    },
+    {
+      "name": "real-agent-discovery-read-confirmation-build"
+    },
+    {
+      "name": "real-a-b-and-self-reference",
+      "compared": 3,
+      "readyCount": 0,
+      "insufficientReasons": [
+        "reference_item",
+        "reference_item",
+        "precise_evidence_unavailable"
+      ]
+    },
+    {
+      "name": "same-day-candidates"
+    },
+    {
+      "name": "unknown-subrange-preview-apply-result-replay-undo"
+    },
+    {
+      "name": "new-person-created-and-withdrawn"
+    },
+    {
+      "name": "new-existing-complete-group-members-and-playback",
+      "total": 2
+    },
+    {
+      "name": "bounded-real-read-load",
+      "requests": 80,
+      "concurrency": 4,
+      "p50Millis": 662,
+      "p95Millis": 698,
+      "maxMillis": 737
+    },
+    {
+      "name": "existing-person-batch-undone"
+    },
+    {
+      "name": "negative-evidence-playback-and-target-exclusion"
+    },
+    {
+      "name": "owned-person-and-learning-withdrawn"
+    },
+    {
+      "name": "sdk-cancellation"
+    },
+    {
+      "name": "owned-recordings-deleted",
+      "count": 3
+    }
+  ],
+  "cleanup": true,
+  "acousticObservation": {
+    "tasks": "succeeded",
+    "intervalMillis": 4900,
+    "speechMillis": 4748,
+    "quality": "insufficient",
+    "reason": "uncertain_speech_quality",
+    "realNumericDistanceVerified": false
+  },
+  "limits": [
+    "Three timestamped copies of one public FunASR sample; not speaker accuracy validation.",
+    "80 reads at concurrency 4; not the earlier backend 2520-request workload.",
+    "No production release or resident application replacement."
+  ],
+  "fullSuite": {
+    "command": "NODE_OPTIONS=--no-experimental-webstorage pnpm test --maxWorkers 2",
+    "startedAt": "2026-10-28T19:00:29+08:00",
+    "durationSeconds": 410.55,
+    "passedFiles": 1283,
+    "skippedFiles": 18,
+    "passedTests": 14523,
+    "skippedTests": 24
+  },
+  "supplementalAgentPreviewTargets": [
+    "unknown",
+    "new",
+    "existing"
+  ],
+  "postCleanupAudit": {
+    "activeOwnedRecordings": 0,
+    "activeOwnedPeople": 0
+  }
+}

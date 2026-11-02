@@ -141,6 +141,7 @@ function safeFailureMessage(error: unknown): string {
 
 export class ChatRealtimeService {
   teamPublication?: (notice: ArkmeChatRealtimeNotice) => void
+  teamChange?: (hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number)=>Promise<import('../team-app-contract.js').TeamMessageChangeHint>
   directoryInvalidation?: (hint: ArkmeChatPolicyUpdatedHint | ArkmeConversationListPreferenceUpdatedHint) => Promise<void>
   directoryAttention?: (retry: boolean) => Promise<ArkmeChatAttentionSummary>
   directoryBaseline?: () => Promise<import('../types.js').ArkmeSourceList>
@@ -304,10 +305,12 @@ export class ChatRealtimeService {
   handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
     if (notice.cause === 'team-message-published') { this.teamPublication?.(notice); return }
     if (notice.cause === 'team-invalidation') {
-      void this.runtime.accountScopedSession().then(session => {
-        if (session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted) {
-          this.emitChatClientEvent({ type: 'team-invalidated', revision: this.nextChatClientRevision(), ...(notice.teamReceiptOnly ? {receiptOnly: true} : {}) })
-        }
+      void this.runtime.accountScopedSession().then(async session => {
+        if (!session || session.userId !== notice.connectionUserId || notice.connectionSignal?.aborted) return
+        const change=notice.teamChange&&this.teamChange?await this.teamChange(notice.teamChange,session.userId).catch(()=>undefined):undefined
+        const current=await this.runtime.accountScopedSession()
+        if(current?.userId!==session.userId || current.refreshToken!==session.refreshToken || notice.connectionSignal?.aborted)return
+        this.emitChatClientEvent({type:'team-invalidated',revision:this.nextChatClientRevision(),...(notice.teamReceiptOnly?{receiptOnly:true}:{}),...(change?{change}:{})})
       }).catch(() => undefined)
       return
     }

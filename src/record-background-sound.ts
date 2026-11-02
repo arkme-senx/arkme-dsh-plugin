@@ -80,3 +80,13 @@ export function arkmeRichBackgroundSound(
   if (new Set(identities).size !== identities.length) throw invalid('背景音资产不能重复')
   return { assets, amplitudes: arkmeBackgroundSoundAmplitudes(value.amplitudes) }
 }
+
+/** The Record payload representation shared by ordinary and Team sends. */
+export function arkmeBackgroundSoundContent(value: ArkmeRichBackgroundSoundInput | undefined, offset = 0) {
+  const sound = arkmeRichBackgroundSound(value)
+  return {
+    refs: sound?.assets.map((asset,index) => ({file_asset_uid:asset.fileAssetUid,
+      content_file_role:4,binding_type:4,render_role:1,sort_order:offset+index,file_name:asset.fileName})) ?? [],
+    amplitudes: sound?.amplitudes ?? [],
+  }
+}

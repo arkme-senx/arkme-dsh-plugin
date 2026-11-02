@@ -1,7 +1,7 @@
 import {expect,it} from 'vitest'
 import {teamComposerDraft,teamMentions} from '../src/client/team-mentions.js'
 import {insertArkmeComposerMentionToken,serializeArkmeComposerDraft,reconcileArkmeComposerMentions} from '../src/client/composer-draft-store.js'
-import {loadTeamDraft,persistTeamDraft,restoreTeamDraftContent,updateTeamDraftText} from '../src/client/team-message-draft.js'
+import {loadTeamDraft,persistTeamDraft,restoreTeamDraftContent,updateTeamDraftText,teamDraftStartForInput} from '../src/client/team-message-draft.js'
 it('retains exact identities through emoji encoding, persistence and edits; typing a name never creates a mention',()=>{
  const base=teamComposerDraft('[微笑] hi ')
  const inserted=insertArkmeComposerMentionToken(base,{mentionRef:'sealed-person'},'同名',base.text.length)!
@@ -25,4 +25,14 @@ it('restores same-name drafts without merging different people or inventing ment
  expect(restoreTeamDraftContent(original,{text:'@同名',mentions:[{...mention,personRef:'person-b'}]})).toEqual({text:'@同名\n\n@同名',mentions:[mention,{...mention,personRef:'person-b',startIndex:5}]})
  expect(restoreTeamDraftContent(original,{text:'@同名'})).toEqual({text:'@同名\n\n@同名',mentions:[mention]})
  expect(restoreTeamDraftContent({template_kind:1,text_content:''},{text:'@同名',mentions:[mention]})).toEqual({text:'@同名',mentions:[mention]})
+})
+
+it('keeps undated restored input unknown and starts a new composer only after clearing',()=>{
+ const legacy={text:'legacy',assets:[]}
+ expect(updateTeamDraftText(legacy,'legacy continued',2000).startedAtMillis).toBeUndefined()
+ const empty=updateTeamDraftText(legacy,'',2000)
+ expect(updateTeamDraftText(empty,'new',3000).startedAtMillis).toBe(3000)
+ expect(teamDraftStartForInput({text:'',assets:[]},4000)).toBe(4000)
+ expect(teamDraftStartForInput(legacy,4000)).toBeUndefined()
+ expect(updateTeamDraftText({text:'',assets:[],startedAtMillis:1000},'',5000).startedAtMillis).toBeUndefined()
 })

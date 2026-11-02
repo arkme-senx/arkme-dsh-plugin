@@ -38,6 +38,7 @@ function page(teamRef: string, name: string, overrides: Partial<TeamMembers> = {
       joinedAtMillis: 1,
       codexSync: { state: 'enabled', hasConversations: true, canViewConversations: true },
     }],
+    membershipRevision: 1, canAddMembers:false,
     totalCount: 1,
     hasMore: false,
     ...overrides,
@@ -190,6 +191,7 @@ describe('TeamDetailPane', () => {
   it.each(['owner', 'admin', 'member'] as const)('offers the add-members picker only to managers: %s', async role => {
     const teamPage = page(teamRefA, '团队 A')
     teamPage.team.currentUserRole = role
+    teamPage.canAddMembers = role !== 'member'
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : { canManage: false })
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(renderer!.root.findAllByType('button').some(node => text(node) === '＋ 添加成员')).toBe(role !== 'member')
@@ -222,6 +224,7 @@ describe('TeamDetailPane', () => {
   it.each(['owner', 'admin', 'member'] as const)('hides editing without the server capability for %s', async role => {
     const teamPage = page(teamRefA, '团队 A')
     teamPage.team.currentUserRole = role
+    teamPage.canAddMembers = role !== 'member'
     teamPage.team.canEditProfile = false
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members' ? teamPage : {canManage: false})
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
@@ -250,7 +253,8 @@ describe('TeamDetailPane', () => {
           joinedAtMillis: 2,
         },
       ],
-      totalCount: 2,
+      membershipRevision: 1, canAddMembers:false,
+    totalCount: 2,
     })
     mocks.callArkme.mockImplementation(async (operation: string) => operation === 'team.app.members'
       ? teamPage
@@ -479,7 +483,8 @@ describe('TeamDetailPane', () => {
           joinedAtMillis: 2,
         },
       ],
-      totalCount: 2,
+      membershipRevision: 1, canAddMembers:false,
+    totalCount: 2,
     }))
     await act(async () => { await tick() })
 

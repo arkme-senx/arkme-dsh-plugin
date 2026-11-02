@@ -96,7 +96,7 @@ if (process.env.FIXTURE_RESERVED === 'true') console.log('123')
     })
     expect(JSON.parse(await readFile(join(project.checkout, 'package.json'), 'utf8')).version).toBe(release.next)
     expect(await readFile(output, 'utf8')).toContain(`next_version=${release.next}\n`)
-  })
+  }, 15_000) // Creates real Git repositories and launches several CLI processes.
 
   it.each(['AUTOMATIC_RELEASE_SHA', 'EXISTING_RELEASE_SHA'])('exports the exact prepared commit version using %s', async (sourceKey) => {
     const project = await fixture()

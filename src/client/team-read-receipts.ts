@@ -79,7 +79,8 @@ export class TeamReceiptStore {
   }
   private fail(keys: string[], error: unknown) {
     const body = (error as { body?: {code?:string; httpStatus?:number} })?.body
-    const lost = /not_accessible|account-changed|auth/u.test(body?.code ?? '') || [401,403].includes(body?.httpStatus ?? 0)
+    const recalled = /message_recalled/u.test(body?.code ?? '')
+    const lost = !recalled && (/not_accessible|account-changed|auth/u.test(body?.code ?? '') || [401,403].includes(body?.httpStatus ?? 0))
     if (lost) { this.controller.abort(); this.visible.clear(); this.details.clear(); this.states.clear(); for (const listener of this.accessListeners) listener() }
     for (const key of keys) this.states.set(key, {...(!lost ? this.get(key) : emptyTeamReceipt), loading:false, at:Date.now(), error:'阅读状态暂未更新，请重试'})
   }
@@ -105,6 +106,7 @@ export class TeamReceiptStore {
             if (byKey.size !== batch.length || batch.some(m => !byKey.has(m.key))) throw new Error('阅读状态返回不完整')
             for (const m of batch) {
               const old = this.get(m.key), item = byKey.get(m.key)!
+              if (item.unavailableReason === 'message_recalled') { this.states.set(m.key,{loading:false,at:Date.now(),error:'消息已撤回'}); continue }
               this.states.set(m.key,{...old, value:{...old.value, members:old.value?.members ?? [], ...item}, error:undefined, at:Date.now()})
             }
             for (const listener of this.readListeners) listener(result)

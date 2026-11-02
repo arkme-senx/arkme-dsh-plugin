@@ -27,11 +27,13 @@ export class TeamMessageForwardService {
   const target=objectValue(input.target)
   let result:ArkmeSourceSendResult
   let nativeTarget:ArkmeSourceRefPayload|undefined
+  let recalled=false
   if(target.kind==='team'){
    if(typeof target.conversationRef!=='string'||target.sourceRef!==undefined)throw invalid()
    const context=await this.team.resolveConversation(target.conversationRef,session.userId)
    const raw=objectValue(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/messages/forward',{...context,client_message_uid:clientUid(input.requestId),expected_reply_seq:0,sources:selected},session,signal))
-   if(!stringValue(raw.message_uid)||raw.state!=='published'||raw.side!==context.side||typeof raw.seq!=='number'||!Number.isSafeInteger(raw.seq)||raw.seq<=0)throw unknown()
+   if(!stringValue(raw.message_uid)||!['published','recalled'].includes(String(raw.state))||raw.side!==context.side||typeof raw.seq!=='number'||!Number.isSafeInteger(raw.seq)||raw.seq<=0)throw unknown()
+   recalled=raw.state==='recalled'
    const receipt=await this.team.messageReceipt(raw,session.userId,context)
    result={sourceRef:target.conversationRef,itemUid:receipt.key,status:1,sequence:receipt.seq,localState:'synced'}
   }else if(target.kind==='source'){
@@ -51,12 +53,13 @@ export class TeamMessageForwardService {
     result={sourceRef:target.sourceRef,itemUid:input.recordUid,status:typeof core.status==='number'?core.status:1,localState:'synced'}
    }else throw invalid()
   }else throw invalid()
-  if(comment && !(nativeTarget?.kind==='private_chat'||nativeTarget?.kind==='group_chat')) {
+  if(recalled) result={...result,warningText:'该消息已投递，随后被撤回'}
+  if(comment && !recalled && !(nativeTarget?.kind==='private_chat'||nativeTarget?.kind==='group_chat')) {
    try {
     if(target.kind==='team') {
      const context=await this.team.resolveConversation(String(target.conversationRef),session.userId)
      const receipt=objectValue(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/messages/send',{...context,client_message_uid:clientUid(input.requestId+':comment'),expected_reply_seq:0,content:{text_content:comment,template_kind:1}},session,signal))
-     if(receipt.state!=='published'||!stringValue(receipt.message_uid))throw unknown()
+     if(!['published','recalled'].includes(String(receipt.state))||!stringValue(receipt.message_uid))throw unknown()
     }else {
      const topic=nativeTarget?.kind==='topic'
      const receipt=objectValue(await this.runtime.authenticatedPost(topic?'/api/v1/topics/records/create':'/api/v1/records/create',{record_uid:input.commentRecordUid,...(topic?{topic_uid:nativeTarget!.ownerRef}:{}),template_kind:1,text_content:comment,send_at:input.sendAtMillis},session,signal))

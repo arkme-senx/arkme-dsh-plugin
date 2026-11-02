@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 const offline = () => new ArkmePluginError('arkme-network-error', '网络断开', true, 503)
 const input = (overrides: Partial<TeamSendInput> = {}): TeamSendInput => ({conversationRef:'42:conversation',clientUid:randomUUID(),expectedReplySeq:0,content:{text_content:'hello',template_kind:1},fileRefs:[],...overrides})
-async function fixture() {
+async function fixture(metadataDigest?: (ref:string)=>Promise<string>) {
   const directory = await mkdtemp(join(tmpdir(), 'arkme team delivery ')); directories.push(directory)
   let user = 42, online = true, paused = false, denied = false, lostAck = false
   const published = new Map<string, TeamMessage>(), cancelled = new Map<string, TeamMessage>()
@@ -34,6 +34,7 @@ async function fixture() {
     signal.throwIfAborted()
     if (!online) throw offline()
     if (denied) throw new ArkmePluginError('team-not_accessible','无权访问',false,403)
+    if (op === 'team.app.snapshot.capabilities') return {schemaVersion:1,recordPropertiesVersion:1}
     if (op === 'team.app.timeline') return {conversation:{channel:{enabled:!paused},blocked:false},messages:[]}
     if (op === 'team.app.cancel') {
       const uid = String(p.clientUid)
@@ -55,7 +56,7 @@ async function fixture() {
     throw new Error(`unexpected ${op}`)
   })
   const createQueue = () => {
-    const queue = new TeamSendQueue({currentUser:async()=>user,files:()=>files,
+    const queue = new TeamSendQueue({...(metadataDigest?{metadataDigest:async(_conversation:string,_uid:string,ref:string)=>metadataDigest(ref)}:{}),currentUser:async()=>user,files:()=>files,
       identify:async(ref,actor)=>{if(!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-not_accessible','wrong account',false,403);return ref.split('#')[0]!},
       identifyReply:async(ref,message,actor)=>{if(!message.startsWith(`${ref}:reply:`)||!ref.startsWith(`${actor}:`))throw new ArkmePluginError('team-invalid_request','wrong conversation',false,409);return message.split('#')[0]!},execute})
     queues.push(queue);return queue
@@ -446,3 +447,68 @@ it('derives the reply identity on the Host for Tools and reuses it after an unkn
  expect(replay.taskRef).toBe(accepted.taskRef)
  expect(replay.reply?.messageRef).toBe(request.reply!.messageRef)
 })
+
+it.each(['replay','cancel'] as const)('finishes accepted delivery with recalled projection after lost ACK: %s',async(mode)=>{
+ const f=await fixture(),command=input()
+ f.setOnline(false);await f.queue.enqueue(command)
+ f.setOnline(true);f.loseAck();await f.queue.recover()
+ const accepted=f.published.get(command.clientUid)!
+ f.published.set(command.clientUid,{...accepted,state:'recalled',revision:accepted.revision+1,content:undefined,contentStatus:'recalled',media:[]})
+ f.restart();vi.setSystemTime(Date.now()+10_000)
+ if(mode==='cancel') {const task=(await f.queue.list(command.conversationRef))[0]!;await f.queue.cancel(command.conversationRef,task.taskRef)}
+ else await f.queue.recover()
+ expect(f.published.size).toBe(1)
+ expect((await f.queue.list(command.conversationRef))[0]).toMatchObject({state:'sent',message:{state:'recalled'}})
+})
+
+it('keeps sealed metadata across restart without treating random nonces as intent',async()=>{
+  const f=await fixture(async ref=>ref==='cipher-changed'?'other-digest':'same-normalized-digest')
+  f.setOnline(false)
+  const command=input({metadataRef:'cipher-first'})
+  const task=await f.queue.enqueue(command)
+  expect(task.metadataRef).toBeUndefined();expect(task.metadataDigest).toBeUndefined()
+  await f.queue.enqueue({...command,metadataRef:'cipher-new-nonce'})
+  await expect(f.queue.enqueue({...command,metadataRef:'cipher-changed'})).rejects.toMatchObject({code:'team-idempotency_conflict'})
+  f.restart();f.setOnline(true);f.loseAck();await f.queue.recover()
+  f.restart();vi.setSystemTime(Date.now()+10000);await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  const sends=f.execute.mock.calls.filter(([op])=>op==='team.app.send')
+  expect(sends.length).toBeGreaterThanOrEqual(2)
+  expect(sends.every(([,body])=>body.metadataRef==='cipher-first')).toBe(true)
+  const persisted=JSON.parse(await readFile(join(f.directory,'42','state.json'),'utf8'))
+  expect(persisted.teamSends[0].metadataRef).toBeUndefined()
+  expect((await f.queue.list(command.conversationRef))[0]!.metadataDigest).toBeUndefined()
+  await expect(f.queue.enqueue(command)).resolves.toMatchObject({state:'sent'})
+})
+
+it('keeps private background audio on the same durable file owner across retry',async()=>{
+ const f=await fixture(),image=await f.stage();
+ const background=await f.files.stageBytes(Buffer.from('recorded audio').toString('base64'),{fileName:'background.webm',mimeType:'audio/webm'});
+ const command=input({fileRefs:[image.fileRef,background.fileRef],backgroundSound:{fileRefs:[background.fileRef],amplitudes:[0,0.4,1]}});
+ f.setOnline(false);await f.queue.enqueue(command);f.restart();f.setOnline(true);f.loseAck();await f.queue.recover();
+ f.restart();vi.setSystemTime(Date.now()+10000);await f.queue.recover();
+ const content=f.published.get(command.clientUid)!.content!;
+ expect(content.content_payload).toMatchObject({background_sound_amplitudes:[0,0.4,1],media_refs:[{file_asset_uid:'asset-image.png'},{file_asset_uid:'asset-background.webm',content_file_role:4,binding_type:4}]});
+ expect(f.published.size).toBe(1);
+ await expect(f.queue.enqueue({...command,backgroundSound:{...command.backgroundSound!,amplitudes:[1]}})).rejects.toMatchObject({code:'team-idempotency_conflict'});
+});
+it('rejects a background file outside the accepted send before persisting',async()=>{
+ const f=await fixture(),image=await f.stage();
+ await expect(f.queue.enqueue(input({backgroundSound:{fileRefs:[image.fileRef],amplitudes:[]}}))).rejects.toMatchObject({code:'background-sound-invalid'});
+ await expect(f.queue.enqueue(input({fileRefs:[image.fileRef],backgroundSound:{fileRefs:[image.fileRef],amplitudes:[]}}))).rejects.toMatchObject({code:'background-sound-file-invalid'});
+ expect(await f.files.teamSends(42)).toEqual([]);
+});
+
+it('retains frozen private audio while a server lacks the complete property contract',async()=>{
+ const f=await fixture();
+ const file=await f.files.stageBytes(Buffer.from('recorded audio').toString('base64'),{fileName:'private.webm',mimeType:'audio/webm'});
+ const original=f.execute.getMockImplementation()!;
+ let properties=false;
+ f.execute.mockImplementation(async(op,p,signal)=>op==='team.app.snapshot.capabilities'?{schemaVersion:1,recordPropertiesVersion:properties?1:0}:original(op,p,signal));
+ const command=input({fileRefs:[file.fileRef],backgroundSound:{fileRefs:[file.fileRef],amplitudes:[0,1]}});
+ await f.queue.enqueue(command);await f.queue.recover();
+ expect(f.published.size).toBe(0);expect(f.upload).not.toHaveBeenCalled();
+ expect((await f.files.teamSends(42))[0]).toMatchObject({backgroundSound:command.backgroundSound});
+ properties=true;await f.queue.retry(command.conversationRef,(await f.queue.list(command.conversationRef))[0]!.taskRef);await f.queue.recover();
+ expect(f.published.size).toBe(1);
+});

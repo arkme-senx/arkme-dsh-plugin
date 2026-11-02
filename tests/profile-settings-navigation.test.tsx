@@ -90,12 +90,12 @@ describe('profile/settings navigation', () => {
     expect(mocks.call.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(['data.deleted', 'arko.deleted']))
     expect(button('恢复')).toBeDefined()
   })
-  it('makes export limitations explicit without creating an export session', async () => {
+  it('preflights export without creating a session before confirmation', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('导出数据').click())
     expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
-    expect(host.textContent).toContain('当前插件尚未接入完整文件打包下载')
-    expect(host.textContent).toContain('10 条快记')
+    expect(host.textContent).toContain('导出备份')
+    expect(host.textContent).toContain('10条快记')
   })
   it('renders usage in settings and unmounts account content immediately on logout', async () => {
     await act(async () => root.render(<ArkmeAccountUsageSettings />))

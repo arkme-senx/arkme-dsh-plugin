@@ -696,3 +696,19 @@ it('does not reuse another account or expired contact reference', async () => {
   expect(expired.contactRef).not.toBe(first.contactRef)
   await expect(f.service.contactProfile(first.contactRef)).rejects.toMatchObject({ code: 'directory-contact-ref-expired' })
 })
+
+
+it('retains adjacent int64 contacts as distinct exact team recipients across both directory sources',async()=>{
+ const first='9007199254740992',second='9007199254740993'
+ const f=fixture({contacts:{items:[{user_id:first,remark:'第一位'}],has_more:false},groups:{items:[{session:{session_kind:1,chat_session_uid:'private-int64'},private_counterpart:{user_id:second},private_supplement:{counterpart_name_snapshot:'第二位'}}],has_more:false}})
+ const page=await f.service.list('contacts')
+ const rows=page.items.filter(v=>v.kind==='contact')
+ expect(rows.map(v=>v.displayName)).toEqual(['第一位','第二位'])
+ expect(await f.service.resolveTeamRecipient(rows[0]!.contactRef)).toBe(first)
+ expect(await f.service.resolveTeamRecipient(rows[1]!.contactRef)).toBe(second)
+ await f.service.openContactChat(rows[1]!.contactRef)
+ expect(f.chat.openPrivateChatFromUser).toHaveBeenCalledWith(second,expect.anything())
+ expect(f.profile.publicProfileSummariesByUserIds.mock.calls.flatMap(v=>v[0])).not.toContain(Number(second))
+ f.setSession({...session,userId:8})
+ await expect(f.service.resolveTeamRecipient(rows[1]!.contactRef)).rejects.toThrow()
+})

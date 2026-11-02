@@ -1300,7 +1300,6 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             'X-Arkme-File-Name': encodeURIComponent(row.file.name), 'X-Arkme-Start-At': String(start),
             'X-Arkme-Belong-User': String(row.ownership === 'self' ? currentUserId : 0), 'X-Arkme-Recording-Kind': '3',
             'X-Arkme-Import-Task': row.id,
-            'X-Arkme-Recording-Strategy': recordingStrategy(row.strategy),
             ...(row.batch ? { 'X-Arkme-Import-Batch': encodeURIComponent(JSON.stringify(row.batch)) } : {}),
           },
         }) as Promise<PublicRecordingImportJob> : uploadArkmeRecording(
@@ -1377,6 +1376,13 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       publishRows(current => current.map(row => frozen.has(row.id) ? { ...row, strategy: recordingStrategy(frozen.get(row.id)!.strategy), submission: frozen.get(row.id)!.submission! } : row))
       persistRows(rowsRef.current, true)
       await journalTail.current
+      // The v1 desktop bridge accepts only the original upload headers. Keep
+      // the frozen strategy in the Host journal, keyed by the existing task ID.
+      const nativeRows = requested.filter(row => row.source?.kind === 'desktop')
+      if (nativeRows.length) await callArkme('recordings.import.strategies.register', {
+        expectedUserId: currentUserId,
+        tasks: nativeRows.map(row => ({ taskId: row.id, strategy: recordingStrategy(row.strategy) })),
+      }, controller.signal)
     }).then(() => ({}), error => ({ error }))
     const duplicateCheck = duplicateCheckQueueRef.current
     setError('')

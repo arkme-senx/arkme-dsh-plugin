@@ -31,7 +31,7 @@ async function settle() {
   // The owner requires consecutive layout samples. A wall-clock delay can
   // expire before its RAF callbacks under load; flush frames and React commits.
   for (let frame = 0; frame < 3; frame++) {
-    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+    await act(async () => { await vi.advanceTimersToNextFrame() })
   }
 }
 async function render(changes: Partial<ArkmeHomeTourProps> = {}) {
@@ -57,6 +57,7 @@ function setDirectoryReady(ready: boolean, account = 'prod:1') {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const computedStyle = window.getComputedStyle.bind(window)
   vi.spyOn(window, 'getComputedStyle').mockImplementation(element => computedStyle(element))
@@ -117,6 +118,7 @@ afterEach(async () => {
   document.body.replaceChildren()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('home tour browser behavior', () => {

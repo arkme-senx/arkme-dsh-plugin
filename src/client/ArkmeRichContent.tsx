@@ -2,9 +2,9 @@ import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './Ar
 import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
 import { selectedTextNotePresentation } from '../selected-text-note.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
-import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess } from './media-access.js'
+import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess,type ArkmeMediaReadState } from './media-access.js'
 import { openLongArticleWindow } from './long-article-window.js'
-import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview } from './attachment-preview-window.js'
+import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview, closeAttachmentPreviewSource } from './attachment-preview-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useArkmeLivePhotoPlayback } from './live-photo-playback.js'
 import { ArkmeLivePhotoBadge } from './ArkmeLivePhotoBadge.js'
@@ -1285,14 +1285,25 @@ export function openSessionAttachmentPreview(blocks: ArkmeContentBlock[], select
 }
 function SessionAttachmentPreview({blocks, initial: selected, source, forceDownload}: {blocks: ArkmeContentBlock[]; initial: ArkmeContentBlock; source: string; forceDownload: boolean}) {
   const mediaAccess = useContext(ArkmeMediaAccessContext)
+  const [readState,setReadState]=useState<ArkmeMediaReadState>(()=>({status:mediaAccess?.subscribeReadState?'checking':'available'}))
+  const previewDocument=useContext(AttachmentPreviewSurface)
+  useEffect(()=>mediaAccess?.subscribeReadState?.(state=>{
+    if(state.status!=='available')for(const media of previewDocument?.querySelectorAll('video,audio')??[]){
+      const element=media as HTMLMediaElement;element.pause();element.removeAttribute('src');element.load()
+    }
+    if(state.status==='revoked')closeAttachmentPreviewSource(source)
+    else setReadState(state)
+  }),[mediaAccess,source,previewDocument])
   const select = (block: ArkmeContentBlock) => openSessionAttachmentPreview(blocks, block, source, forceDownload, mediaAccess)
   const index = blocks.findIndex(block => (block.fileAssetUid ?? block.mediaRef) === (selected.fileAssetUid ?? selected.mediaRef))
   return <div onKeyDownCapture={event => {
+    if(readState.status!=='available')return
     const target = event.target as HTMLElement
     if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || target.closest?.('input,textarea,select,video,audio,[contenteditable="true"],[role="slider"]')) return
     const next = event.key === 'ArrowLeft' ? index - 1 : event.key === 'ArrowRight' ? index + 1 : -1
     if (next >= 0 && next < blocks.length) { event.preventDefault(); event.stopPropagation(); select(blocks[next]!) }
   }}>
-    <ArkmeMediaPreview key={selected.fileAssetUid ?? selected.mediaRef} blocks={blocks} selected={selected} onSelect={select} onClose={closeAttachmentPreview} forceDownload={forceDownload} openLocalFile={false} />
+    {readState.status==='available' ? <ArkmeMediaPreview key={selected.fileAssetUid ?? selected.mediaRef} blocks={blocks} selected={selected} onSelect={select} onClose={closeAttachmentPreview} forceDownload={forceDownload} openLocalFile={false} />
+      : <p role={readState.status==='unavailable'?'alert':'status'}>{tr(readState.status==='unavailable'?'内容暂不可用，请重试':'正在确认访问权限…')}{readState.status==='unavailable'&&<button type="button" onClick={readState.retry}>{tr('重试')}</button>}</p>}
   </div>
 }

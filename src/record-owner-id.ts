@@ -23,6 +23,8 @@ export function parseOwnerJson(text: string): unknown {
 export function stringifyOwnerJson(value: unknown): string {
   const json = JSON as typeof JSON & { rawJSON(text: string): unknown }
   return JSON.stringify(value, function (key, item: unknown) {
+    if (key === 'external_user_id' && typeof item === 'string') return item
+    if ((key === 'user_ids' || key === 'userIds') && Array.isArray(item)) return item.map(id => typeof id === 'string' && typeof recordOwnerId(id) === 'string' ? json.rawJSON(id) : id)
     // Publication attribution has an explicit decimal-string Team ID contract.
     // Other Team/owner endpoints retain their existing numeric int64 wire form.
     if (key === 'team_id' && (this?.membership_kind === 'owner' || this?.membership_kind === 'member')

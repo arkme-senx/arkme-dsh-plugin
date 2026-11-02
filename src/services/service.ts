@@ -32,6 +32,11 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  recordingVoiceDraft?(scope: string, change?: import('../recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDraft>
+ teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
+ retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
+
+  teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
@@ -116,6 +121,7 @@ arkoFileRefs(userId:number):Promise<string[]>
     expectedCandidate?: ArkmeRecordReeditDraft,
   ): Promise<boolean>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  recordingImportStrategies?(scope: string, tasks: Array<{ taskId: string; strategy?: import('../recording-strategy-contract.js').RecordingStrategy }>, signal?: AbortSignal): Promise<Record<string, import('../recording-strategy-contract.js').RecordingStrategy>>
   planRecordingToolBatch?(scope: string, candidates: Array<{ key: string; isNew: boolean; strategy?: import('../recording-strategy-contract.js').RecordingStrategy }>, timeZone: string, signal?: AbortSignal): Promise<Record<string, import('../recording-tool-batch.js').RecordingToolBatchMember>>
   listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
@@ -639,6 +645,9 @@ export class ServiceRuntime {
 
   private registeredRead(baseUrl: string, path: string): boolean {
     if (baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids') return true
+    if (baseUrl === this.config.authBaseUrl && new Set([
+      '/api/v1/dsh-remote/desktops/list', '/api/v1/dsh-remote/sessions/account-list', '/api/v1/dsh-remote/workspaces/list',
+    ]).has(path)) return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
       '/api/v1/chats/members/records/aggregate', '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true

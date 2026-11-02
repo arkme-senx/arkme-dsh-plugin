@@ -1,4 +1,5 @@
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
+import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
 import {requireFrozenTeamSendTime} from './group-representation.js'
 import {GroupRepresentationCodec} from './group-representation.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
@@ -115,7 +116,7 @@ import { arkmeRecordCaptureContextPayload, RecordService } from './record-servic
 import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataFromRecord, arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
-import { arkmeRichBackgroundSound } from '../record-background-sound.js'
+import { arkmeRichBackgroundSound, arkmeBackgroundSoundContent } from '../record-background-sound.js'
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import {
   arkmeChatConversationPreview,
@@ -152,14 +153,7 @@ export function arkmeRichContentPayload(
       sort_order: index,
       file_name: asset.fileName,
     })),
-    ...(backgroundSound?.assets.map((asset, index) => ({
-      file_asset_uid: asset.fileAssetUid,
-      content_file_role: 4,
-      binding_type: 4,
-      render_role: 1,
-      sort_order: assets.length + index,
-      file_name: asset.fileName,
-    })) ?? []),
+    ...arkmeBackgroundSoundContent(backgroundSound, assets.length).refs,
   ]
   return {
     payload_kind: assets.length === 0 ? 1 : 2,
@@ -242,7 +236,7 @@ interface ArkmeChatMemberRefPayload {
   version: 1
   viewerUserId: number
   chatSessionUid: string
-  targetUserId: number
+  targetUserId: RecordOwnerId
 }
 
 interface ArkmeChatHumanMentionRefPayload {
@@ -369,24 +363,7 @@ function firstSnapshotText(...values: unknown[]): string | undefined {
   return undefined
 }
 
-function snapshotDateLabel(value: number | undefined): string | undefined {
-  if (value === undefined) return undefined
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return undefined
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
-}
 
-function snapshotMovement(value: Record<string, unknown>): string | undefined {
-  const rawSpeed = value.speed ?? value.speed_mps ?? value.speedMetersPerSecond
-  const speed = numberValue(rawSpeed)
-  if (typeof rawSpeed === 'number' && Number.isFinite(rawSpeed)) {
-    const kmh = Math.round(speed * 3.6)
-    return kmh <= 2 ? '静止' : kmh <= 5 ? `缓慢移动（${String(kmh)}km/h）` : kmh <= 60 ? `移动（${String(kmh)}km/h）` : `高速移动（${String(kmh)}km/h）`
-  }
-  if (typeof value.activity !== 'number' || !Number.isFinite(value.activity)) return undefined
-  const activity = Math.trunc(value.activity)
-  return activity === 0 ? '静止' : activity === 1 ? '步行' : activity === 2 ? '跑步' : activity === 3 ? '骑行' : activity === 4 ? '驾车' : undefined
-}
 
 function snapshotLocationCapture(value: Record<string, unknown>): ArkmeRecordLocationCapture | undefined {
   const latitude = finiteNumberValue(value.lat ?? value.latitude)
@@ -404,23 +381,6 @@ function snapshotLocationCapture(value: Record<string, unknown>): ArkmeRecordLoc
   }
 }
 
-function snapshotWeatherText(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    const direct = stringValue(value).trim()
-    if (direct !== '') return direct
-    const weather = objectValue(value)
-    if (Object.keys(weather).length === 0) continue
-    const temperature = finiteNumberValue(weather.temp ?? weather.temperature)
-    const condition = firstSnapshotText(
-      weather.weather, weather.weatherText, weather.weather_text,
-      weather.condition_ch, weather.conditionCh, weather.condition,
-    )
-    if (temperature !== undefined || condition !== undefined) {
-      return `${temperature === undefined ? '' : `${String(Math.round(temperature))}°`}${temperature === undefined || condition === undefined ? '' : ' '}${condition ?? ''}`.trim()
-    }
-  }
-  return undefined
-}
 
 function snapshotLocationContext(value: unknown): Record<string, unknown> {
   const root = objectValue(value)
@@ -618,7 +578,9 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
   // Crucially, the detailed core wins over any same-named entry embedded in
   // payload/extra metadata; those entries are frequently zero or stale.
   const lifecycleSources = [recordCore, nestedRecord, raw, payload]
-  const startAtMillis = firstRecordEpochMillis(lifecycleSources, [
+  const frozen = objectValue(values.capture_context).schema_version === 1
+  const recordMillis = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0 && v <= 8640000000000000 ? v : undefined
+  const startAtMillis = frozen ? recordMillis(recordCore.record_started_at) : firstRecordEpochMillis(lifecycleSources, [
     // Match Flutter's canonical order exactly: create_at, then created_at,
     // then the send timestamp for older records that do not expose either.
     'create_at', 'created_at', 'createAt', 'createdAt', 'create_time', 'createTime',
@@ -636,32 +598,25 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
     'update_at', 'updated_at', 'updateAt', 'updatedAt', 'update_time_stamp', 'updateTimeStamp',
     'update_timestamp', 'updateTimestamp', 'update_at_ms', 'updateAtMillis',
   ])
-  const completeAtMillis = updatedAtMillis !== undefined && updatedAtMillis > (sendAtMillis ?? 0)
+  const completeAtMillis = frozen ? recordMillis(recordCore.send_at) : updatedAtMillis !== undefined && updatedAtMillis > (sendAtMillis ?? 0)
     ? updatedAtMillis
     : sendAtMillis
   // update time is completion, not synchronization. Flutter only renders a
   // concrete sync timestamp from the dedicated upload timestamp field.
-  const syncedAtMillis = firstRecordEpochMillis(lifecycleSources, [
+  const syncedAtMillis = frozen ? recordMillis(recordCore.server_synced_at) : firstRecordEpochMillis(lifecycleSources, [
     'upload_at', 'uploadAt', 'upload_timestamp', 'uploadTimeStamp', 'upload_time_stamp_v2',
     'uploadTimeStampV2', 'upload_at_v2', 'uploadAtV2', 'upload_at_ms', 'uploadAtMillis',
   ])
   const captureContext = timelineCaptureContext(values)
   const locationCapture = snapshotLocationCapture({ ...location, ...position, ...objectValue(values.position) })
   // Match Flutter PositionDetail's city/county names and its road + POI suffix.
-  const areaLabel = [
-    firstSnapshotText(position.city)?.replace(/市$/, ''),
-    firstSnapshotText(position.county)?.replace(/(区|县|市)$/, ''),
-  ].filter(Boolean).join('·')
-  const positionLabel = [
-    areaLabel,
-    firstSnapshotText(position.road), firstSnapshotText(position.poi, position.poi_name, position.poiName),
-  ].join('')
+  const positionLabel = snapshotPositionLabel(position)
   const locationLabel = firstSnapshotText(
     positionLabel, position.address,
     location.poi_name, location.poiName, location.address, location.name,
   )
   const weather = snapshotWeatherText(position.weather, position.weatherText, location.weather, values.weather)
-  const altitudeMeters = nonNegativeNumberValue(location.altitude, location.alt, position.altitude, position.alt)
+  const altitudeMeters = [location.altitude, location.alt, position.altitude, position.alt].map(finiteNumberValue).find(value => value !== undefined)
   const movement = snapshotMovement({ ...values, ...location, ...position })
   const backgroundSound = arkmeSnapshotBackgroundSoundState(values)
   const status = numberValue(values.status)
@@ -675,8 +630,8 @@ function snapshotDetailFromChatRaw(raw: Record<string, unknown>, fallback: { ite
     textFormat: arkmeRecordTextFormat(record.text_content !== undefined ? record : values),
     ...(recordDurationMillis === undefined ? {} : { recordDurationMillis }),
     ...(editDurationMillis === undefined ? {} : { editDurationMillis }),
-    ...(numberValue(values.view_times ?? values.viewTimes) > 0 ? { viewTimes: Math.trunc(numberValue(values.view_times ?? values.viewTimes)) } : {}),
-    ...(numberValue(values.share_times ?? values.shareTimes) > 0 ? { shareTimes: Math.trunc(numberValue(values.share_times ?? values.shareTimes)) } : {}),
+    ...(nonNegativeNumberValue(values.view_times, values.viewTimes) === undefined ? {} : {viewTimes:Math.trunc(nonNegativeNumberValue(values.view_times,values.viewTimes)!)}),
+    ...(nonNegativeNumberValue(values.share_times, values.shareTimes) === undefined ? {} : {shareTimes:Math.trunc(nonNegativeNumberValue(values.share_times,values.shareTimes)!)}),
     ...(captureContext === undefined ? {} : { captureContext }),
     backgroundSound,
     ...(locationLabel === undefined ? {} : { locationLabel }),
@@ -1166,21 +1121,21 @@ interface ChatMemberProjectionOptions {
   signal?: AbortSignal
 }
 
-function isUsableChatMemberName(value: string, userId: number): boolean {
+function isUsableChatMemberName(value: string, userId: RecordOwnerId): boolean {
   return value !== ''
     && value !== '成员'
     && value !== '群成员'
     && value !== `用户 ${String(userId)}`
 }
 
-function firstUsableChatMemberName(values: readonly unknown[], userId: number): string {
+function firstUsableChatMemberName(values: readonly unknown[], userId: RecordOwnerId): string {
   return values
     .map(normalizedJoinDisplayName)
     .find(value => isUsableChatMemberName(value, userId)) ?? ''
 }
 
 function resolveChatMemberDisplayNames(input: {
-  userId: number
+  userId: RecordOwnerId
   remarkCandidates?: readonly unknown[]
   memberNameCandidates?: readonly unknown[]
   userNameCandidates?: readonly unknown[]
@@ -1197,7 +1152,7 @@ function resolveChatMemberDisplayNames(input: {
 
 function projectChatMemberDisplayNames(
   item: Record<string, unknown>,
-  userId: number,
+  userId: RecordOwnerId,
   viewerRemark?: string,
   publicDisplayName?: string,
 ): ChatMemberDisplayNames {
@@ -1212,7 +1167,7 @@ function projectChatMemberDisplayNames(
 function projectChatMemberMentionDisplayNames(
   names: Pick<ChatMemberDisplayNames, 'memberName' | 'userName'>,
   remarkCandidates: readonly unknown[],
-  userId: number,
+  userId: RecordOwnerId,
 ): ChatMemberMentionDisplayNames {
   // A mention is public in the group: only its supporting label may consume the viewer's exact private remark.
   const mentionDisplayName = names.memberName || names.userName || '群成员'
@@ -1820,9 +1775,9 @@ export class ChatService {
       item, userId: (await this.openChatMemberRef(item.memberRef, session.userId, source.ownerRef)).targetUserId,
     })))
     const remarks = await this.source.privateRemarksByUserIds(resolved.map(item => item.userId), options)
-    return { items: resolved.map(({ item, userId }) => ({ userId, displayName: remarks.get(userId) || item.displayName,
+    return { items: resolved.flatMap(({ item, userId }) => typeof userId === 'number' ? [{ userId, displayName: remarks.get(userId) || item.displayName,
       nickname: item.memberName || item.displayName, ...(item.avatarRef ? { avatarRef: item.avatarRef } : {}),
-    })), hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }
+    }] : []), hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }
   }
 
   async pageSourceMembers(sourceRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeConversationMemberPage> {
@@ -1838,11 +1793,11 @@ export class ChatService {
     }, options.signal)
     options.signal?.throwIfAborted()
     const raw = listValue(data.items).map(objectValue)
-    const ids = raw.map(item => numberValue(item.user_id))
-    const next = numberValue(data.next_user_id)
+    const ids = raw.map(item => recordOwnerId(item.user_id))
+    const next = recordOwnerId(data.next_user_id)
     if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items) || typeof data.has_more !== 'boolean' || chatMemberRole(data.self_role) === 'unknown'
       || raw.some(item => chatMemberStatus(item.status) === 'unknown')
-      || raw.length > limit || ids.some((id, index) => !Number.isSafeInteger(id) || id <= (index === 0 ? after : ids[index - 1]!))
+      || raw.length > limit || ids.some((id, index) => !id || BigInt(id) <= BigInt(index === 0 ? after : ids[index - 1]!))
       || (data.has_more && (raw.length === 0 || next !== ids.at(-1)))) {
       throw new ArkmePluginError('member-page-invalid-response', '成员分页响应无效', true, 502)
     }
@@ -1852,7 +1807,7 @@ export class ChatService {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     const removedMemberRefs = await Promise.all(raw.filter(item => chatMemberStatus(item.status) !== 'active')
-      .map(item => this.sealChatMemberRef(session.userId, source.ownerRef, numberValue(item.user_id))))
+      .map(item => this.sealChatMemberRef(session.userId, source.ownerRef, recordOwnerId(item.user_id))))
     const signingKey = await this.runtime.stateStore.uniqueCode()
     const joinEvents = source.kind === 'group_chat' && this.runtime.config.chatMemberJoinEventsEnabled !== false
       ? await projectArkmeConversationMemberJoinEvents(raw, {
@@ -1885,12 +1840,12 @@ export class ChatService {
     }, options.signal)
     options.signal?.throwIfAborted()
     const raw = listValue(data.items).map(objectValue)
-    const returnedIds = raw.map(item => numberValue(item.user_id))
+    const returnedIds = raw.map(item => recordOwnerId(item.user_id))
     if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items) || raw.length > ids.length || new Set(returnedIds).size !== raw.length
       || returnedIds.some(id => !ids.includes(id)) || raw.some(item => chatMemberStatus(item.status) !== 'active')) {
       throw new ArkmePluginError('member-presentation-invalid-response', '成员资料响应无效', true, 502)
     }
-    const profiles = await this.profile.publicProfileSummariesByUserIds(returnedIds, session, options.signal).catch(error => {
+    const profiles = await this.profile.publicProfileSummariesByUserIds(returnedIds.filter((id):id is number => typeof id === 'number'), session, options.signal).catch(error => {
       if (options.signal?.aborted) throw error
       return new Map()
     })
@@ -1899,7 +1854,7 @@ export class ChatService {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     options.signal?.throwIfAborted()
-    const unavailableProfileMemberRefs = await Promise.all(returnedIds.filter(id => !profiles.has(id)).map(id => this.sealChatMemberRef(session.userId, source.ownerRef, id)))
+    const unavailableProfileMemberRefs = await Promise.all(returnedIds.filter(id => typeof id !== 'number' || !profiles.has(id)).map(id => this.sealChatMemberRef(session.userId, source.ownerRef, id)))
     const result: ArkmeConversationMemberPresentation = {
       kind: 'presentation', source: await this.source.sourceItem(source), items,
       unavailableProfileMemberRefs,
@@ -1924,21 +1879,21 @@ export class ChatService {
     }
   }
 
-  private async sealMemberPageCursor(userId: number, group: string, after: number): Promise<string> {
+  private async sealMemberPageCursor(userId: number, group: string, after: RecordOwnerId): Promise<string> {
     const encoded = encodeOpaqueJson({ userId, group, after })
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
     return `arkme-member-page-v1.${encoded}.${signature}`
   }
 
-  private async openMemberPageCursor(cursor: string, userId: number, group: string): Promise<number> {
+  private async openMemberPageCursor(cursor: string, userId: number, group: string): Promise<RecordOwnerId> {
     const [prefix, encoded, signature, extra] = cursor.split('.')
     if (cursor.length > 4096 || prefix !== 'arkme-member-page-v1' || !encoded || !signature || extra !== undefined) throw new ArkmePluginError('member-cursor-invalid', '成员分页游标无效', false, 400)
     const expected = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
     if (Buffer.byteLength(signature) !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new ArkmePluginError('member-cursor-invalid', '成员分页游标无效', false, 400)
     let value: Record<string, unknown>
     try { value = objectValue(decodeOpaqueJson(encoded)) } catch { throw new ArkmePluginError('member-cursor-invalid', '成员分页游标无效', false, 400) }
-    if (value.userId !== userId || value.group !== group || !Number.isSafeInteger(value.after) || numberValue(value.after) <= 0) throw new ArkmePluginError('member-cursor-invalid', '成员分页游标与当前账号或群不匹配', false, 403)
-    return numberValue(value.after)
+    if (value.userId !== userId || value.group !== group || !recordOwnerId(value.after)) throw new ArkmePluginError('member-cursor-invalid', '成员分页游标与当前账号或群不匹配', false, 403)
+    return recordOwnerId(value.after)
   }
 
   async listSourceMembers(
@@ -2083,7 +2038,7 @@ export class ChatService {
     const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
     // Signed references identify a person; fresh membership is still required.
     const membership = await this.rawChatMembers(source.ownerRef, false, session, signal)
-    if (!membership.some(raw => numberValue(raw.user_id) === target.targetUserId)) {
+    if (!membership.some(raw => recordOwnerId(raw.user_id) === target.targetUserId)) {
       throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
     }
     const context = { scope: JSON.stringify([this.runtime.config.environment, this.runtime.config.chatBaseUrl, session.userId]), target: target.targetUserId, entry: source.ownerRef }
@@ -2108,11 +2063,11 @@ export class ChatService {
       for (const value of raw.items) {
         const bundle = objectValue(value)
         const chat = objectValue(bundle.session)
-        if (![1, 3].includes(numberValue(chat.session_kind)) || numberValue(objectValue(bundle.private_counterpart).user_id) !== target.targetUserId) continue
+        if (![1, 3].includes(numberValue(chat.session_kind)) || recordOwnerId(objectValue(bundle.private_counterpart).user_id) !== target.targetUserId) continue
         const uid = stringValue(chat.chat_session_uid)
         if (!uid) throw new ArkmePluginError('person-sources-response-invalid', '共同对话列表响应不完整，请重试', true, 502)
         const displayName = stringValue(objectValue(bundle.private_supplement).remark).trim() || stringValue(objectValue(bundle.private_supplement).counterpart_name_snapshot).trim() || stringValue(objectValue(bundle.private_counterpart).display_name_snapshot).trim() || '与TA的私聊'
-        items.push({ source: { ...await this.source.sourceItem({ version: 1, userId: session.userId, kind: 'private_chat', ownerRef: uid, displayName }), peerUserId: target.targetUserId }, memberRef: await this.sealChatMemberRef(session.userId, uid, target.targetUserId) })
+        items.push({ source: { ...await this.source.sourceItem({ version: 1, userId: session.userId, kind: 'private_chat', ownerRef: uid, displayName }), ...(typeof target.targetUserId === 'number' ? {peerUserId: target.targetUserId} : {}) }, memberRef: await this.sealChatMemberRef(session.userId, uid, target.targetUserId) })
         found = true
       }
       if (!found && raw.has_more) {
@@ -2144,7 +2099,7 @@ export class ChatService {
     const rawMembers = await this.rawChatMembers(source.ownerRef, false, session, options.signal)
     const members = await this.projectChatMembers(
       source.ownerRef,
-      options.basicPresentation ? rawMembers.filter(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId) : rawMembers,
+      options.basicPresentation ? rawMembers.filter(item => recordOwnerId(item.user_id) === reference.targetUserId) : rawMembers,
       session,
       {
         includeViewerLabels: !options.basicPresentation && source.kind === 'group_chat',
@@ -2187,7 +2142,7 @@ export class ChatService {
     }
   }
 
-  async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<{ userId: number }> {
+  async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<{ userId: RecordOwnerId }> {
     const session = await this.runtime.requireSession()
     signal?.throwIfAborted()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
@@ -2195,7 +2150,7 @@ export class ChatService {
     const reference = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
     const members = await this.rawChatMembers(source.ownerRef, true, session, signal)
     signal?.throwIfAborted()
-    if (!members.some(member => Math.trunc(numberValue(member.user_id)) === reference.targetUserId)) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+    if (!members.some(member => recordOwnerId(member.user_id) === reference.targetUserId)) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
     return { userId: reference.targetUserId }
   }
 
@@ -2214,7 +2169,7 @@ export class ChatService {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
     const rawMembers = await this.rawChatMembers(source.ownerRef, true, session, options.signal)
-    const memberIsActive = rawMembers.some(item => Math.trunc(numberValue(item.user_id)) === reference.targetUserId)
+    const memberIsActive = rawMembers.some(item => recordOwnerId(item.user_id) === reference.targetUserId)
     if (!memberIsActive) {
       throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
     }
@@ -2224,20 +2179,21 @@ export class ChatService {
   }
 
   async openPrivateChatFromUser(
-    peerUserId: number,
+    peerUserId: RecordOwnerId,
     options: { presentationDisplayName?: string; expectedViewerUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
+    peerUserId=recordOwnerId(peerUserId)
     const session = await this.runtime.requireSession()
     if (options.expectedViewerUserId !== undefined && options.expectedViewerUserId !== session.userId) {
       throw new ArkmePluginError('member-events-unavailable', '账号已切换，请重新打开用户卡片', false, 403)
     }
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
     }
-    if (peerUserId === session.userId) {
+    if (String(peerUserId) === String(session.userId)) {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
-    const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
+    const profile = typeof peerUserId === 'number' ? (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId) : undefined
     const displayName = options.presentationDisplayName?.trim() || profile?.displayName.trim() || '群成员'
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/create-private',
@@ -2265,12 +2221,12 @@ export class ChatService {
         ?? await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
       sourceKey: existingPrivateSource?.sourceKey
         ?? await this.source.chatDirectorySourceKey(session.userId, uid),
-      peerUserId,
+      ...(typeof peerUserId === 'number' ? {peerUserId} : {}),
       kind: 'private_chat',
       displayName: existingPrivateSource?.displayName ?? displayName,
       ...(existingPrivateSource?.avatarRef !== undefined
         ? { avatarRef: existingPrivateSource.avatarRef }
-        : profile?.avatarUrl === undefined
+        : profile?.avatarUrl === undefined || typeof peerUserId !== 'number'
           ? {}
           : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
       activeAtMillis: numberValue(chatSession.last_active_at) || existingPrivateSource?.activeAtMillis || Date.now(),
@@ -2320,7 +2276,7 @@ export class ChatService {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者私聊资料缺失，请稍后重试', true, 502)
     }
     const peerUserId = Math.trunc(numberValue(partner.user_id))
-    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+    if (!recordOwnerId(peerUserId)) {
       throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者账号资料缺失，请稍后重试', true, 502)
     }
     const displayName = stringValue(partner.mark).trim()
@@ -6350,6 +6306,23 @@ export class ChatService {
     return this.hydratedMessageSnapshotDetail(reference, session, options, chatRaw)
   }
 
+  private async recordCreationSnapshot(recordUid: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    let cursor = 0
+    for (;;) {
+      const page = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/revisions/query',
+        {record_uid:recordUid,limit:100,...(cursor ? {cursor_edit_at:cursor} : {})},session,signal)
+      if (typeof page.record_uid === 'string' && page.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
+      for (const row of listValue(page.items)) {
+        const item = objectValue(row)
+        if (typeof item.record_uid === 'string' && item.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
+        if (item.version === 1) return item
+      }
+      const next = numberValue(page.next_cursor_edit_at)
+      if (page.has_more !== true || next <= 0 || cursor > 0 && next >= cursor) return undefined
+      cursor = next
+    }
+  }
+
   private async hydratedMessageSnapshotDetail(
     reference: ArkmeMessageActionRefPayload,
     session: ArkmeSessionCredentials,
@@ -6426,20 +6399,37 @@ export class ChatService {
         },
       },
     }
+    let environmentRevisionUid: string | undefined
+    const needsOriginal = recordCore.has_manual_edit === true || recordCore.has_manual_edit === undefined && numberValue(recordCore.version) > 1
+    if (!options.includeAttachments && needsOriginal) {
+      const original = await this.recordCreationSnapshot(reference.recordUid,session,options.signal)
+      environmentRevisionUid = typeof original?.revision_uid === 'string' ? original.revision_uid : undefined
+      // Latest text stays visible. Only creation properties come from version 1;
+      // an absent original never inherits the latest edit's device or location.
+      raw = {record:{record_uid:reference.recordUid,text_content:recordCore.text_content,
+        text_format:recordCore.text_format,status:recordCore.status,
+        record_started_at:recordCore.record_started_at,send_at:recordCore.send_at,
+        server_synced_at:recordCore.server_synced_at,record_duration_millis:recordCore.record_duration_millis,
+        edit_duration_millis:recordCore.edit_duration_millis,create_at:recordCore.create_at,
+        view_times:recordCore.view_times,share_times:recordCore.share_times,
+        capture_context:objectValue(original?.edit_capture_context),
+        content_payload:objectValue(original?.content_payload),extra:objectValue(original?.template_extra)},
+        location:objectValue(objectValue(original?.edit_capture_context).automatic_location ?? listValue(original?.edit_locations)[0])}
+    }
     // Flutter obtains weather and resolved place context from this record
     // service endpoint after the core record has been read. `records/detail`
     // alone frequently contains the coordinates but not the weather that the
     // desktop detail dialog shows. This enrichment is optional for legacy
     // records: an unavailable context must not hide the otherwise complete
     // snapshot.
-    const locationContext = options.includeAttachments ? undefined : await this.runtime.authenticatedPost<Record<string, unknown>>(
+    const locationContext = options.includeAttachments || needsOriginal && !environmentRevisionUid ? undefined : await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/location/context/get',
-      { record_uid: reference.recordUid },
+      { record_uid: reference.recordUid, ...(environmentRevisionUid ? {revision_uid:environmentRevisionUid} : {}) },
       session,
       options.signal,
       {
         lane: 'interactive-read',
-        key: `message-snapshot-location-context:${reference.recordUid}`,
+        key: `message-snapshot-location-context:${reference.recordUid}:${environmentRevisionUid ?? 'current'}`,
         failureCooldownMs: 10_000,
       },
     ).catch(() => undefined)
@@ -6612,10 +6602,10 @@ export class ChatService {
     ])
     const members: ArkmeConversationMemberItem[] = []
     for (const item of rawItems) {
-      const userId = Math.trunc(numberValue(item.user_id))
-      if (!Number.isSafeInteger(userId) || userId <= 0) continue
-      const profile = profiles.get(userId)
-      const viewerLabel = viewerLabels.get(userId)
+      const userId = recordOwnerId(item.user_id)
+      if (!userId) continue
+      const profile = typeof userId === 'number' ? profiles.get(userId) : undefined
+      const viewerLabel = typeof userId === 'number' ? viewerLabels.get(userId) : undefined
       const names = projectChatMemberDisplayNames(
         item, userId, viewerLabel?.remark, profile?.displayName,
       )
@@ -6630,7 +6620,7 @@ export class ChatService {
         && Number.isSafeInteger(extra.mention_count) && numberValue(extra.mention_count) >= 0
       members.push({
         memberRef: await this.sealChatMemberRef(session.userId, chatSessionUid, userId),
-        ...(options.includeHumanMentionRefs && status === 'active' && userId !== session.userId ? {
+        ...(options.includeHumanMentionRefs && typeof userId === 'number' && status === 'active' && userId !== session.userId ? {
           mentionRef: await this.sealChatHumanMentionRef(session.userId, chatSessionUid, userId, mentionDisplayName),
           mentionDisplayName,
           ...(mentionSecondaryName === '' ? {} : { mentionSecondaryName }),
@@ -6638,7 +6628,7 @@ export class ChatService {
         displayName,
         ...(memberName === '' ? {} : { memberName }),
         ...(secondaryName === '' ? {} : { secondaryName }),
-        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, userId) }),
+        ...(profile?.avatarUrl === undefined || typeof userId !== 'number' ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, userId) }),
         role,
         status,
         isSelf: userId === session.userId,
@@ -6965,7 +6955,7 @@ export class ChatService {
   private async sealChatMemberRef(
     viewerUserId: number,
     chatSessionUid: string,
-    targetUserId: number,
+    targetUserId: RecordOwnerId,
   ): Promise<string> {
     const encoded = encodeOpaqueJson({
       version: 1,
@@ -6999,11 +6989,11 @@ export class ChatService {
       version: 1,
       viewerUserId: Math.trunc(numberValue(raw.viewerUserId)),
       chatSessionUid: stringValue(raw.chatSessionUid).trim(),
-      targetUserId: Math.trunc(numberValue(raw.targetUserId)),
+      targetUserId: recordOwnerId(raw.targetUserId),
     }
     if (raw.version !== 1 || result.viewerUserId !== expectedViewerUserId
       || result.chatSessionUid !== expectedChatSessionUid
-      || !Number.isSafeInteger(result.targetUserId) || result.targetUserId <= 0) {
+      || !result.targetUserId) {
       throw new ArkmePluginError('chat-member-ref-invalid', '聊天成员引用与当前账号或会话不匹配', false, 403)
     }
     return result

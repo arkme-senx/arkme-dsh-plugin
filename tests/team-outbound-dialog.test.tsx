@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamOutboundDialog, TeamOutboundMount } from '../src/client/TeamOutboundDialog.js'
 import { openTeamOutbound, type TeamOutboundIntent } from '../src/client/team-outbound.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
-import { TEAM_OUTBOUND_PENDING_TEXT } from '../src/team-outbound-contract.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 
 const { call, navigate, invalidate } = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), invalidate: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
@@ -30,24 +30,69 @@ async function query(value: string) {
 }
 function deferred() { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 beforeEach(() => {
+  localStorage.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.clearAllMocks(); call.mockReset()
   call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'directory.list' ? { items: [], hasMore: false } : { state: 'backend_pending' })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-it('keeps the selected person and real team, with an explicit pending result and no personal chat or message write', async () => {
+it('keeps the selected person and team on an unavailable response without manufacturing a conversation', async () => {
   await render(); expect(document.body.textContent).toContain('以 即我 身份发给 客户备注')
   expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams'])
   await click('开始团队私信')
   expect(call.mock.calls.at(-1)).toEqual(['team.app.outbound.open', {
     expectedAccountKey: 'prod:90', teamRef: 'sealed-team-a', recipient: intent.person!.recipient, requestUid: expect.any(String),
   }, expect.any(AbortSignal)])
-  expect(document.body.textContent).toContain(TEAM_OUTBOUND_PENDING_TEXT)
+  expect(document.body.textContent).toContain('团队会话返回异常')
   expect(document.body.textContent).toContain('客户备注')
-  expect(button('开始团队私信').disabled).toBe(true)
+  expect(button('开始团队私信').disabled).toBe(false)
   expect(navigate).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled()
   expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams', 'team.app.outbound.open'])
+})
+
+it.each(teams)('shows the channel opening path for $currentUserRole and retains the original selection for retry', async selected => {
+  const conversation = { ref: 'real-ref', side: 'team', channel: { jotmoId: selected.jotmoId } }
+  let attempts = 0
+  call.mockImplementation(async op => {
+    if (op === 'team.app.teams') return [selected]
+    if (++attempts === 1) throw Object.assign(new Error('团队已暂停接收新消息'), { body: { code: 'team-channel_paused' } })
+    return { state: 'ready', conversation }
+  })
+  await render(); await click('开始团队私信')
+  const heading = selected.currentUserRole === 'owner' ? '开启路径' : '请团队所有者开启'
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(`${heading}：联系人 → 团队 → ${selected.name} → 团队消息通道 → 接收外部消息`)
+  expect(document.body.textContent).toContain('客户备注')
+  expect(document.querySelector('select')?.value).toBe(selected.jotmoId)
+  expect(close).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled()
+  expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams', 'team.app.outbound.open'])
+  await click('开始团队私信')
+  const opens = call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')
+  expect(opens[1]![1]).toEqual(opens[0]![1])
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
+})
+
+it('keeps other opening errors distinct from a disabled team channel', async () => {
+  await render()
+  call.mockRejectedValueOnce(Object.assign(new Error('此对话已被屏蔽'), { body: { code: 'team-conversation_blocked' } }))
+  await click('开始团队私信')
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('此对话已被屏蔽')
+  expect(navigate).not.toHaveBeenCalled()
+})
+
+it('localizes the opening path while preserving the team name', async () => {
+  const locale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })
+  const disconnect = locale('en')
+  try {
+    call.mockResolvedValueOnce([{ ...teams[1], name: '团队消息通道' }])
+    await render()
+    call.mockRejectedValueOnce(Object.assign(new Error('团队已暂停接收新消息'), { body: { code: 'team-channel_paused' } }))
+    await act(async () => (document.querySelector('footer button:last-child') as HTMLButtonElement).click())
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Enable: Contacts → Teams → 团队消息通道 → Team message channel → Accept visitor messages')
+  } finally {
+    disconnect()
+    await act(async () => { locale('zh')() })
+  }
 })
 
 it('requires explicit team choice for multiple memberships; a directory entry prefills only its own team', async () => {
@@ -143,4 +188,54 @@ it('adds a separate team action to the shared avatar card without triggering per
   await click('以团队联系'); expect(team).toHaveBeenCalledOnce(); expect(personal).not.toHaveBeenCalled()
   await act(async () => root.render(<ArkmeMemberProfileCard member={{ displayName: '本人' }} hideSend busy={false} onClose={close} onSend={personal} onContactAsTeam={team} />))
   expect(document.body.textContent).not.toContain('以团队联系')
+})
+
+
+it('opens only on explicit intent even when an old browser attempt exists', async () => {
+  localStorage.setItem(`arkme.team.outbound:${intent.accountKey}`, JSON.stringify({ ...intent, teamJotmoId: 'team_a', requestUid: 'old-attempt' }))
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(call).not.toHaveBeenCalled()
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active={false} />))
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  const selected = { ...intent, person: { displayName: '当前选择客户', recipient: { kind: 'contact-lookup' as const, contactRef: 'current-selection' } } }
+  await act(async () => openTeamOutbound(selected))
+  expect(document.body.textContent).toContain('当前选择客户')
+  expect(document.body.textContent).not.toContain('客户备注')
+  expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams'])
+})
+
+it('opens through the Host when browser attempt storage is unavailable', async () => {
+  const conversation = { ref: 'real-ref', key: 'real-key', side: 'team', channel: { jotmoId: 'team_a' } }
+  await render()
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+  call.mockResolvedValueOnce({ state: 'ready', conversation })
+  await click('开始团队私信')
+  expect(call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')).toHaveLength(1)
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
+})
+
+it('dismisses an uncertain opening until the user enters again and retries the selected target', async () => {
+  await act(async () => root.render(<TeamOutboundMount accountKey={intent.accountKey} active />))
+  await act(async () => openTeamOutbound(intent))
+  const wait = deferred(), conversation = { ref: 'same-cloud-conversation', key: 'same-cloud-key', side: 'team', channel: { jotmoId: 'team_a' } }
+  call.mockImplementationOnce(() => wait.promise)
+  await click('开始团队私信')
+  const first = call.mock.calls.at(-1)!
+  await click('关闭')
+  expect(first[2].aborted).toBe(true)
+  await act(async () => root.render(<TeamOutboundMount key="reloaded" accountKey={intent.accountKey} active />))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => wait.resolve({ state: 'ready', conversation }))
+  expect(navigate).not.toHaveBeenCalled()
+  expect(call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')).toHaveLength(1)
+  await act(async () => openTeamOutbound(intent))
+  call.mockResolvedValueOnce({ state: 'ready', conversation })
+  await click('开始团队私信')
+  const opens = call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')
+  expect(opens).toHaveLength(2)
+  expect(opens[1]![1].recipient).toEqual(first[1].recipient)
+  expect(opens[1]![1].requestUid).not.toBe(first[1].requestUid)
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
 })

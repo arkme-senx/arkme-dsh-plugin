@@ -501,7 +501,7 @@ async function withTimeout<T>(
   }
 }
 
-function browserComputerName(source: ArkmeNavigatorCaptureSource | undefined): string {
+export function arkmeRecordInputComputerName(source: ArkmeNavigatorCaptureSource | undefined): string {
   const userAgent = source?.userAgent ?? ''
   if (/Android/iu.test(userAgent)) return 'Android'
   if (/iPhone|iPad|iPod/iu.test(userAgent)) return 'iOS'
@@ -547,7 +547,7 @@ export async function captureArkmeRecordInputContext(
   const computerName = typeof device?.computerName === 'string' ? device.computerName.trim().slice(0, 80) : ''
   const clientName = desktop?.startupAuthGate === true ? 'Arkme' : arkmeRecordInputBrowserName(source)
   const base: ArkmeRecordCaptureContext = {
-    clientName: `${computerName || browserComputerName(source)}（${clientName}）`,
+    clientName: `${computerName || arkmeRecordInputComputerName(source)}（${clientName}）`,
     ...(displayNetwork === '' ? {} : { networkName: displayNetwork }),
   }
   const level = typeof battery?.level === 'number' && Number.isFinite(battery.level)

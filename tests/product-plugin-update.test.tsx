@@ -62,9 +62,10 @@ describe('Arkme product plugin update entry', () => {
       <productNavigation.ArkmeProductNavigation compact={false} currentSessionId="session-1" />,
     )
 
+    const displayedVersion = `v3.${pluginManifest.version.split('.')[2]}`
     expect(availableMarkup).toContain(`data-arkme-plugin-version="${pluginManifest.version}"`)
-    expect(availableMarkup).toContain(`aria-label="即我 v${pluginManifest.version}"`)
-    expect(availableMarkup).toContain(`>v${pluginManifest.version}</span>`)
+    expect(availableMarkup).toContain(`aria-label="即我 ${displayedVersion}"`)
+    expect(availableMarkup).toContain(`>${displayedVersion}</span>`)
     expect(availableMarkup).not.toContain('Arkme 核心插件')
     expect(availableMarkup).not.toContain('更新 Arkme 插件')
   })

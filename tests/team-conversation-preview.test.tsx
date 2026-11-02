@@ -5,8 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage, TeamTimeline } from '../src/team-app-contract.js'
 import { TeamConversationPreview } from '../src/client/TeamConversationPreview.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
-import { groupTeamConversations } from '../src/client/team-conversation-directory.js'
+import { groupTeamConversations, readTeamDirectory, startTeamDirectory } from '../src/client/team-conversation-directory.js'
 import { arkmeVisibleReadIntentAllowed } from '../src/client/read-intent-visibility.js'
+import {messageSelectionTarget} from '../src/client/ArkmeMessageTextSelection.js'
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -21,6 +22,38 @@ const preview = () => <TeamConversationPreview accountKey="preview-test" target=
 const render = async (node = preview()) => { await act(async () => root.render(node)) }
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === text || b.getAttribute('aria-label') === text)!
 const click = async (text: string) => { expect(button(text)).toBeDefined(); await act(async () => button(text).click()) }
+it('does not turn a read-only source into an annotation or reply target',async()=>{
+ mocks.call.mockResolvedValue(timeline([{...message,localMarkRef:'local-mark'}]))
+ await render()
+ const element=document.querySelector<HTMLElement>('[data-arkme-text-selection]')!
+ expect(element).not.toBeNull()
+ expect(messageSelectionTarget(element)).toBeUndefined()
+})
+
+it('keeps the current preview material for policy and unrelated occurrences while a refresh is pending',async()=>{
+ const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+ await render()
+ mocks.call.mockImplementation(()=>new Promise(()=>{}))
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.notification-policy.changed'}))
+ expect(document.body.textContent).toContain('预览正文')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:'another'}))
+ expect(document.body.textContent).toContain('预览正文')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:message.key}))
+ expect(document.body.textContent).not.toContain('预览正文')
+})
+it('retains an older mounted source when a changed occurrence refreshes only the first page',async()=>{
+ const {invalidateTeamMessages}=await import('../src/client/team-messaging-events.js')
+ const older={...message,key:'older',ref:'older-ref',seq:1,content:{text_content:'历史预览',template_kind:1}}
+ mocks.call.mockImplementation(async(_,{beforeSeq})=>beforeSeq?timeline([older]):{...timeline(),hasMore:true,beforeSeq:4})
+ await render();await click('加载更早消息')
+ const article=[...document.querySelectorAll('article')].find(node=>node.textContent?.includes('历史预览'))!
+ expect(article).toBeDefined()
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:message.key}))
+ expect(document.body.contains(article)).toBe(true)
+ expect(article.textContent).toContain('历史预览')
+ await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:older.key}))
+ expect(article.textContent).not.toContain('历史预览')
+})
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('IntersectionObserver', class { constructor(private callback: (entries: unknown[]) => void) {} observe() { this.callback([{ isIntersecting: true }]) } disconnect() {} })
@@ -82,6 +115,23 @@ it('shows stars in folder visitor rows without applying a visitor membership to 
   expect(document.querySelector('header [data-arkme-membership]')).toBeNull()
 })
 
+it.each(['unavailable', 'absent'])('does not show a frozen folder membership after the current directory is %s', async state => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'svip' } }
+  const group = groupTeamConversations([snapshot])[0]!
+  const accountKey = `preview-folder-${state}`
+  if (state === 'unavailable') mocks.call.mockRejectedValue(new Error('网络暂不可用'))
+  else mocks.call.mockResolvedValue({ items: [], hasMore: false })
+  let stop!: () => void
+  await act(async () => { stop = startTeamDirectory(accountKey) })
+  try {
+    expect(readTeamDirectory(accountKey).hasLoaded).toBe(true)
+    await render(<TeamConversationPreview accountKey={accountKey} target={{ kind: 'folder', group }} onClose={close} />)
+    expect(Boolean(document.querySelector('[data-arkme-membership]'))).toBe(false)
+    expect(document.body.textContent).toContain('旧目录访客')
+    expect(mocks.call.mock.calls.every(([operation]) => operation !== 'team.app.read')).toBe(true)
+  } finally { await act(async () => stop()) }
+})
+
 it('has a loading state, retries failures, and aborts a pending request on dismissal', async () => {
   let fail!: (error: Error) => void
   mocks.call.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
@@ -93,6 +143,34 @@ it('has a loading state, retries failures, and aborts a pending request on dismi
   await render(<></>); expect(signal.aborted).toBe(true)
   expect(document.activeElement).toBe(opener)
   expect(arkmeVisibleReadIntentAllowed()).toBe(true)
+})
+
+it('clears a directory membership snapshot when the initial authorized preview read fails and restores the latest status on retry', async () => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'svip' } }
+  mocks.call.mockRejectedValueOnce(new Error('网络暂不可用'))
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: snapshot }} onClose={close} />)
+  expect(Boolean(document.querySelector('header [data-arkme-membership]'))).toBe(false)
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: { ...snapshot, visitor: { nickname: '当前访客', memberType: 'vip' } } })
+  await click('重试')
+  expect(document.querySelector('header [data-arkme-membership="vip"]')).not.toBeNull()
+  expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('当前访客的聊天预览')
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
+})
+
+it('clears current membership after a later preview failure without regressing identity or passing the stale snapshot to the conversation', async () => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'vip' } }
+  const current: TeamConversation = { ...snapshot, visitor: { nickname: '当前访客', memberType: 'svip' } }
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: current, hasMore: true, beforeSeq: 4 })
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: snapshot }} onClose={close} />)
+  expect(document.querySelector('header [data-arkme-membership="svip"]')).not.toBeNull()
+  mocks.call.mockRejectedValueOnce(new Error('网络暂不可用'))
+  await click('加载更早消息')
+  expect(Boolean(document.querySelector('header [data-arkme-membership]'))).toBe(false)
+  expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('当前访客的聊天预览')
+  expect(document.body.textContent).toContain('预览正文')
+  await click('打开对话')
+  expect(mocks.open).toHaveBeenCalledWith({ kind: 'conversation', conversation: { ...current, visitor: { ...current.visitor, memberType: 'unknown' } } })
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
 })
 
 it('appends older messages without duplicating overlap or changing unread state', async () => {
@@ -119,4 +197,25 @@ it('suspends the underlying team conversation read intent until the preview clos
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.read')).toBe(false)
   await render(<>{pane}</>)
   expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.read')).toHaveLength(1)
+})
+
+it('withdraws preview material on a source change and cannot revive from a late old read', async () => {
+  await render()
+  const pending: Array<(value: TeamTimeline) => void> = []
+  mocks.call.mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+  const { invalidateTeamMessages } = await import('../src/client/team-messaging-events.js')
+  await act(async () => invalidateTeamMessages('preview-test'))
+  expect(document.body.textContent).not.toContain('预览正文')
+  await act(async () => invalidateTeamMessages('preview-test'))
+  const {content: _content, ...redacted} = message
+  await act(async () => pending.at(-1)!(timeline([{ ...redacted, state: 'recalled', contentStatus: 'recalled' }])))
+  await act(async () => pending[0]!(timeline()))
+  expect(document.body.textContent).not.toContain('预览正文')
+  expect(document.querySelector('[contenteditable="true"],textarea')).toBeNull()
+})
+
+it('does not reuse a frozen folder summary when the current directory has no authorized row',async()=>{
+ const group=groupTeamConversations([{...conversation,preview:{status:'available',text:'冻结目录摘要',hasMedia:false,templateKind:1}}])[0]!
+ await render(<TeamConversationPreview accountKey="preview-test" target={{kind:'folder',group}} onClose={close}/>)
+ expect(document.body.textContent).not.toContain('冻结目录摘要')
 })

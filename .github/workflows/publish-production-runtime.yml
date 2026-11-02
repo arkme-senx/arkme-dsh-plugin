@@ -35,7 +35,13 @@ jobs:
     timeout-minutes: 30
     environment: production
     permissions:
-      contents: read
+      contents: write
+      actions: read
+    env:
+      VERSION: ${{ github.event.client_payload.version }}
+      ARKME_RELEASE_SOURCE_SHA: ${{ github.event.client_payload.release_sha }}
+      ARKME_SOURCE_DIR: runtime-source
+      ARKME_RELEASE_NOTES_DIR: .production-release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,29 +80,66 @@ jobs:
           fi
 
       - name: 检出精确发布提交
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.release_sha }}
+          path: runtime-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装受信任的发布依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: 恢复本版本更新说明
+        id: notes-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .production-release
+          key: production-release-notes-v1-${{ github.event.client_payload.version }}-${{ github.event.client_payload.release_sha }}
+      - name: 生成并保存生产更新说明
+        id: notes
         env:
-          RELEASE_SHA: ${{ github.event.client_payload.release_sha }}
-        run: git checkout --detach "$RELEASE_SHA"
-      - name: 安装依赖
+          GH_TOKEN: ${{ github.token }}
+          ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
+          ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_RELEASE_NOTES_MODEL: ${{ vars.OPENAI_RELEASE_NOTES_MODEL }}
+          ARKME_LEGACY_RUNTIME_IDS: ${{ vars.ARKME_LEGACY_RUNTIME_IDS }}
+        run: node scripts/production-runtime-release.mjs prepare
+      - name: 固定本版本更新说明
+        if: steps.notes-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .production-release
+          key: production-release-notes-v1-${{ github.event.client_payload.version }}-${{ github.event.client_payload.release_sha }}
+      - name: 保存说明与证据
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-notes-${{ github.event.client_payload.version }}-${{ github.run_attempt }}
+          path: .production-release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - name: 安装精确源码依赖
+        if: steps.notes.outputs.already_activated != 'true'
+        working-directory: runtime-source
         run: |
           corepack enable
           pnpm install --frozen-lockfile
           zstd --version
       - name: 校验、构建并打包 Runtime
+        if: steps.notes.outputs.already_activated != 'true'
+        working-directory: runtime-source
         run: |
           pnpm run typecheck
           pnpm run verify:call-assets
           pnpm run build
           pnpm run pack:runtime
-      - name: 准备发布说明
-        run: |
-          summary=$(node -e "const value = require('./package.json').arkme?.updateNotice?.summary; process.stdout.write(typeof value === 'string' && value.trim() ? value.trim().replace(/\\s+/g, ' ') : 'Arkme plugin production release')")
-          echo "ARKME_RELEASE_NOTES=$summary" >> "$GITHUB_ENV"
-      - name: 上传并激活生产 Runtime
+      - name: 上传并激活生产 Runtime 后创建 Tag 与 Release
         env:
           DEBUG: ""
+          GH_TOKEN: ${{ github.token }}
           ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
           ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
           ARKME_HARNESS_VERSION_CODE_RANGE: ${{ vars.ARKME_HARNESS_VERSION_CODE_RANGE }}
-          ARKME_RELEASE_SOURCE_SHA: ${{ github.event.client_payload.release_sha }}
-        run: node scripts/publish-runtime-artifact.mjs
+        run: node scripts/production-runtime-release.mjs publish

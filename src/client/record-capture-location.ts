@@ -191,11 +191,14 @@ export async function arkmeLocationPermissionState(
 export async function captureArkmeRecordLocation(
   intent: ArkmeLocationCaptureIntent,
   scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
+  signal?: AbortSignal,
 ): Promise<ArkmeRecordLocationCapture> {
   const desktop = scope.arkmeDesktopLocation
   const locationNavigator = scope.navigator
   const explicit = intent === 'explicit-user-action'
+  signal?.throwIfAborted()
   let permission = await arkmeLocationPermissionState(scope)
+  signal?.throwIfAborted()
 
   if (permission === 'prompt' && explicit && desktop !== undefined) {
     if (typeof desktop.requestPermission !== 'function') permission = 'unavailable'
@@ -210,6 +213,7 @@ export async function captureArkmeRecordLocation(
     }
   }
 
+  signal?.throwIfAborted()
   // In a normal browser, getCurrentPosition is the permission request owner.
   // The desktop bridge is authoritative whenever it exists, so a desktop
   // prompt must be resolved by requestPermission before Web geolocation runs.
@@ -222,7 +226,12 @@ export async function captureArkmeRecordLocation(
   }
 
   return await new Promise((resolve, reject) => {
+    const abort = () => reject(signal?.reason)
+    signal?.addEventListener('abort',abort,{once:true})
     locationNavigator.geolocation!.getCurrentPosition(position => {
+      signal?.removeEventListener('abort',abort)
+      if(signal?.aborted)return
+
       const { latitude, longitude, accuracy, altitude, speed } = position.coords
       resolve({
         latitude, longitude,
@@ -231,7 +240,7 @@ export async function captureArkmeRecordLocation(
         ...(altitude === null ? {} : { altitudeMeters: altitude }),
         ...(speed === null || speed < 0 ? {} : { speedMetersPerSecond: speed }),
       })
-    }, error => { reject(geolocationError(error)) },
+    }, error => {signal?.removeEventListener('abort',abort);if(!signal?.aborted)reject(geolocationError(error)) },
     { enableHighAccuracy: false, timeout: 10_000, maximumAge: 30_000 })
   })
 }

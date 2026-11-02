@@ -9,6 +9,20 @@ import type { ArkmeRecordReeditSubmission } from '../src/record-reedit-contract.
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  it('retains only frozen account/profile reception targets through restart and bounds local attempt history',async()=>{
+    const root=await mkdtemp(join(tmpdir(),'arkme reception ')),store=new ArkmeStateStore(root)
+    const original={teamId:'42',targetId:'9007199254740993',selection:'fixed-source'}
+    await store.retainTeamOutboundTarget('test:7','original',original)
+    const restarted=new ArkmeStateStore(root)
+    expect(await restarted.teamOutboundTarget('test:7','original')).toEqual(original)
+    expect(await restarted.teamOutboundTarget('prod:7','original')).toBeUndefined()
+    expect(await restarted.teamOutboundTarget('test:8','original')).toBeUndefined()
+    await expect(restarted.retainTeamOutboundTarget('test:7','original',{...original,targetId:'99'})).rejects.toThrow('不能更换客户')
+    expect(await new ArkmeStateStore(root).teamOutboundTarget('test:7','original')).toEqual(original)
+    for(let i=0;i<65;i++)await restarted.retainTeamOutboundTarget('test:7',`next-${i}`,original)
+    expect(await restarted.teamOutboundTarget('test:7','original')).toBeUndefined()
+    expect(await new ArkmeStateStore(root).teamOutboundTarget('test:7','next-64')).toEqual(original)
+  })
   it('preserves the chosen recording strategy through restart and refuses corrupted identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-strategy-'))
     const store = new ArkmeStateStore(root)

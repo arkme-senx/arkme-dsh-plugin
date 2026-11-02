@@ -3,12 +3,13 @@ import {
   ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE, ARKME_CHAT_SSE_PATH,
   ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE,
   ARKME_CONVERSATION_LIST_PREFERENCE_UPDATED_BIZ_TYPE,
-  ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ARKME_RUNTIME_INSTANCE_ID_HEADER,
+  ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ARKME_RUNTIME_INSTANCE_ID_HEADER, ARKME_TEAM_HINT_VERSION_HEADER,
   ARKME_SSE_IDENTITY_VERSION, ARKME_SSE_IDENTITY_VERSION_HEADER, ArkmeChatRealtimeRuntime,
   decodeArkmeChatReadCursorAdvancedDataLine, decodeArkmeChatReceiveDataLine,
   decodeArkmeChatTimelineChangedDataLine, decodeArkmeChatPolicyUpdatedDataLine,
   decodeArkmeConversationListPreferenceUpdatedDataLine,
   decodeArkmeProjectionInvalidatedDataLine, decodeArkmeMemberJoinedDataLine,
+  decodeArkmeTeamNotificationDataLine,
 } from '../src/chat-realtime.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 
@@ -55,6 +56,50 @@ const timelineChangedHint = {
 }
 
 describe('Arkme Chat realtime', () => {
+  it('decodes message and conversation revisions separately and makes overflow a full reconciliation',()=>{
+    const event={t:28,event_uid:'versioned',event_at:123456,kind:'team.message.changed',conversation_uid:'c',message_uid:'m',revision:99,message_revision:2,seq:4}
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toMatchObject({change:{messageRevision:2,conversationRevision:99,sequence:4}})
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,reconcile:true})}`)).toEqual({eventUid:'versioned',eventAtMillis:123456,receiptOnly:false})
+    for(const bad of [-1,'2',1.5])expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,message_revision:bad})}`)).toBeUndefined()
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,seq:0})}`)).toBeUndefined()
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,reconcile:'true'})}`)).toBeUndefined()
+  })
+  it('preserves Team source relevance across decoder and live SSE delivery without content',async()=>{
+    const event={t:28,event_uid:'recall-hint',kind:'team.message.changed',message_uid:'message-uid',conversation_uid:'conversation-uid',revision:2,event_at:123456}
+    const change={kind:event.kind,messageUid:event.message_uid,conversationUid:event.conversation_uid,conversationRevision:event.revision}
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toMatchObject({change,receiptOnly:false})
+    expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify({...event,message_uid:1,conversation_uid:null})}`)).toMatchObject({change:{kind:event.kind}})
+    let stream!:ReadableStreamDefaultController<Uint8Array>
+    const runtime=new ArkmeChatRealtimeRuntime({imBaseUrl:'https://im.test',readSession:async()=>({userId:42,accessToken:'access',refreshToken:'refresh'}),fetchImpl:vi.fn(async()=>new Response(new ReadableStream({start(c){stream=c}}),{headers:{'content-type':'text/event-stream','X-Jotmo-Team-Hint-Version':'2'}})),inactivityTimeoutMs:10_000,leaseDurationMs:10_000})
+    const notice=vi.fn(),unsubscribe=runtime.subscribe(notice),stop=runtime.start()
+    try{
+      await vi.waitFor(()=>expect(runtime.state().connected).toBe(true))
+      stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
+      await vi.waitFor(()=>expect(notice).toHaveBeenCalledWith(expect.objectContaining({cause:'team-invalidation',connectionUserId:42,teamChange:change})))
+    }finally{unsubscribe();stop()}
+  })
+  it('treats an unacknowledged legacy SSE connection as a full Team reconciliation', async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.test',
+      readSession: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),
+      fetchImpl: vi.fn(async () => new Response(new ReadableStream({ start(c) { stream = c } }), {
+        headers: { 'content-type': 'text/event-stream' },
+      })),
+      inactivityTimeoutMs: 10_000, leaseDurationMs: 10_000,
+    })
+    const notice = vi.fn(), unsubscribe = runtime.subscribe(notice), stop = runtime.start()
+    try {
+      await vi.waitFor(() => expect(runtime.state().connected).toBe(true))
+      stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({
+        t: 28, event_uid: 'legacy-coalesced', kind: 'team.message.changed',
+        conversation_uid: 'last-source', message_uid: 'last-message', revision: 99, event_at: 123456,
+      })}\n\n`))
+      await vi.waitFor(() => expect(notice).toHaveBeenCalledWith(expect.objectContaining({ cause: 'team-invalidation' })))
+      const delivered = notice.mock.calls.map(call => call[0]).find(value => value.cause === 'team-invalidation')
+      expect(delivered.teamChange).toBeUndefined()
+    } finally { unsubscribe(); stop() }
+  })
   it('decodes only complete Chat receive hints and ignores heartbeats', () => {
     expect(decodeArkmeChatReceiveDataLine('data:')).toBeUndefined()
     expect(decodeArkmeChatReceiveDataLine('data: {"t":18}')).toBeUndefined()
@@ -225,6 +270,7 @@ describe('Arkme Chat realtime', () => {
     expect(init?.method).toBe('POST')
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access-secret')
     expect(new Headers(init?.headers).get(ARKME_RUNTIME_INSTANCE_ID_HEADER)).toBe(ARKME_RUNTIME_INSTANCE_ID)
+    expect(new Headers(init?.headers).get(ARKME_TEAM_HINT_VERSION_HEADER)).toBe('2')
     expect(ARKME_RUNTIME_INSTANCE_ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
     stream.close()
     unsubscribe()

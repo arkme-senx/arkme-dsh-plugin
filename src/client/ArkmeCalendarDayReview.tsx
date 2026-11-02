@@ -142,13 +142,13 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     pendingSubmission.current ??= { ...q, ...(selectedModel ? { modelCode: selectedModel } : {}), sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
       ...(config ? { promptConfig: promptConfigOnly(config) } : {}), ...(reuse ? { reuseResultId: reuse.id } : {}) }
     try {
-      const value = await withArkmeReadDeadline(signal => uncertain ? callArkme<DayReviewState>('calendar.day-review.reconcile', { ...q }, signal) : callArkme<DayReviewState>('calendar.day-review.create', pendingSubmission.current!, signal), controller.signal)
+      const value = await (uncertain ? callArkme<DayReviewState>('calendar.day-review.reconcile', { ...q }, controller.signal) : callArkme<DayReviewState>('calendar.day-review.create', pendingSubmission.current!, controller.signal))
       if (controller.signal.aborted) return
       refreshAccepted = !value.result && !!value.job
       apply(value); setSelectedVersion(''); setHistorical(undefined); setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setReuse(undefined)
     } catch (e) {
       if (!controller.signal.aborted) {
-        const notSubmitted = e instanceof ArkmeClientError && ['calendar-review-model-unsupported', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(e.body.code)
+        const notSubmitted = e instanceof ArkmeClientError && ['day-review-human-required', 'calendar-review-model-unsupported', 'calendar-review-prompt-unsupported', 'calendar-review-unavailable', 'calendar-review-not-accepted', 'calendar-review-storage'].includes(e.body.code)
         if (notSubmitted) {
           setUncertain(false); requestId.current = ''; pendingSubmission.current = undefined; setError(errorText(e)); void prompts.read()
         } else { setUncertain(true); setError(`${tr('提交结果尚未确认，请先检查更新。再次提交会核对同一次请求。')} ${errorText(e)}`) }
@@ -174,7 +174,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     submittingRef.current = true; setSubmitting(true); setError(''); readRequest.current?.abort()
     const controller = new AbortController(); writeRequest.current = controller
     try {
-      const value = await withArkmeReadDeadline(signal => callArkme<DayReviewState>('calendar.day-review.resume', { ...q, jobId: state.job!.id }, signal), controller.signal)
+      const value = await callArkme<DayReviewState>('calendar.day-review.resume', { ...q, jobId: state.job!.id }, controller.signal)
       if (!controller.signal.aborted) apply(value)
     } catch (e) { if (!controller.signal.aborted) setError(errorText(e)) }
     finally { submittingRef.current = false; if (mounted.current && !controller.signal.aborted) setSubmitting(false) }
@@ -247,7 +247,9 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     {state?.job && <div className="day-review-progress" role="status" data-failed={state.job.status === 'failed'}>
       <strong>{tr(stages[state.job.status])}</strong>
       {active && !result && <span>{view === 'summary' ? tr('生成完成后，这里会自动显示日总结。') : tr('生成完成后，这里会自动显示时间轴。')}</span>}
-      {state.job.message && <span>{state.job.message}</span>}
+      {state.job.status === 'failed' && state.job.failureCode === 'insufficient_balance'
+        ? <span>{tr('上次生成因积分不足中断。充值后可继续原任务；已完成步骤会复用，剩余步骤仍消耗积分。')}</span>
+        : state.job.message && <span>{state.job.message}</span>}
       {state.job.resumable && <button type="button" className="arkme-day-source" disabled={submitting || loading || uncertain} onClick={() => void resume()}>{tr('继续生成')}</button>}
       {state.result && <span>{tr('下方保留上一次生成的结果')}</span>}
     </div>}

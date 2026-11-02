@@ -3,6 +3,9 @@ import type { TeamContent, TeamMessage, TeamReplyTarget } from './team-app-contr
 
 /** Internal App delivery receipt. A Team destination is never a Chat source. */
 export interface TeamSendInput {
+  /** Account/operation-bound Host-sealed metadata, never raw coordinates. */
+  metadataRef?: string
+  backgroundSound?: import('./file-transfer-contract.js').ArkmeFileBackgroundSoundInput
   conversationRef: string
   clientUid: string
   expectedReplySeq: number
@@ -11,6 +14,8 @@ export interface TeamSendInput {
   reply?: TeamReplyTarget
 }
 export interface TeamSendTask extends TeamSendInput {
+  /** Internal normalized business digest, independent of random cipher nonces. */
+  metadataDigest?: string
   taskRef: string
   conversationKey: string
   createdAtMillis: number

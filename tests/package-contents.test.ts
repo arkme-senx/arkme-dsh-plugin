@@ -26,6 +26,19 @@ function runPnpm(args: string[]) {
 }
 
 describe('published package contents', () => {
+  it('uses the consuming Harness Agent registry and scope identity for local takeover', () => {
+    runPnpm(['run', 'bundle'])
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { AgentRegistry } from '@deepseek-ai/dsh-agent';
+      import LocalSessionRegistry from './lib/local-session-registry.js';
+      if (Object.getPrototypeOf(LocalSessionRegistry) !== AgentRegistry) {
+        throw new Error('Local takeover must share the Harness Agent registry and its scope routing');
+      }
+      console.log('shared-agent-registry');
+    `], { cwd: projectRoot, encoding: 'utf8', timeout: packageCommandTimeout })
+    expect(output.trim()).toBe('shared-agent-registry')
+  }, packageTestTimeout)
+
   it('ships public docs without internal planning artifacts', () => {
     const output = runPnpm([
       'pack',
@@ -66,9 +79,26 @@ describe('published package contents', () => {
     expect(javascript).not.toMatch(/(?:from\s+|import\s*\()(["'])mediabunny\1/)
   }, packageTestTimeout)
 
+  it('bundles yazl and its checksum dependency into the Release Set plugin', () => {
+    runPnpm(['run', 'bundle'])
+
+    const libDirectory = join(projectRoot, 'lib')
+    const javascript = readdirSync(libDirectory)
+      .filter(path => path.endsWith('.js'))
+      .map(path => readFileSync(join(libDirectory, path), 'utf8'))
+      .join('\n')
+
+    expect(javascript).not.toMatch(/(?:from\s+|(?:import|require)\s*\()(["'])(?:yazl|buffer-crc32)(?:\/[^"']*)?\1/)
+  }, packageTestTimeout)
+
   it('ships browser factories without unresolved local chunk requires', () => {
     runPnpm(['run', 'bundle'])
     const libDirectory = join(projectRoot, 'lib')
+    const gatewayManifestUrl = import.meta.resolve('@deepseek-ai/dsh-api-gateway/package.json')
+    const gatewayManifest = JSON.parse(readFileSync(new URL(gatewayManifestUrl), 'utf8'))
+    const browserCarrier = readFileSync(join(libDirectory, 'local-session/gateway-browser/client.js'), 'utf8')
+    expect(browserCarrier).toBe(readFileSync(new URL(gatewayManifest.exports['./client'].browser, gatewayManifestUrl), 'utf8'))
+    expect(browserCarrier).toContain('window.__ModuleLoader__.load(')
     const factories = readdirSync(libDirectory)
       .filter(path => path === 'client.js' || /^harness-.*-client\.js$/.test(path))
     expect(factories.length).toBeGreaterThanOrEqual(7)

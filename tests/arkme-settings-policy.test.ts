@@ -65,16 +65,16 @@ describe('Arkme settings policy', () => {
   it('shows a read-only plugin version without exposing update controls or polling', () => {
     const source = readUiSource(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('arkmePluginUpdateStore')
-    expect(source).toContain('title="ArkME 插件"')
+    expect(source).toContain('<ArkmeAboutProduct />')
     expect(source).not.toContain("arkmeUpdateUi.open('plugin')")
   })
 
-  it('keeps one shell-owned APP update entry without restoring plugin actions', () => {
+  it('keeps update controls out of the settings surface', () => {
     const source = readUiSource(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('复制更新命令')
-    expect(source).toContain('arkmeAppUpdateStore')
+    expect(source).not.toContain('arkmeAppUpdateStore')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
-    expect(source).toContain('arkmeAppUpdateStore.open()')
+    expect(source).not.toContain('arkmeAppUpdateStore.open()')
     expect(source).not.toContain('arkmeUpdateUi')
     expect(source).not.toContain('arkmeAppUpdateStore.download')
     expect(source).not.toContain('arkmeAppUpdateStore.install')

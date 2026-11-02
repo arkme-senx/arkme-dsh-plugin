@@ -1,3 +1,4 @@
+import { invalidateTeamMessages } from '../src/client/team-messaging-events.js'
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TeamConversation } from '../src/team-app-contract.js'
@@ -140,4 +141,33 @@ it('receipt hints cannot reread hidden-folder message bodies or restore removed 
     expect(teamEntryHidden(preferences,target)).toBe(true)
     expect(readTeamDirectory('hidden-folder').items[0]?.unread).toBe(0)
   } finally { read.mockRestore() }
+})
+
+it('redacts previews on changed hints and prevents an older in-flight read from restoring them', async () => {
+  const source={...item('team'),preview:{status:'available',text:'old preview',hasMedia:false}}
+  mock.mockImplementation(async (_, {side})=>({items:side==='team'?[source]:[],hasMore:false}))
+  stops.push(startTeamDirectory('recall'))
+  await vi.waitFor(()=>expect(readTeamDirectory('recall').items).toHaveLength(1))
+  let release!: (value: unknown)=>void
+  mock.mockReturnValue(new Promise(resolve=>{release=resolve}))
+  const old=refreshTeamDirectory('recall')
+  invalidateTeamMessages('recall')
+  expect(readTeamDirectory('recall').items[0]!.preview?.text).toBe('')
+  mock.mockRejectedValue(new Error('offline'))
+  release({items:[source],hasMore:false});await old
+  expect(readTeamDirectory('recall').items.every(c=>!c.preview?.text)).toBe(true)
+  expect(readTeamDirectory('recall').items.map(c=>c.key)).toEqual([source.key])
+})
+it('does not redact a conversation preview for policy or another conversation',async()=>{
+ const source={...item('team'),preview:{status:'available',text:'保留的摘要',hasMedia:false}}
+ mock.mockImplementation(async(_,{side})=>({items:side==='team'?[source]:[],hasMore:false}))
+ stops.push(startTeamDirectory('scoped'))
+ await vi.waitFor(()=>expect(readTeamDirectory('scoped').items).toHaveLength(1))
+ mock.mockImplementation(()=>new Promise(()=>{}))
+ invalidateTeamMessages('scoped',false,{kind:'team.notification-policy.changed'})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('保留的摘要')
+ invalidateTeamMessages('scoped',false,{kind:'team.message.changed',conversationKeys:['other']})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('保留的摘要')
+ invalidateTeamMessages('scoped',false,{kind:'team.message.changed',conversationKeys:[source.key]})
+ expect(readTeamDirectory('scoped').items[0]!.preview?.text).toBe('')
 })

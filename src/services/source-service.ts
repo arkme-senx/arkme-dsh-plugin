@@ -1,3 +1,4 @@
+import {recordOwnerId, type RecordOwnerId} from '../record-owner-id.js'
 import { arkmeChatActivityPreview, retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { SharedReadGroup } from '../shared-read-group.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
@@ -662,15 +663,13 @@ export class SourceService {
    * This deliberately does not fall back to a private nickname or snapshot:
    * callers must keep those identities in their own domain-specific order.
    */
-  async privateRemarksByUserIds(
-    userIds: readonly number[],
+  async privateRemarksByUserIds<T extends RecordOwnerId>(
+    userIds: readonly T[],
     options: { signal?: AbortSignal } = {},
-  ): Promise<Map<number, string>> {
+  ): Promise<Map<T, string>> {
     const session = await this.runtime.requireSession()
-    const remaining = new Set(userIds.filter(
-      userId => Number.isSafeInteger(userId) && userId > 0 && userId !== session.userId,
-    ))
-    const remarks = new Map<number, string>()
+    const remaining = new Set(userIds.filter(userId => !!recordOwnerId(userId) && String(userId) !== String(session.userId)))
+    const remarks = new Map<T, string>()
     let offset = 0
 
     for (let page = 0; page < PRIVATE_REMARK_MAX_PAGES && remaining.size > 0; page += 1) {
@@ -688,7 +687,7 @@ export class SourceService {
       const rawItems = listValue(data.items)
       for (const value of rawItems) {
         const raw = objectValue(value)
-        const targetUserId = integerIdentifierValue(raw.user_id)
+        const targetUserId = recordOwnerId(raw.user_id) as T
         if (!remaining.has(targetUserId)) continue
         const remark = stringValue(raw.remark).trim()
         if (remark !== '') {
@@ -726,7 +725,7 @@ export class SourceService {
         const chatSession = objectValue(bundle.session)
         const sessionKind = numberValue(chatSession.session_kind)
         if (sessionKind !== 1 && sessionKind !== 3) continue
-        const targetUserId = integerIdentifierValue(objectValue(bundle.private_counterpart).user_id)
+        const targetUserId = recordOwnerId(objectValue(bundle.private_counterpart).user_id) as T
         if (!remaining.has(targetUserId)) continue
         const remark = stringValue(objectValue(bundle.private_supplement).remark).trim()
         if (remark !== '') remarks.set(targetUserId, remark)

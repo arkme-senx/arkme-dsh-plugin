@@ -2,19 +2,22 @@
 import { act, createElement, useSyncExternalStore, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { AccountSessionBrowser, reconcileAccountSessions, accountSessionKey, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
+import { AccountSessionBrowser, accountSessionKey, applyAccountSessionDelta, reconcileAccountSessions, installHarnessAccountSessions, projectAccountSessionOrder, projectAccountSessions, projectAccountWorkspaces } from '../src/client/harness-account-sessions.js'
+import type { DshDirectoryDelta, DshDirectorySession } from '../src/dsh-remote/account-session-directory.js'
 import type { DshAccountSession } from '../src/dsh-remote/account-session-types.js'
-import { HARNESS_HISTORY_PREVIEW, openNativeAccountSession } from '../src/client/harness-native-navigation.js'
-import { callArkme } from '../src/sdk/index.js'
+import { openNativeAccountSession } from '../src/client/harness-native-navigation.js'
+import { callArkme, createArkmeSdk } from '../src/sdk/index.js'
 import { HARNESS_MENU_OPEN } from '../src/client/harness-session-menu-bridge.js'
 import type { HarnessNativeWindow } from '../src/harness-native-transport-script.js'
-vi.mock('../src/sdk/index.js', () => ({ callArkme: vi.fn() }))
-vi.mock('../src/client/harness-native-navigation.js', async importOriginal => ({ ...await importOriginal<typeof import('../src/client/harness-native-navigation.js')>(), openNativeAccountSession: vi.fn() }))
+vi.mock('../src/sdk/index.js', () => ({ callArkme: vi.fn(), createArkmeSdk: vi.fn(() => ({ observeDshAccountSessions: vi.fn(() => () => {}) })) }))
+vi.mock('../src/client/harness-native-navigation.js', () => ({ openNativeAccountSession: vi.fn() }))
 const row = (overrides: Partial<DshAccountSession> = {}): DshAccountSession => ({ runtimeRef: 'windows', sessionRef: 'same', workspaceRef: 'workspace', workspaceName: 'repo', title: 'Windows 对话', updatedAt: 20, capabilities: [], running: false, blank: false, archived: false, origin: '', desktopName: 'Windows', sameDesktop: false, runtimeName: 'web', presence: 'online', local: false, ...overrides })
 const local = { current: 'same', ids: ['same'], byId: { same: { id: 'same', displayTitle: '本机', title: '本机', blank: false, running: true, updatedAt: 10 } }, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined }
 const ws = { items: [{ workspaceId: 'workspace', path: '/repo', title: 'repo', sessionIds: ['same'], createdAt: 1 }], archivedSessionIds: [], phase: 'ready', state: 'idle', error: null }
 const cleanups: Array<() => void> = []
 it('publishes one source per container only after complete pagination, without deleting another device session', async () => {
+  let notify!: () => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: () => void) => { notify = changed; return () => {} } } as never)
   const nativeWindow = window as HarnessNativeWindow
   const original = nativeWindow.__ARKME_NATIVE_DIRECTORY__
   const publish = vi.fn()
@@ -37,64 +40,163 @@ it('publishes one source per container only after complete pagination, without d
   expect(publish).toHaveBeenLastCalledWith([other, current], 'mac')
   expect(projectAccountWorkspaces(ws, publish.mock.lastCall![0]).items.flatMap(item => item.sessionIds)).not.toContain(accountSessionKey(old))
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [{ ...old }, { ...other }, { ...current }], localRuntimeRef: 'mac' })
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  notify()
   await Promise.resolve(); await Promise.resolve()
   expect(publish).toHaveBeenCalledTimes(1)
   // A failed/incomplete refresh must not briefly republish the old duplicates.
   vi.mocked(callArkme).mockRejectedValue(new Error('network unavailable'))
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
+  notify()
   await Promise.resolve(); await Promise.resolve()
   expect(publish).toHaveBeenCalledTimes(1)
 })
 
-it('refreshes the surface catalog without a mounted menu, single-flights pulls, and stops when hidden or disposed', async () => {
+const committed = (overrides: Partial<DshDirectorySession> = {}): DshDirectorySession => ({
+  runtime_ref: 'windows', session_ref: 'same', workspace_ref: 'workspace', host_generation: 1, projection_at: 2,
+  source_updated_at: 30, title: 'Committed', running: false, blank: false, archived: false, projection_as_of_seq: 3, ...overrides,
+})
+it('applies committed create/update/delete pushes without directory HTTP and keeps tombstone versions', async () => {
+  let notify!: (delta?: DshDirectoryDelta) => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: typeof notify) => { notify = changed; return () => {} } } as never)
+  const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'; document.body.append(surface)
+  const publish = vi.fn()
+  Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: { publish } })
+  cleanups.push(() => { delete (window as any).__ARKME_NATIVE_DIRECTORY__ })
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, includesDeleted: true, items: [row({ directoryVersion: [1, 1] })] })
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce())
+  notify({ version: 1, sessions: [committed({ session_ref: 'new' })] })
+  expect(publish.mock.lastCall?.[0]).toEqual(expect.arrayContaining([expect.objectContaining({ sessionRef: 'new', title: 'Committed', workspaceName: 'repo' })]))
+  notify({ version: 1, sessions: [committed({ session_ref: 'new', projection_at: 3, title: 'Renamed' })] })
+  expect(publish.mock.lastCall?.[0]).toEqual(expect.arrayContaining([expect.objectContaining({ sessionRef: 'new', title: 'Renamed' })]))
+  notify({ version: 1, sessions: [committed({ session_ref: 'new', projection_at: 4, deleted_at: 100 })] })
+  const afterDelete = publish.mock.calls.length
+  expect(publish.mock.lastCall?.[0]).toHaveLength(1)
+  notify({ version: 1, sessions: [committed({ session_ref: 'new', projection_at: 3 })] })
+  expect(publish).toHaveBeenCalledTimes(afterDelete)
+  expect(callArkme).toHaveBeenCalledOnce()
+  notify({ version: 1, sessions: [committed({ runtime_ref: 'unknown', workspace_ref: 'other' })] })
+  await vi.waitFor(() => expect(callArkme).toHaveBeenCalledTimes(2))
+})
+
+it('keeps a pushed new row and newer version when an earlier full refresh finishes', async () => {
+  let notify!: (delta?: DshDirectoryDelta) => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: typeof notify) => { notify = changed; return () => {} } } as never)
+  const surface = document.createElement('section'); document.body.append(surface)
+  const publish = vi.fn()
+  Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: { publish } })
+  cleanups.push(() => { delete (window as any).__ARKME_NATIVE_DIRECTORY__ })
+  const initial = { contractVersion: 1, includesDeleted: true, items: [row({ directoryVersion: [1, 1] })] }
+  vi.mocked(callArkme).mockResolvedValue(initial)
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce())
+  const full = Promise.withResolvers<typeof initial>()
+  vi.mocked(callArkme).mockReturnValueOnce(full.promise)
+  notify(); await vi.waitFor(() => expect(callArkme).toHaveBeenCalledTimes(2))
+  notify({ version: 1, sessions: [committed(), committed({ session_ref: 'new' })] })
+  full.resolve(initial)
+  await vi.waitFor(() => expect(publish.mock.lastCall?.[0]).toHaveLength(2))
+  await Promise.resolve(); await Promise.resolve()
+  expect(publish.mock.lastCall?.[0]).toEqual(expect.arrayContaining([expect.objectContaining({ sessionRef: 'same', title: 'Committed' }), expect.objectContaining({ sessionRef: 'new' })]))
+  expect(callArkme).toHaveBeenCalledTimes(2)
+})
+
+it('compares canonical row revisions across takeover without runtime generation gates', () => {
+  const original = row({ directoryVersion: [10, 100], projectionAsOfSeq: 20 })
+  const current = applyAccountSessionDelta([original], { version: 1, sessions: [committed({ host_generation: 11, projection_at: 1 })] })!
+  expect(current[0]).toMatchObject({ directoryVersion: [11, 1], title: 'Committed', projectionAsOfSeq: 20 })
+  expect(applyAccountSessionDelta(current, { version: 1, sessions: [committed({ host_generation: 10, projection_at: 999 })] })).toBe(current)
+  expect(applyAccountSessionDelta(current, { version: 1, sessions: [committed({ host_generation: 11, projection_at: 1, projection_as_of_seq: 21, title: 'do not overwrite' })] })?.[0])
+    .toMatchObject({ title: 'Committed', projectionAsOfSeq: 21 })
+  expect(reconcileAccountSessions(current, [original])[0]).toBe(current[0])
+  expect(applyAccountSessionDelta(current, { version: 99, sessions: [] })).toBeUndefined()
+})
+
+it('retains authoritative full-read tombstones against an unseen intermediate update', async () => {
+  let notify!: (delta?: DshDirectoryDelta) => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: typeof notify) => { notify = changed; return () => {} } } as never)
+  const surface = document.createElement('section'); document.body.append(surface)
+  const publish = vi.fn()
+  Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: { publish } })
+  cleanups.push(() => { delete (window as any).__ARKME_NATIVE_DIRECTORY__ })
+  const other = row({ sessionRef: 'other', directoryVersion: [1, 1] })
+  vi.mocked(callArkme).mockResolvedValueOnce({ contractVersion: 1, includesDeleted: true, items: [row({ directoryVersion: [1, 10] }), other] })
+    .mockResolvedValue({ contractVersion: 1, includesDeleted: true, items: [row({ directoryVersion: [1, 20], deleted: true }), other] })
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce())
+  notify()
+  await vi.waitFor(() => expect(publish.mock.lastCall?.[0]).toHaveLength(1))
+  notify({ version: 1, sessions: [committed({ projection_at: 15 })] })
+  expect(publish.mock.lastCall?.[0]).toMatchObject([other])
+  expect(callArkme).toHaveBeenCalledTimes(2)
+})
+
+it('retains full refresh for an older service without complete tombstone support', async () => {
+  let notify!: (delta?: DshDirectoryDelta) => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: typeof notify) => { notify = changed; return () => {} } } as never)
+  const surface = document.createElement('section'); document.body.append(surface)
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row({ directoryVersion: [1, 1] })] })
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
+  await vi.waitFor(() => expect(callArkme).toHaveBeenCalledOnce())
+  await Promise.resolve(); await Promise.resolve()
+  notify({ version: 1, sessions: [committed()] })
+  await vi.waitFor(() => expect(callArkme).toHaveBeenCalledTimes(2))
+})
+
+it('requires tombstone support on every full-directory page before applying deltas', async () => {
+  let notify!: (delta?: DshDirectoryDelta) => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: typeof notify) => { notify = changed; return () => {} } } as never)
+  const surface = document.createElement('section'); document.body.append(surface)
+  const publish = vi.fn()
+  Object.assign(window, { __ARKME_NATIVE_DIRECTORY__: { publish } })
+  cleanups.push(() => { delete (window as any).__ARKME_NATIVE_DIRECTORY__ })
+  vi.mocked(callArkme).mockResolvedValueOnce({ contractVersion: 1, items: [row({ directoryVersion: [1, 1] })], nextCursor: { session_ref: 'same' } })
+    .mockResolvedValue({ contractVersion: 1, includesDeleted: true, items: [] })
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce())
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(callArkme).mock.calls.every(([, params]) => params?.includeDeleted === true)).toBe(true)
+  notify({ version: 1, sessions: [committed()] })
+  await vi.waitFor(() => expect(callArkme).toHaveBeenCalledTimes(3))
+})
+
+it('refreshes only on directory push or surface entry, never a periodic timer', async () => {
   vi.useFakeTimers()
+  let notify!: () => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: () => void) => { notify = changed; return () => {} } } as never)
   const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'; document.body.append(surface)
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
   const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
   cleanups.push(stop)
-  await vi.advanceTimersByTimeAsync(5_000)
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(callArkme).toHaveBeenCalledTimes(1)
+  document.dispatchEvent(new Event(HARNESS_MENU_OPEN)); window.dispatchEvent(new Event('focus'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(callArkme).toHaveBeenCalledTimes(1)
+  notify(); await vi.advanceTimersByTimeAsync(0)
   expect(callArkme).toHaveBeenCalledTimes(2)
-  let finish!: (value: unknown) => void
-  vi.mocked(callArkme).mockImplementation(() => new Promise(resolve => { finish = resolve }))
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
-  window.dispatchEvent(new Event('focus'))
-  await vi.advanceTimersByTimeAsync(10_000)
+  surface.dataset.arkmeVisible = 'false'; await vi.advanceTimersByTimeAsync(10_000)
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  surface.dataset.arkmeVisible = 'true'; await vi.advanceTimersByTimeAsync(0)
   expect(callArkme).toHaveBeenCalledTimes(3)
-  finish({ contractVersion: 1, items: [row({ sessionRef: 'new-instance' })] })
-  await vi.advanceTimersByTimeAsync(0)
-  surface.dataset.arkmeVisible = 'false'
-  await vi.advanceTimersByTimeAsync(10_000)
+  cleanups.pop()!(); notify(); await vi.advanceTimersByTimeAsync(30_000)
   expect(callArkme).toHaveBeenCalledTimes(3)
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [] })
-  surface.dataset.arkmeVisible = 'true'
-  await vi.advanceTimersByTimeAsync(0)
-  expect(callArkme).toHaveBeenCalledTimes(4)
-  cleanups.pop()!()
-  window.dispatchEvent(new Event('focus'))
-  document.dispatchEvent(new Event(HARNESS_MENU_OPEN))
-  await vi.advanceTimersByTimeAsync(10_000)
-  expect(callArkme).toHaveBeenCalledTimes(4)
 })
 afterEach(() => { cleanups.splice(0).reverse().forEach(fn => fn()); document.body.replaceChildren(); vi.clearAllMocks(); vi.useRealTimers() })
-it('uses the embedding window focus and visibility to resume discovery', async () => {
+it('keeps pushed directory changes while the embedding document is hidden', async () => {
+  let notify!: () => void
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: () => void) => { notify = changed; return () => {} } } as never)
   const frame = document.createElement('iframe'); document.body.append(frame)
   const owner = frame.contentDocument!, surface = owner.body
-  const hidden = vi.spyOn(owner, 'hidden', 'get').mockReturnValue(false)
+  const hidden = vi.spyOn(owner, 'hidden', 'get').mockReturnValue(true)
   cleanups.push(() => hidden.mockRestore())
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
-  const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
-  cleanups.push(stop)
+  cleanups.push(installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface))
   await Promise.resolve(); await Promise.resolve()
-  hidden.mockReturnValue(true)
-  owner.defaultView!.dispatchEvent(new frame.contentWindow!.Event('focus'))
-  expect(callArkme).toHaveBeenCalledTimes(1)
-  hidden.mockReturnValue(false)
-  owner.dispatchEvent(new frame.contentWindow!.Event('visibilitychange'))
-  await Promise.resolve(); await Promise.resolve()
+  notify(); await Promise.resolve(); await Promise.resolve()
   expect(callArkme).toHaveBeenCalledTimes(2)
+  hidden.mockReturnValue(false); owner.dispatchEvent(new frame.contentWindow!.Event('visibilitychange'))
   owner.defaultView!.dispatchEvent(new frame.contentWindow!.Event('focus'))
-  expect(callArkme).toHaveBeenCalledTimes(3)
+  expect(callArkme).toHaveBeenCalledTimes(2)
 })
 it('separates identical ids from different hosts without changing the native local snapshot', () => {
   const before = structuredClone(local)
@@ -103,16 +205,6 @@ it('separates identical ids from different hosts without changing the native loc
   expect(value.byId.same).toBe(local.byId.same)
   expect(value.current).toBe(accountSessionKey(row()))
   expect(local).toEqual(before)
-})
-it('projects native mainView selection without mutating the executable local owner', () => {
-  const native = { ...local, byId: { same: { ...local.byId.same, retainedBy: { mainView: 1, other: 2 } } } }
-  const before = structuredClone(native)
-  const projected = projectAccountSessions(native as never, [row()], row())
-  expect(projected.byId[accountSessionKey(row()) as never]!.retainedBy.mainView).toBe(1)
-  expect(projected.byId.same!.retainedBy.mainView).toBe(0)
-  expect(projected.byId.same!.retainedBy.other).toBe(2)
-  expect(native).toEqual(before)
-  expect(projectAccountSessions(native as never, [row()]).byId.same!.retainedBy.mainView).toBe(1)
 })
 it('adds computer prefixes only for workspace name collisions and preserves each membership', () => {
   const rows = [row(), row({ local: true, runtimeRef: 'mac', desktopName: 'Mac' })]
@@ -194,10 +286,8 @@ it('keeps remote navigation out of native open, retains last good rows after fai
   vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row()] })
   await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, useStore: (select: any) => select({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (select: any) => select(local), useWorkspaces: (select: any) => select(ws), startSession: vi.fn() })))
   expect(container.textContent).toContain('Windows 对话')
-  const preview = vi.fn(); document.addEventListener(HARNESS_HISTORY_PREVIEW, preview); cleanups.push(() => document.removeEventListener(HARNESS_HISTORY_PREVIEW, preview))
   act(() => props.open(accountSessionKey(row())))
-  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).not.toHaveBeenCalled()
-  expect(preview).toHaveBeenCalledWith(expect.objectContaining({ detail: { session: row(), accountId: '3016', accountScope: '' } }))
+  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).toHaveBeenCalledWith(row(), undefined)
   act(() => props.open('same')); expect(open).toHaveBeenCalledWith('same')
   vi.mocked(callArkme).mockRejectedValue(new Error('offline'))
   await act(async () => window.dispatchEvent(new Event('focus')))
@@ -291,24 +381,39 @@ it('removes expired proof and removed optional revision fields instead of retain
  expect(reconcileAccountSessions(updated, [legacy])[0]).toBe(legacy)
 })
 
-it('keeps native local execution and actions, but previews injected foreign rows and blocks their mutations', async () => {
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  const surface = document.createElement('section'); surface.dataset.arkmeAccountId = '3016'; document.body.append(surface)
-  const container = document.createElement('div'); document.body.append(container)
-  const root = createRoot(container); cleanups.push(() => act(() => root.unmount()))
-  const foreign = row({ sameDesktop: true, desktopName: '本机同名电脑' }), id = accountSessionKey(foreign)
-  const nativeState = { ...local, ids: [...local.ids, id], byId: { ...local.byId, [id]: { ...local.byId.same, id } } }
-  const preview = vi.fn(); document.addEventListener(HARNESS_HISTORY_PREVIEW, preview); cleanups.push(() => document.removeEventListener(HARNESS_HISTORY_PREVIEW, preview))
-  const open = vi.fn(), rename = vi.fn(), archive = vi.fn(), fork = vi.fn(), start = vi.fn()
-  let props: any
-  const Native = (p: any) => { props = p; return null }
-  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [foreign] })
-  await act(async () => root.render(createElement(AccountSessionBrowser as ComponentType<any>, { Native, surface, open, renameSession: rename, archiveSession: archive, forkSession: fork, startSession: start, useStore: (s: any) => s({ orderBy: 'updated', sessionOrderByAccount: {} }), useSessions: (s: any) => s(nativeState), useWorkspaces: (s: any) => s(ws) })))
-  await act(async () => { props.open(id); await props.renameSession(id, '改名'); await props.archiveSession(id); props.forkSession(id); props.startSession('arkme:windows:workspace') })
-  expect(preview).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ session: foreign }) }))
-  expect(open).not.toHaveBeenCalled(); expect(openNativeAccountSession).not.toHaveBeenCalled()
-  expect(callArkme).not.toHaveBeenCalledWith('remote.session.command', expect.anything(), expect.anything())
-  expect(rename).not.toHaveBeenCalled(); expect(archive).not.toHaveBeenCalled(); expect(fork).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled()
-  await act(async () => { props.open('same'); await props.renameSession('same', '本机改名'); await props.archiveSession('same'); props.forkSession('same'); props.startSession('workspace') })
-  expect(open).toHaveBeenCalledWith('same'); expect(rename).toHaveBeenCalledWith('same', '本机改名'); expect(archive).toHaveBeenCalledWith('same'); expect(fork).toHaveBeenCalledWith('same'); expect(start).toHaveBeenCalledWith('workspace')
+it('refreshes immediately on a committed directory event and retains an event received during an in-flight read', async () => {
+  vi.useFakeTimers()
+  let notify!: () => void
+  const stopObserve = vi.fn()
+  vi.mocked(createArkmeSdk).mockReturnValueOnce({ observeDshAccountSessions: (changed: () => void) => { notify = changed; return stopObserve } } as never)
+  const surface = document.createElement('section'); surface.dataset.arkmeVisible = 'true'; document.body.append(surface)
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [] })
+  const stop = installHarnessAccountSessions({ slots: { entries: () => [], subscribe: () => () => {} } } as never, surface)
+  cleanups.push(stop)
+  await vi.advanceTimersByTimeAsync(0)
+  let finish!: (value: unknown) => void
+  vi.mocked(callArkme).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  notify()
+  expect(callArkme).toHaveBeenCalledTimes(2)
+  notify(); notify()
+  vi.mocked(callArkme).mockResolvedValue({ contractVersion: 1, items: [row({ sessionRef: 'new' })] })
+  finish({ contractVersion: 1, items: [] })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(callArkme).toHaveBeenCalledTimes(3) // No timer advanced, and the invalidation wasn't lost.
+  cleanups.pop()!()
+  expect(stopObserve).toHaveBeenCalledOnce()
+  notify()
+  expect(callArkme).toHaveBeenCalledTimes(3)
+})
+
+it('retains verified copy coverage only while committed content revisions match', () => {
+  const old = row({ directoryVersion: [1, 1], canonicalIdentity: true, historyRevision: 'h1', contentRevision: 'c1',
+    coveredLocalHistory: { runtimeRef: 'local', updatedAt: 20, projectionAsOfSeq: 3, source: 'local' } })
+  const renamed = applyAccountSessionDelta([old], { version: 1, sessions: [committed({
+    canonical_identity: true, history_revision: 'h1', content_revision: 'c1', deduplicated_runtime_refs: ['local'], readable_runtime_refs: ['local'],
+  })] })!
+  expect(renamed[0]).toMatchObject({ canonicalIdentity: true, previousRuntimeRefs: ['local'], readableRuntimeRefs: ['local'], coveredLocalHistory: old.coveredLocalHistory })
+  const advanced = applyAccountSessionDelta(renamed, { version: 1, sessions: [committed({ projection_at: 3, history_revision: 'h1', content_revision: 'c2' })] })!
+  expect(advanced[0]?.coveredLocalHistory).toBeUndefined()
+  expect(advanced[0]?.contentRevision).toBe('c2')
 })

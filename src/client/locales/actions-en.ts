@@ -15,6 +15,8 @@ export const actionEnglish: Record<string,string> = {
   "确认共享": "Confirm sharing",
   "保存更改": "Save changes",
   "正在加载团队…": "Loading teams…",
+  "开启路径：联系人 → 团队 → {team} → 团队消息通道 → 接收外部消息": "Enable: Contacts → Teams → {team} → Team message channel → Accept visitor messages",
+  "请团队所有者开启：联系人 → 团队 → {team} → 团队消息通道 → 接收外部消息": "Ask the team owner to enable: Contacts → Teams → {team} → Team message channel → Accept visitor messages",
   "你尚未加入团队": "You have not joined a team yet",
   "已共享": "Shared",
   "待共享": "To share",

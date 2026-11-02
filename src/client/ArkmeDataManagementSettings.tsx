@@ -1,3 +1,4 @@
+import { ArkmeRecordExportPanel } from './ArkmeRecordExportPanel.js'
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
 import { ArkmeConfirmDialog, ArkmeConfirmDialogPreview } from './ArkmeConfirmDialog.js'
 import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedItemsPage } from './data-deleted-items.js'
@@ -118,7 +119,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       if (mounted.current) setError(error instanceof Error ? error.message : '恢复失败，请刷新后重试')
     } finally { if (mounted.current) { recoveryController.current = undefined; setRecovering(false) } }
   }
-  return <section className="arkme-data-settings" data-arkme-settings-page="data" aria-label={tr("数据管理")}>
+  return <section className="arkme-data-settings" data-arkme-settings-page="data" data-export={page === 'export' ? 'true' : undefined} aria-label={tr("数据管理")}>
     <header>{page !== 'home' && <button type="button" className="arkme-data-back" disabled={recovering} onClick={() => setPage('home')}>{tr("‹ 数据管理")}</button>}
       <h2>{({ home: '数据管理', archived: '已归档主题', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
     {page === 'home' ? <>
@@ -135,7 +136,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <a className="arkme-data-primary" href="https://jiwo.cc/import" target="_blank" rel="noopener noreferrer">{tr("打开导入网页 ↗")}</a>
       <small>{tr("不会自动上传文件，也不会通过链接传递你的登录凭证。")}</small>
     </div> : <>
-      <button type="button" className="arkme-settings-link" disabled={loading || recovering} onClick={() => setRevision(value => value + 1)}>{loading ? tr("读取中…") : tr("刷新")}</button>
+      {page !== 'export' && <button type="button" className="arkme-settings-link" disabled={loading || recovering} onClick={() => setRevision(value => value + 1)}>{loading ? tr("读取中…") : tr("刷新")}</button>}
       {error && !confirm && <p role="alert" className="arkme-data-error">{tr(error)}</p>}
       {notice && <p role="status">{notice}</p>}
       {page === 'deleted' && deleted && <>
@@ -153,14 +154,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
         confirmLabel={tr('确认恢复')} busyLabel={tr('正在恢复…')} busy={recovering} error={tr(error)}
         onClose={() => setConfirm(undefined)} onConfirm={() => { void recover() }}
       ><ArkmeConfirmDialogPreview>{confirm.title || confirm.text.slice(0, 80) || tr('无文字记录')}</ArkmeConfirmDialogPreview></ArkmeConfirmDialog>}
-      {page === 'export' && <div className="arkme-data-panel">
-        <h3>{tr("完整备份")}</h3>
-        {preflight && <><p>{preflight.recordCount} {tr("条快记 ·")} {preflight.voiceCount} {tr("个语音 ·")} {preflight.imageCount} {tr("张图片")}</p>
-          {(preflight.message || !preflight.canExport) && <p>{preflight.message || '当前暂不满足导出条件，请在手机端查看。'}</p>}
-          {preflight.latestAtMillis > 0 && <small>{tr("最近导出：")}{new Date(preflight.latestAtMillis).toLocaleString(arkmeIntlLocale())}</small>}</>}
-        <p>{tr("当前插件尚未接入完整文件打包下载。请先在即我手机端或 Flutter 桌面端的「数据管理 → 导出」完成备份。")}</p>
-        <small>{tr("这里只查询导出条件，不会创建导出任务或消耗导出次数。")}</small>
-      </div>}
+      {page === 'export' && <ArkmeRecordExportPanel scope={scope} preflight={preflight} loading={loading} onRefresh={() => setRevision(value => value + 1)} />}
     </>}
   </section>
 }

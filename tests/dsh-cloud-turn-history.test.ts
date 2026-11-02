@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { readCloudTurnHistory } from '../src/dsh-remote/cloud-turn-history.js'
 import { DshCloudNativeTransport } from '../src/dsh-remote/cloud-native-transport.js'
 import { DshNativeHistoryCache } from '../src/dsh-remote/native-history-cache.js'
+import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import type { NativeHistoryRecord } from '../src/dsh-remote/native-history.js'
 
 // The plugin's development peer is older than the native desktop runtime.

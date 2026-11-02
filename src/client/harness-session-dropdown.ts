@@ -140,6 +140,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   mark(statusLabel, 'status-label')
   statusLabel.setAttribute('aria-hidden', 'true')
   const labelText = doc.createElement('span')
+  mark(labelText, 'label-text')
   label.append(status, labelText, statusLabel)
   const arrow = doc.createElement('span')
   const chevron = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -204,6 +205,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       color: var(--dsw-alias-label-secondary, #626872); font-size: 12px; font-weight: 500; line-height: 18px;
     }
     [${PREFIX}status-label]:not(:empty) { display: inline-block; }
+    [${PREFIX}trigger] > span:first-child { display: flex; align-items: center; }
+    [${PREFIX}label-text] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     [${PREFIX}header] { padding-left: 20px; padding-right: 20px; container: arkme-session-header / inline-size; }
     [${PREFIX}title-row] {
       --arkme-header-side: max(calc((100% - 8px) / 4), var(--arkme-header-utilities-width, 0px));
@@ -315,9 +318,9 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     const rect = trigger.getBoundingClientRect()
     const width = Math.min(CONVERSATION_MENU_LAYOUT.width, win!.innerWidth - 24)
     const anchor = external?.anchor()
-    const hoverPosition = anchor && external?.placement !== 'below' ? conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight }) : undefined
-    const top = hoverPosition?.top ?? Math.max(8, Math.min((anchor?.bottom ?? rect.bottom) + 7, win!.innerHeight - 100))
-    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(anchor?.left ?? rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
+    const hoverPosition = anchor && conversationMenuPosition(anchor, width, Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - 24), { width: win!.innerWidth, height: win!.innerHeight })
+    const top = hoverPosition?.top ?? Math.max(8, Math.min(rect.bottom + 7, win!.innerHeight - 100))
+    variable(current.column, '--arkme-session-left', `${hoverPosition?.left ?? Math.max(CONVERSATION_MENU_LAYOUT.viewportInset, Math.min(rect.left, win!.innerWidth - width - CONVERSATION_MENU_LAYOUT.viewportInset))}px`)
     variable(current.column, '--arkme-session-top', `${top}px`)
     variable(current.column, '--arkme-session-width', `${width}px`)
     variable(current.column, '--arkme-session-height', `${Math.min(CONVERSATION_MENU_LAYOUT.maxHeight, win!.innerHeight - top - CONVERSATION_MENU_LAYOUT.viewportInset)}px`)

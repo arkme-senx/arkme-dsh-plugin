@@ -107,15 +107,27 @@ describe('recording summary and timeline generation', () => {
     })
     await act(async () => { button(renderer, '总结').props.onClick(); await tick() })
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300_000)
-      await tick()
-    })
+    // Flush each owner response through React before advancing the next deadline.
+    // This integration case renders all 90 fast polls plus the first slow poll;
+    // keep the 15-second wall-clock budget local to this intentionally long case.
+    const advancePoll = async (milliseconds: number) => {
+      await act(async () => { vi.advanceTimersByTime(milliseconds); await tick() })
+    }
+    await advancePoll(1_500)
+    expect(dayReads).toBe(2)
+    for (let attempt = 1; attempt < 90; attempt += 1) await advancePoll(3_000)
+    expect(dayReads).toBe(91)
+    expect(renderedText(renderer.root)).toContain('生成总结中...')
 
-    expect(dayReads).toBeGreaterThan(91)
+    await advancePoll(14_999)
+    expect(dayReads).toBe(91)
+    await advancePoll(1)
+    expect(dayReads).toBe(92)
     expect(renderedText(renderer.root)).toContain('生成未完成，请重试或选择其他模型。')
     expect(button(renderer, '选择模型并重试')).toBeDefined()
-  })
+    await advancePoll(60_000)
+    expect(dayReads).toBe(92)
+  }, 15_000)
 
   it('preserves the selected timeline version while polling an independent summary generation', async () => {
     vi.useFakeTimers()

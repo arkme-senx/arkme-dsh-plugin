@@ -59,7 +59,7 @@ export class DshNativeSocket {
           if (!controller.signal.aborted) send({ id, ok: true, value })
         } catch (error) {
           if (!id) client.close(1008, 'Invalid native request')
-          else if (!controller?.signal.aborted) { const e = asDshRemoteError(error); send({ id, ok: false, error: { code: e.code, message: e.message } }) }
+          else if (!controller?.signal.aborted) { const e = asDshRemoteError(error); send({ id, ok: false, error: { code: e.code, message: e.message, retryable: e.retryable } }) }
         } finally {
           if (controller) { requests.delete(id!); this.pending-- }
         }

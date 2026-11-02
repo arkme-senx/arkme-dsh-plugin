@@ -82,6 +82,24 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires the existing conversation confirmation before scheduling evidence', async () => {
+    const ctx = await setup()
+    const recordingSpeakerEvidenceQuery = vi.fn(async () => ({state:'building',queuedCount:1,missingMaterialChildren:0}))
+    const mounted = await mountArkmeTools(ctx,'business',{...ports,recordingSpeakerEvidenceQuery} as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{seq:0,type:'user/message',data:{content:[{type:'text',text:'计算选中声音证据'}],source:{kind:'user'}}}])
+    const agent={id:SessionId('evidence-build'),session:{get events(){return events}}} as unknown as Agent
+    const invoke=(call:string)=>ctx.tools.execute({callId:CallId(call),name:'arkme_recording_speaker_evidence_build',arguments:{request_json:JSON.stringify({action:'build',itemRefs:['opaque']})},agent,signal:new AbortController().signal})
+    const prepared=await invoke('evidence-prepare')
+    expect(prepared.isError?'':prepared.value).toContain('confirmation_required')
+    expect(prepared.isError?'':prepared.value).toContain('不会改动人物归属')
+    expect(recordingSpeakerEvidenceQuery).not.toHaveBeenCalled()
+    events.push({seq:1,type:'user/message',data:{content:[{type:'text',text:'确认计算'}],source:{kind:'user'}}})
+    expect((await invoke('evidence-execute')).isError).toBe(false)
+    expect(recordingSpeakerEvidenceQuery).toHaveBeenCalledTimes(1)
+    await mounted.dispose()
+  })
+
+
   it('executes common-group reads with paging and cancellation, and keeps sync separate from paging', async () => {
     const ctx = await setup()
     const result = {items:[],totalCached:0,hasMore:false,syncHasMore:false,syncedAtMillis:1,revision:1}
@@ -254,12 +272,13 @@ describe('registerArkmeTools', () => {
 
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
-      'arkme_group_identities', 'arkme_team_public_card',
+      'arkme_records_export_preflight', 'arkme_records_export',
+      'arkme_team_outbound_open','arkme_group_identities', 'arkme_team_public_card',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
-      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send', 'arkme_codex_work_records', 'arkme_codex_work_record_change',
+      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_member_candidates', 'arkme_team_members_add', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send', 'arkme_codex_work_records', 'arkme_codex_work_record_change',
       'arkme_team_notification_conversations',
       'arkme_team_notification_policy',
       'arkme_team_notification_policy_set',
@@ -321,7 +340,7 @@ describe('registerArkmeTools', () => {
       'arkme_relation_pages',
       'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
-      'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
+      'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',
       'arkme_recording_notifications',
       'arkme_recording_notifications_read',
@@ -1250,4 +1269,23 @@ describe('recording import write authorization', () => {
     expect(result.isError).toBe(true)
     expect(importRecordingFile).not.toHaveBeenCalled()
   })
+  it('requires a later human confirmation for exact Team edits and redacts private snapshot output',async()=>{
+    const ctx=await setup(),revisionUid='11111111-1111-4111-8111-111111111111'
+    const editTeamMessage=vi.fn(async()=>({version:2})),readTeamEditReceipt=vi.fn(async()=>({revisionUid,accepted:false}))
+    const readTeamMessageSnapshot=vi.fn(async()=>({schemaVersion:1,recorded:true,version:1,snapshotVersion:1,captureStates:{device:'recorded',location:'recorded'},detail:{itemUid:'opaque',textContent:'',backgroundSound:'unknown',startAtMillis:1000,captureContext:{clientName:'private-device'},locationCapture:{latitude:30,longitude:120}}}))
+    const preflightTeamMessages=vi.fn(async()=>[{own:true,canEdit:true,version:1,content:{template_kind:1,text_content:'original'}}])
+    const registration=await mountArkmeTools(ctx,'business',{...ports,editTeamMessage,readTeamEditReceipt,readTeamMessageSnapshot,preflightTeamMessages} as unknown as ArkmeToolPorts)
+    const events=sessionEvents([{type:'user/message',data:{content:[{type:'text',text:'帮我修改这条团队消息'}],source:{kind:'user'}}}])
+    const agent={id:SessionId('team-snapshot'),session:{get events(){return events}}} as unknown as Agent,signal=new AbortController().signal
+    const read=await ctx.tools.execute({name:'arkme_team_messages',callId:CallId('snapshot-read'),arguments:{snapshot:true,conversation_ref:'conversation',message_ref:'message'},agent,signal})
+    expect(read.isError).toBe(false);expect(JSON.stringify(read)).not.toMatch(/private-device|latitude|longitude/)
+    const args={conversation_ref:'conversation',message_ref:'message',version:1,revision_uid:revisionUid,text:'new'}
+    const first=await ctx.tools.execute({name:'arkme_team_message_edit',callId:CallId('edit-prepare'),arguments:args,agent,signal})
+    expect(first.isError?'':first.value).toContain('confirmation_required');expect(editTeamMessage).not.toHaveBeenCalled();expect(readTeamEditReceipt).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{content:[{type:'text',text:'确认修改'}],source:{kind:'user'}}})
+    const accepted=await ctx.tools.execute({name:'arkme_team_message_edit',callId:CallId('edit-confirmed'),arguments:args,agent,signal})
+    expect(accepted.isError).toBe(false);expect(editTeamMessage).toHaveBeenCalledOnce();expect(editTeamMessage.mock.calls[0]![0]).toMatchObject({revisionUid,version:1})
+    await registration.dispose()
+  })
+
 })

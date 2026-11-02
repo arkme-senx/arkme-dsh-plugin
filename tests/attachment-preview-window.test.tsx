@@ -45,6 +45,17 @@ describe('independent preview host', () => {
     expect(docs).toHaveLength(2)
     expect(docs[1]!.body.textContent).toContain('new account')
   })
+  it('closes only the invalidated source and stops independent media playback', () => {
+    const {manager, docs, windows} = setup()
+    act(() => manager.show('team-message:asset:false', () => <video src="blob:retained-media" />))
+    act(() => manager.closeSource('another-message'))
+    expect(windows[0].closed).toBe(false)
+    expect(docs[0]!.querySelector('video')).not.toBeNull()
+    act(() => manager.closeSource('team-message'))
+    expect(windows[0].closed).toBe(true)
+    expect(docs[0]!.querySelector('video')).toBeNull()
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled()
+  })
   it('reports unavailable windows without placing an overlay in chat', () => {
     const manager = new AttachmentPreviewWindow(window, () => null)
     expect(() => manager.show('a', () => <div>file</div>)).toThrow()

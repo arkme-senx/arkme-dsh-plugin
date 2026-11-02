@@ -5,6 +5,13 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('recording UI-only host operations', () => {
+  it('dispatches the native strategy snapshot with its account and cancellation signal', async () => {
+    const registerRecordingImportStrategies = vi.fn(async () => {})
+    const controller = new AbortController(), tasks = [{ taskId: 'opaque-task', strategy: 'system-sd-asr/v1' }]
+    await dispatchArkmeHostOperation({ registerRecordingImportStrategies } as unknown as ArkmeService,
+      'recordings.import.strategies.register', { tasks, expectedUserId: 42 }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(registerRecordingImportStrategies).toHaveBeenCalledWith(tasks, 42, controller.signal)
+  })
   it('routes the public page through the same owner and rejects a source/cursor type mismatch', async () => {
     const recordingTranscriptPage = vi.fn(async () => ({ items: [], nextCursor: '', viewRef: 'opaque' }))
     const service = { recordingTranscriptPage } as unknown as ArkmeService
@@ -102,6 +109,7 @@ describe('recording UI-only host operations', () => {
     if (address === null || typeof address === 'string') throw new Error('test server address missing')
     try {
       for (const body of [
+        { operation: 'recordings.import.strategies.register', params: { expectedUserId: 42, tasks: [] } },
         { operation: 'recordings.generate', params: { dateStamp: 10, kind: 'summary' } },
         { operation: 'recordings.compare.start', params: { dateStamp: 10 } },
         { operation: 'recordings.forward', params: { itemRefs: ['opaque'] } },

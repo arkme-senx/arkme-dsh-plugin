@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamConversation, TeamTimeline } from '../team-app-contract.js'
 import { TeamMessageContent } from './TeamMessageContent.js'
@@ -12,7 +12,9 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory } from './team-conversation-directory.js'
-import { openTeamMessages } from './team-messaging-events.js'
+import { openTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { mergeTeamMessages,withoutTeamConversationMaterial } from '../team-message-projection.js'
+import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
 import type { TeamEntryTarget } from './team-directory-preferences.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
@@ -21,7 +23,11 @@ const button = { border: 0, background: 'transparent', color: arkmeTheme.accent,
 export function TeamConversationPreview({ accountKey, target, onClose }: { accountKey: string; target: TeamEntryTarget; onClose(): void }) {
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
-  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? target.group : undefined
+  const retainFolderIdentity = (value: TeamConversation): TeamConversation => {
+    const retained = withoutTeamConversationMaterial(value)
+    return directory.hasLoaded && retained.visitor ? { ...retained, visitor: { ...retained.visitor, memberType: 'unknown' } } : retained
+  }
+  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? {...target.group, latest:retainFolderIdentity(target.group.latest), conversations:target.group.conversations.map(retainFolderIdentity)} : undefined
   const [chosen, setChosen] = useState<TeamConversation | undefined>(target.kind === 'conversation' ? target.conversation : undefined)
   const conversation = target.kind === 'conversation' ? target.conversation : chosen
   const [loadedConversation, setLoadedConversation] = useState<TeamConversation>()
@@ -70,32 +76,47 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
           {(directory.hasMore || directory.error) && <button style={button} disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, !directory.error) }}>{directory.loading ? '正在加载…' : directory.error ? '重试' : '加载更多对话'}</button>}
         </div>}
       <footer style={{ padding: '8px 16px', borderTop: `1px solid ${arkmeTheme.borderSoft}`, textAlign: 'right' }}>
-        <button style={button} onClick={() => { onClose(); openTeamMessages(conversation ? { kind: 'conversation', conversation } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
+        <button style={button} onClick={() => { onClose(); openTeamMessages(current ? { kind: 'conversation', conversation: current } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
       </footer>
     </div>
   </div>, document.body)
 }
 
-function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation(value: TeamConversation): void }) {
+function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation: Dispatch<SetStateAction<TeamConversation | undefined>> }) {
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
+  const generation = useRef(0)
+  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly,change) => {
+    if (account !== accountKey || receiptOnly || !teamChangeAffectsSource(change,{conversationKey:conversation.key})) return
+    ++generation.current
+    setPage(old=>old?{...old,conversation:withoutTeamConversationMaterial(old.conversation),messages:old.messages.map(row=>invalidateTeamMessageRead(row,change,conversation.key))}:old)
+    setRequest(value => ({before:0, attempt:value.attempt+1}))
+  }), [accountKey])
   const body = useRef<HTMLDivElement>(null), geometry = useRef<{ height: number; top: number }>()
   useEffect(() => {
-    const controller = new AbortController()
+    const controller = new AbortController(), token = ++generation.current
     setLoading(true); setError('')
     void callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: request.before, limit: 30 }, controller.signal)
       .then(value => {
         controller.signal.throwIfAborted()
+        if (token !== generation.current) return
         if (value.hasMore && (!value.beforeSeq || request.before > 0 && value.beforeSeq >= request.before)) throw new Error('消息分页异常，请重试')
         if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
-        setPage(old => ({ ...value, messages: [...new Map([...(request.before ? old?.messages ?? [] : []), ...value.messages].map(message => [message.key, message])).values()].sort((a, b) => a.seq - b.seq) }))
+        setPage(old => ({ ...value, messages: mergeTeamMessages(old?.messages??[],value.messages) }))
         onConversation(value.conversation)
-      }).catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '加载失败，请重试') })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+      }).catch(caught => {
+        if (controller.signal.aborted || token !== generation.current) return
+        setError(caught instanceof Error ? caught.message : '加载失败，请重试')
+        onConversation(previous => {
+          const latest = previous?.key === conversation.key && previous.side === conversation.side ? previous : conversation
+          return latest.visitor ? { ...latest, visitor: { ...latest.visitor, memberType: 'unknown' } } : latest
+        })
+      })
+      .finally(() => { if (!controller.signal.aborted && token === generation.current) setLoading(false) })
     return () => controller.abort()
   }, [accountKey, conversation.ref, request, onConversation])
   useLayoutEffect(() => {
-    if (body.current && page) body.current.scrollTop = request.before && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
+    if (body.current && page) body.current.scrollTop = (request.before || request.attempt>0) && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
   }, [page])
   return <div ref={body} aria-label="预览消息列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}>
     {error && <p role="alert">{error}<button style={button} onClick={() => setRequest(value => ({ ...value, attempt: value.attempt + 1 }))}>{tr('重试')}</button></p>}
@@ -107,7 +128,7 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>
         <div style={{ padding: '8px 10px', borderRadius: 10, background: message.own ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
-          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent message={message} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
+          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
         </div>
       </div>
     </article>)}

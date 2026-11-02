@@ -2,7 +2,7 @@ import { watchConversationMenuHover } from './conversation-menu-layer.js'
 import { HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARNESS_MENU_POSITION, harnessMenuLayers, type HarnessSessionMenuRequest } from './harness-session-menu-bridge.js'
 
 /** Reveal the existing native list. Never resize or translate the conversation on hover. */
-export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, activate: () => void, clickToOpen = false): () => void {
+export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, activate: () => void): () => void {
   const doc = anchor.ownerDocument, win = doc.defaultView
   if (!win) return () => {}
   let native: Document | undefined
@@ -11,8 +11,7 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
   const release = () => { stopWatching?.(); stopWatching = undefined; native = undefined; frameElement = undefined }
   return watchConversationMenuHover(anchor, {
     open: hover => {
-      const outer = win.frameElement?.ownerDocument ?? doc
-      const surface = outer.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"]:not([data-arkme-active="false"])[data-arkme-account-id]')
+      const surface = doc.querySelector<HTMLElement>('[data-arkme-owned="deepseek-harness-surface"]:not([data-arkme-active="false"])[data-arkme-account-id]')
       if (surface?.getAttribute('data-arkme-account-scope') !== scope) return false
       const frame = surface.querySelector('iframe')
       let next: Document | null | undefined
@@ -24,7 +23,7 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
       const visible = surface.getAttribute('data-arkme-visible')
       const close = () => next.dispatchEvent(new nw.Event(HARNESS_MENU_CLOSE))
       const point = (event: PointerEvent) => {
-        const viewport = doc === next ? { left: 0, top: 0 } : frame.getBoundingClientRect()
+        const viewport = frame.getBoundingClientRect()
         return { x: event.clientX + viewport.left, y: event.clientY + viewport.top }
       }
       const move = (event: PointerEvent) => hover.checkPointer(event.target, point(event))
@@ -47,9 +46,8 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
       }
       const request: HarnessSessionMenuRequest = {
         accepted: false,
-        ...(clickToOpen ? { placement: 'below' as const } : {}),
         anchor: () => {
-          const card = hover.anchor(), viewport = doc === next ? { left: 0, top: 0 } : frame.getBoundingClientRect()
+          const card = hover.anchor(), viewport = frame.getBoundingClientRect()
           return { left: card.left - viewport.left, right: card.right - viewport.left, top: card.top - viewport.top, bottom: card.bottom - viewport.top }
         },
         onLayout: () => {},
@@ -66,12 +64,12 @@ export function watchHarnessSessionHover(anchor: HTMLElement, scope: string, act
     contains: target => !!native && harnessMenuLayers(native).some(node => node.contains(target as Node | null)),
     bounds: () => {
       if (!native || !frameElement) return []
-      const viewport = doc === native ? { left: 0, top: 0 } : frameElement.getBoundingClientRect()
+      const viewport = frameElement.getBoundingClientRect()
       return harnessMenuLayers(native).map(node => {
         const rect = node.getBoundingClientRect()
         return { left: rect.left + viewport.left, right: rect.right + viewport.left,
           top: rect.top + viewport.top, bottom: rect.bottom + viewport.top }
       })
     },
-  }, clickToOpen)
+  })
 }

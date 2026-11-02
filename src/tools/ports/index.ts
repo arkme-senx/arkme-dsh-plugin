@@ -1,4 +1,6 @@
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
+import type { ArkmeRecordExportPort } from '../../data-management.js'
+import type {TeamMemberManagementPort} from '../../team-member-add-contract.js'
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
 import type { TeamNotificationPort } from '../../team-notification-contract.js'
@@ -30,7 +32,10 @@ import type { ArkmeFileToolPort } from './files.js'
 import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
-export interface ArkmeCoreToolPorts extends CodexWorkRecordsPort,
+export interface ArkmeCoreToolPorts extends
+  CodexWorkRecordsPort,
+  ArkmeRecordExportPort,
+  TeamMemberManagementPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,

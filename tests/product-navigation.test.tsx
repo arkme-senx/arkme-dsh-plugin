@@ -76,7 +76,7 @@ describe('Arkme product navigation', () => {
       expect(nav.props.style.minWidth).toBe(60)
       const brand = renderer.root.findByProps({ 'data-arkme-owned': 'product-brand' })
       const version = brand.findByType('span')
-      expect(version.children).toEqual([`v${version.props['data-arkme-plugin-version']}`])
+      expect(version.children).toEqual([`v3.${version.props['data-arkme-plugin-version'].split('.')[2]}`])
       expect(version.props.style).toMatchObject({ fontSize: 10, lineHeight: '13px', color: arkmeTheme.tertiary })
       const profile = renderer.root.findByProps({ 'aria-label': '个人资料' })
       const avatar = profile.findByProps({ 'data-arkme-avatar': true })

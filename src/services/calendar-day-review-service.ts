@@ -39,6 +39,10 @@ export class CalendarDayReviewService {
     await this.guard(query, session, epoch, signal)
     return { query, epoch, session }
   }
+  async confirmationAccount(input: unknown, signal?: AbortSignal): Promise<string> {
+    const { query, epoch } = await this.context(input, signal)
+    return `${query.accountScope}:${epoch}`
+  }
   private body(q: DayReviewQuery) { return { schema_version: 1, scope: 'calendar_day', date: q.bucketDate, time_zone: q.timezone } }
   private request(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal, write = false) {
     return this.runtime.authenticatedIntelligentPost<unknown>(`${base}/${path}`, body, session, signal,
