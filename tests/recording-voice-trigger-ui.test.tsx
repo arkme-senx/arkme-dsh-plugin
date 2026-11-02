@@ -9,7 +9,7 @@ import { RecordingVoiceTriggerDialog } from '../src/client/recordings/RecordingV
 import { defaultRecordingVoiceRule, type RecordingVoiceCandidate } from '../src/recording-voice-trigger-contract.js'
 let root: Root, holder: HTMLDivElement, available = true
 const accountKey = 'prod:7', onClose = vi.fn()
-const hit = (speaker: RecordingVoiceCandidate['speaker'], status: RecordingVoiceCandidate['status'] = 'pending'): RecordingVoiceCandidate => ({ candidateKey: speaker, candidateRef: `opaque-${speaker}`, revision: 1, phrase: '帮我记一下', text: `${speaker}的记事`, speaker, speakerLabel: speaker === 'unknown' ? '未识别说话人' : '其他人', status, boundary: 'complete', startAtMillis: 1000, endAtMillis: 2000, evidence: { kind: 'audio-kws', model: 'test', score: .9 } })
+const hit = (speaker: RecordingVoiceCandidate['speaker'], status: RecordingVoiceCandidate['status'] = 'pending'): RecordingVoiceCandidate => ({ candidateKey: speaker, candidateRef: `opaque-${speaker}`, revision: 1, phrase: '帮我记一下', text: `${speaker}的记事`, speaker, speakerLabel: speaker === 'unknown' ? '未识别说话人' : '其他人', status, boundary: 'complete', startAtMillis: 1000, endAtMillis: 2000, evidence: { kind: 'transcript', model: 'test', match: 'literal' } })
 const buttons = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].filter(node => node.textContent === label)
 const click = async (node: HTMLElement) => act(async () => { node.click() })
 beforeEach(() => {
@@ -62,4 +62,21 @@ it('does not offer a save for an unfinished capture', async () => {
   await mount()
   expect(buttons('保存到发给自己')[0]!.disabled).toBe(true)
   expect(document.body.textContent).toContain('等待后续录音')
+})
+
+it('requires a second explicit action before saving uncertain displayed text',async()=>{
+ const original=api.callArkme.getMockImplementation()!
+ api.callArkme.mockImplementation(async(operation,params)=>params.action==='page'?{items:[{...hit('unknown'),boundary:'uncertain'}]}:original(operation,params))
+ await mount();await click(buttons('保存到发给自己')[0]!)
+ expect(api.callArkme.mock.calls.some(([op])=>op==='recordings.voice-triggers.decide')).toBe(false)
+ expect(document.body.textContent).toContain('只保存当前显示的文字')
+ await click(buttons('保存当前内容')[0]!)
+ expect(api.callArkme.mock.calls.find(([op])=>op==='recordings.voice-triggers.decide')?.[1]).toMatchObject({confirmedRange:true})
+})
+it('keeps pagination available when current permissions remove all items in a snapshot page',async()=>{
+ const original=api.callArkme.getMockImplementation()!
+ api.callArkme.mockImplementation(async(op,params)=>params.action==='page'?{items:[],nextCursor:'next-authorized-page'}:original(op,params))
+ await mount()
+ expect(buttons('加载更多')).toHaveLength(1)
+ expect(document.body.textContent).not.toContain('尚未发现口令命中')
 })

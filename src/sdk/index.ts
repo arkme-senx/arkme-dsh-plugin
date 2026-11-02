@@ -1,3 +1,4 @@
+export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 export type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../thought-continuation.js'
@@ -890,6 +891,26 @@ export class ArkmeSdk {
       throw new Error(`Unsupported Arkme provider contract version ${String(capabilities.contractVersion)}`)
     }
     return capabilities
+  }
+
+  private async requireRecordingVoice(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.recordingVoiceTriggersV2 !== true) throw new Error('当前 Provider 不支持录音语音触发 v2')
+  }
+  async voiceTriggerSettings(expectedAccountScope: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceSettings> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'settings', accountKey: expectedAccountScope }, signal)
+  }
+  async voiceTriggerPage(expectedAccountScope: string, cursor?: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoicePage> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'page', accountKey: expectedAccountScope, ...(cursor ? { cursor } : {}) }, signal)
+  }
+  async voiceTriggerDetail(expectedAccountScope: string, candidateRef: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDetail> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'detail', accountKey: expectedAccountScope, candidateRef }, signal)
+  }
+  /** Rules do not enable the separate ongoing AI-usage authorization. */
+  async setVoiceTriggerRules(expectedAccountScope: string, input: { rules: import('../recording-voice-trigger-contract.js').RecordingVoiceRule[]; revision: number; localRevision: number }, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceSettings> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers.rules.set', { accountKey: expectedAccountScope, ...input }, signal)
+  }
+  async decideVoiceTrigger(expectedAccountScope: string, input: { candidateRef: string; decision: 'save' | 'ignore'; confirmedRange?: boolean }, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceCandidate> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers.decide', { accountKey: expectedAccountScope, ...input }, signal)
   }
 
   async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {

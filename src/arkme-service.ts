@@ -1398,6 +1398,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
+        recordingVoiceTriggersV2: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,
@@ -1685,9 +1686,9 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
-  /** @internal Built-in loopback UI; detection and exactly-once note writes are Audio-owner capabilities. */
+  /** UI, Tools and SDK share the account-scoped Audio candidate owner. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
-    return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingSpeakerCorrectionItems(query, signal)).request(action, input, signal)
+    return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingVoiceSourceItems(query, signal)).request(action, input, signal)
   }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }

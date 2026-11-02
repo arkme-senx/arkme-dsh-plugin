@@ -1,3 +1,4 @@
+import { ArkmeConfirmDialog } from '../ArkmeConfirmDialog.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -54,8 +55,9 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
   const [cursor, setCursor] = useState<string>(), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [editing, setEditing] = useState<RecordingVoiceRule>()
   const [voices, setVoices] = useState<ArkmeRecordingWorkbenchItem[]>(), [marking, setMarking] = useState<ArkmeRecordingWorkbenchItem>()
+  const [confirming, setConfirming] = useState<RecordingVoiceCandidate>()
   const dialog = useRef<HTMLElement>(null), abort = useRef<AbortController>(), actionLock = useRef(false), readVersion = useRef(0)
-  const editingRef = useRef(false); editingRef.current = !!editing || !!voices || !!marking
+  const editingRef = useRef(false); editingRef.current = !!editing || !!voices || !!marking || !!confirming
   const playback = useRecordingPlayback(mediaPath)
   const guard = (value: RecordingVoiceSettings) => { if (value.accountKey !== accountKey) throw new Error(tr('账号已切换，请重新打开语音触发')); return value }
   const reload = useCallback(async () => {
@@ -95,13 +97,17 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
     setSettings(result); setEditing(undefined)
     setNotice(result.available ? tr('语音触发规则已保存') : tr('配置已保存在本机，尚未开始自动检测。'))
   })
-  const decide = (candidate: RecordingVoiceCandidate, decision: 'save' | 'ignore') => run(async () => {
-    const result = await callArkme<RecordingVoiceCandidate>('recordings.voice-triggers.decide', { accountKey, candidateRef: candidate.candidateRef, decision })
+  const decide = (candidate: RecordingVoiceCandidate, decision: 'save' | 'ignore', confirmedRange = false) => {
+    if (decision === 'save' && candidate.boundary === 'uncertain' && !confirmedRange) { setConfirming(candidate); return Promise.resolve() }
+    return run(async () => {
+    const result = await callArkme<RecordingVoiceCandidate>('recordings.voice-triggers.decide', { accountKey, candidateRef: candidate.candidateRef, decision, confirmedRange })
     // Keep the row in place, including while late voiceprint attribution arrives.
     if (result.candidateKey !== candidate.candidateKey) throw new Error(tr('识别记录不一致，请刷新后重试'))
     setItems(values => values.map(item => item.candidateKey === candidate.candidateKey ? result : item))
-    setNotice(decision === 'save' ? tr('已保存到发给自己，可继续标记说话人。') : tr('已忽略这条识别记录'))
-  })
+    setConfirming(undefined)
+    setNotice(decision === 'save' ? result.status === 'saved' ? tr('已保存到发给自己，可继续标记说话人。') : tr('保存已受理，正在完成，请稍后刷新查看。') : tr('已忽略这条识别记录'))
+    })
+  }
   const detail = (candidate: RecordingVoiceCandidate, mark: boolean) => run(async () => {
     const value = await callArkme<RecordingVoiceDetail>('recordings.voice-triggers', { accountKey, action: 'detail', candidateRef: candidate.candidateRef })
     if (mark) setVoices(value.items)
@@ -145,14 +151,14 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
           {settings.available && settings.draft.revision > 0 && JSON.stringify(settings.draft.rules) !== JSON.stringify(settings.rules) && <button type="button" style={button} disabled={busy || !!editing} onClick={() => { void save(settings.draft.rules) }}>{tr('应用此前保存在本机的配置')}</button>}
           {editing && <VoiceRuleEditor key={editing.id} rule={editing} busy={busy} onCancel={() => setEditing(undefined)} onSave={rule => { void save([...settings.rules.filter(item => item.id !== rule.id), rule]) }} />}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><strong>{tr('识别记录')}</strong><span style={{ color: theme.secondary }}>{tr('本人优先')} <button type="button" style={quiet} disabled={busy || loading || !!editing || !!voices} onClick={() => { void reload() }}>{tr('刷新')}</button></span></div>
-          {settings.available && !loading && !error && items.length === 0 && <p style={{ margin: 0, color: theme.secondary }}>{tr('尚未发现口令命中。录音上传并处理后，识别结果会显示在这里。')}</p>}
+          {settings.available && !loading && !error && !cursor && items.length === 0 && <p style={{ margin: 0, color: theme.secondary }}>{tr('尚未发现口令命中。录音上传并处理后，识别结果会显示在这里。')}</p>}
           {items.map(candidate => <article key={candidate.candidateKey} style={{ padding: 12, border: `1px solid ${theme.border}`, borderRadius: 9 }}>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap', color: theme.secondary }}><span>{candidate.speaker === 'self' ? tr('我') : candidate.speakerLabel} · {clock(candidate.startAtMillis)}</span><span>{tr(candidate.status === 'saved' ? '已保存' : candidate.status === 'ignored' ? '已忽略' : '待确认')}</span></div>
-            <div style={{ marginTop: 8, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.6 }}>{candidate.text || tr('等待后续录音…')}</div>
+            <div style={{ marginTop: 8, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.6 }}>{candidate.text || tr(candidate.pendingReason === 'ai_allowance_exhausted' ? 'AI 额度不足，补充后继续处理。' : candidate.pendingReason === 'automatic_disabled' ? '自动使用额度未授权，此候选尚未解释。' : candidate.pendingReason === 'source_changed' ? '原音转写已更新，此候选无法继续保存。' : candidate.pendingReason === 'not_a_directive' ? '此处未识别为明确记事指令，可试听后忽略。' : candidate.pendingReason === 'inference_not_verified' ? '本次解释未通过核验，可试听后忽略。' : '等待后续录音…')}</div>
             {candidate.boundary !== 'complete' && <p style={{ color: theme.secondary }}>{tr(candidate.boundary === 'open' ? '正在等待后续录音，内容完整后可保存。' : '内容边界待确认，请试听核对后保存。')}</p>}
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <button type="button" style={quiet} disabled={busy} onClick={() => { void detail(candidate, false) }}>{tr('播放原音')}</button>
-              {candidate.status === 'pending' && <><button type="button" style={quiet} disabled={busy} onClick={() => { void decide(candidate, 'ignore') }}>{tr('忽略')}</button><button type="button" style={button} disabled={busy || candidate.boundary === 'open' || !candidate.text.trim()} onClick={() => { void decide(candidate, 'save') }}>{tr('保存到发给自己')}</button></>}
+              {candidate.status === 'pending' && <><button type="button" style={quiet} disabled={busy || candidate.pendingReason === 'save_in_progress'} onClick={() => { void decide(candidate, 'ignore') }}>{tr('忽略')}</button><button type="button" style={button} disabled={busy || candidate.pendingReason === 'save_in_progress' || candidate.pendingReason === 'source_changed' || candidate.boundary === 'open' || !candidate.text.trim()} onClick={() => { void decide(candidate, 'save') }}>{tr(candidate.pendingReason === 'save_in_progress' ? '保存处理中…' : '保存到发给自己')}</button></>}
               {candidate.status === 'saved' && <button type="button" style={button} disabled={busy} onClick={() => { void detail(candidate, true) }}>{tr('标记说话人')}</button>}
             </div>
           </article>)}
@@ -165,6 +171,7 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
           <button type="button" style={quiet} onClick={() => setVoices(undefined)}>{tr('收起')}</button></section>}
       </div>
     </section>
+    {confirming && <ArkmeConfirmDialog titleId="voice-trigger-range-confirm" title={tr('确认保存当前内容？')} description={tr('这条记事的结束边界尚不确定。将只保存当前显示的文字，请先试听核对。')} confirmLabel={tr('保存当前内容')} busyLabel={tr('保存中…')} busy={busy} error={error} onClose={() => setConfirming(undefined)} onConfirm={() => { void decide(confirming, 'save', true) }}><div style={{ whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{confirming.text}</div></ArkmeConfirmDialog>}
     {marking && <ArkmeRecordingSpeakerEditor item={marking} items={[marking]} initialBatchUpdate={false} onPlay={item => { void playback.playItem(item) }} onClose={() => setMarking(undefined)} onUpdated={() => { setMarking(undefined); setVoices(undefined); setNotice(tr('已标记所选片段，身份识别效果会随后续处理核验。')) }} />}
   </div>, document.body)
 }

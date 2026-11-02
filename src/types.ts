@@ -1587,6 +1587,7 @@ export interface ArkmeProviderCapabilities {
 arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
+    recordingVoiceTriggersV2?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true

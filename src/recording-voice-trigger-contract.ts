@@ -29,12 +29,15 @@ export interface RecordingVoiceCandidate {
   speakerLabel: string
   status: 'pending' | 'saved' | 'ignored'
   boundary: 'complete' | 'open' | 'uncertain'
-  evidence: { kind: 'audio-kws'; model: string; score: number }
+  pendingReason?: string
+  /** Present only after the native Record owner acknowledges persistence. */
+  recordUID?: string
+  evidence: { kind: 'transcript'; model: string; match: 'literal' | 'phonetic' }
 }
 export interface RecordingVoicePage { items: RecordingVoiceCandidate[]; nextCursor?: string }
 export interface RecordingVoiceDetail { items: ArkmeRecordingWorkbenchItem[] }
 
-/** Rule text configures an acoustic detector; this is never a transcript matcher. */
+/** Rule text configures candidate discovery in the existing formal transcript. */
 export function recordingVoiceRules(value: unknown): RecordingVoiceRule[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error('最多添加 20 条语音触发规则')
   const phrases = new Set<string>(), ids = new Set<string>()
@@ -47,7 +50,7 @@ export function recordingVoiceRules(value: unknown): RecordingVoiceRule[] {
       if (typeof value !== 'string') throw new Error('请填写触发口令')
       const text = value.trim().normalize('NFKC')
       if ([...text].length < 3 || [...text].length > 32 || /[\r\n\x00-\x1f]/u.test(text)) throw new Error('触发口令需为 3–32 个字')
-      const key = text.toLocaleLowerCase('zh-CN').replace(/[\s，。！？、,.!?]/gu, '')
+      const key = text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
       if ([...key].length < 3 || !/[\p{L}\p{N}]/u.test(key)) throw new Error('请填写有辨识度的触发口令')
       if (phrases.has(key)) throw new Error('口令或其他说法重复，请调整后保存')
       phrases.add(key)

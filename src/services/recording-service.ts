@@ -1,3 +1,4 @@
+import type { RecordingVoiceSourceQuery } from './recording-voice-trigger-service.js'
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
 import { RecordingFileStorageService } from './recording-file-storage-service.js'
@@ -757,6 +758,27 @@ export class RecordingService {
     await this.assertSpeakerReadCurrent(session, revision, signal)
     try { return parseRecordingSpeakerEvidence(raw, input) }
     catch { throw new ArkmePluginError('recording-evidence-contract-invalid', '声纹证据格式不完整，暂不能用于判断', true, 502) }
+  }
+
+  /** Rehydrate only the canonical source supplied by Audio's candidate owner. */
+  async recordingVoiceSourceItems(query: RecordingVoiceSourceQuery, signal?: AbortSignal): Promise<{ items: ArkmeRecordingWorkbenchItem[] }> {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const window = { startAt: query.startAt, endAt: query.endAt }
+    let cursor: string | undefined
+    const seen = new Set<string>()
+    for (;;) {
+      const page = await this.readOwner.transcript(query.recordingId, 'primary', window, session, { limit: 200, revision: query.revision, ...(cursor ? { cursor } : {}) }, signal)
+      const exact = page.items.find(item => item.locator.child_id === query.childId && item.locator.source === 'primary' && item.locator.ordinal === query.ordinal)
+      if (exact) {
+        const localDate = new Date(exact.startAt); localDate.setHours(0, 0, 0, 0)
+        const date = this.recordingDayStart(localDate.getTime()).getTime()
+        const projected = await this.projectWorkbenchPage(date, 'system', { ...page, items: [exact], views: [{ recording_uid: query.recordingId, source: 'primary', revision: query.revision }], totalDurationMillis: exact.endAt - exact.startAt }, session, signal)
+        return { items: projected.items }
+      }
+      if (!page.nextCursor || seen.has(page.nextCursor)) throw new ArkmePluginError('voice-trigger-source-not-ready', '原音片段已更新，请刷新后重试', true, 409)
+      seen.add(page.nextCursor); cursor = page.nextCursor
+    }
   }
 
   /** Explicit time selection creates opaque references; no inferred acoustic membership. */
