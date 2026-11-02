@@ -1,3 +1,4 @@
+import { TeamEntryRemovalList } from './TeamEntryRemovalFeedback.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import type {ArkmeRecordInputCaptureResult} from './record-input-capture.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
@@ -63,7 +64,7 @@ import { useTeamVisitorActions } from './TeamVisitorActions.js'
 import { TeamVisitorRecords } from './TeamVisitorRecords.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
-import { teamDirectoryPreferences, teamConversationEntryKey, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
 import { arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
@@ -88,9 +89,10 @@ import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
-import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamOpen, TeamPage, TeamTimeline } from '../team-app-contract.js'
+import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { invalidateTeamMessages, openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, teamDraftStartForInput, type TeamDraft as Draft } from './team-message-draft.js'
+import { loadTeamEntryOpen, retryTeamEntryOpen } from './team-entry-navigation.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { TeamConversationTools } from './TeamConversationTools.js'
@@ -155,9 +157,9 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
   const preview = c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
     : c.preview ? tr('内容暂不可用') : ''
-  return <><button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
+  return <><button className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
-    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
+    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={directoryStyles.sourceAvatarWrap}>
       {c.side === 'team'
@@ -177,6 +179,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
         {c.notificationPolicy?.muted && <span style={directoryStyles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
       </span>
     </span>
+    {actions.feedback}
   </button>{actions.overlays}</>
 }
 
@@ -216,22 +219,14 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
     setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
       if (intent.kind === 'conversation') {
-        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(intent.conversation))
-        controller.signal.throwIfAborted()
-        if (intent.conversation.side === 'team') await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.conversation.channel.jotmoId))
-        controller.signal.throwIfAborted()
         setSelected(intent.conversation); return
       }
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
-      if (intent.kind === 'team') { if (intent.channel) await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(intent.channel.jotmoId)); return }
-      const publicRef = intent.kind === 'official'
-        ? (await callArkme<TeamChannel>('team.app.official', { expectedAccountKey: accountKey }, controller.signal)).publicRef : intent.publicRef
-      const value = await callArkme<TeamOpen>('team.app.open', { publicRef, expectedAccountKey: accountKey }, controller.signal)
+      if (intent.kind === 'team') return
+      const value = await loadTeamEntryOpen(accountKey, intent, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
       if (value.conversation) {
-        await teamDirectoryPreferences.restore(accountKey, teamConversationEntryKey(value.conversation))
-        controller.signal.throwIfAborted()
         setSelected(value.conversation)
       }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
@@ -261,11 +256,15 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   return <section className="team-message-panel" aria-label={tr('团队对话')}>
     <header style={messageLayout.header}><div style={messageLayout.titleBlock}><strong style={messageLayout.title}>{channel?.name ?? tr(intent.kind === 'official' ? '联系作者' : '团队对话')}</strong>{channel && <small style={messageLayout.headerSubtitle}>{tr('团队对话')}</small>}</div></header>
     {loading ? <div className="team-empty" role="status">{tr('正在打开对话…')}</div>
-      : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
+      : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { retryTeamEntryOpen(accountKey, intent); setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
-        <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow accountKey={accountKey} conversation={c} showTeamName={!channel}
-          onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }} /></div>)}</div>
+        <div role="list" aria-label={tr('团队对话')}><TeamEntryRemovalList accountKey={accountKey}
+          targets={directory.items.map(conversation => ({kind:'conversation', conversation}))}
+          visible={items.map(conversation => ({kind:'conversation', conversation}))}>
+          {rows => rows.map(target => target.kind === 'conversation' && <div role="listitem" key={`${target.conversation.side}:${target.conversation.key}`}><TeamConversationRow accountKey={accountKey} conversation={target.conversation} showTeamName={!channel}
+            onClick={() => { openTeamMessages({ kind: 'conversation', conversation: target.conversation }) }} /></div>)}
+        </TeamEntryRemovalList></div>
         {items.length === 0 && !directory.error && <p className="team-empty" role={initialDirectoryLoad ? 'status' : undefined}>{tr(initialDirectoryLoad ? '正在加载团队对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
       </div>}

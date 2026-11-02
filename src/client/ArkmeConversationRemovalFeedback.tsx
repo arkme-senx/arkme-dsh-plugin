@@ -31,11 +31,11 @@ export function ArkmeConversationRemovalStyles() {
   `}</style>
 }
 
-export function ArkmeConversationRemovalFeedback({ phase }: { phase: ConversationRemovalPhase | undefined }) {
+export function ArkmeConversationRemovalFeedback({ phase, message = "已移除对话，可在联系人中找回" }: { phase: ConversationRemovalPhase | undefined; message?: string }) {
   if (phase === undefined || phase === 'pending') return null
   return <span data-arkme-removal-overlay role="status" aria-live="polite" style={{
     position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: '0 12px', borderRadius: 'inherit', background: arkmeTheme.layer2, color: arkmeTheme.secondary,
     fontSize: 12, lineHeight: '18px', pointerEvents: 'none', overflow: 'hidden',
-  }}>{tr("已移除对话，可在联系人中找回")}</span>
+  }}>{tr(message)}</span>
 }

@@ -17,7 +17,7 @@ export interface TeamSourceReadTarget {
 /** Delivery metadata is only a relevance hint. The existing Host preflight grants reads. */
 export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'|'revision'>):boolean {
   if (!change) return true // Reconnects must recheck facts missed while disconnected.
-  if (['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
+  if (['team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
   if (change.conversationKeys?.length && target.conversationKey && !change.conversationKeys.includes(target.conversationKey)) return false
   if (change.messageKey && target.messageKey && change.messageKey !== target.messageKey) return false
   if(change.kind==='team.message.changed'&&change.messageKey===target.messageKey&&change.messageRevision&&change.messageRevision>0&&target.revision!==undefined&&target.revision>=change.messageRevision)return false

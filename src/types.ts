@@ -1531,6 +1531,7 @@ arkoImagesV1?:true
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
     teamPersonMentions?: 1
+    teamEntryPreferencesV1?: true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
@@ -4346,6 +4347,7 @@ export type ArkmePluginOperation =
   | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
+  | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
