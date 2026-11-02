@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
@@ -140,6 +141,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
   'public-social-service.ts',
   'model-directory-service.ts',
   'composer-document.ts',
