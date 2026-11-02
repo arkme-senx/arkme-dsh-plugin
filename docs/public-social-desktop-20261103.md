@@ -44,6 +44,18 @@
 - Chromium 使用本地合成数据渲染实际组件，检查公开群直接加入/审批等待、私聊激活、上架/下架、群主设置、建群与浏览往返、亮暗主题、英文和 920×680 桌面布局；无页面脚本错误及横向溢出。
 - 本地截图、浏览器检查记录和可复现 fixture 保存在 `/Users/tison/arkme/artifacts/public-social-desktop-20261103/`。未连接真实业务账号，浏览器验收不等于已部署服务的跨端联调。
 
+后续真实接口联调也已通过：新增 `tests/public-social-backend-integration.test.tsx`，桌面组件经 SDK、Host HTTP、Go 鉴权与真实 handler，连接全新 Mongo 副本集数据库。覆盖默认公开建群、入群与游标、主动展示和群主权限、审批与移除后重放、私聊 pair 去重、拒收、资料服务故障时下架、关闭公开及账号范围校验。该测试没有伪造 Chat 成功响应。
+
+在 `jotmo-chat` 仓运行下列入口即可复现。测试只使用固定账号资料，旧端投递为替身；Redis 限频、跨端通知与线上部署另行验收。脚本会停止自己启动的进程，并保留日志和 JSON 报告；没有配置真实接口时，这条集成测试会显式跳过，不计入通过数。
+
+```sh
+ARKME_DESKTOP_REPO=/path/to/arkme-dsh-plugin \
+MONGOD_BIN=/path/to/mongod \
+./test/integration/run_public_social_desktop.sh
+```
+
+手动与完整脚本两次联调均通过；相关 332 项桌面回归保持通过。真实接口证据在 `/Users/tison/arkme/artifacts/public-social-live-20261103/`。
+
 定向回归命令：
 
 ```sh
