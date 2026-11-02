@@ -43,8 +43,9 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
  else if(path.endsWith('/auth/search-contact-account'))data={user_id:target,is_registered:true,is_self:false,can_add:true,nick_name:'待联系客户',jotmo_id:'customer_one'}
  else if(path.endsWith('/get-public-users-by-ids'))data={items:input.user_ids.map(id=>({user_id:id,nick_name:id===actor?'接待验收成员':'待联系客户',jotmo_id:id===actor?'reception_actor':'customer_one'}))}
  else if(path.endsWith('/team/list-mine'))data={teams:[{...channel,role:3,owner_user_id:99,ca:1,ua:1}]}
+ else if(path.endsWith('/team/members/snapshot'))data={member_count:2,membership_revision:1,can_add_members:false,has_more:false,items:[{user_id:99,display_name:'验收所有者',role:1,joined_at:1,can_remove:false},{user_id:actor,display_name:'接待验收成员',role:3,joined_at:1,can_remove:false}]}
  else if(path.endsWith('/team/message-channel/get'))data=channel
- else if(path.endsWith('/team/conversations/open-by-member')){assert.equal(input.team_id,42);assert.equal(input.external_user_id,String(target));data={channel,conversation,open_inbox:false}}
+ else if(path.endsWith('/team/conversations/open-by-member')){assert.equal(input.team_id,42);assert.equal(input.external_user_id,String(target));if(!channel.enabled){code=2002;data={reason:'channel_paused'}}else data={channel,conversation,open_inbox:false}}
  else if(path.endsWith('/team/conversations/timeline/page'))data={conversation,messages:[],has_more:false,before_seq:0}
  else if(path.endsWith('/team/conversations/context'))data={conversation_uid:conversation.conversation_uid,side:'team',team_name:channel.name}
  await pauseOpeningResponse(path)
@@ -91,6 +92,15 @@ try{
   return dialog
  }
  let dialog=await enterReception()
+ if(!liveTeam){
+  channel.enabled=false
+  await dialog.getByRole('button',{name:'开始团队私信',exact:true}).click()
+  await dialog.getByRole('alert').getByText(`请团队所有者开启：联系人 → 团队 → ${channel.name} → 团队消息通道 → 接收外部消息`,{exact:true}).waitFor()
+  await dialog.getByText('待联系客户',{exact:true}).waitFor()
+  assert.equal(calls.filter(c=>c.path.endsWith('/message-channel/configure')).length,0)
+  await page.screenshot({path:join(capture,'paused-channel-guidance.png')})
+  channel.enabled=true
+ }
  await page.screenshot({path:join(capture,'selection.png')})
  const openCount=calls.filter(c=>c.path.endsWith('/open-by-member')).length
  const accepted=new Promise(resolve=>{observeHeldOpen=resolve});holdNextOpen=true

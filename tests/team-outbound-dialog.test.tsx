@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamOutboundDialog, TeamOutboundMount } from '../src/client/TeamOutboundDialog.js'
 import { openTeamOutbound, type TeamOutboundIntent } from '../src/client/team-outbound.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
+import { connectArkmeLocale } from '../src/client/locale.js'
 
 const { call, navigate, invalidate } = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), invalidate: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
@@ -48,6 +49,50 @@ it('keeps the selected person and team on an unavailable response without manufa
   expect(button('开始团队私信').disabled).toBe(false)
   expect(navigate).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled()
   expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams', 'team.app.outbound.open'])
+})
+
+it.each(teams)('shows the channel opening path for $currentUserRole and retains the original selection for retry', async selected => {
+  const conversation = { ref: 'real-ref', side: 'team', channel: { jotmoId: selected.jotmoId } }
+  let attempts = 0
+  call.mockImplementation(async op => {
+    if (op === 'team.app.teams') return [selected]
+    if (++attempts === 1) throw Object.assign(new Error('团队已暂停接收新消息'), { body: { code: 'team-channel_paused' } })
+    return { state: 'ready', conversation }
+  })
+  await render(); await click('开始团队私信')
+  const heading = selected.currentUserRole === 'owner' ? '开启路径' : '请团队所有者开启'
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(`${heading}：联系人 → 团队 → ${selected.name} → 团队消息通道 → 接收外部消息`)
+  expect(document.body.textContent).toContain('客户备注')
+  expect(document.querySelector('select')?.value).toBe(selected.jotmoId)
+  expect(close).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled()
+  expect(call.mock.calls.map(v => v[0])).toEqual(['team.app.teams', 'team.app.outbound.open'])
+  await click('开始团队私信')
+  const opens = call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')
+  expect(opens[1]![1]).toEqual(opens[0]![1])
+  expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
+})
+
+it('keeps other opening errors distinct from a disabled team channel', async () => {
+  await render()
+  call.mockRejectedValueOnce(Object.assign(new Error('此对话已被屏蔽'), { body: { code: 'team-conversation_blocked' } }))
+  await click('开始团队私信')
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('此对话已被屏蔽')
+  expect(navigate).not.toHaveBeenCalled()
+})
+
+it('localizes the opening path while preserving the team name', async () => {
+  const locale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })
+  const disconnect = locale('en')
+  try {
+    call.mockResolvedValueOnce([{ ...teams[1], name: '团队消息通道' }])
+    await render()
+    call.mockRejectedValueOnce(Object.assign(new Error('团队已暂停接收新消息'), { body: { code: 'team-channel_paused' } }))
+    await act(async () => (document.querySelector('footer button:last-child') as HTMLButtonElement).click())
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Enable: Contacts → Teams → 团队消息通道 → Team message channel → Accept visitor messages')
+  } finally {
+    disconnect()
+    await act(async () => { locale('zh')() })
+  }
 })
 
 it('requires explicit team choice for multiple memberships; a directory entry prefills only its own team', async () => {

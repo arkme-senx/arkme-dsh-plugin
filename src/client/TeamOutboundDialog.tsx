@@ -111,7 +111,13 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
       invalidateTeamMessages(intent.accountKey)
       onClose()
       openTeamMessages({ kind: 'conversation', conversation: result.conversation })
-    } catch (e) { if (!c.signal.aborted) setError(errorText(e)) }
+    } catch (e) {
+      if (!c.signal.aborted) setError((e as { body?: { code?: string } })?.body?.code === 'team-channel_paused'
+        ? tr(team.currentUserRole === 'owner'
+          ? '开启路径：联系人 → 团队 → {team} → 团队消息通道 → 接收外部消息'
+          : '请团队所有者开启：联系人 → 团队 → {team} → 团队消息通道 → 接收外部消息', { team: team.name })
+        : errorText(e))
+    }
     finally { requests.current.delete(c); opening.current = false; if (!c.signal.aborted && mounted.current) setBusy(false) }
   }
   const filtered = contacts.filter(value => [value.displayName, value.nickname, value.remark, value.accountName].some(text => text?.toLowerCase().includes(query.trim().toLowerCase())))
