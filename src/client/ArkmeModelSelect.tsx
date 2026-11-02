@@ -1,12 +1,12 @@
 import { tr, useArkmeLocale } from './locale.js'
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ModelSelection, ModelProviderGroup, ModelCatalogFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import { ArkmeBillingSettings, formatArkmePoints } from './ArkmeBillingSettings.js'
-import { ArkmeModelPricing } from './ArkmeModelPricing.js'
+import type { ModelChoice } from '../model-directory.js'
+import { ModelBalanceShortcut, UnifiedModelPicker } from './UnifiedModelPicker.js'
 import css from './arkme-model-select.css?inline'
 
-/** The public ModelDirectory face; DSH remains the sole directory and selection owner. */
+/** DSH remains the selection owner; the shared panel only adapts its public directory. */
 export interface ArkmeModelDirectory {
   store: SnapshotStore<{
     current: ModelSelection | null
@@ -18,110 +18,37 @@ export interface ArkmeModelDirectory {
   load(): Promise<unknown>
   select(selection: ModelSelection): Promise<unknown>
 }
-
-export function ArkmeModelSelect({ directory, locked, available }: {
-  directory: ArkmeModelDirectory
-  locked: boolean
-  available: boolean
-}) {
+export function ArkmeModelSelect({ directory, locked, available }: { directory: ArkmeModelDirectory; locked: boolean; available: boolean }) {
   useArkmeLocale()
   const state = useSyncExternalStore(directory.store.subscribe, directory.store.getSnapshot)
-  const [pane, setPane] = useState<'model' | 'effort' | null>(null)
-  const root = useRef<HTMLDivElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const id = useId()
-  const group = state.groups.find(item => item.id === state.current?.provider)
-  const model = group?.models.find(item => item.id === state.current?.model)
-  const reasoning = model?.reasoning
-  const effort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
-  const effortLabel = reasoning?.efforts.find(item => item.id === effort)?.name ?? effort ?? '默认'
-  const busy = locked || state.status === 'selecting'
-  const reload = () => { void directory.load().catch(() => { /* DSH publishes the error on its store. */ }) }
-  const close = (focus = false) => { setPane(null); if (focus) trigger.current?.focus() }
-
+  const [open, setOpen] = useState(false), trigger = useRef<HTMLButtonElement>(null)
+  const reload = () => { void directory.load().catch(() => {}) }
   useEffect(() => { if (available) reload() }, [available, directory])
-  useEffect(() => {
-    if (pane === null) return
-    const outside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) close()
-    }
-    document.addEventListener('pointerdown', outside)
-    root.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"][aria-checked="true"]')?.focus()
-    return () => document.removeEventListener('pointerdown', outside)
-  }, [pane])
-
   if (!available) return null
-  const choose = (selection: ModelSelection) => {
-    if (busy) return
-    void directory.select(selection).then(() => close(true), () => { /* Keep menu and prior selection on failure. */ })
-  }
-  const keyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (pane === null) return
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return }
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const items = [...(root.current?.querySelectorAll<HTMLElement>('[role="menu"] button:not(:disabled), [role="menu"] summary') ?? [])]
-    if (items.length === 0) return
-    event.preventDefault()
-    const current = items.indexOf(document.activeElement as HTMLButtonElement)
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
-      : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-    items[next]?.focus()
-  }
-
-  return <ArkmeBillingSettings active={pane === 'model' && state.groups.some(item => item.id === 'arkme-managed')}
-    renderTrigger={({ quotaState, onOpen, onRefresh }) => <div className="arkme-model-select" ref={root} onKeyDown={keyboard}
-      onBlur={event => { if (event.relatedTarget instanceof Node && !root.current?.contains(event.relatedTarget)) close() }}>
-      <style>{css}</style>
-      <button ref={trigger} type="button" className="arkme-model-trigger" disabled={locked}
-        aria-label={tr("选择模型：{v0}", { v0: model?.name ?? tr("选择模型") })} aria-haspopup="menu" aria-expanded={pane !== null}
-        aria-controls={pane === null ? undefined : id}
-        onClick={() => { if (pane !== null) close(); else { setPane('model'); reload() } }}>
-        <span>{model?.name ?? tr("选择模型")}</span>{reasoning && <small> · {effortLabel}</small>}<span aria-hidden>⌄</span>
-      </button>
-      {pane !== null && <div id={id} className="arkme-model-menu" role="menu" aria-label={tr("模型选择")} aria-busy={state.status === 'loading' || busy}>
-        {pane === 'effort' ? <>
-          <button type="button" role="menuitem" className="arkme-model-option" onClick={() => setPane('model')}>{tr("‹ 返回模型列表")}</button>
-          {reasoning && [{ id: undefined, name: '默认', description: undefined }, ...reasoning.efforts].map(item =>
-            <button key={item.id ?? 'default'} type="button" role="menuitemradio" className="arkme-model-option"
-              aria-checked={item.id === (state.current?.reasoningEffort ?? undefined)} disabled={busy}
-              onClick={() => { if (state.current) choose({ provider: state.current.provider, model: state.current.model,
-                ...(item.id === undefined ? {} : { reasoningEffort: item.id }) }) }}>
-              <span>{item.name}{item.description && <small>{item.description}</small>}</span>
-              {item.id === state.current?.reasoningEffort && <span aria-hidden>✓</span>}
-            </button>)}
-        </> : <>
-          {reasoning && <button type="button" role="menuitem" className="arkme-model-option" disabled={busy} onClick={() => setPane('effort')}>
-            <span>{tr("思考强度")}</span><small>{effortLabel} ›</small>
-          </button>}
-          {state.status === 'loading' && <div className="arkme-model-status" role="status">{tr("正在加载模型…")}</div>}
-          {state.failures.map(failure => <div key={failure.id} className="arkme-model-error" role="alert">{failure.name}：{failure.message}</div>)}
-          {state.groups.map(provider => <section role="group" aria-labelledby={`${id}-${provider.id}`} key={provider.id}>
-            <div className="arkme-model-group-heading">
-              <span id={`${id}-${provider.id}`}>{provider.id === 'arkme-managed' ? 'Arkme' : provider.name}
-                {provider.id === 'arkme-managed' && <span aria-live="polite"> · {quotaState.kind === 'ready'
-                  ? formatArkmePoints(quotaState.quota.availableNanoCny)
-                  : quotaState.kind === 'loading' ? '积分加载中…' : '积分读取失败'}</span>}
-              </span>
-              {provider.id === 'arkme-managed' && <span className="arkme-model-balance-actions">
-                {quotaState.kind === 'error' && <button type="button" onClick={onRefresh}>{tr("重试")}</button>}
-                <button type="button" onClick={() => { close(true); onOpen() }}>{tr("去充值")}</button>
-              </span>}
-            </div>
-            {provider.models.map(item => {
-              const selected = state.current?.provider === provider.id && state.current.model === item.id
-              return <div key={item.id}><button type="button" role="menuitemradio" className="arkme-model-option"
-                aria-checked={selected} disabled={busy} onClick={() => selected ? close(true) : choose({ provider: provider.id, model: item.id })}>
-                <span>{item.name}{provider.id !== 'arkme-managed' && item.description && <small>{item.description}</small>}</span>{selected && <span aria-hidden>✓</span>}
-              </button>
-              </div>
-            })}
-          </section>)}
-          <ArkmeModelPricing models={state.groups.filter(provider => provider.id === 'arkme-managed').flatMap(provider => provider.models)} />
-          {state.status === 'ready' && state.groups.every(item => item.models.length === 0) && <div className="arkme-model-status">{tr("暂无可用模型")}</div>}
-        </>}
-        {(state.error || state.failures.length > 0) && <div className="arkme-model-error" role="alert">
-          <span>{state.error}</span><button type="button" disabled={busy} onClick={reload}>{tr("重新加载")}</button>
-        </div>}
-      </div>}
-    </div>} />
+  const models: ModelChoice[] = state.groups.flatMap(provider => provider.models.map(model => ({
+    id: JSON.stringify(['dsh', provider.id, model.id]), name: model.name, identifier: model.id,
+    channel: provider.id === 'arkme-managed' ? 'Arkme 托管' : provider.name,
+    billing: provider.id === 'arkme-managed' ? 'arkme-points' as const : 'provider-account' as const,
+    ...(provider.id === 'arkme-managed' && model.description ? { pricing: model.description } : {}),
+    ...(model.reasoning ? { reasoning: { efforts: model.reasoning.efforts.map(effort => ({ id: effort.id, name: effort.name,
+      ...(effort.description ? { description: effort.description } : {}) })), ...(model.reasoning.defaultEffort ? { defaultEffort: model.reasoning.defaultEffort } : {}) } } : {}),
+    dsh: { provider: provider.id, model: model.id },
+  })))
+  const currentId = JSON.stringify(['dsh', state.current?.provider, state.current?.model]), model = models.find(item => item.id === currentId)
+  const effort = state.current?.reasoningEffort ?? model?.reasoning?.defaultEffort
+  const effortName = model?.reasoning?.efforts.find(item => item.id === effort)?.name ?? effort
+  return <div className="arkme-unified-model-seat"><style>{css}</style>
+    <button ref={trigger} type="button" className="arkme-model-trigger" disabled={locked} aria-label={tr('选择模型：{v0}', { v0: model?.name ?? tr('选择模型') })}
+      aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(value => !value); reload() }}>
+      <span>{model?.name ?? state.current?.model ?? tr('选择模型')}</span>{effortName && <small> · {effortName}</small>}<span aria-hidden>⌄</span>
+    </button><ModelBalanceShortcut/>
+    {open && <UnifiedModelPicker scene="dsh" scopeLabel="当前 DSH 对话" models={models} currentId={currentId} currentEffort={state.current?.reasoningEffort ?? undefined}
+      anchor={trigger.current ?? undefined} busy={locked || state.status === 'selecting'}
+      error={[state.error, ...state.failures.map(failure => `${failure.name}：${failure.message}`)].filter(Boolean).join('；')}
+      onRefresh={async () => { await directory.load() }} onClose={() => setOpen(false)} onApply={async (selected, reasoningEffort) => {
+        const target = selected.dsh
+        if (!target || !state.groups.some(group => group.id === target.provider && group.models.some(item => item.id === target.model))) throw new Error('此模型暂未出现在当前对话目录，请刷新后重试')
+        await directory.select({ ...target, ...(reasoningEffort ? { reasoningEffort } : {}) }); return true
+      }}/>}
+  </div>
 }

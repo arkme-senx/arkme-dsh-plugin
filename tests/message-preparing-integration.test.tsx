@@ -168,7 +168,7 @@ describe('preparing production wiring', () => {
     const sidebar = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(sidebar).toContain('const messagePreparing = useMessagePreparing({')
     expect(sidebar).toContain('enabled: activeConversation && activeRecordReeditComposer === undefined && !directAdmission.blocked')
-    expect(sidebar.includes('onInputActivity={messagePreparing.input}')).toBe(true)
+    expect(sidebar).toMatch(/onInputActivity=\{text => \{\s*messagePreparing\.input\(text\)/)
     expect(sidebar).toContain('if (sameTargetComposer()) messagePreparing.stop()')
     const submit = sidebar.slice(sidebar.indexOf('const send = async'), sidebar.indexOf('const updateComposerText ='))
     const normalSendStart = submit.indexOf('const targetSource = source')

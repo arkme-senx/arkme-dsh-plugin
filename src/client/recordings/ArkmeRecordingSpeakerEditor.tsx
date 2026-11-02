@@ -113,8 +113,9 @@ export interface RecordingSpeakerUpdateFeedback {
   warning?: string
 }
 
-export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
+export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewItems, anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
   items?: readonly ArkmeRecordingWorkbenchItem[]
+  loadReviewItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
   onPlay?(item: ArkmeRecordingWorkbenchItem): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
@@ -271,7 +272,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], anchor, init
 
   const layer = <><button type="button" tabIndex={-1} aria-label={tr("关闭说话人编辑")} style={styles.backdrop} onClick={() => { if (!pending && !correctionIntent && !reviewOpen && !pickerOpen) onClose() }} />
   <div ref={popoverRef} style={{ ...styles.popover, left: correctionIntent ? Math.min(position.left, Math.max(8, (typeof window === 'undefined' ? 1024 : window.innerWidth) - 396)) : position.left, top: position.top, ...(correctionIntent ? { width: 'min(388px, calc(100vw - 16px))' } : {}), ...(reviewOpen ? { left: 'auto', right: 8, top: 8, width: 'min(820px, calc(100vw - 16px))', height: 'calc(100vh - 16px)', padding: 16 } : {}) }} role="dialog" aria-label={tr(reviewOpen ? '核对声音' : '编辑说话人')}>
-    {reviewOpen ? <ArkmeRecordingSpeakerReview key={item.itemRef} item={item} items={items} options={options} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} /> : correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
+    {reviewOpen ? <ArkmeRecordingSpeakerReview key={item.itemRef} item={item} items={items} {...(loadReviewItems ? { loadItems: loadReviewItems } : {})} options={options} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} /> : correctionIntent ? <ArkmeRecordingSpeakerCorrection key={item.itemRef} item={item} items={items} intent={correctionIntent}
       autoReject={autoReject} rejectCurrent={correctionChoice.current.rejectCurrent}
       {...(correctionChoice.current.target?.kind === 'speaker' ? { target: correctionChoice.current.target } : {})}
       onUpdated={day => { onUpdated(day) }} onClose={onClose} {...(onPlay ? { onPlay } : {})} /> : <>

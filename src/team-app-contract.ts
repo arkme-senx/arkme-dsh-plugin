@@ -51,7 +51,7 @@ export interface TeamConversation {
 }
 export interface TeamMention { personRef: string; displayName: string; startIndex: number; length: number }
 export interface TeamContent { mentions?: TeamMention[]; text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
-export interface TeamMedia { ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
+export interface TeamMedia { inlineRef?: string; ref: string; key: string; url: string; name: string; mimeType: string; size: number; kind: number }
 export interface TeamMessage {
   /** Verified author-only send acknowledgement; absent is unknown. */
   metadataSaved?: boolean

@@ -26,9 +26,10 @@ export function speakerEvidenceBucket(row?: EvidenceRow, margin = 0): Exclude<Fi
   return row.distanceA < row.distanceB ? 'a' : 'b'
 }
 
-export function ArkmeRecordingSpeakerReview({ item, items, options, onPlay, onUpdated, onClose }: {
+export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, onPlay, onUpdated, onClose }: {
   item: ArkmeRecordingWorkbenchItem
   items: readonly ArkmeRecordingWorkbenchItem[]
+  loadItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
   options: readonly ArkmeRecordingSpeakerOption[]
   onPlay?(item: ArkmeRecordingWorkbenchItem): void
   onUpdated(day: ArkmeRecordingDay): void
@@ -55,12 +56,25 @@ export function ArkmeRecordingSpeakerReview({ item, items, options, onPlay, onUp
   const listRef = useRef<HTMLDivElement>(null)
   const initialAccount = useRef(arkmeAuthStore.getSnapshot().auth)
   const mounted = useRef(true)
-  const all = useMemo(() => [...new Map([item, ...items].map(row => [row.itemId, row])).values()], [items, item])
+  const [complete, setComplete] = useState<{ items?: readonly ArkmeRecordingWorkbenchItem[]; error?: string }>()
+  const [readRevision, setReadRevision] = useState(0)
+  useEffect(() => {
+    if (!loadItems) return
+    const controller = new AbortController()
+    setComplete(undefined)
+    void loadItems(controller.signal).then(items => {
+      if (!controller.signal.aborted) setComplete({ items })
+    }).catch(error => {
+      if (!controller.signal.aborted) setComplete({ error: error instanceof Error ? error.message : '读取核对片段失败' })
+    })
+    return () => { controller.abort() }
+  }, [loadItems, readRevision])
+  const all = useMemo(() => [...new Map([item, ...(loadItems ? complete?.items ?? [] : items)].map(row => [row.itemId, row])).values()], [items, item, loadItems, complete])
   const candidates = useMemo(() => speakerReviewItems(all, item, nearby), [all, item, nearby])
   const pages = Math.max(1, Math.ceil(candidates.length / 50))
   const pageIndex = Math.min(page, pages - 1)
   const pageItems = candidates.slice(pageIndex * 50, pageIndex * 50 + 50)
-  const consistency = useRecordingConsistency([item.itemRef], pageItems.map(row => row.itemRef))
+  const consistency = useRecordingConsistency(loadItems && !complete?.items ? [] : [item.itemRef], loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
   const group = consistency.groups[0]
   const deviations = new Map(group?.items.map(row => [row.itemRef, row]) ?? [])
   const referenceA = all.filter(row => a.includes(row.itemId))
@@ -133,6 +147,11 @@ export function ArkmeRecordingSpeakerReview({ item, items, options, onPlay, onUp
     intent="review" rejectCurrent={!originalPerson && !!item.assignedSpeakerOptionKey && chosen[0].assignedSpeakerOptionKey === item.assignedSpeakerOptionKey}
     {...(originalPerson ? { target: { ...originalPerson, label: item.speakerLabel } } : {})} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} onBack={() => setSaving(false)} />
 
+  if (loadItems && !complete?.items) return <section style={{ padding: 16 }}>
+    <button type="button" style={button} onClick={onClose}>{tr('关闭')}</button>
+    {complete?.error ? <div role="alert">{complete.error} <button type="button" style={button} onClick={() => setReadRevision(value => value + 1)}>{tr('重试读取核对片段')}</button></div>
+      : <div role="status">{tr('正在读取当天完整核对片段…')}</div>}
+  </section>
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, height: '100%', fontSize: 12, lineHeight: 1.5 }}>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><strong style={{ flex: 1, fontSize: 15 }}>{tr('声音一致性')} <span style={{ fontWeight: 400, color: color.secondary }}>· {item.speakerLabel}</span></strong>
       <button type="button" style={button} onClick={onClose}>{tr('关闭')}</button></div>
@@ -152,7 +171,7 @@ export function ArkmeRecordingSpeakerReview({ item, items, options, onPlay, onUp
         <button type="button" style={button} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
         <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : group ? tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: group.totalCount }) : tr('已加载 {v0} 段', { v0: candidates.length })}</span>
       </div>
-      <div style={{ color: color.secondary }}>{tr('下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
+      <div style={{ color: color.secondary }}>{tr(loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={button} aria-pressed={deviationFirst} onClick={() => { setDeviationFirst(true); setAdvanced(false) }}>{tr('本页偏离较大优先')}</button>
         <button type="button" style={button} aria-pressed={!deviationFirst} onClick={() => { setDeviationFirst(false); setAdvanced(false) }}>{tr('按时间')}</button>

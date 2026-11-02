@@ -25,7 +25,12 @@ export function createArkmeFileTransfers(options: {
     send: async (input, assets, backgroundSound, expectedUserId, signal): Promise<FileTransferSendOutcome> => {
       try {
         const backgroundRefs = new Set(input.backgroundSound?.fileRefs ?? [])
-        const ordinaryAssets = input.fileRefs.flatMap((ref, index) => backgroundRefs.has(ref) ? [] : [assets[index]!])
+        const ordinaryAssets = [...(input.content.assets ?? []), ...input.fileRefs.flatMap((ref, index) => backgroundRefs.has(ref) ? [] : [assets[index]!])]
+        if (input.attachmentOrder) {
+          const order = new Map(input.attachmentOrder.map((key, index) => [key, index]))
+          const uploaded = new Map(input.fileRefs.map((ref, index) => [assets[index]!.fileAssetUid, ref]))
+          ordinaryAssets.sort((a, b) => (order.get(uploaded.get(a.fileAssetUid) ?? a.fileAssetUid) ?? Infinity) - (order.get(uploaded.get(b.fileAssetUid) ?? b.fileAssetUid) ?? Infinity))
+        }
         let result = await options.chat.sendSourceRich(input.sourceRef, {
           ...input.content,
           ...(ordinaryAssets.length === 0 ? {} : { assets: ordinaryAssets }),

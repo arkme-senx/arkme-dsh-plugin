@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { ArkmeRecordLocationCapture } from '../src/types.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArkmeBackgroundSoundServerPreferenceRuntime,
@@ -81,10 +82,10 @@ function createOwner(input: {
   recorder: FakeRecorder
   enabled?: () => boolean
   microphoneReady?: () => boolean
-  requestMicrophonePermission?: () => Promise<'granted'>
   now?: () => number
   failures?: string[]
   captureContext?: () => Promise<{ clientName?: string; networkName?: string }>
+  captureLocation?: (signal: AbortSignal) => Promise<ArkmeRecordLocationCapture | undefined>
   maxCaptureDurationMillis?: number
   maxEncodedBytes?: number
   maxRetainedDrafts?: number
@@ -99,10 +100,10 @@ function createOwner(input: {
     operationTimeoutMillis: 100,
     backgroundSoundEnabled: input.enabled ?? (() => true),
     microphoneReady: input.microphoneReady,
-    requestMicrophonePermission: input.requestMicrophonePermission,
     subscribeBackgroundSoundPreference: () => () => undefined,
     now: input.now,
     captureContext: input.captureContext ?? (async () => ({ clientName: 'Test Browser' })),
+    captureLocation: input.captureLocation ?? (async () => undefined),
     createCaptureId: () => 'capture-test',
     onBackgroundSoundFailure: failure => { input.failures?.push(failure) },
     maxCaptureDurationMillis: input.maxCaptureDurationMillis,
@@ -365,7 +366,6 @@ describe('record input capture preference and permission', () => {
     const owner = createOwner({
       recorder,
       microphoneReady: () => arkmeMicrophoneCaptureReady(grantScope),
-      requestMicrophonePermission: () => requestArkmeBackgroundSoundPermission(source, grantScope),
     })
     try {
       owner.sync({ draftKey: 'restored-draft', isActive: true, hasUserContent: true })
@@ -376,6 +376,10 @@ describe('record input capture preference and permission', () => {
 
       owner.beginUserInput('restored-draft')
       owner.beginUserInput('restored-draft')
+      await flushLifecycle()
+      expect(getUserMedia).not.toHaveBeenCalled()
+      await requestArkmeBackgroundSoundPermission(source, grantScope)
+      owner.sync({ draftKey: 'restored-draft', isActive: true, hasUserContent: true })
       await flushLifecycle()
       expect(getUserMedia).toHaveBeenCalledExactlyOnceWith({ audio: true, video: false })
       expect(stopTrack).toHaveBeenCalledOnce()
@@ -817,7 +821,7 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     await owner.dispose()
   })
 
-  it('requests microphone permission once from the first real input event, never from focus or sync effects', async () => {
+  it('does not request microphone permission during input and starts after explicit authorization', async () => {
     const recorder = new FakeRecorder()
     let microphoneReady = false
     const requestPermission = vi.fn(async (): Promise<'granted'> => {
@@ -827,7 +831,6 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     const owner = createOwner({
       recorder,
       microphoneReady: () => microphoneReady,
-      requestMicrophonePermission: requestPermission,
     })
 
     owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: false })
@@ -839,12 +842,16 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     owner.beginUserInput('draft-a')
     owner.beginUserInput('draft-a')
     await flushLifecycle()
-    expect(requestPermission).toHaveBeenCalledOnce()
+    expect(requestPermission).not.toHaveBeenCalled()
+    expect(recorder.startCalls).toBe(0)
+    await requestPermission()
+    owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: true })
+    await flushLifecycle()
     expect(recorder.startCalls).toBe(1)
     await owner.dispose()
   })
 
-  it('latches an input permission denial for the draft while keeping text submission fail-open', async () => {
+  it('keeps text submission available without requesting missing microphone permission', async () => {
     const recorder = new FakeRecorder()
     const failures: string[] = []
     const requestPermission = vi.fn(async (): Promise<'granted'> => {
@@ -854,7 +861,6 @@ describe('ArkmeRecordInputCaptureOwner', () => {
       recorder,
       failures,
       microphoneReady: () => false,
-      requestMicrophonePermission: requestPermission,
     })
 
     owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: true })
@@ -862,33 +868,30 @@ describe('ArkmeRecordInputCaptureOwner', () => {
     owner.beginUserInput('draft-a')
     await flushLifecycle()
 
-    expect(requestPermission).toHaveBeenCalledOnce()
-    expect(failures).toEqual(['permission-denied'])
+    expect(requestPermission).not.toHaveBeenCalled()
+    expect(failures).toEqual([])
     const result = await owner.finishForSubmit('draft-a')
     expect(result).toMatchObject({
       recordDurationMillis: expect.any(Number),
-      backgroundSound: { enabled: true, state: 'denied', segments: [] },
+      backgroundSound: { enabled: true, state: 'not-captured', segments: [] },
     })
     expect(recorder.startCalls).toBe(0)
     await owner.dispose()
   })
 
-  it('drops a late input permission result after the logical draft is cleared', async () => {
+  it('does not resume a cleared draft when microphone access becomes available', async () => {
     const recorder = new FakeRecorder()
     let microphoneReady = false
-    let grant: (() => void) | undefined
     const owner = createOwner({
       recorder,
       microphoneReady: () => microphoneReady,
-      requestMicrophonePermission: async () => await new Promise<'granted'>(resolve => {
-        grant = () => { microphoneReady = true; resolve('granted') }
-      }),
     })
 
     owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: true })
     owner.beginUserInput('draft-a')
     owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: false })
-    grant?.()
+    microphoneReady = true
+    owner.sync({ draftKey: 'draft-a', isActive: true, hasUserContent: false })
     await flushLifecycle()
 
     expect(recorder.startCalls).toBe(0)
@@ -1450,17 +1453,87 @@ describe('shared input support and coarse capture context', () => {
   })
 })
 
-it('prewarms context without microphone permission, shares the fresh sample and refreshes after five seconds', async () => {
+it('prewarms context during input and never starts a new sample at submission', async () => {
  let now = 1000
  const recorder = new FakeRecorder(), captureContext = vi.fn(async () => ({clientName:'device'}))
  const owner = createOwner({recorder,enabled:()=>false,now:()=>now,captureContext})
- owner.beginUserInput('draft'); await Promise.resolve()
+ owner.beginUserInput('draft'); await flushLifecycle()
  expect(captureContext).toHaveBeenCalledTimes(1)
  await owner.finishForSubmit('draft')
  expect(captureContext).toHaveBeenCalledTimes(1)
  expect(recorder.startCalls).toBe(0)
  now += 5000
  await owner.finishForSubmit('draft')
+ expect(captureContext).toHaveBeenCalledTimes(1)
+ owner.beginUserInput('draft'); await flushLifecycle()
  expect(captureContext).toHaveBeenCalledTimes(2)
  await owner.dispose()
+})
+
+describe('input-phase environment snapshots', () => {
+  it('freezes available facts without waiting for slow device or location reads', async () => {
+    let finishContext!: (value: { clientName: string }) => void
+    let finishLocation!: (value: ArkmeRecordLocationCapture) => void
+    const context = vi.fn(() => new Promise<{ clientName: string }>(resolve => { finishContext = resolve }))
+    const location = vi.fn((_signal: AbortSignal) => new Promise<ArkmeRecordLocationCapture>(resolve => { finishLocation = resolve }))
+    const owner = createOwner({ recorder: new FakeRecorder(), enabled: () => false, now: () => 1000, captureContext: context, captureLocation: location })
+    owner.beginUserInput('draft')
+    await Promise.resolve()
+    const first = await owner.finishForSubmit('draft')
+    expect(first.captureContext).toEqual({})
+    expect(first.location).toBeUndefined()
+    expect(location.mock.calls[0]![0].aborted).toBe(true)
+    finishContext({ clientName: '迟到设备' })
+    finishLocation({ latitude: 30, longitude: 120, capturedAtMillis: 1000 })
+    await flushLifecycle()
+    const next = await owner.finishForSubmit('draft')
+    expect(next.captureContext).toEqual({})
+    expect(next.location).toBeUndefined()
+    expect(context).toHaveBeenCalledOnce()
+    expect(location).toHaveBeenCalledOnce()
+    await owner.dispose()
+  })
+
+  it('refreshes only on input activity, throttles requests, and keeps one latest location', async () => {
+    let now = 1000
+    const context = vi.fn(async () => ({ clientName: `device-${now}` }))
+    const location = vi.fn(async () => ({ latitude: 30 + now / 1000000, longitude: 120, capturedAtMillis: now }))
+    const owner = createOwner({ recorder: new FakeRecorder(), enabled: () => false, now: () => now, captureContext: context, captureLocation: location })
+    owner.beginUserInput('draft'); await flushLifecycle()
+    for (let index = 0; index < 50; index++) owner.beginUserInput('draft')
+    await flushLifecycle()
+    expect(context).toHaveBeenCalledOnce(); expect(location).toHaveBeenCalledOnce()
+    now = 7000
+    owner.beginUserInput('draft'); await flushLifecycle()
+    expect(context).toHaveBeenCalledTimes(2); expect(location).toHaveBeenCalledOnce()
+    now = 31001
+    owner.beginUserInput('draft'); await flushLifecycle()
+    const result = await owner.finishForSubmit('draft')
+    expect(location).toHaveBeenCalledTimes(2)
+    expect(result.captureContext.clientName).toBe('device-31001')
+    expect(result.location?.capturedAtMillis).toBe(31001)
+    expect(result).not.toHaveProperty('locations')
+    await owner.dispose()
+  })
+
+  it('isolates drafts and drops cleared or inactive draft reads', async () => {
+    let now = 1000
+    const completions: Array<(value: ArkmeRecordLocationCapture) => void> = []
+    const location = vi.fn(() => new Promise<ArkmeRecordLocationCapture>(resolve => { completions.push(resolve) }))
+    const owner = createOwner({ recorder: new FakeRecorder(), enabled: () => false, now: () => now, captureLocation: location })
+    owner.sync({ draftKey: 'a', isActive: true, hasUserContent: true }); await Promise.resolve()
+    owner.sync({ draftKey: 'b', isActive: true, hasUserContent: true }); await Promise.resolve()
+    completions[0]!({ latitude: 10, longitude: 20, capturedAtMillis: now })
+    completions[1]!({ latitude: 30, longitude: 40, capturedAtMillis: now })
+    await flushLifecycle()
+    expect((await owner.finishForSubmit('a')).location).toBeUndefined()
+    expect((await owner.finishForSubmit('b')).location).toMatchObject({ latitude: 30, longitude: 40 })
+    now += 1000
+    owner.sync({ draftKey: 'a', isActive: true, hasUserContent: true }); await Promise.resolve()
+    owner.sync({ draftKey: 'a', isActive: true, hasUserContent: false })
+    completions[2]!({ latitude: 50, longitude: 60, capturedAtMillis: now })
+    await flushLifecycle()
+    expect((await owner.finishForSubmit('a')).location).toBeUndefined()
+    await owner.dispose()
+  })
 })

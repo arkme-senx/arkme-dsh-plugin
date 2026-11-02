@@ -6,8 +6,10 @@ import { arkmeTheme as colors } from '../arkme-theme.js'
 import { RecordingDesktopIcon } from './RecordingDesktopIcon.js'
 import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 
-export function RecordingTranscriptSearch({ query, position, count, onChange, onFind, onPrevious, onNext }: {
+export function RecordingTranscriptSearch({ query, position, count, pending = false, incomplete = false, onChange, onFind, onPrevious, onNext }: {
   query: string; position: number; count: number
+  pending?: boolean
+  incomplete?: boolean
   onChange(query: string): void; onFind(): void; onPrevious(): void; onNext(): void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -37,7 +39,7 @@ export function RecordingTranscriptSearch({ query, position, count, onChange, on
       <input ref={inputRef} aria-label={tr("搜索当天转写")} placeholder={tr("搜索当天转写")} maxLength={64} value={query} onChange={event => { onChange(event.target.value) }} onKeyDown={event => {
         if (event.key === 'Enter' && !event.nativeEvent?.isComposing) { event.preventDefault(); onFind() }
       }} style={{ minWidth: 0, flex: 1, padding: 0, border: 0, outline: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 13 }} />
-      <span role="status" aria-label={tr("搜索命中数")} style={{ whiteSpace: 'nowrap', color: colors.secondary, fontSize: 12, paddingRight: query === '' ? 10 : 0 }}>{`${position}/${count}`}</span>
+      <span role="status" aria-label={tr("搜索命中数")} style={{ whiteSpace: 'nowrap', color: colors.secondary, fontSize: 12, paddingRight: query === '' ? 10 : 0 }}>{pending ? tr('搜索中… {v0}/{v1}', { v0: position, v1: count }) : incomplete ? tr('未完成 {v0}/{v1}', { v0: position, v1: count }) : `${position}/${count}`}</span>
       {query !== '' && <RecordingTranscriptButton aria-label={tr("清除转写搜索")} onClick={() => { setExpanded(true); onChange(''); inputRef.current?.focus?.() }} style={{ border: 0, background: 'transparent', padding: 0, width: 26, flex: 'none', display: 'grid', placeItems: 'center', color: colors.secondary }}><X size={14} /></RecordingTranscriptButton>}
       </>}
     </div>

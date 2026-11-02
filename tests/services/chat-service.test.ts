@@ -1777,6 +1777,8 @@ describe('ChatService', () => {
   })
 
   it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {
+    const quote = { version: 1, projection: 'arkme-text-v1', sourceDigest: 'a'.repeat(64), start: 0, end: 3,
+      text: '原快记', prefix: '', suffix: '' }
     const worldPost = vi.fn(async () => { throw new Error('chat detail must not use the public-record extension list') })
     const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
       if (path !== '/api/v1/chats/extensions/tree/page') throw new Error(`unexpected chat path: ${path}`)
@@ -1795,6 +1797,7 @@ describe('ChatService', () => {
             chat_session_uid: 'chat-1', parent_record_owner_user_id: 42, parent_record_uid: 'record-snapshot-1',
             child_record_owner_user_id: 17, child_record_uid: 'extension-record-1',
             root_record_owner_user_id: 42, root_record_uid: 'record-snapshot-1', source_mode: 1,
+            quote_reply: quote, quote_reply_state: 'available',
             created_at: 1_787_735_200_000, updated_at: 1_787_735_200_000,
           },
           item: {
@@ -1856,6 +1859,7 @@ describe('ChatService', () => {
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
         contentBlocks, senderMemberRef: expect.any(String), senderIsMe: false,
         senderAvatarUrl: 'current-extension-avatar',
+        quote, quoteState: 'available', relationUid: 'rel-extension-1', sequence: 10,
       })],
     })
     expect(profile.sealProfileImageRef).toHaveBeenCalledWith(42, 7)

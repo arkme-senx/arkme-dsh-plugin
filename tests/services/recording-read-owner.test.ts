@@ -59,6 +59,41 @@ function fixture(rows: Row[][]) {
 const rows = (count: number, phase = 0): Row[] => Array.from({ length: count }, (_, i) => ({ body: `原文-${phase}-${i}`, offset: 2 * i + phase, child: phase + 100, ordinal: i }))
 
 describe('RecordingReadOwner', () => {
+  it('builds a compact complete overview in linear reads instead of rechecking all recordings on every merged page', async () => {
+    const f = fixture([rows(250), rows(250, 1)])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    f.requests.length = 0
+    const value = await f.owner.dayOverview(window, 'primary', session, first.next!)
+    expect(value.items).toHaveLength(500)
+    expect(value.items.every(item => !('text' in item) && item.textPreview.length <= 80)).toBe(true)
+    expect(f.requests.filter(request => request.path.endsWith('/transcript/query'))).toHaveLength(8)
+    expect(f.requests.filter(request => request.path.endsWith('/recordings/query'))).toHaveLength(1)
+    expect(value.views).toEqual(first.views)
+  })
+
+  it('rejects revision changes during the final overview verification', async () => {
+    const f = fixture([rows(250)])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    f.mutate((value, request) => { if (request.limit === 1) value.revision = 'b'.repeat(64) })
+    await expect(f.owner.dayOverview(window, 'primary', session, first.next!)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('rejects a newly added recording instead of publishing an incomplete day overview', async () => {
+    const recordings = [rows(250)], f = fixture(recordings)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    recordings.push(rows(2, 1))
+    await expect(f.owner.dayOverview(window, 'primary', session, first.next!)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('coalesces long Unicode fragments in the overview without retaining the full body', async () => {
+    const body = '汉🎙'.repeat(15000), f = fixture([[{body,offset:1,child:100,ordinal:7}]])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    const value = await f.owner.dayOverview(window, 'primary', session, first.next!)
+    expect(value.items).toHaveLength(1)
+    expect(value.items[0]).toMatchObject({ textCount: 30000, textPreview: '汉🎙'.repeat(40), textStart: 0, textEnd: 30000 })
+    expect(value.items[0]).not.toHaveProperty('text')
+  })
+
   it('preserves the owner search version when a long utterance is split across pages', async () => {
     const f = fixture([[{body:'原'.repeat(24_000),offset:1,child:100,ordinal:7}]])
     f.mutate(value => {

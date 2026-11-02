@@ -33,7 +33,8 @@ export interface ArkmeFileSendInput {
   backgroundSound?: ArkmeFileBackgroundSoundInput
   /** Send-scoped browser capture persisted until the owner confirms the record and applies its location post-effect. */
   location?: ArkmeRecordLocationCapture
-  content: Omit<ArkmeRichSendInput, 'assets' | 'backgroundSound'>
+  attachmentOrder?: string[]
+  content: Omit<ArkmeRichSendInput, 'backgroundSound'>
 }
 
 export interface ArkmeFileBackgroundSoundInput {

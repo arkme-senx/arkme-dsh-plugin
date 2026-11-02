@@ -1,10 +1,12 @@
-import type { ArkmeContentBlock, ArkmeTimelineItem } from './types.js'
+import type { ArkmeContentBlock, ArkmeTimelineItem, ArkmeMessageSnapshotDetail } from './types.js'
 
 /** Revision content is immutable display data, never a mutable timeline message. */
 export interface ArkmeRecordRevision {
   revisionUid: string
   kind: 'manual' | 'original' | 'transcription' | 'polish' | 'rewrite' | 'other'
   editAtMillis: number
+  avatarRef?: string
+  senderName?: string
   content: Pick<ArkmeTimelineItem, 'title' | 'textContent' | 'textFormat' | 'mediaUnavailable'> & { contentBlocks: ArkmeContentBlock[] }
 }
 
@@ -16,6 +18,11 @@ export interface ArkmeRecordEditHistoryPage {
 
 export interface ArkmeRecordEditHistoryReader {
   page(sourceRef: string, messageActionRef: string, cursorEditAt: number, signal: AbortSignal): Promise<ArkmeRecordEditHistoryPage>
+  snapshot?(sourceRef: string, messageActionRef: string, revisionUid: string, signal: AbortSignal): Promise<ArkmeRecordRevisionSnapshot>
+}
+
+export interface ArkmeRecordRevisionSnapshot extends ArkmeMessageSnapshotDetail {
+  revisionUid: string
 }
 
 /** Missing is distinct from explicit false, including on older cached projections. */

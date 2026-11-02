@@ -175,7 +175,7 @@ describe('recording playback controller', () => {
     let pending!: Promise<void>
     await act(async () => { pending = playback.playItem(item('item-b', 200_000)); await tick() })
     expect(first.pause).toHaveBeenCalled()
-    expect(playback.activeItemRef).toBe('')
+    expect(playback.activeItemRef).toBe('item-b')
     expect(audios).toHaveLength(1)
 
     await act(async () => {

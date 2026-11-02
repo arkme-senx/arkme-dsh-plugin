@@ -383,7 +383,7 @@ export class FileTransfers {
       throw fail('file-account-changed', '账号已切换，本次文件发送已取消')
     }
     if (!UUID.test(input.recordUid) || !UUID.test(input.relationUid) || !input.sourceRef.trim()
-      || input.fileRefs.length < 1 || input.fileRefs.length > this.policy.maxAttachments
+      || input.fileRefs.length < 1 || input.fileRefs.length + (input.content.assets?.length ?? 0) > this.policy.maxAttachments
       || new Set(input.fileRefs).size !== input.fileRefs.length || (input.content.textContent?.length ?? 0) > 20_000
       || !validLocation(input.location)) {
       throw fail('file-send-invalid', '发送标识、正文或附件数量无效')
@@ -411,6 +411,7 @@ export class FileTransfers {
       if (prior) {
         if (prior.sourceRef !== input.sourceRef || prior.relationUid !== input.relationUid || JSON.stringify(prior.fileRefs) !== JSON.stringify(input.fileRefs)
           || JSON.stringify(prior.content) !== JSON.stringify(input.content)
+          || JSON.stringify(prior.attachmentOrder) !== JSON.stringify(input.attachmentOrder)
           || JSON.stringify(prior.backgroundSound) !== JSON.stringify(backgroundSound)
           || (prior.state !== 'sent' && JSON.stringify(prior.location) !== JSON.stringify(input.location))) throw fail('file-send-conflict', '发送标识已用于另一份内容')
         return clone(prior)

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
 import type { ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 import { localFileBlock } from './file-send-tasks.js'
+import { recordReeditBackground } from './record-reedit-background.js'
 
 /** Shared by display handoff and receipt acknowledgement; newer edits always win. */
 export function recordReeditProjectionSettled(item: ArkmeTimelineItem, job: ArkmeRecordReeditSubmissionView): boolean {
@@ -60,7 +61,15 @@ export function useRecordReeditSubmissions(
   const revision = useRef(0)
   const resumedGeneration = useRef(-1)
   const [snapshot, setSnapshot] = useState<{ key: string; generation: number; requestGeneration: number; jobs: ArkmeRecordReeditSubmissionView[] }>({ key, generation, requestGeneration: -1, jobs: [] })
-  const jobs = snapshot.key === key && snapshot.generation === generation ? snapshot.jobs : []
+  const backgroundRevision = useSyncExternalStore(recordReeditBackground.subscribe, recordReeditBackground.getRevision, recordReeditBackground.getRevision)
+  const jobs = useMemo(() => {
+    const remote = snapshot.key === key && snapshot.generation === generation ? snapshot.jobs : []
+    const preparing = active ? recordReeditBackground.views(accountKey, sourceKey) : []
+    return [...remote.filter(job => !preparing.some(local => local.itemUid === job.itemUid)), ...preparing]
+  }, [snapshot, key, generation, active, accountKey, sourceKey, backgroundRevision])
+  useEffect(() => {
+    if (snapshot.key === key && snapshot.generation === generation) recordReeditBackground.observe(accountKey, sourceKey, snapshot.jobs)
+  }, [snapshot, key, generation, accountKey, sourceKey, backgroundRevision])
   const needsDiscovery = snapshot.key !== key || snapshot.generation !== generation || snapshot.requestGeneration !== requestGeneration
   const needsPolling = needsDiscovery || jobs.some(job => job.state === 'pending' || job.state === 'committing' || job.state === 'uncertain'
       || job.result && items.some(item => item.itemUid === job.itemUid))
@@ -71,8 +80,9 @@ export function useRecordReeditSubmissions(
     const jobs = await callArkme<ArkmeRecordReeditSubmissionView[]>('source.record-reedit.submissions', { sourceRef })
     if (scope.current.requestGeneration !== requestGeneration || scope.current.generation !== generation
       || scope.current.key !== key || started !== revision.current || !Array.isArray(jobs)) return
+    if (reconcile) recordReeditBackground.observe(accountKey, sourceKey, jobs, true)
     setSnapshot({ key, generation, requestGeneration, jobs })
-  }, [sourceRef, accountKey, active, key, generation, requestGeneration])
+  }, [sourceRef, accountKey, active, key, generation, requestGeneration, sourceKey])
   useEffect(() => {
     let disposed = false
     let timer: ReturnType<typeof setTimeout>

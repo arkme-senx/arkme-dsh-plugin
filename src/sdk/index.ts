@@ -2523,6 +2523,10 @@ export class ArkmeSdk {
     return this.call('source.message-extension.capabilities', { sourceRef }, signal)
   }
 
+  async modelDirectory(expectedAccountScope: string, signal?: AbortSignal): Promise<import('../model-directory.js').UnifiedModelCatalog> {
+    return this.call('models.directory', { expectedAccountScope }, signal)
+  }
+
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
@@ -2534,6 +2538,13 @@ export class ArkmeSdk {
     return await this.call<ArkmeSourceMessageExtensionContext>('source.message-extension.context', {
       sourceRef, messageActionRef,
     }, signal)
+  }
+
+  /** Read a single comment page; the existing context method reads the complete tree. */
+  async sourceMessageExtensionPage(sourceRef: string, messageActionRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceMessageExtensionContext> {
+    if (!sourceRef.trim() || !messageActionRef.trim()) throw new TypeError('Arkme source message extension requires a source and action reference')
+    return this.call('source.message-extension.context', { sourceRef, messageActionRef, paginated: true,
+      ...(options.cursor ? { pageCursor: options.cursor } : {}) }, options.signal)
   }
 
   async extendSourceMessage(
