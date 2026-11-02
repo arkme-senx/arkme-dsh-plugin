@@ -31,6 +31,16 @@ export class TeamDirectoryPreferenceStore {
     return state
   }
   read = (account: string): TeamDirectoryPreferences => account ? this.state(account).view : empty
+  removalActivity(account: string, target: TeamEntryTarget) {
+    const state = this.state(account), key = teamEntryKey(target)
+    const saved = state.saved.get(state.aliases.get(key) ?? key)
+    if (saved?.accessible === false || teamEntryConversations(target).some(c => !this.canPresent(account, c))) return undefined
+    return { sequence: saved?.activitySeq ?? 0, activityAtMillis: 0 }
+  }
+  removingOrHidden(account: string, target: TeamEntryTarget) {
+    const state = this.state(account), key = teamEntryKey(target)
+    return state.optimistic.has(key) || state.view[key]?.dismissed === true
+  }
   canPresent(account: string, conversation: TeamConversation): boolean {
     const state = this.state(account)
     const allowed = (key: string) => state.saved.get(state.aliases.get(key) ?? key)?.accessible !== false

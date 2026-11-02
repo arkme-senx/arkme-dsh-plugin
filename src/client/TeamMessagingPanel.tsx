@@ -1,3 +1,4 @@
+import { TeamEntryRemovalList } from './TeamEntryRemovalFeedback.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import type {ArkmeRecordInputCaptureResult} from './record-input-capture.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
@@ -156,9 +157,9 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
   const preview = c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
     : c.preview ? tr('内容暂不可用') : ''
-  return <><button className="team-conversation-row" data-team-side={c.side} type="button" role={role}
+  return <><button className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
-    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
+    style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={directoryStyles.sourceAvatarWrap}>
       {c.side === 'team'
@@ -178,6 +179,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
         {c.notificationPolicy?.muted && <span style={directoryStyles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
       </span>
     </span>
+    {actions.feedback}
   </button>{actions.overlays}</>
 }
 
@@ -257,8 +259,12 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
       : error ? <div className="team-opening-error" role="alert"><p>{error}</p><button onClick={() => { retryTeamEntryOpen(accountKey, intent); setAttempt(v => v + 1) }}>{tr('重试')}</button></div>
       : <div className="team-conversation-directory">
         {directory.error && <div className="team-opening-error" role="alert"><p>{tr(directory.error)}</p><button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey) }}>{tr('重试')}</button></div>}
-        <div role="list" aria-label={tr('团队对话')}>{items.map(c => <div role="listitem" key={`${c.side}:${c.key}`}><TeamConversationRow accountKey={accountKey} conversation={c} showTeamName={!channel}
-          onClick={() => { openTeamMessages({ kind: 'conversation', conversation: c }) }} /></div>)}</div>
+        <div role="list" aria-label={tr('团队对话')}><TeamEntryRemovalList accountKey={accountKey}
+          targets={directory.items.map(conversation => ({kind:'conversation', conversation}))}
+          visible={items.map(conversation => ({kind:'conversation', conversation}))}>
+          {rows => rows.map(target => target.kind === 'conversation' && <div role="listitem" key={`${target.conversation.side}:${target.conversation.key}`}><TeamConversationRow accountKey={accountKey} conversation={target.conversation} showTeamName={!channel}
+            onClick={() => { openTeamMessages({ kind: 'conversation', conversation: target.conversation }) }} /></div>)}
+        </TeamEntryRemovalList></div>
         {items.length === 0 && !directory.error && <p className="team-empty" role={initialDirectoryLoad ? 'status' : undefined}>{tr(initialDirectoryLoad ? '正在加载团队对话…' : '还没有团队对话')}</p>}
         {directory.hasMore && <button disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, true) }}>{tr('加载更多对话')}</button>}
       </div>}

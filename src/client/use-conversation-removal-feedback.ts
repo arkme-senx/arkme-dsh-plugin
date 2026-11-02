@@ -18,20 +18,21 @@ interface Removal<Row> {
 }
 
 /** Presentation only: owner visibility is committed immediately, never by an animation timer. */
-export function useConversationRemovalFeedback<Row>({ rows, rowKey, activity, scope, enabled }: {
+export function useConversationRemovalFeedback<Row>({ rows, rowKey, activity, scope, enabled, canRetain }: {
   rows: readonly Row[]
   rowKey: (row: Row) => string
   activity: ReadonlyMap<string, ConversationVisibilityActivityEvidence>
   scope: string | undefined
   enabled: boolean
+  canRetain?: (key: string) => boolean
 }) {
   const [, redraw] = useState(0)
   const bucket = useMemo(() => ({ entries: new Map<string, Removal<Row>>(), alive: true }), [scope, enabled])
-  const current = useRef({ bucket, activity })
-  current.current = { bucket, activity }
+  const current = useRef({ bucket, activity, canRetain })
+  current.current = { bucket, activity, canRetain }
   const valid = (entry: Removal<Row>) => {
     const latest = current.current.activity.get(entry.key)
-    return latest !== undefined && !conversationVisibilityActivityAdvanced(entry.activity, latest)
+    return current.current.canRetain?.(entry.key) !== false && latest !== undefined && !conversationVisibilityActivityAdvanced(entry.activity, latest)
   }
   const owns = (entry: Removal<Row>) => bucket.alive && current.current.bucket === bucket
     && bucket.entries.get(entry.key) === entry

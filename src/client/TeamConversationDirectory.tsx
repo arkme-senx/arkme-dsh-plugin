@@ -1,3 +1,4 @@
+import { TeamEntryRemovalList } from './TeamEntryRemovalFeedback.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import type { TeamChannel } from '../team-app-contract.js'
@@ -30,8 +31,8 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
-    className="team-conversation-row" data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
-    style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}>
+    className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
+    style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={styles.sourceAvatarWrap}>
       <ArkmeTeamChannelAvatar size={styles.sourceAvatarWrap.width} channel={channel} />
@@ -45,6 +46,7 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
       <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText
         text={`${latest.visitor?.nickname ?? tr('用户')}：${preview}`} presentation="preview" emojiSize={20} /></span></span>
     </span>
+    {actions.feedback}
   </button>{actions.overlays}</>
 }
 
@@ -114,10 +116,15 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
       {error && <div role="alert" className="team-opening-error"><p>{tr(error)}</p><button onClick={() => setAttempt(value=>value+1)}>{tr('重试')}</button></div>}
       {!error && <>
         <div role="tree" aria-label={channel?.name ?? tr('团队对话')}>
-          {channel ? visibleItems.map(c => <TeamConversationRow key={c.key} accountKey={accountKey} conversation={c} showTeamName={false} selected={selectedKey===c.key} role="treeitem"
-            onClick={() => openTeamMessages({kind:'conversation',conversation:c})} />)
-            : !resolving && visibleGroups.map(group => <TeamConversationGroupRow key={group.key} accountKey={accountKey} group={group}
-              onClick={() => openTeamMessages({kind:'team',teamRef:group.channel.teamRef,channel:group.channel})} />)}
+          <TeamEntryRemovalList key={`${accountKey}:${channel?.jotmoId ?? 'groups'}`} accountKey={accountKey}
+            targets={channel ? items.map(conversation => ({ kind: 'conversation', conversation })) : groups.map(group => ({ kind: 'folder', group }))}
+            visible={channel ? visibleItems.map(conversation => ({ kind: 'conversation', conversation })) : resolving ? [] : visibleGroups.map(group => ({ kind: 'folder', group }))}>
+            {rows => rows.map(target => target.kind === 'conversation'
+              ? <TeamConversationRow key={target.conversation.key} accountKey={accountKey} conversation={target.conversation} showTeamName={false} selected={selectedKey===target.conversation.key} role="treeitem"
+                  onClick={() => openTeamMessages({kind:'conversation',conversation:target.conversation})} />
+              : <TeamConversationGroupRow key={target.group.key} accountKey={accountKey} group={target.group}
+                  onClick={() => openTeamMessages({kind:'team',teamRef:target.group.channel.teamRef,channel:target.group.channel})} />)}
+          </TeamEntryRemovalList>
         </div>
         {channel && removedItems.length > 0 && <div>
           <button type="button" onClick={() => setShowRemoved(value => !value)} style={{ border: 0, padding: '8px 12px', background: 'transparent', color: arkmeTheme.secondary, fontSize: 12, cursor: 'pointer' }}>{showRemoved ? '收起已移除对话' : `查看已移除对话 (${removedItems.length})`}</button>

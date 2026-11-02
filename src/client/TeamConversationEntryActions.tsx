@@ -1,3 +1,5 @@
+import { useTeamEntryRemovalActions } from './TeamEntryRemovalFeedback.js'
+import { ArkmeConversationRemovalFeedback, conversationRemovalRowStyle } from './ArkmeConversationRemovalFeedback.js'
 import { useEffect, useState, type MouseEvent } from 'react'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { TeamConversationPreview } from './TeamConversationPreview.js'
@@ -5,6 +7,8 @@ import { teamDirectoryPreferences, teamEntryHidden, teamEntryKey, teamEntryPinne
 
 /** One menu and one preference owner for root folders, direct entries and the nested team directory. */
 export function useTeamConversationEntryActions(accountKey: string | undefined, target: TeamEntryTarget) {
+  const removal = useTeamEntryRemovalActions()
+  const phase = removal?.phase(target)
   const preferences = useTeamDirectoryPreferences(accountKey ?? '')
   const [point, setPoint] = useState<{ x: number; y: number }>(), [preview, setPreview] = useState(false), [error, setError] = useState('')
   const key = teamEntryKey(target), pinned = teamEntryPinned(preferences, target), hidden = teamEntryHidden(preferences, target)
@@ -14,9 +18,12 @@ export function useTeamConversationEntryActions(accountKey: string | undefined, 
   const restore = (navigation = false) => { if (accountKey) return teamDirectoryPreferences.restoreTarget(accountKey, target, navigation) }
   return {
     pinned,
-    open: (navigate: () => void) => mutate(async () => { const saved = restore(true); navigate(); await saved }),
+    phase,
+    rowStyle: conversationRemovalRowStyle(phase),
+    feedback: <ArkmeConversationRemovalFeedback phase={phase} message="已移除，可在团队中重新打开" />,
+    open: (navigate: () => void) => phase ? Promise.resolve() : mutate(async () => { const saved = restore(true); navigate(); await saved }),
     onContextMenu: (event: MouseEvent<HTMLElement>) => {
-      if (!accountKey) return
+      if (!accountKey || phase) return
       event.preventDefault(); event.stopPropagation(); setError('')
       const rect = event.currentTarget.getBoundingClientRect()
       setPoint(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : { x: rect.left + 20, y: rect.top + 20 })
@@ -26,7 +33,7 @@ export function useTeamConversationEntryActions(accountKey: string | undefined, 
         { id: 'preview', label: '预览', onSelect: () => { setPoint(undefined); setPreview(true) } },
         { id: 'pin', label: pinned ? '取消置顶' : '置顶对话', onSelect: () => mutate(() => teamDirectoryPreferences.pin(accountKey, target, !pinned)) },
         { id: 'separator', type: 'separator' },
-        { id: 'remove', label: hidden ? '恢复到列表' : '移除', danger: !hidden, onSelect: () => mutate(() => hidden ? restore() : teamDirectoryPreferences.remove(accountKey, target)) },
+        { id: 'remove', label: hidden ? '恢复到列表' : '移除', danger: !hidden, onSelect: () => mutate(() => hidden ? restore() : removal ? removal.remove(target) : teamDirectoryPreferences.remove(accountKey, target)) },
       ]} />}
       {error && <p role="alert" style={{ fontSize: 12 }}>{error}</p>}
       {preview && accountKey && <TeamConversationPreview key={`${accountKey}:${key}`} accountKey={accountKey} target={target} onClose={() => setPreview(false)} />}

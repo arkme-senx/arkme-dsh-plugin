@@ -1,3 +1,5 @@
+import { TeamEntryRemovalContext, teamRemovalActions, teamRemovalEvidence, teamRemovalKey } from './TeamEntryRemovalFeedback.js'
+import { type TeamEntryTarget } from './team-directory-preferences.js'
 import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { teamDirectoryPreferences, useTeamDirectoryPreferenceError } from './team-directory-preferences.js'
 import { localDirectoryPreferences, useDirectoryPreferenceError } from './local-directory-preferences.js'
@@ -12,7 +14,7 @@ import { TeamConversationRow } from './TeamMessagingPanel.js'
 import { useTeamDirectoryPreferences } from './team-directory-preferences.js'
 import { readOfficialTeamMembership, subscribeOfficialTeamMembership, shouldShowOfficialContact } from './official-team-membership.js'
 import { conversationDirectoryStyles, conversationTimeLabel as timeLabel } from './conversation-directory-presentation.js'
-import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows } from './team-conversation-directory.js'
+import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
@@ -1197,16 +1199,31 @@ export function ArkmeNavigation({
       ...conversationProjection.bots.map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
     ], arkmeComposerDraftStore, authenticated ? auth?.userId : undefined)
   }, [auth?.environment, auth?.userId, authenticated, conversationProjection, botDirectoryPreferences, privateInteractionDirectory.rows, chatDirectory.projection?.removedSourceKeys, draftRevision])
+  const mergedRows = mergeTeamDirectoryRows(rootConversationRows, teamDirectory.items,
+    teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
+  const targetForTeamRow = (row: (typeof mergedRows)[number]): TeamEntryTarget | undefined => row.kind === 'team-folder'
+    ? { kind: 'folder', group: row.group } : row.kind === 'team' ? { kind: 'conversation', conversation: row.conversation } : undefined
+  const teamTargets: TeamEntryTarget[] = [
+    ...groupTeamConversations(teamDirectory.items).map(group => ({ kind: 'folder' as const, group })),
+    ...teamDirectory.items.map(conversation => ({ kind: 'conversation' as const, conversation })),
+  ]
+  const teamActivity = teamRemovalEvidence(currentAccountKey ?? '', teamTargets)
   const removalFeedback = useConversationRemovalFeedback({
-    rows: rootConversationRows,
-    rowKey: row => row.kind === 'source'
-      ? `source:${conversationSourceVisibilityKey(row.source)}`
-      : `bot:${conversationBotVisibilityKey(row.bot)}`,
-    activity: conversationVisibilityActivity,
+    rows: mergedRows,
+    rowKey: row => {
+      const target = targetForTeamRow(row)
+      return target ? teamRemovalKey(target) : row.kind === 'source'
+        ? `source:${conversationSourceVisibilityKey(row.source)}`
+        : row.kind === 'bot' ? `bot:${conversationBotVisibilityKey(row.bot)}` : ''
+    },
+    activity: new Map([...conversationVisibilityActivity, ...teamActivity]),
     scope: currentAccountKey,
     enabled: active && directory === 'root',
+    canRetain: key => !key.startsWith('team-entry:') || teamTargets.some(target => teamRemovalKey(target) === key
+      && teamDirectoryPreferences.removingOrHidden(currentAccountKey ?? '', target)),
   })
-  const mergedConversationRows = mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
+  const teamRemovals = teamRemovalActions(currentAccountKey ?? '', removalFeedback, mergedRows, targetForTeamRow)
+  const mergedConversationRows = removalFeedback.rows
   const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications'; pinned: boolean; activeAtMillis: number }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
     const index = mergedConversationRows.findIndex(row => Number(notificationPinned) > Number(row.pinned)
@@ -2212,7 +2229,7 @@ export function ArkmeNavigation({
     {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
     onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />
 
-  return <section
+  return <TeamEntryRemovalContext.Provider value={teamRemovals}><section
     style={styles.shell}
     aria-label={tr("Arkme 会话列表")}
     data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
@@ -2443,5 +2460,5 @@ export function ArkmeNavigation({
       <div role="status" style={styles.directoryActionFeedback}>{directoryActionFeedback}</div>,
       document.body,
     )}
-  </section>
+  </section></TeamEntryRemovalContext.Provider>
 }
