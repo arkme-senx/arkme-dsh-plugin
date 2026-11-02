@@ -4167,6 +4167,14 @@ export type ArkmeChatClientEvent = {
   source: Pick<ArkmeSourceItem, 'sourceRef' | 'sourceKey' | 'latestSequence'>
   items: ArkmeTimelineItem[]
 } | {
+  type: 'thought-invalidated'
+  revision: number
+  accountScope: string
+  sourceKey?: string
+  timelineItemKey?: string
+  clear?: boolean
+  stream?: import('./record-thought-contract.js').ArkmeThoughtStreamUpdate
+} | {
   type: 'timeline-changed'
   revision: number
   sourceKey: string
@@ -4265,6 +4273,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'record.thoughts.query'
+  | 'chat.thoughts.query'
   | 'composer.resources.list'
   | 'composer.document.prepare'
   | 'team.app.outbound.open'

@@ -6,14 +6,14 @@ import { tr, useArkmeLocale } from './locale.js'
 
 const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
   personal_profile: '「探索 → 个人档案」',
-  record_thought: '手机快记列表或详情',
-  chat_thought: '手机聊天页面',
+  record_thought: '发给自己的消息下方或详情',
+  chat_thought: '私聊、群聊的消息下方或详情',
   arrangement_recognition: '左侧「安排」',
   offline_context: '聊天中的线下交流关联',
   goal_insight: '「探索 → 目标」',
 }
 
-export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: string }) {
+export function ArkmeAutomaticAiSettings({ accountScope, only, title = '自动使用额度', compact = false }: { accountScope: string; only?: readonly ArkmeCapabilitySetting['key'][]; title?: string; compact?: boolean }) {
   useArkmeLocale()
   const [settings, setSettings] = useState<ArkmeCapabilitySetting[]>()
   const [loading, setLoading] = useState(true)
@@ -67,25 +67,26 @@ export function ArkmeAutomaticAiSettings({ accountScope }: { accountScope: strin
       if (ownsScope()) { pending.current = false; setSaving(false); setConfirm(undefined); await reload(failure) }
     }
   }
-  const visibleSettings = loadedScope === accountScope ? settings : undefined
+  const visibleSettings = loadedScope === accountScope ? settings?.filter(item => !only || only.includes(item.key)) : undefined
   const profile = visibleSettings?.find(item => item.key === 'personal_profile' && item.enabled)
-  return <section className="arkme-automatic-ai" aria-label={tr('自动使用额度')}>
-    <h3>{tr('自动使用额度')}</h3>
-    <p>{tr('开启后自动分析，消耗 AI 额度。')}</p>
+  const settingLabel = (setting: ArkmeCapabilitySetting) => tr(only && setting.key === 'record_thought' ? compact ? '快记里的想法' : '快记想法' : only && setting.key === 'chat_thought' ? compact ? '聊天中的建议' : '聊天自动回复' : setting.title.replaceAll('阿森', 'Arko'))
+  return <section className="arkme-automatic-ai" aria-label={tr(title)}>
+    <h3>{tr(title)}</h3>
+    <p>{tr(compact ? '开启后会使用 AI 额度，聊天建议包含私聊和群聊。' : '开启后自动分析，消耗 AI 额度。')}</p>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">{tr('正在读取设置…')}</p>}
     {!loading && !settings && <button type="button" onClick={() => { setError(''); void reload() }}>{tr('重新加载')}</button>}
     {visibleSettings?.map(setting => <div className="arkme-automatic-ai-row" key={setting.key}>
-      <span>{tr(setting.title)}</span>
-      <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={tr(setting.title)} aria-checked={setting.enabled} disabled={loading || saving}
+      <span>{settingLabel(setting)}</span>
+      <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={settingLabel(setting)} aria-checked={setting.enabled} disabled={loading || saving}
         onClick={() => setting.enabled ? void save(setting, false) : setConfirm(setting)}><span aria-hidden="true" /></button>
     </div>)}
-    <details className="arkme-automatic-ai-help"><summary>{tr('使用说明')}</summary>
-      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title)}</strong>：{tr(capabilityLocations[setting.key])}</p>)}
-    </details>
+    {!compact && <details className="arkme-automatic-ai-help"><summary>{tr('使用说明')}</summary>
+      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title.replaceAll('阿森', 'Arko'))}</strong>：{tr(capabilityLocations[setting.key])}</p>)}
+    </details>}
     {retryProfile && profile && !loading && <button type="button" disabled={saving} onClick={() => { void save(profile, true) }}>{tr('个人档案已授权，重试启动分析')}</button>}
     {confirm && loadedScope === accountScope && <ArkmeConfirmDialog titleId={titleId} title={tr('开启功能')} busy={saving} onClose={() => setConfirm(undefined)}
-      description={<>{tr(confirm.title)}：{tr(automaticCapabilityDescriptions[confirm.key])}</>}
+      description={<>{tr(confirm.title.replaceAll('阿森', 'Arko'))}：{tr(automaticCapabilityDescriptions[confirm.key])}</>}
       confirmLabel={tr('同意并开启')} busyLabel={tr('正在开启…')} onConfirm={() => { void save(confirm, true) }} />}
   </section>
 }

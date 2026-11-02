@@ -2348,6 +2348,8 @@ export async function dispatchArkmeHostOperation(
         requestSignal,
       )
     }
+    case 'record.thoughts.query': return await service.recordThoughts(stringParam(params, 'expectedAccountScope'), params.recordUids, requestSignal)
+    case 'chat.thoughts.query': return await service.chatThoughts(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), params.messageActionRefs, requestSignal)
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(

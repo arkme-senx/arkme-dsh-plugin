@@ -51,6 +51,8 @@ import { SelfRoleService } from './services/self-role-service.js'
 import { teamCodexPost } from './services/team-codex-transport.js'
 import { AiPointsService } from './services/ai-points-service.js'
 import { ModelDirectoryService } from './services/model-directory-service.js'
+import { ThoughtRealtimeService } from './services/thought-realtime-service.js'
+import { readRecordThoughts } from './services/record-thought-service.js'
 import type { ArkmeAiPointsQuery } from './ai-points.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -408,6 +410,23 @@ export class ArkmeService {
   attachModelDirectoryReader(reader: () => Promise<import('./dsh-remote/types.js').DshRemoteModelCatalog>): () => void {
     this.modelDirectoryReader = reader
     return () => { if (this.modelDirectoryReader === reader) this.modelDirectoryReader = undefined }
+  }
+  private thoughtRealtime: ThoughtRealtimeService | undefined
+  private startThoughtRealtime(): void {
+    this.thoughtRealtime ??= new ThoughtRealtimeService(this.runtime, this.source, event => this.realtime.emitChatClientEvent({ ...event, revision: this.realtime.nextChatClientRevision() }))
+    this.thoughtRealtime.start()
+  }
+  async recordThoughts(expectedScope: string, recordUids: unknown, signal?: AbortSignal) {
+    const result = await readRecordThoughts(this.runtime, expectedScope, recordUids, signal)
+    this.startThoughtRealtime()
+    return result
+  }
+  async chatThoughts(expectedScope: string, sourceRef: string, actionRefs: unknown, signal?: AbortSignal) {
+    const { readChatThoughts } = await import('./services/chat-thought-service.js')
+    const result = await readChatThoughts(this.runtime, expectedScope, sourceRef, actionRefs,
+      (source, ref) => this.chat.recordEditHistoryTarget(source, ref), signal)
+    this.startThoughtRealtime()
+    return result
   }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
@@ -1461,6 +1480,7 @@ arkoImagesV1:true,
     this.contact.dispose()
     this.contactDirectory.dispose()
     this.unmarkedSpeaker.dispose()
+    this.thoughtRealtime?.dispose()
     this.realtime.dispose()
     this.arko.dispose()
     this.deviceLock.dispose()
@@ -3129,6 +3149,7 @@ arkoImagesV1:true,
   async resolveCancellationLogin(continueLogin: boolean) { return await this.auth.resolveCancellationLogin(continueLogin) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    this.thoughtRealtime?.dispose(); this.thoughtRealtime = undefined
     return await this.logoutFeedback.run(async () => {
       this.recordingPresenceWriter.revoke()
       const expected = await this.runtime.accountScopedSession()
