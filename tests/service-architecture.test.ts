@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
   'dataExport',
+  'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
@@ -78,7 +80,7 @@ const expectedPublicMethods = [
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingEntityFeedback', 'undoRecordingEntityFeedback', 'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences',
-  'recordingDay', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
+  'recordingDay', 'recordingDayOverview', 'recordingDayReview', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
@@ -136,6 +138,9 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'model-directory-service.ts',
+  'composer-document.ts',
+  'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
   'record-export-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',

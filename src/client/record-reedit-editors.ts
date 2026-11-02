@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type SetStateAction } from 'react'
 import type { ArkmeRecordReeditAttachmentView, ArkmeRecordReeditEditorSnapshot } from '../record-reedit-contract.js'
 import type { ArkmeTimelineItem } from '../types.js'
+import { reconcileArkmeComposerMentions } from './composer-draft-store.js'
 
 interface RecordReeditScope {
   accountKey: string | undefined
@@ -17,12 +18,29 @@ export interface ArkmeRecordReeditComposerState extends RecordReeditScope {
   mentions?: import('../record-reedit-contract.js').ArkmeRecordReeditMention[]
   attachments: ArkmeRecordReeditAttachmentView[]
   // One session owns its CAS revision and queue, even when its editor is inactive.
-  persisted: { candidateKey: string; draftRevision: number; saveTail: Promise<void>; exclusive?: boolean }
+  persisted: { candidateKey: string; draftRevision: number; saveTail: Promise<void>; exclusive?: boolean;
+    readiness?: Promise<ArkmeRecordReeditEditorSnapshot>; preserveInput?: boolean; expectedVersion?: number }
   loading: boolean
   busy: boolean
   error: string
   conflict?: 'record' | 'draft' | undefined
   recoveryConfirmation?: boolean | undefined
+}
+
+/** Hydration owns metadata; text already changed in this editor belongs to the user. */
+export function hydrateRecordReeditEditor(current: ArkmeRecordReeditComposerState, snapshot: ArkmeRecordReeditEditorSnapshot, preserveInput = false): ArkmeRecordReeditComposerState {
+  if (current.snapshot === snapshot && !preserveInput) return current
+  const edited = preserveInput || current.persisted.preserveInput || current.textContent !== current.item.textContent || current.title !== current.item.title
+  const changedRemotely = edited && (current.persisted.expectedVersion !== undefined && snapshot.version !== current.persisted.expectedVersion
+    || (snapshot.textContent !== current.item.textContent || snapshot.title !== current.item.title) && snapshot.draft === undefined)
+  return { ...current, snapshot, loading: false,
+    title: edited ? current.title : snapshot.draft?.title ?? snapshot.title,
+    textContent: edited ? current.textContent : snapshot.draft?.textContent ?? snapshot.textContent,
+    mentions: current.persisted.preserveInput ? current.mentions ?? [] : edited ? reconcileArkmeComposerMentions(snapshot.textContent, current.textContent, snapshot.mentions ?? [], snapshot.textFormat)
+      : snapshot.draft?.mentions ?? snapshot.mentions ?? [],
+    attachments: current.persisted.preserveInput ? current.attachments : snapshot.draft?.attachments ?? snapshot.attachments ?? [],
+    ...(changedRemotely ? { conflict: 'record', error: '快记已在其他位置更新，当前输入已保留，请检查后重新确认' } : {}),
+  }
 }
 
 const scopeKey = (scope: RecordReeditScope) => JSON.stringify([scope.accountKey, scope.sourceKey])
@@ -83,6 +101,14 @@ export function useRecordReeditEditors() {
   }, [publish])
   const findCandidate = useCallback((scope: RecordReeditScope, itemUid: string) =>
     stateRef.current.candidates.get(editorKey(scope, itemUid)), [])
+  const detachCandidate = useCallback((target: ArkmeRecordReeditComposerState) => {
+    const previous = stateRef.current
+    const key = editorKey(target, target.item.itemUid)
+    if (previous.candidates.get(key)?.persisted !== target.persisted) return
+    const selected = new Map(previous.selected)
+    if (selected.get(scopeKey(target)) === key) selected.delete(scopeKey(target))
+    publish({ ...previous, selected, currentKey: previous.currentKey === key ? undefined : previous.currentKey })
+  }, [publish])
   return { composer: state.currentKey === undefined ? undefined : state.candidates.get(state.currentKey),
-    composerRef, setComposer, updateCandidate, activateScope, findCandidate }
+    composerRef, setComposer, updateCandidate, activateScope, findCandidate, detachCandidate }
 }

@@ -1,8 +1,9 @@
+import { detailExtensionSends } from '../src/client/detail-extension-send.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { emojiSample } from './fixtures/emoji.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ArkmeConversationMemberItem,
@@ -10,6 +11,13 @@ import type {
   ArkmeSourceMessageExtendResult,
   ArkmeTimelineItem,
 } from '../src/types.js'
+
+const mountedRenderers = new Set<ReactTestRenderer>()
+function create(...args: Parameters<typeof createRenderer>) {
+  const renderer = createRenderer(...args)
+  mountedRenderers.add(renderer)
+  return renderer
+}
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -53,6 +61,7 @@ import { ArkmeTimelineDetailDrawer } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from '../src/client/ArkmeDetailSourceBadgeVisuals.js'
 import { ArkmeClientError } from '../src/client/api.js'
+import { usePersonalNoteDetail } from '../src/client/use-personal-note-detail.js'
 
 const timelineItem: ArkmeTimelineItem = {
   itemUid: 'record-source',
@@ -77,6 +86,67 @@ const relatedList: ArkmeRelatedQuickNoteList = {
 }
 
 describe('normal timeline related quick note drawer', () => {
+  it.each(['send_to_self', 'topic', 'default_category'] as const)('loads the same edited detail and history from %s despite incomplete list metadata', async sourceKind => {
+    const sourceRef = `${sourceKind}-source`
+    const preview = { ...timelineItem, isMe: true, recordVersion: 2, updateAtMillis: 0,
+      ...(sourceKind === 'send_to_self' ? { hasManualEdit: true } : {}) }
+    const canonical = { ...timelineItem, isMe: true, recordVersion: 2, hasManualEdit: true,
+      textContent: '统一读取的最新正文', updateAtMillis: 100 }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'record.app.detail') return canonical
+      if (operation === 'source.record-edit-history') return { items: [{ revisionUid: 'rev', kind: 'manual', editAtMillis: 1710000000000,
+        content: { title: '', textContent: '修改前正文', contentBlocks: [] } }], hasMore: false }
+      return { items: [], total: 0, recallMode: 'embedding', extensions: [], extensionCount: 0 }
+    })
+    function PersonalDetail() {
+      const detail = usePersonalNoteDetail(preview, true, sourceRef, 0)
+      return <ArkmeTimelineDetailDrawer item={detail.item!} sourceRef={sourceRef} sourceKind={sourceKind}
+        detailLoading={detail.loading} detailError={detail.error} onRetryDetail={detail.retry}
+        showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />
+    }
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<PersonalDetail />) })
+    try {
+      expect(JSON.stringify(view.toJSON())).toContain('统一读取的最新正文')
+      expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'record.app.detail')).toHaveLength(1)
+      await act(async () => view.root.findByProps({ 'aria-label': '已编辑' }).props.onClick())
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.record-edit-history', {
+        sourceRef, messageActionRef: timelineItem.messageActionRef, cursorEditAt: 0,
+      }, expect.any(AbortSignal))
+      expect(view.root.findByProps({ 'aria-label': '编辑记录' })).toBeDefined()
+    } finally { act(() => view.unmount()) }
+  })
+
+  it('keeps the first comment visible when a later page fails and retries only that page', async () => {
+    const extension = (recordUid: string) => ({ recordUid, parentRecordUid: timelineItem.itemUid, recordOwnerUserId: 7, level: 2,
+      sourceKind: 'record_extension', senderDisplayName: '作者', title: '', textContent: `评论${recordUid}`, sendAtMillis: 100,
+      templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] })
+    let retries = 0
+    mocks.callArkme.mockImplementation(async (operation: string, params: Record<string, unknown>) => {
+      if (operation === 'source.message-extension.context') {
+        if (!params.pageCursor) return { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [extension('one')], nextCursor: 'page-two' }
+        if (++retries === 1) throw new Error('第二页暂时不可用')
+        return { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [{ ...extension('two'),
+          quote: { version: 1, projection: 'arkme-text-v1', sourceDigest: 'a'.repeat(64), start: 0, end: 2, text: '正文', prefix: '', suffix: '' }, quoteState: 'available' }] }
+      }
+      return { total: 0, items: [], recallMode: 'embedding' }
+    })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceKind="group_chat"
+      showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    expect(view.root.findByProps({ 'data-arkme-note-extension-item': 'one' })).toBeDefined()
+    expect(JSON.stringify(view.toJSON())).toContain('第二页暂时不可用')
+    const retry = view.root.findAll(node => node.type === 'button' && node.children.includes('重试'))[0]!
+    await act(async () => retry.props.onClick())
+    expect(view.root.findByProps({ 'data-arkme-note-extension-item': 'one' })).toBeDefined()
+    const second = view.root.findByProps({ 'data-arkme-note-extension-item': 'two' })
+    expect(second.findByProps({ 'data-arkme-comment-quote': true })).toBeDefined()
+    expect(JSON.stringify(view.toJSON())).not.toContain('第二页暂时不可用')
+    const reads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.context')
+    expect(reads.map(([, params]) => params.pageCursor ?? 'first')).toEqual(['first', 'page-two', 'page-two'])
+    act(() => view.unmount())
+  })
+
   it.each([
     { sourceKind: 'send_to_self' as const, path: undefined, expected: '未指定主题', childTopic: false },
     { sourceKind: 'topic' as const, path: '产品 / 设计', expected: '产品 / 设计', childTopic: true },
@@ -339,8 +409,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(view.root.findAllByType('button').some(node => node.props['aria-label'] === '已编辑')).toBe(false)
     await act(async () => view.update(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />))
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())
-    expect(JSON.stringify(view.toJSON())).not.toContain('历史快记')
-    await act(async () => view.root.findAllByType('button').find(node => node.children.includes('查看此版全文'))!.props.onClick())
+    expect(view.root.findAllByType('button').some(node => node.children.includes('查看此版全文'))).toBe(false)
     expect(JSON.stringify(view.toJSON())).toContain('历史快记')
     expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe('row')
     await act(async () => view.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick())
@@ -433,6 +502,7 @@ describe('normal timeline related quick note drawer', () => {
   })
 
   beforeEach(() => {
+    detailExtensionSends.clear()
     arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:11})
     socialAccessStore.confirm('test:11', true)
     mocks.callArkme.mockReset()
@@ -457,7 +527,7 @@ describe('normal timeline related quick note drawer', () => {
     })
   })
 
-  afterEach(() => { socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+  afterEach(() => { act(() => { for (const renderer of mountedRenderers) renderer.unmount() }); mountedRenderers.clear(); detailExtensionSends.clear(); socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
   it('refusal disables detail extension text, attachments and send without losing the draft', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
@@ -728,7 +798,7 @@ describe('normal timeline related quick note drawer', () => {
 
     expect(mocks.callArkme).toHaveBeenCalledWith(
       'source.message-extension.context',
-      { sourceRef: 'opaque-source', messageActionRef: 'opaque-action' },
+      { sourceRef: 'opaque-source', messageActionRef: 'opaque-action', paginated: true },
       expect.any(AbortSignal),
     )
     expect(renderer.root.findByProps({ 'data-arkme-note-extension-count': 'true' }).children.join('')).toBe('共2条延展')
@@ -1069,7 +1139,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain('暂未找到相关快记')
   })
 
-  it('reports detail extension failures through toast without rendering an inline error row', async () => {
+  it('retains an uncertain detail extension with an inline receipt and leaves the composer ready', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
       if (operation === 'source.message-extension.context') return {
@@ -1098,8 +1168,10 @@ describe('normal timeline related quick note drawer', () => {
       await Promise.resolve(); await Promise.resolve()
     })
 
-    expect(onToast).toHaveBeenCalledWith('资源不存在')
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('资源不存在')
+    expect(onToast).not.toHaveBeenCalled()
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
+    expect(renderer.root.findByType(ArkmeRichComposerInput).props.disabled).toBe(false)
+    expect(JSON.stringify(renderer.toJSON())).toContain('发送结果待确认')
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
   })
 
@@ -1494,46 +1566,26 @@ describe('normal timeline related quick note drawer', () => {
     }), expect.any(AbortSignal))
   })
 
-  it('reuses the same detail extension record uid after a failed send', async () => {
-    let attempts = 0
-    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+  it('keeps the stable UID and reconciles a lost response without a second write', async () => {
+    let committed = false
+    const recordUid = '11111111-1111-4111-8111-111111111111'
+    const extension = { recordUid, parentRecordUid: 'record-source', level: 2, sourceKind: 'record_extension', senderDisplayName: '我',
+      title: '', textContent: '继续延展', sendAtMillis: 1, templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
-      if (operation === 'source.message-extension.extend') {
-        attempts += 1
-        if (attempts === 1) throw new Error('网络中断')
-        return { recordUid: params?.recordUid, parentRecordUid: 'record-source', status: 1, localState: 'synced' }
-      }
+      if (operation === 'source.message-extension.context') return { parentRecordUid: 'record-source', extensionCount: committed ? 1 : 0, extensions: committed ? [extension] : [] }
+      if (operation === 'source.message-extension.extend') { committed = true; throw new Error('响应丢失') }
       throw new Error(`unexpected operation: ${operation}`)
     })
-    const uuids = [
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
-    ]
-    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => uuids.shift()) })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce(recordUid).mockReturnValueOnce('22222222-2222-4222-8222-222222222222') })
     let renderer!: ReactTestRenderer
-    await act(async () => {
-      renderer = create(<ArkmeTimelineDetailDrawer
-        item={timelineItem} sourceRef="opaque-source" showOriginal={false}
-        onClose={vi.fn()} onToggleOriginal={vi.fn()}
-      />)
-      await Promise.resolve()
-    })
-    act(() => { renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('失败后重试') })
-    await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
-      await Promise.resolve(); await Promise.resolve()
-    })
-    await act(async () => {
-      renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick()
-      await Promise.resolve(); await Promise.resolve()
-    })
-
-    const extensionCalls = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')
-    expect(extensionCalls).toHaveLength(2)
-    expect(extensionCalls[0]?.[1]?.recordUid).toBe('11111111-1111-4111-8111-111111111111')
-    expect(extensionCalls[1]?.[1]?.recordUid).toBe(extensionCalls[0]?.[1]?.recordUid)
-    expect(extensionCalls[0]?.[1]?.relationUid).toBe('22222222-2222-4222-8222-222222222222')
-    expect(extensionCalls[1]?.[1]?.relationUid).toBe(extensionCalls[0]?.[1]?.relationUid)
+    await act(async () => { renderer = create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="opaque-source" showOriginal={false} onClose={vi.fn()} onToggleOriginal={vi.fn()} />); await Promise.resolve() })
+    act(() => renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('继续延展'))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '发送延展' }).props.onClick(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')).toHaveLength(1)
+    expect(detailExtensionSends.views('test:11', 'opaque-source')[0]?.state).toBe('sent')
+    expect(renderer.root.findAllByProps({ 'data-arkme-note-extension-item': recordUid })).toHaveLength(1)
+    await act(async () => renderer.unmount())
   })
 
   it('removes staged detail attachments when the drawer is discarded', async () => {
@@ -1558,7 +1610,7 @@ describe('normal timeline related quick note drawer', () => {
     expect(mocks.removeLocalFile).toHaveBeenCalledWith('arkme-file-v1.11111111-1111-4111-8111-111111111111')
   })
 
-  it('aborts an in-flight detail extension before cleaning its staged attachment on close', async () => {
+  it('keeps an in-flight detail extension and its attachment owned by the queue after closing', async () => {
     let requestSignal: AbortSignal | undefined
     mocks.callArkme.mockImplementation(async (operation: string, _params?: Record<string, unknown>, signal?: AbortSignal) => {
       if (operation === 'source.related-quick-notes.from-message') return { total: 0, items: [], recallMode: 'embedding', retryable: false, retryAfterMillis: 1500 }
@@ -1589,8 +1641,9 @@ describe('normal timeline related quick note drawer', () => {
     })
     expect(mocks.removeLocalFile).not.toHaveBeenCalled()
     await act(async () => { renderer.unmount(); await Promise.resolve(); await Promise.resolve() })
-    expect(requestSignal?.aborted).toBe(true)
-    expect(mocks.removeLocalFile).toHaveBeenCalledWith('arkme-file-v1.11111111-1111-4111-8111-111111111111')
+    expect(requestSignal?.aborted).toBe(false)
+    expect(mocks.removeLocalFile).not.toHaveBeenCalled()
+    expect(detailExtensionSends.views('test:11', 'opaque-source')[0]?.state).toBe('sending')
   })
 
   it('does not let an old detail send clear the next target draft', async () => {
@@ -1620,7 +1673,7 @@ describe('normal timeline related quick note drawer', () => {
     await act(async () => { renderer.update(renderDrawer(nextItem)); await Promise.resolve() })
     act(() => { renderer.root.findByType(ArkmeRichComposerInput).props.onTextChange('新目标草稿') })
     await act(async () => {
-      resolveOldSend({ recordUid: 'old-record', parentRecordUid: 'record-source', status: 1, localState: 'synced' })
+      resolveOldSend({ recordUid: 'old-record', parentRecordUid: 'record-source', status: 1, localState: 'synced', extension: { recordUid: 'old-record', level: 2, senderDisplayName: '我', title: '', textContent: '旧目标内容', sendAtMillis: 1, templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] } })
       await Promise.resolve(); await Promise.resolve()
     })
     expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('新目标草稿')

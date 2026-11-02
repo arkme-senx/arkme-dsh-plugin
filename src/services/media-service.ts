@@ -1459,6 +1459,12 @@ export class MediaService {
     return this.recordMediaRefs(raw).some(ref => !displayed.has(stringValue(ref.file_asset_uid).trim()))
   }
 
+  recordBackgroundSoundRefs(raw: unknown): Record<string, unknown>[] {
+    const payload = this.recordContentPayload(raw)
+    return listValue(payload.media_refs ?? payload.mediaRefs).map(objectValue)
+      .filter(ref => numberValue(ref.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND)
+  }
+
   richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const root = objectValue(raw)

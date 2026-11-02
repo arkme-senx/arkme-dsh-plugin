@@ -192,6 +192,7 @@ export async function captureArkmeRecordLocation(
   intent: ArkmeLocationCaptureIntent,
   scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope(),
   signal?: AbortSignal,
+  options: { maximumAgeMillis?: number; timeoutMillis?: number } = {},
 ): Promise<ArkmeRecordLocationCapture> {
   const desktop = scope.arkmeDesktopLocation
   const locationNavigator = scope.navigator
@@ -241,8 +242,15 @@ export async function captureArkmeRecordLocation(
         ...(speed === null || speed < 0 ? {} : { speedMetersPerSecond: speed }),
       })
     }, error => {signal?.removeEventListener('abort',abort);if(!signal?.aborted)reject(geolocationError(error)) },
-    { enableHighAccuracy: false, timeout: 10_000, maximumAge: 30_000 })
+    { enableHighAccuracy: false, timeout: options.timeoutMillis ?? 10_000, maximumAge: options.maximumAgeMillis ?? 30_000 })
   })
+}
+
+/** Input sampling is granted-only: typing never owns a location permission prompt. */
+export async function captureArkmeRecordInputLocation(signal: AbortSignal, scope: ArkmeLocationRuntimeScope = browserLocationRuntimeScope()): Promise<ArkmeRecordLocationCapture | undefined> {
+  try {
+    return await captureArkmeRecordLocation('automatic-send', scope, signal, { maximumAgeMillis: 0, timeoutMillis: 5_000 })
+  } catch { return undefined }
 }
 
 export async function requestArkmeRecordLocation(

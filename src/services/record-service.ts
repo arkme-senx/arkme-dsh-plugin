@@ -25,7 +25,8 @@ import type {
   ArkmeRecordReeditPrepareInput,
   ArkmeRecordReeditPreparedContext,
 } from '../record-reedit-contract.js'
-import { ArkmeRecordReeditDraftConflict } from '../record-reedit-contract.js'
+import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditCapture } from '../record-reedit-contract.js'
+import { arkmeBackgroundSoundContent } from '../record-background-sound.js'
 import { RecordReeditSubmissions, recordReeditSubmissionView, type RecordReeditExecutionOutcome } from './record-reedit-submissions.js'
 import {
   recordReeditAttachmentChanges, recordReeditAttachmentSelection, recordReeditMediaGroups,
@@ -353,7 +354,8 @@ export class RecordService {
           this.assertReeditActive()
           await this.runtime.stateStore.putRecordReeditSubmission(userId, job, expectedId)
         }
-        const refs = job.draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []
+        const refs = [...(job.draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []),
+          ...(job.draft.capture?.backgroundSound?.fileRefs ?? [])]
         return expectedId !== job.submissionId && refs.length > 0
           ? this.recordReeditFiles().withReferences(refs, userId, persist) : persist()
       },
@@ -524,6 +526,7 @@ export class RecordService {
     input: ArkmeRecordReeditPrepareInput, owner: RecordReeditOwnerSnapshot, session: ArkmeSessionCredentials, draftOnly: boolean,
   ): Promise<ArkmeRecordReeditPreparedContext> {
     const { sourceRef, itemUid } = input
+    const capture = input.capture === undefined ? undefined : parseArkmeRecordReeditCapture(input.capture)
     const previous = await this.runtime.stateStore.getRecordReeditDraft(
       session.userId, owner.sourceIdentityKey, itemUid,
     )
@@ -580,6 +583,10 @@ export class RecordService {
         if (item.fileRef !== undefined) await this.recordReeditFiles().readLocal(item.fileRef)
       }
     }
+    if (capture?.backgroundSound && !draftOnly) for (const ref of capture.backgroundSound.fileRefs) {
+      const { file } = await this.recordReeditFiles().readLocal(ref)
+      if (!file.mimeType.startsWith('audio/')) throw new ArkmePluginError('background-sound-file-invalid', '背景音必须是音频文件', false, 400)
+    }
     if ((await this.runtime.requireSession()).userId !== session.userId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
     }
@@ -603,6 +610,7 @@ export class RecordService {
       baseVersion,
       baseContentFingerprint,
       editDurationMillis: previous?.editDurationMillis ?? owner.editDurationMillis,
+      ...(capture ?? previous?.capture ? { capture: capture ?? previous!.capture! } : {}),
       updatedAtMillis: Date.now(),
     }, input.expectedDraftRevision ?? previous?.draftRevision ?? 0)
     return {
@@ -799,6 +807,27 @@ export class RecordService {
       body.content_payload = updated.contentPayload
       if (draft.textContent === '' && updated.contentPayload.text_state === 1) updated.contentPayload.text_state = 3
     }
+    if (draft.capture) {
+      const capture = parseArkmeRecordReeditCapture(draft.capture)
+      const point = capture.location
+      body.edit_capture_context = { schema_version: 1, captured_at: capture.completedAtMillis,
+        device_state: capture.captureContext.clientName ? 'recorded' : 'unavailable',
+        location_state: point ? 'recorded' : 'not_recorded',
+        ...arkmeRecordCaptureContextPayload(capture.captureContext),
+        ...(point ? { automatic_location: { lat: point.latitude, lon: point.longitude, captured_at: point.capturedAtMillis,
+          ...(point.accuracyMeters === undefined ? {} : { accuracy_meters: point.accuracyMeters }),
+          ...(point.altitudeMeters === undefined ? {} : { alt: point.altitudeMeters }),
+          ...(point.speedMetersPerSecond === undefined ? {} : { speed: point.speedMetersPerSecond }) } } : {}) }
+      body.edit_duration_millis = owner.editDurationMillis + (capture.durationMillis ?? 0)
+      const payload: Record<string, unknown> = { payload_kind: 1, schema_version: 1, text_state: draft.textContent ? 1 : 3, ...objectValue(body.content_payload) }
+      const refs = listValue(payload.media_refs).map(objectValue).filter(ref => numberValue(ref.content_file_role) !== 4)
+      const assets = capture.backgroundSound ? await this.recordReeditFiles().uploadRefs(capture.backgroundSound.fileRefs) : []
+      const sound = arkmeBackgroundSoundContent(assets.length ? { assets, amplitudes: capture.backgroundSound!.amplitudes } : undefined, refs.length)
+      const hasVoice = stringValue(objectValue(payload.voice).source_file_asset_uid) !== ''
+      const kind = hasVoice ? (refs.length + sound.refs.length > 0 ? 4 : 3) : payload.payload_kind
+      if (hasVoice) body.template_kind = kind
+      body.content_payload = { ...payload, payload_kind: kind, media_refs: [...refs, ...sound.refs], background_sound_amplitudes: sound.amplitudes }
+    }
     const committedContentPayload = recordReeditReadContentPayload(body.content_payload)
     const { source: _source, sourceIdentityKey: _sourceIdentityKey, fingerprint: _fingerprint, attachmentData: _attachmentData, ...baseFields } = owner
     const expectedCommittedFingerprint = recordReeditFingerprint({
@@ -808,6 +837,7 @@ export class RecordService {
       templateKind: numberValue(body.template_kind),
       ...(committedContentPayload === undefined ? {} : { contentPayload: committedContentPayload }),
       version: owner.version + 1,
+      editDurationMillis: numberValue(body.edit_duration_millis),
     })
     if ((await this.runtime.requireSession()).userId !== session.userId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
@@ -883,7 +913,7 @@ export class RecordService {
     const uid = recordUid.trim()
     if (!uid) throw new ArkmePluginError('record-uid-required', '快记标识无效', false, 400)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read' },
+      '/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read', bypassCache: true },
     )
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid) !== uid || recordOwnerId(core.owner_user_id) !== session.userId
@@ -1118,7 +1148,8 @@ export class RecordService {
         this.assertReeditActive()
         return await this.runtime.stateStore.putRecordReeditDraft(userId, draft, expectedRevision)
       }
-      const refs = draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []
+      const refs = [...(draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []),
+        ...(draft.capture?.backgroundSound?.fileRefs ?? [])]
       return refs.length === 0 ? await persist() : await this.recordReeditFiles().withReferences(refs, userId, persist)
     } catch (error) {
       if (error instanceof ArkmeRecordReeditDraftConflict) {

@@ -2095,6 +2095,58 @@ export class RecordingService {
     return await this.recordingTranscriptPageWithSession(dateStamp, await this.runtime.requireSession(), options)
   }
 
+  private async readDayOverviewSnapshot(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal, onFragment?: (item: RecordingOwnerFragment) => void) {
+    this.assertWorkbenchEnabled()
+    if (!cursor || cursor.length > 8 * 1024 * 1024 || !viewRef) throw new ArkmePluginError('recording-cursor-invalid', '全天概览引用无效，请刷新后重试', false, 400)
+    const session = await this.runtime.requireSession()
+    const raw = await this.openRecordingRef('arkme-recording-page-v1', cursor)
+    const source = raw.source as ArkmeRecordingTranscriptSource, window = raw.window as ArkmeRecordingWindow | undefined
+    this.validateRecordingWindow(window)
+    if (raw.dateStamp !== dateStamp || !['system', 'doubao'].includes(source) || !raw.continuation || typeof raw.continuation !== 'object'
+      || !Array.isArray((raw.continuation as RecordingDayReadCursor).positions)) throw new ArkmePluginError('recording-cursor-invalid', '全天概览日期或来源不匹配', false, 409)
+    const continuation = raw.continuation as RecordingDayReadCursor
+    const key = await this.recordingRefKey('arkme-recording-page-v1')
+    const views = continuation.positions.map(position => ({ recording_uid: position.fact.recording_uid, revision: position.revision, source: continuation.source }))
+    const expected = createHmac('sha256', key).update(JSON.stringify({ viewer: session.userId, dateStamp, source, window, views })).digest('base64url')
+    if (viewRef !== expected) throw new ArkmePluginError('recording-view-changed', '录音内容已更新，请刷新后重试', true, 409)
+    const dayStart = window ? window.dateStamp : this.recordingDayStart(dateStamp).getTime()
+    const dayEnd = new Date(dayStart); if (window) dayEnd.setTime(window.endStamp); else dayEnd.setDate(dayEnd.getDate() + 1)
+    const page = await this.readOwner.dayOverview({ startAt: Math.max(0, dayStart), endAt: dayEnd.getTime() },
+      source === 'system' ? 'primary' : 'enhanced', session, continuation, signal, onFragment)
+    const profiles = await this.recordingSpeakerProfiles([...new Set(page.items.flatMap(item => item.speaker.userId === undefined ? [] : [item.speaker.userId]))], session, signal, false, 'interactive-read')
+    const [itemKey, speakerKey] = await Promise.all([this.recordingRefKey('arkme-recording-item-v1'), this.recordingRefKey('arkme-recording-speaker-v1')])
+    await this.ensureRecordingSession(session, signal)
+    return { page, profiles, session, itemKey, speakerKey, window }
+  }
+
+  async recordingDayOverview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeRecordingDayOverview> {
+    const { page, profiles, session, itemKey, speakerKey, window } = await this.readDayOverviewSnapshot(dateStamp, viewRef, cursor, signal)
+    const speakerTextCounts: Record<string, number> = Object.create(null) as Record<string, number>
+    let textCount = 0
+    const items = page.items.map(item => {
+      const value = this.workbenchItem(dateStamp, this.ownerTranscriptItem({ ...item, text: '' }, session.userId, profiles), session.userId, itemKey, speakerKey, window)
+      textCount += item.textCount
+      if (!value.isBackground && value.recordingBelongsToViewer !== false) speakerTextCounts[value.speakerKey] = (speakerTextCounts[value.speakerKey] ?? 0) + item.textCount
+      return { itemId: value.itemId, itemRef: value.itemRef, startAtMillis: value.startAtMillis, endAtMillis: value.endAtMillis,
+        speakerKey: value.speakerKey, speakerLabel: value.speakerLabel, speakerColorIndex: value.speakerColorIndex,
+        ...(value.speakerAvatarRef ? { speakerAvatarRef: value.speakerAvatarRef } : {}), isBackground: value.isBackground,
+        recordingBelongsToViewer: value.recordingBelongsToViewer === true, textPreview: item.textPreview, textCount: item.textCount }
+    })
+    return { viewRef, items, metrics: { ...projectRecordingDailyMetrics(page.storage, [], page.asrInput), textCount, speakerTextCounts } }
+  }
+
+  /** Full bodies are fetched only after the user opens sound review. */
+  async recordingDayReview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<{ viewRef: string; items: ArkmeRecordingWorkbenchItem[] }> {
+    const bodies = new Map<string, string[]>()
+    const { page, profiles, session, itemKey, speakerKey, window } = await this.readDayOverviewSnapshot(dateStamp, viewRef, cursor, signal, item => {
+      const key = `${item.recordingId}:${item.index}`, parts = bodies.get(key) ?? []
+      parts.push(item.text); bodies.set(key, parts)
+    })
+    return { viewRef, items: page.items.map(item => this.workbenchItem(dateStamp,
+      this.ownerTranscriptItem({ ...item, text: (bodies.get(`${item.recordingId}:${item.index}`) ?? []).join('') }, session.userId, profiles),
+      session.userId, itemKey, speakerKey, window)) }
+  }
+
   private async readDayPage(dateStamp: number, session: ArkmeSessionCredentials, options: ArkmeRecordingTranscriptPageOptions) {
     this.validateRecordingWindow(options.window)
     let window = options.window

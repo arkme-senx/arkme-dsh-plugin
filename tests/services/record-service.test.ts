@@ -35,7 +35,8 @@ describe('RecordService', () => {
     expect(item.isMe).toBe(true)
     expect(media.richContentBlocks).toHaveBeenCalledWith({ record_core: core }, 42, displays)
     expect(post).toHaveBeenCalledTimes(1)
-    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/records/detail')
+    expect(post).toHaveBeenCalledWith('/api/v1/records/detail', { record_uid: 'team-record' }, session, undefined,
+      { lane: 'interactive-read', bypassCache: true })
   })
   it.each([
     { owner_user_id: 43 }, { record_uid: 'another' }, { status: 2 },

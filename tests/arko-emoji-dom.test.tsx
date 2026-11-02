@@ -390,7 +390,7 @@ describe('Arko emoji input and send boundary', () => {
     expect(host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.disabled).toBe(true)
     expect(trigger!.textContent).toBe('Model A')
     await click(trigger!)
-    expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('模型选择')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('选择模型')
     const currentApi = vi.mocked(callArkme).getMockImplementation()!
     vi.mocked(callArkme).mockImplementation(async (method, input, signal) => {
       if (method === 'arko.model.activate') return {
@@ -399,9 +399,10 @@ describe('Arko emoji input and send boundary', () => {
       } as never
       return currentApi(method, input, signal)
     })
-    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')).find(node => node.textContent === 'Model B')!)
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(node => node.textContent?.includes('Model B'))!)
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(node => node.textContent === '使用此模型')!)
     expect(trigger!.textContent).toBe('Model B')
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     ask.mockImplementation(() => new Promise(() => {}))
     act(() => documentEditor().commands.insertContent('test'))
     await send()
@@ -412,18 +413,19 @@ describe('Arko emoji input and send boundary', () => {
     await mount()
     const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')!
     await click(trigger)
-    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]'))
     expect(items).toHaveLength(2)
-    expect(items[0]!.getAttribute('aria-checked')).toBe('true')
-    expect(document.activeElement).toBe(items[0])
+    expect(items[0]!.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('搜索模型、渠道或版本')
+    items[0]!.focus()
     await act(async () => { items[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
     expect(document.activeElement).toBe(items[1])
     await act(async () => { items[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(trigger)
     await click(trigger)
-    await act(async () => { document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    await act(async () => { document.querySelector('.arkme-unified-model-backdrop')!.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
   it('keeps the model menu open and prior selection on activation failure', async () => {
@@ -435,10 +437,11 @@ describe('Arko emoji input and send boundary', () => {
     })
     const trigger = host.querySelector<HTMLButtonElement>('footer button[aria-label="选择模型"]')!
     await click(trigger)
-    await click(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')[1]!)
-    expect(document.querySelector('[role="menu"] [role="alert"]')?.textContent).toBe('模型切换失败')
+    await click(document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]!)
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(node => node.textContent === '使用此模型')!)
+    expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe('模型切换失败')
     expect(trigger.textContent).toBe('Model A')
-    expect(document.querySelector('[aria-checked="true"]')?.textContent).toBe('Model A')
+    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain('Model B')
   })
 
   it('undoes and redoes text and rich emoji using the existing editor history', async () => {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 
 import { projectRecordReedit, useRecordReeditSubmissions } from '../src/client/record-reedit-submissions.js'
+import { recordReeditBackground } from '../src/client/record-reedit-background.js'
 
 const original: ArkmeTimelineItem = {
   itemUid: 'record-a', title: '', textContent: '原正文', status: 1, version: 3, sendAtMillis: 1,
@@ -89,6 +90,31 @@ describe('record re-edit submission hook owns canonical handoff', () => {
     const settledReads = readCalls().length
     await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
     expect(readCalls()).toHaveLength(settledReads)
+  })
+  it('retains local preparation across empty receipt reads and conversation switches', async () => {
+    receipts = []
+    const accountKey = 'background-account', sourceKey = 'background-source'
+    await mount({ accountKey, sourceKey, items: [original] })
+    let resolve!: (view: ArkmeRecordReeditSubmissionView) => void
+    const pending = { ...committed, submissionId: 'local-preparation', state: 'pending', result: undefined } as ArkmeRecordReeditSubmissionView
+    await act(async () => {
+      recordReeditBackground.start({ accountKey, sourceKey, view: pending,
+        run: () => new Promise(finish => { resolve = finish }), failed: vi.fn() })
+      await flush()
+    })
+    expect(state.jobs).toEqual([pending])
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(state.jobs).toEqual([pending])
+    await update({ accountKey, sourceKey: 'another-source', items: [original] })
+    expect(state.jobs).toEqual([])
+    const accepted = { ...pending, submissionId: 'host-preparation' }
+    await act(async () => { resolve(accepted); await flush() })
+    await update({ accountKey, sourceKey, items: [original] })
+    expect(state.jobs).toEqual([accepted])
+    receipts = [accepted]
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(state.jobs).toEqual([accepted])
+    expect(recordReeditBackground.views(accountKey, sourceKey)).toEqual([])
   })
 
   it('retries failed discovery without treating it as an empty queue', async () => {

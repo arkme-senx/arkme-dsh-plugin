@@ -6,10 +6,15 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeRecordRevisionDiff, historyRevisionKindLabel } from './ArkmeRecordRevisionDiff.js'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { ArkmeRecordRevisionSnapshotDialog } from './ArkmeRecordRevisionSnapshotDialog.js'
 
 const historyReader: ArkmeRecordEditHistoryReader = {
   page: (sourceRef, messageActionRef, cursorEditAt, signal) => callArkme<ArkmeRecordEditHistoryPage>(
     'source.record-edit-history', { sourceRef, messageActionRef, cursorEditAt }, signal,
+  ),
+  snapshot: (sourceRef, messageActionRef, revisionUid, signal) => callArkme(
+    'source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, signal,
   ),
 }
 const actionStyle = { border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 6, padding: '6px 12px', background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer' } as const
@@ -31,6 +36,9 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
   const cursorRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   const boundaryRef = useRef<HTMLDivElement>(null)
+  const [menu, setMenu] = useState<{ revision: ArkmeRecordEditHistoryPage['items'][number]; x: number; y: number }>()
+  const [snapshot, setSnapshot] = useState<ArkmeRecordEditHistoryPage['items'][number]>()
+  const closeSnapshot = useCallback(() => { setSnapshot(undefined) }, [])
   const cancel = useCallback(() => {
     controllerRef.current?.abort()
     clearTimeout(timerRef.current)
@@ -75,6 +83,8 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
     cancel()
     cursorRef.current = 0
     setPage(emptyPage)
+    setMenu(undefined)
+    setSnapshot(undefined)
     load(0)
     return cancel
   }, [load, cancel])
@@ -97,8 +107,17 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
           <div>{index === 0 && <span data-arkme-history-latest style={{ display: 'inline-block', marginLeft: 10, padding: '1px 4px', borderRadius: 4, border: `0.5px solid color-mix(in srgb, ${arkmeTheme.recordHistoryLatest} 30%, transparent)`, color: arkmeTheme.recordHistoryLatest, fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{tr("最新")}</span>}</div>
         </div>
         <div data-arkme-history-row style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 10 }}>
-          <ArkmeUserAvatar {...(author?.avatarRef === undefined ? {} : { avatarRef: author.avatarRef })} {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={author?.senderName || tr("作者头像")} />
-          <div data-arkme-history-bubble style={{ minWidth: 0, width: 'calc(100% - 42px)', minHeight: 42, boxSizing: 'border-box', padding: 12, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
+          <ArkmeUserAvatar {...((revision.avatarRef ?? author?.avatarRef) === undefined ? {} : { avatarRef: (revision.avatarRef ?? author?.avatarRef)! })}
+            fallbackContent={revision.avatarRef && author?.avatarRef && revision.avatarRef !== author.avatarRef
+              ? <ArkmeUserAvatar avatarRef={author.avatarRef} size={32} label={author.senderName || tr('作者头像')} /> : undefined}
+            {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={revision.senderName || author?.senderName || tr("作者头像")} />
+          <div data-arkme-history-bubble tabIndex={mine ? 0 : undefined}
+            aria-label={mine ? tr('历史消息，可右键查看记忆快照') : undefined}
+            onContextMenu={event => { if (mine) { event.preventDefault(); event.stopPropagation(); setMenu({ revision, x: event.clientX, y: event.clientY }) } }}
+            onKeyDown={event => { if (mine && (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')) {
+              event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setMenu({ revision, x: rect.left + 20, y: rect.top + 20 })
+            } }}
+            style={{ minWidth: 0, width: 'calc(100% - 42px)', minHeight: 42, boxSizing: 'border-box', padding: 12, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
             <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={author?.senderName ?? ''} mine={mine} />
           </div>
         </div>
@@ -109,6 +128,10 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
       {!loading && error === '' && page.items.some(item => item.content.mediaUnavailable === true) && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(0) }}>{tr("重新加载历史附件")}</button>}
       {page.hasMore && <div ref={boundaryRef} data-arkme-history-baseline />}
       {!loading && error === '' && page.hasMore && <button data-arkme-feedback="neutral" type="button" style={actionStyle} onClick={() => { load(cursorRef.current) }}>{tr("加载更多")}</button>}
+      {menu && <ArkmeActionMenu label={tr('历史消息操作')} point={menu} onClose={() => setMenu(undefined)}
+        actions={[{ id: 'snapshot', label: tr('记忆快照'), onSelect: () => { setSnapshot(menu.revision); setMenu(undefined) } }]} />}
+      {snapshot && <ArkmeRecordRevisionSnapshotDialog key={snapshot.revisionUid} revision={snapshot} sourceRef={sourceRef}
+        messageActionRef={messageActionRef} reader={reader} mine={mine} senderName={snapshot.senderName || author?.senderName || ''} onClose={closeSnapshot} />}
     </div>
 }
 

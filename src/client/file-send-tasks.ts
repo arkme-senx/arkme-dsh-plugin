@@ -1,8 +1,16 @@
+import type { ArkmeComposerAttachment } from './composer-draft-store.js'
 import { useEffect, useState } from 'react'
 import type { ArkmeFileSendTask, ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 
+export function composerAttachmentBlock(attachment: ArkmeComposerAttachment, sortOrder: number): ArkmeContentBlock | undefined {
+  if (attachment.localFile) return localFileBlock(attachment.localFile, sortOrder)
+  const asset = attachment.asset
+  if (!asset) return undefined
+  return { kind: asset.fileKind === 1 ? 'image' : asset.fileKind === 3 ? 'video' : 'file', mediaRef: attachment.resourceMediaRef ?? '', fileAssetUid: asset.fileAssetUid,
+    fileName: asset.fileName, mimeType: asset.mimeType, size: asset.size, sortOrder }
+}
 export function localFileBlock(file: ArkmeLocalFile, sortOrder = 0): ArkmeContentBlock {
   return { kind: file.fileKind === 1 ? 'image' : file.fileKind === 3 ? 'video' : 'file', mediaRef: file.fileRef, localFileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder }
 }
@@ -21,14 +29,20 @@ export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
 }
 export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem {
   const visibleFiles = visibleTaskFiles(task)
+  const localBlocks = visibleFiles.map((file, index) => ({ key: file.fileRef, block: { ...localFileBlock(file, index),
+    ...(['queued', 'uploading', 'sending'].includes(task.state) ? { uploadProgress: file.progress } : {}) } }))
+  const assetBlocks = (task.content.assets ?? []).map(asset => ({ key: asset.fileAssetUid, block: {
+    kind: asset.fileKind === 1 ? 'image' as const : asset.fileKind === 3 ? 'video' as const : 'file' as const,
+    mediaRef: '', fileAssetUid: asset.fileAssetUid, fileName: asset.fileName, mimeType: asset.mimeType, size: asset.size, sortOrder: 0,
+  } }))
+  const order = new Map((task.attachmentOrder ?? []).map((key, index) => [key, index]))
+  const blocks = [...assetBlocks, ...localBlocks].sort((a, b) => (order.get(a.key) ?? Infinity) - (order.get(b.key) ?? Infinity)).map((entry, index) => ({ ...entry.block, sortOrder: index }))
   return {
     itemUid: task.result?.itemUid ?? task.recordUid, title: task.content.title ?? '', textContent: task.content.textContent ?? '', textFormat: task.content.textFormat ?? 'plain',
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
     ...(task.result?.sequence === undefined ? {} : { sequence: task.result.sequence }),
     ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
-    contentBlocks: visibleFiles.map((file, index) => ({ ...localFileBlock(file, index),
-      ...(['queued', 'uploading', 'sending'].includes(task.state) ? { uploadProgress: file.progress } : {}),
-    })),
+    contentBlocks: blocks,
   }
 }
 export function fileTaskConversationPreview(task: ArkmeFileSendTask): string {

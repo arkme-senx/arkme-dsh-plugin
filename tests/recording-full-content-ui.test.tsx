@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeRecordingTranscriptPage } from '../src/types.js'
 const calls = vi.hoisted(() => ({ read: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: calls.read }))
-import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
+import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 
 let renderer: ReactTestRenderer
 function page(dateStamp: number, continued = false): ArkmeRecordingTranscriptPage {
@@ -21,6 +21,7 @@ beforeEach(() => {
     if (operation === 'recordings.summary-model-config') return { options: [] }
     if (operation === 'recordings.day') return { dateStamp: params.dateStamp, totalDurationMillis: 1000, transcript: page(params.dateStamp),
       summary: { state: 'empty', message: '', items: [] }, timeline: { state: 'empty', message: '', items: [] } }
+    if (operation === 'recordings.day.overview') return { viewRef: 'same-view', items: [{ ...page(params.dateStamp).items[0], textPreview: '汉🎙尾部' }] }
     if (operation === 'recordings.transcript.page') return page(params.dateStamp, true)
     throw new Error(`Unexpected ${operation}`)
   })
@@ -44,14 +45,14 @@ describe('full-content workbench actions', () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain('正在读取完整转写')
   })
 
-  it('renders the first page without exhausting it, then exports all original text once complete', async () => {
+  it('preloads the overview while rendering only the first body page, then exports all original text once complete', async () => {
     const click = vi.fn(), blobs: Blob[] = []
     vi.stubGlobal('document', { createElement: () => ({ click }), addEventListener() {}, removeEventListener() {} })
     vi.spyOn(URL,'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:fixture' })
     vi.spyOn(URL,'revokeObjectURL').mockImplementation(() => {})
     await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
     expect(calls.read.mock.calls.filter(([op]) => op === 'recordings.transcript.page')).toHaveLength(0)
-    expect(JSON.stringify(renderer.toJSON())).toContain('汉🎙')
+    expect(renderer.root.findByType(ArkmeRecordingTranscriptRow).props.item.text).toBe('汉🎙')
     await act(async () => { renderer.root.findByProps({ 'aria-label': '导出' }).props.onClick() })
     expect(calls.read.mock.calls.filter(([op]) => op === 'recordings.transcript.page')).toHaveLength(1)
     expect(click).toHaveBeenCalledTimes(1)
