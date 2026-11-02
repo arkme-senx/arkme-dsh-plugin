@@ -553,6 +553,7 @@ AI 摘要：|AI summary:
 选择二维码图片|Choose QR code image
 条新消息|new messages
 暂时无法回到底部，请重试|Unable to jump to the latest message. Please retry.
+已移除，可在团队中重新打开|Removed. Reopen it from Teams.
 已移除对话，可在联系人中找回|Conversation removed. Find it again in Contacts.
 搜索结果暂不完整，请缩小范围或调整关键词|Results may be incomplete. Narrow your search or change the keywords.
 查看媒体消息|View media message

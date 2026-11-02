@@ -2,6 +2,7 @@ import {TeamMemberAddition} from './team-member-addition.js'
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-preference-service.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
@@ -56,6 +57,7 @@ const reasons: Record<string, string> = {
   member_management_forbidden: '仅当前团队所有者或管理员可添加成员', request_conflict: '同一批次的成员不一致，请核对原批次', snapshot_stale: '团队成员已变化，请重新加载',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
   message_recalled:'消息已撤回', message_not_published:'消息尚未发布，请取消发送',
+  entry_preference_version_conflict: '入口设置已在其他设备变化，请核对后重试',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
@@ -90,6 +92,7 @@ function imagePresentationIdentity(raw: string): string {
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
+  private readonly entryPreferences: TeamEntryPreferenceService
   private readonly policies = new Map<string,TeamNotificationPolicy>()
   private policy(raw:unknown, actor:number, uid:string, required=false):TeamNotificationPolicy {
     const key=`${actor}:${uid}`, next=mergeTeamNotificationPolicy(this.policies.get(key),notificationPolicy(raw,required))
@@ -105,6 +108,7 @@ export class TeamAppService {
     private readonly memberCandidates?: TeamMemberCandidatePort,
  private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
+    this.entryPreferences = new TeamEntryPreferenceService(runtime.stateStore, { open: (kind, ref, actor) => this.open(kind, ref, actor), seal: (kind, value, actor) => this.ref(kind, value, actor) })
 
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -227,11 +231,13 @@ export class TeamAppService {
   }
   private async channel(raw: unknown, actor: number): Promise<TeamChannel> {
     const v = obj(raw)
+    const entryKey = teamEntryCloudKey(actor, 'folder', String(v.team_id))
+    if (recordOwnerId(v.team_id)) this.entryPreferences.register(actor, {entry_kind:'team_folder',team_id:recordOwnerId(v.team_id)}, JSON.stringify(['folder', str(v.jotmo_id)]))
     const identity = await this.identity({ nickname: v.name, avatar_url: v.avatar_url }, actor)
     const publicRef = str(v.public_ref)
     const link = new URL('/team-message', this.runtime.config.shareWebsite || 'https://www.jotmo.cc')
     link.searchParams.set('channel', publicRef)
-    return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+    return { entryKey, teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
       avatar: await this.avatar(v,actor,publicRef),
       ...(identity.imageRef ? { imageRef: identity.imageRef, imageKey: identity.imageKey } : {}), publicRef, link: publicRef ? link.toString() : '',
       enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true,
@@ -240,11 +246,13 @@ export class TeamAppService {
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
     const v = obj(raw), uid = str(v.conversation_uid), side: TeamSide = v.side === 'team' ? 'team' : 'external'
     if (!uid) throw invalid()
+    const legacyKey = await this.key(`${uid}:${side}`, actor)
+    this.entryPreferences.register(actor, {entry_kind:'team_conversation',team_id: recordOwnerId(obj(v.channel).team_id),conversation_uid:uid,side}, JSON.stringify(['conversation',side,str(obj(v.channel).jotmo_id),legacyKey]))
     const visitor = obj(v.visitor)
     const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
-    return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
+    return { entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
@@ -420,6 +428,7 @@ export class TeamAppService {
   private async dispatch(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials,
     post: (path: string, body?: Record<string, unknown>, read?: boolean) => Promise<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown> {
     const actor = session.userId
+    if (operation.startsWith('team.app.entries.')) return this.entryPreferences.execute(operation, p, actor, this.runtime.config.environment, post)
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
     }

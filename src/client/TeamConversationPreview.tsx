@@ -15,7 +15,7 @@ import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscr
 import { openTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
 import { mergeTeamMessages,withoutTeamConversationMaterial } from '../team-message-projection.js'
 import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
-import type { TeamEntryTarget } from './team-directory-preferences.js'
+import { teamDirectoryPreferences, type TeamEntryTarget } from './team-directory-preferences.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
 const button = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '6px 8px', fontSize: 13 }
@@ -76,7 +76,7 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
           {(directory.hasMore || directory.error) && <button style={button} disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, !directory.error) }}>{directory.loading ? '正在加载…' : directory.error ? '重试' : '加载更多对话'}</button>}
         </div>}
       <footer style={{ padding: '8px 16px', borderTop: `1px solid ${arkmeTheme.borderSoft}`, textAlign: 'right' }}>
-        <button style={button} onClick={() => { onClose(); openTeamMessages(current ? { kind: 'conversation', conversation: current } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
+        <button style={button} onClick={() => { void teamDirectoryPreferences.restoreTarget(accountKey, current ? { kind: 'conversation', conversation: current } : target, true).catch(() => {}); onClose(); openTeamMessages(current ? { kind: 'conversation', conversation: current } : { kind: 'team', teamRef: group!.channel.teamRef, channel: group!.channel }) }}>{conversation ? '打开对话' : '打开团队消息'}</button>
       </footer>
     </div>
   </div>, document.body)

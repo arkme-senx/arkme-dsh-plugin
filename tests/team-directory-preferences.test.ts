@@ -1,93 +1,186 @@
 // @vitest-environment jsdom
-import { beforeEach, expect, it, vi } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import type { TeamConversation } from '../src/team-app-contract.js'
-import { TeamDirectoryPreferenceStore, teamConversationEntryKey, teamEntryHidden, teamEntryPinned, type TeamEntryTarget } from '../src/client/team-directory-preferences.js'
+import type { TeamEntryPreferenceSnapshot, TeamEntryPreferencePage } from '../src/team-entry-preference-contract.js'
+import { TeamDirectoryPreferenceStore, teamEntryHidden, teamEntryPinned, type TeamEntryTarget } from '../src/client/team-directory-preferences.js'
 import { groupTeamConversations, mergeTeamDirectoryRows } from '../src/client/team-conversation-directory.js'
-
-const channel = { teamRef: 'signed', name: '团队', jotmoId: 'team', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
-const conversation: TeamConversation = { ref: 'signed-message-ref', key: 'a', channel, side: 'team', lastSeq: 4, latestTeamReplySeq: 0, myReadSeq: 0, unread: 4, needsReply: true, blocked: false, revision: 1, updatedAt: 10 }
-const direct = (c = conversation): TeamEntryTarget => ({ kind: 'conversation', conversation: c })
-const folder = (items = [conversation]): TeamEntryTarget => ({ kind: 'folder', group: groupTeamConversations(items)[0]! })
-let store: TeamDirectoryPreferenceStore
-const signal = () => new AbortController().signal
-beforeEach(() => { localStorage.clear(); store = new TeamDirectoryPreferenceStore(() => localStorage) })
-
-it('persists pin and removal across restarts with account isolation, without retaining content or signed refs', () => {
-  store.pin('a', folder(), true)
-  store.remove('b', direct(), 100)
-  const restarted = new TeamDirectoryPreferenceStore(() => localStorage)
-  expect(teamEntryPinned(restarted.read('a'), folder())).toBe(true)
-  expect(teamEntryHidden(restarted.read('a'), direct())).toBe(false)
-  expect(teamEntryHidden(restarted.read('b'), direct())).toBe(true)
-  expect(teamEntryPinned(restarted.read('b'), folder())).toBe(false)
-  expect(JSON.stringify(localStorage)).not.toMatch(/signed|团队/)
+const channel = { entryKey: 'folder-key', teamRef: 'team-ref', name: '团队', jotmoId: 'team', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
+const conversation: TeamConversation = { entryKey: 'conversation-key', ref: 'conversation-ref', key: 'a', channel, side: 'team', lastSeq: 4, latestTeamReplySeq: 0, myReadSeq: 0, unread: 4, needsReply: true, blocked: false, revision: 1, updatedAt: 10 }
+const direct: TeamEntryTarget = { kind: 'conversation', conversation }
+const folder: TeamEntryTarget = { kind: 'folder', group: groupTeamConversations([conversation])[0]! }
+const snapshot = (kind: 'folder' | 'conversation', extra = {}): TeamEntryPreferenceSnapshot => ({ key: `${kind}-key`, target: { kind, ref: `${kind === 'folder' ? 'team' : kind}-ref` }, accessible: true, pinned: false, dismissed: false, version: 0, activitySeq: 4, ...extra })
+const page = (items: TeamEntryPreferenceSnapshot[]): TeamEntryPreferencePage => ({ schemaVersion: 1, items, hasMore: false })
+function fixture() {
+  const rows = new Map<string, TeamEntryPreferenceSnapshot>([['team-ref', snapshot('folder')], ['conversation-ref', snapshot('conversation')]])
+  const transport = vi.fn(async (operation: string, p: Record<string, any>, _signal?: AbortSignal) => {
+    if (operation.endsWith('.cached') || operation.endsWith('.list')) return page([...rows.values()])
+    if (operation.endsWith('.query')) return page(p.entries.map((e: any) => rows.get(e.ref)!))
+    for (const c of p.changes) {
+      const old = rows.get(c.target.ref)!
+      if (c.expectedVersion !== old.version) throw new Error('conflict')
+      rows.set(c.target.ref, { ...old, version: old.version + 1, pinned: c.action === 'pin' || c.action === 'restore' && old.pinned, dismissed: c.action === 'dismiss' || c.action === 'unpin' && old.dismissed })
+    }
+    return page(p.changes.map((c: any) => rows.get(c.target.ref)!))
+  })
+  return { rows, transport, store: new TeamDirectoryPreferenceStore(transport as never) }
+}
+it('uses cloud projection without mutating unread, content, or other accounts', async () => {
+  const { store } = fixture()
+  await store.pin('a', folder, true)
+  expect(teamEntryPinned(store.read('a'), folder)).toBe(true)
+  expect(mergeTeamDirectoryRows([{ activeAtMillis: 100, pinned: false }], [conversation], true, store.read('a'))[0]).toMatchObject({ kind: 'team-folder' })
+  await store.remove('a', folder)
+  expect(teamEntryHidden(store.read('a'), folder)).toBe(true)
+  expect(teamEntryHidden(store.read('b'), folder)).toBe(false)
+  expect(conversation.unread).toBe(4)
+})
+it('accepts whole monotonic snapshots without inferring restoration from local metadata', async () => {
+  const { store, rows } = fixture()
+  rows.set('team-ref', snapshot('folder', { dismissed: true, version: 3, activitySeq: 5 }))
+  await store.reconcile('a', [conversation], new AbortController().signal)
+  rows.set('team-ref', snapshot('folder', { dismissed: false, version: 4, activitySeq: 4 }))
+  await store.reconcile('a', [{ ...conversation, lastSeq: 99, updatedAt: 500 }], new AbortController().signal)
+  expect(teamEntryHidden(store.read('a'), folder)).toBe(true)
+  rows.set('team-ref', snapshot('folder', { dismissed: false, version: 3, activitySeq: 6 }))
+  await store.reconcile('a', [conversation], new AbortController().signal)
+  expect(teamEntryHidden(store.read('a'), folder)).toBe(false)
+})
+it('authority denial is distinct from dismissal and a team-side denial does not revoke visitor-side presentation', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { accessible: false }))
+  await f.store.reconcile('a', [conversation], new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+  expect(f.store.canPresent('a', conversation)).toBe(false)
+  expect(f.store.canPresent('a', { ...conversation, side: 'external', entryKey: 'visitor-key' })).toBe(true)
+})
+it('serializes rapid actions and restores parent + child in one command', async () => {
+  const { store, transport } = fixture()
+  await Promise.all([store.pin('a', direct, true), store.pin('a', direct, false)])
+  expect(teamEntryPinned(store.read('a'), direct)).toBe(false)
+  await store.remove('a', direct); await store.remove('a', folder)
+  await store.restoreTarget('a', direct)
+  expect(teamEntryHidden(store.read('a'), folder)).toBe(false)
+  expect(teamEntryHidden(store.read('a'), direct)).toBe(false)
+  expect(transport.mock.calls.filter(([op]) => op.endsWith('.change')).at(-1)?.[1].changes).toHaveLength(2)
+})
+it('rolls back failed optimism and discovers pins outside ordinary pages', async () => {
+  const f = fixture()
+  await f.store.hydrate('a')
+  const impl = f.transport.getMockImplementation()!
+  f.transport.mockImplementation(async (op, p) => { if (op.endsWith('.change')) throw new Error('offline'); return impl(op, p) })
+  await expect(f.store.pin('a', direct, true)).rejects.toThrow('offline')
+  expect(teamEntryPinned(f.store.read('a'), direct)).toBe(false)
+  f.rows.set('team-ref', snapshot('folder', { pinned: true, version: 5 }))
+  await f.store.hydrate('a', true)
+  expect(f.store.missingPins('a', [])).toEqual([{ kind: 'folder', ref: 'team-ref' }])
+})
+it('keeps a legacy migration explanation until acknowledged, across normal refreshes', async () => {
+  const f = fixture(), impl = f.transport.getMockImplementation()!
+  let first = true
+  f.transport.mockImplementation(async (op, p) => {
+    const result = await impl(op, p)
+    if (op.endsWith('.query') && first) { first = false; return { ...result, migrationNotice: '旧文件夹隐藏记录已保留为可见' } }
+    return result
+  })
+  await f.store.reconcile('a', [conversation], new AbortController().signal)
+  await f.store.hydrate('a', true)
+  expect(f.store.error('a')).toContain('保留为可见')
+  f.store.acknowledgeNotice('a'); expect(f.store.error('a')).toBe('')
+})
+it('empty navigation never restores, while an explicit restore supports a zero watermark', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  const empty = { ...conversation, lastSeq: 0 }
+  await f.store.restoreTarget('a', { kind: 'folder', group: groupTeamConversations([empty])[0]! }, true)
+  expect(f.transport.mock.calls.some(([op]) => op.endsWith('.change'))).toBe(false)
+  await f.store.restoreTarget('a', folder)
+  expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+})
+it('explicit historical navigation restores a zero-counter folder and its child atomically', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { dismissed: true, version: 2, activitySeq: conversation.lastSeq }))
+  await f.store.restoreTarget('a', direct, true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).at(-1)?.[1].changes).toHaveLength(2)
+  expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(false)
 })
 
-it('pins a team above unpinned ordinary rows and removes only its presentation entry', () => {
-  const ordinary = { activeAtMillis: 100, pinned: false }, pinned = { activeAtMillis: 1, pinned: true }
-  store.pin('a', folder(), true)
-  expect(mergeTeamDirectoryRows([pinned, ordinary], [conversation], true, store.read('a')).map(row => row.activeAtMillis)).toEqual([10, 1, 100])
-  store.remove('a', folder(), 100)
-  expect(mergeTeamDirectoryRows([ordinary], [conversation], true, store.read('a'))).toEqual([ordinary])
-  expect(conversation.lastSeq).toBe(4)
-  store.pin('a', folder(), true)
-  expect(mergeTeamDirectoryRows([ordinary], [conversation], true, store.read('a'))).toHaveLength(2)
+it('reserves slow navigation before a later dismissal in the same command queue', async () => {
+  const f = fixture()
+  await f.store.remove('a', direct)
+  let complete!: (target: TeamEntryTarget) => void
+  const pending = new Promise<TeamEntryTarget>(resolve => { complete = resolve })
+  const restore = f.store.restoreNavigation('a', () => pending)
+  const dismiss = f.store.remove('a', direct)
+  complete(direct)
+  await Promise.all([restore, dismiss])
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).slice(-2).map(([, p]) => p.changes[0].action)).toEqual(['restore', 'dismiss'])
+})
+it('cancelled navigation neither writes nor blocks the next user command', async () => {
+  const f = fixture(), controller = new AbortController()
+  let complete!: (target: TeamEntryTarget) => void
+  const pending = new Promise<TeamEntryTarget>(resolve => { complete = resolve })
+  const restore = f.store.restoreNavigation('a', () => pending, controller.signal)
+  await Promise.resolve()
+  controller.abort()
+  const dismiss = f.store.remove('a', direct)
+  complete(direct)
+  await Promise.all([restore, dismiss])
+  expect(teamEntryHidden(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).map(([, p]) => p.changes[0].action)).toEqual(['dismiss'])
+  expect(f.store.error('a')).toBe('')
 })
 
-it('does not restore entries on receipt/metadata changes, but does on a newer message sequence', async () => {
-  store.remove('a', direct(), 100); store.remove('a', folder(), 100)
-  const latest = vi.fn()
-  await store.reconcile('a', [{ ...conversation, revision: 2, updatedAt: 200, myReadSeq: 4, unread: 0 }], latest, signal())
-  expect(teamEntryHidden(store.read('a'), direct())).toBe(true)
-  expect(teamEntryHidden(store.read('a'), folder())).toBe(true)
-  expect(latest).not.toHaveBeenCalled()
-  await store.reconcile('a', [{ ...conversation, lastSeq: 5 }], latest, signal())
-  expect(teamEntryHidden(store.read('a'), direct())).toBe(false)
-  expect(teamEntryHidden(store.read('a'), folder())).toBe(false)
+it('a later permission denial cannot be overwritten by an older in-flight projection', async () => {
+  const f = fixture(), original = f.transport.getMockImplementation()!
+  const old = page([snapshot('conversation', { pinned: true, version: 3 }), snapshot('folder', { pinned: true, version: 3 })])
+  let complete!: (value: TeamEntryPreferencePage) => void
+  let queries = 0
+  f.transport.mockImplementation(async (op, p) => {
+    if (op.endsWith('.query') && ++queries === 1) return new Promise<TeamEntryPreferencePage>(resolve => { complete = resolve })
+    return original(op, p)
+  })
+  const previous = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await vi.waitFor(() => expect(queries).toBe(1))
+  f.rows.set('team-ref', snapshot('folder', { accessible: false, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { accessible: false, activitySeq: 0 }))
+  const revoked = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  complete(old)
+  await Promise.all([previous, revoked])
+  expect(f.store.canPresent('a', conversation)).toBe(false)
+  expect(f.store.missingPins('a', [])).toEqual([])
+  // A later authorized read may establish new access; denial is not permanent.
+  f.rows.set('team-ref', snapshot('folder', { version: 4 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { version: 4 }))
+  await f.store.reconcile('a', [conversation], new AbortController().signal)
+  expect(f.store.canPresent('a', conversation)).toBe(true)
 })
 
-it('does not treat a newly loaded old directory page as a new message, even with newer metadata', async () => {
-  store.remove('a', folder(), 100)
-  const older = { ...conversation, key: 'older', updatedAt: 200 }
-  const latest = vi.fn().mockResolvedValue(90)
-  await store.reconcile('a', [older], latest, signal())
-  expect(teamEntryHidden(store.read('a'), folder([conversation, older]))).toBe(true)
-  await store.reconcile('a', [older], latest, signal())
-  expect(latest).toHaveBeenCalledOnce()
-  await store.reconcile('a', [{ ...older, lastSeq: 5 }], latest, signal())
-  expect(teamEntryHidden(store.read('a'), folder([conversation, older]))).toBe(false)
+it('a cancelled reconciliation does not dispatch or poison later commands', async () => {
+  const f = fixture(), controller = new AbortController()
+  controller.abort()
+  const previous = f.store.reconcile('a', [conversation], controller.signal)
+  const write = f.store.pin('a', direct, true)
+  await expect(previous).rejects.toMatchObject({ name: 'AbortError' })
+  await write
+  expect(teamEntryPinned(f.store.read('a'), direct)).toBe(true)
+  expect(f.transport.mock.calls.every(([, , signal]) => !signal?.aborted)).toBe(true)
 })
-
-it('restores a folder for an unknown visitor only after checking actual new message time', async () => {
-  store.remove('a', folder(), 100)
-  const visitor = { ...conversation, key: 'new', updatedAt: 200 }
-  expect(teamEntryHidden(store.read('a'), folder([visitor]))).toBe(true)
-  await store.reconcile('a', [visitor], async () => 150, signal())
-  expect(teamEntryHidden(store.read('a'), folder([visitor]))).toBe(false)
-})
-
-it('late verification cannot undo a newer removal', async () => {
-  store.remove('a', folder(), 100)
-  let finish!: (time: number) => void
-  const pending = store.reconcile('a', [{ ...conversation, key: 'new', updatedAt: 200 }], () => new Promise(resolve => { finish = resolve }), signal())
-  store.remove('a', folder(), 300)
-  finish(200); await pending
-  expect(teamEntryHidden(store.read('a'), folder())).toBe(true)
-})
-
-it('keeps a hidden entry on verification failure and does not report failed persistence as success', async () => {
-  store.remove('a', folder(), 100)
-  await expect(store.reconcile('a', [{ ...conversation, key: 'new', updatedAt: 200 }], async () => { throw new Error('offline') }, signal())).rejects.toThrow('offline')
-  expect(teamEntryHidden(store.read('a'), folder())).toBe(true)
-  const broken = new TeamDirectoryPreferenceStore(() => ({ getItem: () => null, setItem: () => { throw new Error('quota') } }))
-  expect(() => broken.pin('a', direct(), true)).toThrow('保存失败')
-  expect(teamEntryPinned(broken.read('a'), direct())).toBe(false)
-})
-
-it('restores a removed conversation independently of other accounts and folders', () => {
-  store.remove('a', direct(), 100); store.remove('a', folder(), 100); store.remove('b', direct(), 100)
-  store.restore('a', teamConversationEntryKey(conversation))
-  expect(teamEntryHidden(store.read('a'), direct())).toBe(false)
-  expect(teamEntryHidden(store.read('a'), folder())).toBe(true)
-  expect(teamEntryHidden(store.read('b'), direct())).toBe(true)
+it('a slow reconciliation in one account does not block another account', async () => {
+  const f = fixture(), original = f.transport.getMockImplementation()!
+  let complete!: (value: TeamEntryPreferencePage) => void
+  f.transport.mockImplementation(async (op, p) => {
+    if (p.expectedAccountKey === 'a') return new Promise<TeamEntryPreferencePage>(resolve => { complete = resolve })
+    return original(op, p)
+  })
+  const read = f.store.reconcile('a', [conversation], new AbortController().signal)
+  await vi.waitFor(() => expect(complete).toBeDefined())
+  await f.store.pin('b', direct, true)
+  expect(teamEntryPinned(f.store.read('b'), direct)).toBe(true)
+  complete(page([snapshot('conversation'), snapshot('folder')]))
+  await read
+  expect(teamEntryPinned(f.store.read('a'), direct)).toBe(false)
 })

@@ -154,7 +154,8 @@ it('clears a directory membership snapshot when the initial authorized preview r
   await click('重试')
   expect(document.querySelector('header [data-arkme-membership="vip"]')).not.toBeNull()
   expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('当前访客的聊天预览')
-  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline' || operation === 'team.app.entries.query')).toBe(true)
+  expect(mocks.call.mock.calls.some(([operation]) => operation === 'team.app.read')).toBe(false)
 })
 
 it('clears current membership after a later preview failure without regressing identity or passing the stale snapshot to the conversation', async () => {
@@ -170,7 +171,8 @@ it('clears current membership after a later preview failure without regressing i
   expect(document.body.textContent).toContain('预览正文')
   await click('打开对话')
   expect(mocks.open).toHaveBeenCalledWith({ kind: 'conversation', conversation: { ...current, visitor: { ...current.visitor, memberType: 'unknown' } } })
-  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline' || operation === 'team.app.entries.query')).toBe(true)
+  expect(mocks.call.mock.calls.some(([operation]) => operation === 'team.app.read')).toBe(false)
 })
 
 it('appends older messages without duplicating overlap or changing unread state', async () => {

@@ -1,3 +1,4 @@
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -7,7 +8,7 @@ import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { invalidateTeamMessages, openTeamMessages } from './team-messaging-events.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { subscribeTeamOutbound, type TeamOutboundIntent, type TeamOutboundPerson } from './team-outbound.js'
 import { tr, useArkmeLocale } from './locale.js'
 
@@ -110,7 +111,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
         || result.conversation.channel.jotmoId !== team.jotmoId) throw new Error(tr('团队会话返回异常，请重试'))
       invalidateTeamMessages(intent.accountKey)
       onClose()
-      openTeamMessages({ kind: 'conversation', conversation: result.conversation })
+      openTeamEntryMessages({ kind: 'conversation', conversation: result.conversation })
     } catch (e) {
       if (!c.signal.aborted) setError((e as { body?: { code?: string } })?.body?.code === 'team-channel_paused'
         ? tr(team.currentUserRole === 'owner'
