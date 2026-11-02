@@ -1711,6 +1711,7 @@ export class RecordService {
     assets: readonly ArkmeUploadedAsset[] = [],
     textFormat?: 'plain' | 'markdown',
     quote?: ArkmeMessageQuote,
+    mentionMetadata?: Record<string, unknown>,
   ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
     const session = await this.runtime.requireSession()
     const normalizedParentUid = parentRecordUid.trim()
@@ -1747,6 +1748,7 @@ export class RecordService {
           payload_kind: assets.length === 0 ? 1 : 2,
           ...(textFormat === undefined ? {} : { text_format: textFormat }),
           schema_version: 1,
+          ...(mentionMetadata === undefined ? {} : { mention_metadata: mentionMetadata }),
           text_state: normalizedText === '' ? 3 : 1,
           ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
           ...(assets.length === 0 ? {} : {
