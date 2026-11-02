@@ -17,8 +17,8 @@
 .arkme-arrangement-directory h3 { margin: 0; font-size: 17px; font-weight: 600; }
 .arkme-arrangement-directory header small { display: block; color: var(--aw-secondary); font-size: 11px; margin-top: 4px; }
 .arkme-arrangement-directory-tools { display: flex; gap: 5px; }
-.arkme-arrangement-directory-tools button, .arkme-arrangement-detail > header button { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--aw-secondary); }
-.arkme-arrangement-directory-tools button:hover, .arkme-arrangement-detail > header button:hover { background: var(--aw-hover); color: var(--aw-ink); }
+.arkme-arrangement-directory-tools button, .arkme-arrangement-detail-header-actions button { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--aw-secondary); }
+.arkme-arrangement-directory-tools button:hover, .arkme-arrangement-detail-header-actions button:hover { background: var(--aw-hover); color: var(--aw-ink); }
 .arkme-arrangement-directory-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
 .arkme-arrangement-task { display: flex; align-items: flex-start; min-width: 0; border-radius: 9px; padding: 14px 10px; gap: 12px; margin-bottom: 2px; transition: background 120ms ease, opacity 160ms ease; }
 .arkme-arrangement-task:hover { background: var(--aw-hover); }
@@ -40,9 +40,15 @@
 .arkme-arrangement-workspace-empty { color: var(--aw-secondary); text-align: center; padding: 40px 12px; font-size: 13px; }
 .arkme-arrangement-detail, .arkme-arrangement-detail-empty { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .arkme-arrangement-detail-empty { align-items: center; justify-content: center; color: var(--aw-secondary); font-size: 13px; }
-.arkme-arrangement-detail > header { flex: none; min-height: 78px; padding: 18px 24px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; color: var(--aw-secondary); border-bottom: 1px solid var(--aw-line); font-size: 12px; }
-.arkme-arrangement-detail-scroll { flex: 1; min-height: 0; padding: 26px 28px 36px; overflow-y: auto; overscroll-behavior: contain; }
-.arkme-arrangement-detail h2 { font-size: 20px; line-height: 1.5; margin: 0 0 15px; font-weight: 600; overflow-wrap: anywhere; }
+.arkme-arrangement-detail > header { flex: none; min-height: 54px; padding: 12px 20px; box-sizing: border-box; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--aw-line); }
+.arkme-arrangement-detail-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.arkme-arrangement-detail-heading h2 { width: 100%; min-width: 0; font-size: 20px; line-height: 1.5; margin: 0; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.arkme-arrangement-detail-heading h2[data-expanded=true] { display: block; -webkit-line-clamp: unset; max-height: min(40vh, 320px); overflow-y: auto; overscroll-behavior: contain; }
+.arkme-arrangement-detail-heading .arkme-arrangement-title-toggle { padding: 0; color: var(--aw-secondary); font-size: 12px; line-height: 20px; }
+.arkme-arrangement-detail-heading .arkme-arrangement-title-toggle:hover { color: var(--aw-ink); }
+.arkme-arrangement-detail-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.arkme-arrangement-detail-scroll { flex: 1; min-height: 0; padding: 20px 24px 32px; overflow-y: auto; overscroll-behavior: contain; }
+.arkme-arrangement-detail-scroll > :first-child { margin-top: 0; }
 .arkme-arrangement-detail-description { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 14px; }
 .arkme-arrangement-detail dl { display: flex; flex-direction: column; gap: 13px; margin: 26px 0; font-size: 12px; }
 .arkme-arrangement-detail dl > div { display: flex; align-items: flex-start; gap: 20px; line-height: 20px; }
@@ -50,9 +56,6 @@
 .arkme-arrangement-detail dd { margin: 0; overflow-wrap: anywhere; }
 .arkme-arrangement-detail dd button { padding: 0 7px; margin-left: -7px; color: #477dec; }
 .arkme-arrangement-detail dd button:hover { background: var(--aw-hover); }
-.arkme-arrangement-detail-actions { display: flex; align-items: center; gap: 10px; padding: 0 0 24px; }
-.arkme-arrangement-detail-actions button { padding: 7px 12px; background: var(--aw-hover); font-size: 12px; }
-.arkme-arrangement-detail-actions button:first-child { background: var(--aw-selected); color: #3c72df; }
 .arkme-arrangement-detail-sources { border-top: 1px solid var(--aw-line); padding-top: 22px; }
 .arkme-arrangement-detail-sources strong, .arkme-arrangement-detail-sources h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
 .arkme-arrangement-detail-sources .arkme-arrangement-content { cursor: text; }
@@ -93,5 +96,6 @@
   .arkme-arrangement-navigation-footer button { padding-inline: 5px; font-size: 10px; }
   .arkme-arrangement-detail { width: calc(100% - 108px); }
   .arkme-arrangement-detail-scroll { padding: 20px 16px; }
+  .arkme-arrangement-detail > header { padding-inline: 16px; gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .arkme-arrangement-task { transition: none; } }
