@@ -43,3 +43,19 @@
 - `tests/e2e/team-group-identity-stack.mjs`：新建官方 DSH Profile，安装不可变 tgz；真实 UI、外部 SDK Consumer、官方 Tools 对真实 Team/Chat/Record HTTP owner 和隔离 Mongo/Redis/RabbitMQ 验收。账号元数据为夹具，不使用生产账号。
 
 本次证据目录：`analysis/team-parallel-handoff-20261028/03-群内团队身份与公开名片/开发证据/ui-parity-20261029`。真实原生验收在本机 macOS 执行；并不表示已在 Windows/Linux 物理机器运行。
+
+## 2026-11-02：消息身份标签与点击区域
+
+- 头像上的原 14px 多人图标只作装饰，忽略指针事件和可访问焦点，个人头像保留原个人资料操作。
+- 明确的“代表 · 团队名”文字标签使用原团队链接和公开名片。自己发送的消息也显示该标签，仍隐藏冗余的本人姓名；延伸保留原复合消息布局。长名称省略时，完整名称保留在 title 和可访问名称。
+- 普通文字、富文本、附件及延伸的已接受回执携带服务端冻结的 representation。主窗口 merge 和附件投影仅采用已确认回执，不从输入区选择、草稿或 originRepresentation 补出历史署名。
+- 延伸 API 在既有关系读取上返回已接受 relation 的快照；无需新增查询、索引、配置或状态机。
+
+| 能力面 | 本轮范围与验收 |
+| --- | --- |
+| UI | 原头像、团队文字链接、公开名片及本地发送合并 owner；检查自己的消息、延伸、转发、长名称、选择模式及刚发送无需刷新。 |
+| Host owner | 现有 GroupRepresentationCodec 和 ChatService 生成浏览器安全的回执投影；复用服务端已接受关系。 |
+| SDK | 既有 ArkmeSourceSendResult / ArkmeSourceMessageExtendResult 补可选表示字段；仓外编译 consumer 验证发送回执含权威团队快照。 |
+| Tools | 既有 arkme_text_send 沿同一 Host owner 返回相同快照，官方 DSH 本地隔离会话执行验证；未新增工具或授权面。 |
+
+验收产物位于交接包 `开发证据/badge-fix-20261102/`；官方安装使用独立 Profile 和新的不可变 tgz，未修改 DSH 或用户 Profile。

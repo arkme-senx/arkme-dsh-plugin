@@ -4111,6 +4111,30 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it.each([false, true])('keeps distinct represented Team names visible on own messages extension=%s', async extension => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    const representation = { name: '接待团队', jotmoId: 'team', teamRef: 'sealed-team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
+    timeline = ['接待团队', '设计团队'].map((name, index) => ({
+      itemUid: `own-team-${index}`, senderName: '真实本人', isMe: true,
+      sendAtMillis: index + 1, title: '', textContent: '代表发言', status: 1,
+      representation: { ...representation, name },
+      ...(extension ? { extensionParentRecordUid: 'parent', extensionParent: {
+        itemUid: 'parent', senderName: '原作者', title: '', textContent: '原消息',
+        recordOwnerUserId: 8, sequence: 1, sendAtMillis: 1,
+      } } : {}),
+    }))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    for (const [index, name] of ['接待团队', '设计团队'].entries()) {
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': `own-team-${index}` })
+      const header = row.findByType(ArkmeTimelineMessageHeader)
+      expect(renderedText(header)).toContain(`代表 · ${name}`)
+      expect(renderedText(header)).not.toContain('真实本人')
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(1)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(extension ? 0 : 1)
+    }
+  })
+
   it('hides the own sender header but retains the original time inside the message bubble', async () => {
     timeline = [{
       itemUid: 'own-message-without-metadata', senderName: '狗才', isMe: true,

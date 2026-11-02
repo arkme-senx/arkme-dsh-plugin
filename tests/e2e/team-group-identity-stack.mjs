@@ -62,6 +62,8 @@ try{
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
  const {verifyInstalledGroupIdentity}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  const verified=await verifyInstalledGroupIdentity(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef)
+ const toolSent=await invoke('arkme_text_send',{source_ref:source.sourceRef,text:`本地团队回执验收 ${randomUUID()}`,representation:verified.selection,send_at_millis:Date.now()})
+ assert.equal(toolSent.isError,false);assert.match(JSON.stringify(toolSent),/representation/);assert.match(JSON.stringify(toolSent),/接待团队7/)
  assert.equal(calls.filter(c=>/conversations\/open|message-channel/.test(c.path)).length,0,'read must not open or repair a channel')
  const acceptedPage=await host.readSource(source.sourceRef,{limit:100})
  const sdkItem=acceptedPage.items.find(item=>item.itemUid===verified.sent.itemUid)
@@ -82,6 +84,7 @@ try{
  let uiCall
  for(let attempt=0;attempt<100&&!uiCall;attempt++){uiCall=calls.find(c=>c.path.endsWith('/records/send')&&c.input.text_content===uiText);if(!uiCall)await new Promise(resolve=>setTimeout(resolve,100))}
  assert(uiCall?.input.representation,'UI send must carry explicit team selection')
+ await page.locator(`[data-arkme-message-item-uid="${uiCall.input.record_uid}"]`).getByRole('button',{name:'查看接待团队7团队资料',exact:true}).waitFor()
  for(let attempt=0;attempt<100;attempt++){const receipt=await ownerPost('chat','/api/v1/chats/records/receipt/get',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid});if(receipt.accepted)break;if(attempt===99)throw new Error('UI acceptance missing');await new Promise(resolve=>setTimeout(resolve,100))}
  const detail=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid,record_owner_user_id:actor})
  assert.equal(detail.item.relation.representation.team_id,'7');assert.equal(detail.item.relation.sender_user_id,actor)

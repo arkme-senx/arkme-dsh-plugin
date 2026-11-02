@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
+import { TeamRepresentationBadge } from '../src/client/TeamRepresentationBadge.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem, ArkmeTeam } from '../src/types.js'
 
@@ -13,6 +15,25 @@ const selection={teamRef:'sealed-team',membershipKind:'member' as const,membersh
 const teams: Array<ArkmeTeam & {representation:typeof selection}> = [{representation:selection, teamRef: 'sealed-team', jotmoId: 'our_team', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 }]
 const eligible: TeamGroupContext = { state: 'ready', membershipPolicy: 'independent', teams }
 const source: ArkmeSourceItem = { kind: 'group_chat', sourceRef: 'group-ref', sourceKey: 'chat:group-id', displayName: '产品反馈群', activeAtMillis: 1, unreadCount: 0 }
+
+it('keeps the avatar marker decorative and the named Team label as the only card entry', async () => {
+  const value = { name: '接待团队', jotmoId: 'team' }
+  await mount(<TeamRepresentationBadge value={value} compact />)
+  expect(host.querySelector('button')).toBeNull()
+  expect(host.querySelector<HTMLElement>('[data-arkme-team-representation="marker"]')?.style.pointerEvents).toBe('none')
+  expect(call).not.toHaveBeenCalled()
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 90, environment: 'prod' })
+  call.mockResolvedValue({ ...value, contact: { state: 'disabled' }, navigation: { kind: 'none' } })
+  const rowClick = vi.fn()
+  await mount(<div onClick={rowClick}><TeamRepresentationBadge value={value} /></div>)
+  expect(button('代表 · 接待团队').title).toContain('查看团队资料')
+  await click('代表 · 接待团队')
+  expect(rowClick).not.toHaveBeenCalled()
+  expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card'])
+  expect(call.mock.calls[0]![1]).toEqual({ expectedAccountKey: 'prod:90', jotmoId: 'team' })
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('接待团队')
+  arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
+})
 let host: HTMLDivElement, root: Root
 const mount = async (element: React.ReactNode) => act(async () => root.render(element))
 function button(text: string) {

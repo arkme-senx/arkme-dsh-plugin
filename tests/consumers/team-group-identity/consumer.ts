@@ -12,5 +12,6 @@ export async function verifyInstalledGroupIdentity(fetchImpl:typeof fetch,source
  let rejected=false;try{await unsupported.groupIdentityContext(sourceRef)}catch{rejected=true}assert(rejected,'absent capability');
  const sent = await sdk.sendText(sourceRef,'代表身份连通验收',{recordUid:crypto.randomUUID(),relationUid:crypto.randomUUID(),sendAtMillis:Date.now(),representation:selection});
  assert(sent.localState==='synced','represented send receipt');
+ assert(sent.representation?.name===candidate.name&&sent.representation.jotmoId===candidate.jotmoId,'accepted attribution in SDK receipt');
  return {context,card,selection,sent};
 }

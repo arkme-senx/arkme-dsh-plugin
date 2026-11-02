@@ -42,6 +42,7 @@ export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
     ...(task.result?.sequence === undefined ? {} : { sequence: task.result.sequence }),
     ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
+    ...(task.result?.localState !== 'synced' || task.result.representation === undefined ? {} : { representation: task.result.representation }),
     contentBlocks: blocks,
   }
 }

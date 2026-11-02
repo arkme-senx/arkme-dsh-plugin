@@ -1509,6 +1509,7 @@ export function ArkmeTimelineMessageHeader({
   item,
   profile,
   member,
+  presentationIsMe = false,
 }: {
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
@@ -1517,8 +1518,8 @@ export function ArkmeTimelineMessageHeader({
 }) {
   const memberDisplayName = member?.displayName.trim()
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
-  return <span style={styles.messageHeader}>
-    {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
+  return <span style={{ ...styles.messageHeader, ...(presentationIsMe ? { alignSelf: 'flex-end' } : {}), minWidth: 0, maxWidth: '100%' }}>
+    {!presentationIsMe && (item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>)}
     {item.representation&&<TeamRepresentationBadge value={item.representation}/>}
   </span>
 }
@@ -5254,6 +5255,7 @@ export function ArkmeSurface({
             itemUid: result.recordUid,
             status: result.status,
             localState: result.localState,
+            ...(result.representation === undefined ? {} : { representation: result.representation }),
             ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
           }, optimistic, cachedTimeline?.items ?? [],
         ).map(item => item.itemUid === result.recordUid
@@ -8115,7 +8117,7 @@ export function ArkmeSurface({
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
-                const messageHeader = presentationIsMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
+                const messageHeader = source.kind === 'private_chat' || presentationIsMe && !item.representation ? null : <ArkmeTimelineMessageHeader
                   item={item}
                   presentationIsMe={presentationIsMe}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}

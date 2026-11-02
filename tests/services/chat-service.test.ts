@@ -3691,6 +3691,24 @@ it('confirms long article with the sender-only exact receipt after group read ac
   await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,localState:'synced'})
 })
 
+it('projects the accepted Team snapshot on a native send receipt without trusting the selection label', async () => {
+  const { GroupRepresentationCodec } = await import('../../src/services/group-representation.js')
+  const raw = { team_id: '7', membership_kind: 'member', membership_revision: 3, group_join_at: 9, name: '服务端团队', jotmo_id: 'team' }
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = { config, stateStore: { uniqueCode: async () => 'accepted-team-key' },
+    authenticatedChatPost: vi.fn(async () => ({ record_uid: 'record', rel_uid: 'rel', audit_status: 1, seq: 7, representation: raw })) }
+  const codec = new GroupRepresentationCodec(runtime as never)
+  const { name: _name, jotmoId: _id, ...selection } = (await codec.snapshot({ ...raw, name: '点击时的旧团队名' }, 42))!
+  const chat = new ChatService(runtime as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+    { scheduleChatSessionProjection: vi.fn() } as never)
+  const result = await chat.sendChatSourceTextRaw('source', 'group', '正文', 'record', 'rel', session,
+    undefined, undefined, undefined, { representation: selection, sendAtMillis: 123 })
+  expect(result.representation).toMatchObject({ name: '服务端团队', jotmoId: 'team', membershipRevision: 3 })
+  expect(await codec.selection(result.representation && { teamRef: result.representation.teamRef, membershipKind: result.representation.membershipKind,
+    membershipRevision: result.representation.membershipRevision, groupJoinAt: result.representation.groupJoinAt }, 42)).toMatchObject({ team_id: '7' })
+  expect(JSON.stringify(result)).not.toContain('team_id')
+})
+
 it('checks the frozen team identity when confirming a long article receipt', async () => {
  const {GroupRepresentationCodec}=await import('../../src/services/group-representation.js')
  const raw={team_id:'9223372036854775807',membership_kind:'member',membership_revision:3,group_join_at:9,name:'团队',jotmo_id:'team'}
@@ -3700,7 +3718,7 @@ it('checks the frozen team identity when confirming a long article receipt', asy
  const {name:_name,jotmoId:_jotmo,...representation}=snapshot
  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
  const input={title:'article',textContent:'text',recordUid:'article',relationUid:'relation',representation}
- await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9})
+ await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,representation:{name:'团队',jotmoId:'team'}})
  acceptedRepresentation={...raw,membership_revision:4}
  await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'team-identity-receipt-conflict'})
 })

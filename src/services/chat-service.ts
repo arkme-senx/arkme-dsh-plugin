@@ -210,6 +210,7 @@ interface ArkmeMessageActionRefPayload {
 }
 
 interface ArkmeSentMessageActionInput {
+  representation?: unknown
   sourceKind: 'chat_relation' | 'record'
   sourceOwnerRef: string
   recordUid: string
@@ -4092,10 +4093,12 @@ nextPublic = next
         officialMark: 0,
         mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
       }, assets, session, options.signal)
+      const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation, session.userId)
       return {
         ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
  ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
- recordUid: createdRecordUid,
+        recordUid: createdRecordUid,
+        ...(representation === undefined ? {} : { representation }),
         parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         relationUid,
         ...(sequence > 0 ? { sequence } : {}),
@@ -5126,6 +5129,7 @@ nextPublic = next
       }, session, {
         sourceKind: 'chat_relation',
         sourceOwnerRef: chatSessionUid,
+        representation: result.representation,
         recordUid,
         relationUid: stringValue(result.rel_uid ?? result.relUid).trim() || relationUid,
         title: '',
@@ -5332,6 +5336,7 @@ nextPublic = next
       }, session, {
         sourceKind: 'chat_relation',
         sourceOwnerRef: source.ownerRef,
+        representation: result.representation,
         recordUid,
         relationUid: stringValue(result.rel_uid ?? result.relUid).trim() || relationUid,
         title,
@@ -5488,12 +5493,14 @@ nextPublic = next
         send_at: options.sendAtMillis ?? Date.now(),
       }, session, options.signal,
     )
+    const representation = await new GroupRepresentationCodec(this.runtime).snapshot(result.representation, session.userId)
     return {
       sourceRef,
       itemUid: stringValue(result.record_uid).trim() || recordUid,
       status: numberValue(result.audit_status ?? result.status),
       sequence: numberValue(result.seq),
       localState: 'synced',
+      ...(representation === undefined ? {} : { representation }),
     }
   }
   
@@ -5505,7 +5512,8 @@ nextPublic = next
     const expected=await new GroupRepresentationCodec(this.runtime).selection(input.content.representation,session.userId)
     const actual=objectValue(result.representation)
     if(expected?Object.entries(expected).some(([key,value])=>actual[key]!==value):result.representation!==undefined&&result.representation!==null)throw new ArkmePluginError('team-identity-receipt-conflict','该发送标识已接受另一身份，请核对原消息',false,409)
-    return {sourceRef:input.sourceRef,itemUid:input.recordUid,status:numberValue(result.audit_status),sequence:numberValue(result.seq),localState:'synced'}
+    const representation=await new GroupRepresentationCodec(this.runtime).snapshot(result.representation,session.userId)
+    return {sourceRef:input.sourceRef,itemUid:input.recordUid,status:numberValue(result.audit_status),sequence:numberValue(result.seq),localState:'synced',...(representation===undefined?{}:{representation})}
   }
   async confirmLongArticlePublication(sourceRef: string, input: import('../types.js').ArkmeLongArticlePublishInput, userId: number, signal?: AbortSignal): Promise<ArkmeSourceSendResult> {
     const session = await this.runtime.requireSession()
@@ -7359,8 +7367,11 @@ nextPublic = next
     }))
     try {
       const signingKey = await this.runtime.stateStore.uniqueCode()
+      const representation = input.sourceKind === 'chat_relation'
+        ? await new GroupRepresentationCodec(this.runtime).snapshot(input.representation, session.userId) : undefined
       const withAction: ArkmeSourceSendResult = {
         ...sent,
+        ...(representation === undefined ? {} : { representation }),
         messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({
           sourceKind: input.sourceKind,
           userId: session.userId,

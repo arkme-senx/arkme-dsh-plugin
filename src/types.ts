@@ -2737,6 +2737,7 @@ export interface ArkmeSourceMessageExtendResult {
   privateThoughtReplyRef?: string
   privateThoughtReply?: boolean
 
+  representation?: TeamRepresentationSnapshot
   recordUid: string
   parentRecordUid: string
   relationUid?: string
@@ -2920,6 +2921,8 @@ export interface ArkmeInterwovenDetail {
 }
 
 export interface ArkmeSourceSendResult {
+  /** Server-accepted publication identity; never inferred from the current composer. */
+  representation?: TeamRepresentationSnapshot
   sourceRef: string
   itemUid: string
   /** Host-signed reference for immediate actions before timeline convergence. */
