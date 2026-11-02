@@ -1,3 +1,4 @@
+import { ConversationActionFeedbackContext, useConversationActionFeedback } from './use-conversation-action-feedback.js'
 import { TeamEntryRemovalContext, teamRemovalActions, teamRemovalEvidence, teamRemovalKey } from './TeamEntryRemovalFeedback.js'
 import { type TeamEntryTarget } from './team-directory-preferences.js'
 import { openTeamEntryMessages } from './team-entry-navigation.js'
@@ -265,11 +266,6 @@ const styles: Record<string, CSSProperties> = {
   },
   botBadge: { padding: '1px 6px', borderRadius: 999, background: arkmeTheme.subtle, color: colors.secondary, fontSize: 9, lineHeight: '15px', fontWeight: 600 },
 
-  directoryActionFeedback: {
-    position: 'fixed', zIndex: 10001, left: '50%', bottom: 24, transform: 'translateX(-50%)',
-    maxWidth: 360, padding: '9px 13px', borderRadius: 9, background: 'rgba(34, 38, 44, .92)',
-    color: '#fff', boxShadow: '0 6px 18px rgba(22, 26, 31, .18)', fontSize: 12, lineHeight: '18px',
-  },
   mutedUnreadDot: {
     position: 'absolute', top: -1, right: -1, width: 10, height: 10, boxSizing: 'border-box',
     borderRadius: 999, background: '#ff5f57', border: `2px solid ${colors.panel}`,
@@ -1034,7 +1030,6 @@ export function ArkmeNavigation({
     key: string
     action: 'pin' | 'dismiss'
   }>()
-  const [directoryActionFeedback, setDirectoryActionFeedback] = useState<string>()
   const [conversationVisibility, setConversationVisibility] = useState<ConversationVisibilityOverlay>(
     emptyConversationVisibilityOverlay,
   )
@@ -1066,6 +1061,7 @@ export function ArkmeNavigation({
   const currentAccountKey = authenticated && auth.userId !== undefined
     ? `${auth.environment}:${String(auth.userId)}`
     : undefined
+  const { feedback: directoryActionFeedback, notify: setDirectoryActionFeedback } = useConversationActionFeedback(currentAccountKey, active)
   const codexEntryVisible = useCodexEntryAvailability(currentAccountKey,authenticated ? auth.userId : undefined,
     active && showHarnessEntry && !lockedDirectory)
   const teamDirectory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(currentAccountKey ?? ''), () => readTeamDirectory(currentAccountKey ?? ''))
@@ -1222,7 +1218,7 @@ export function ArkmeNavigation({
     canRetain: key => !key.startsWith('team-entry:') || teamTargets.some(target => teamRemovalKey(target) === key
       && teamDirectoryPreferences.removingOrHidden(currentAccountKey ?? '', target)),
   })
-  const teamRemovals = teamRemovalActions(currentAccountKey ?? '', removalFeedback, mergedRows, targetForTeamRow)
+  const teamRemovals = teamRemovalActions(currentAccountKey ?? '', removalFeedback, mergedRows, targetForTeamRow, row => row.pinned)
   const mergedConversationRows = removalFeedback.rows
   const rootDirectoryRows: Array<(typeof mergedConversationRows)[number] | { kind: 'notifications'; pinned: boolean; activeAtMillis: number }> = [...mergedConversationRows]
   if (authenticated && notificationSummary.ready && notificationSummary.hasNotifications) {
@@ -1283,12 +1279,6 @@ export function ArkmeNavigation({
     stopCreatedHighlightAnimation()
   }, [active, ui.teamDirectory, stopCreatedHighlightAnimation])
 
-
-  useEffect(() => {
-    if (directoryActionFeedback === undefined || typeof window === 'undefined') return
-    const timeout = window.setTimeout(() => { setDirectoryActionFeedback(undefined) }, 2_200)
-    return () => { window.clearTimeout(timeout) }
-  }, [directoryActionFeedback])
 
   const persistCache = useCallback((patch: {
     directory?: ArkmeSourceDirectory
@@ -2224,12 +2214,12 @@ export function ArkmeNavigation({
     ><ArkmeMark size={20} /></button></div>
   }
 
-  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <TeamConversationDirectory
+  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamConversationDirectory
     accountKey={currentAccountKey} folder={ui.teamDirectory}
     {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
-    onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />
+    onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />{directoryActionFeedback}</ConversationActionFeedbackContext.Provider>
 
-  return <TeamEntryRemovalContext.Provider value={teamRemovals}><section
+  return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamEntryRemovalContext.Provider value={teamRemovals}><section
     style={styles.shell}
     aria-label={tr("Arkme 会话列表")}
     data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
@@ -2456,9 +2446,6 @@ export function ArkmeNavigation({
           onSelect: () => { void dismissConversationDirectoryEntry(directoryContextMenu) } },
       ]}
     />}
-    {active && directoryActionFeedback !== undefined && typeof document !== 'undefined' && createPortal(
-      <div role="status" style={styles.directoryActionFeedback}>{directoryActionFeedback}</div>,
-      document.body,
-    )}
-  </section></TeamEntryRemovalContext.Provider>
+    {directoryActionFeedback}
+  </section></TeamEntryRemovalContext.Provider></ConversationActionFeedbackContext.Provider>
 }

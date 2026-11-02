@@ -31,7 +31,7 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
-    className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
+    className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
     style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={styles.sourceAvatarWrap}>

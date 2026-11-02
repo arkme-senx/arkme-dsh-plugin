@@ -65,6 +65,7 @@ export function useConversationRemovalFeedback<Row>({ rows, rowKey, activity, sc
   return {
     rows: presentedRows,
     phases,
+    retainedRows: new Map(retained.map(entry => [entry.key, entry.row])),
     begin(row: Row, submittedActivity: ConversationVisibilityActivityEvidence) {
       if (!enabled || scope === undefined || !bucket.alive || current.current.bucket !== bucket) return undefined
       const key = rowKey(row)
