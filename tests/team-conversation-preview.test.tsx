@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamMessage, TeamTimeline } from '../src/team-app-contract.js'
 import { TeamConversationPreview } from '../src/client/TeamConversationPreview.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
-import { groupTeamConversations } from '../src/client/team-conversation-directory.js'
+import { groupTeamConversations, readTeamDirectory, startTeamDirectory } from '../src/client/team-conversation-directory.js'
 import { arkmeVisibleReadIntentAllowed } from '../src/client/read-intent-visibility.js'
 import {messageSelectionTarget} from '../src/client/ArkmeMessageTextSelection.js'
 
@@ -115,6 +115,23 @@ it('shows stars in folder visitor rows without applying a visitor membership to 
   expect(document.querySelector('header [data-arkme-membership]')).toBeNull()
 })
 
+it.each(['unavailable', 'absent'])('does not show a frozen folder membership after the current directory is %s', async state => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'svip' } }
+  const group = groupTeamConversations([snapshot])[0]!
+  const accountKey = `preview-folder-${state}`
+  if (state === 'unavailable') mocks.call.mockRejectedValue(new Error('网络暂不可用'))
+  else mocks.call.mockResolvedValue({ items: [], hasMore: false })
+  let stop!: () => void
+  await act(async () => { stop = startTeamDirectory(accountKey) })
+  try {
+    expect(readTeamDirectory(accountKey).hasLoaded).toBe(true)
+    await render(<TeamConversationPreview accountKey={accountKey} target={{ kind: 'folder', group }} onClose={close} />)
+    expect(Boolean(document.querySelector('[data-arkme-membership]'))).toBe(false)
+    expect(document.body.textContent).toContain('旧目录访客')
+    expect(mocks.call.mock.calls.every(([operation]) => operation !== 'team.app.read')).toBe(true)
+  } finally { await act(async () => stop()) }
+})
+
 it('has a loading state, retries failures, and aborts a pending request on dismissal', async () => {
   let fail!: (error: Error) => void
   mocks.call.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
@@ -126,6 +143,34 @@ it('has a loading state, retries failures, and aborts a pending request on dismi
   await render(<></>); expect(signal.aborted).toBe(true)
   expect(document.activeElement).toBe(opener)
   expect(arkmeVisibleReadIntentAllowed()).toBe(true)
+})
+
+it('clears a directory membership snapshot when the initial authorized preview read fails and restores the latest status on retry', async () => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'svip' } }
+  mocks.call.mockRejectedValueOnce(new Error('网络暂不可用'))
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: snapshot }} onClose={close} />)
+  expect(Boolean(document.querySelector('header [data-arkme-membership]'))).toBe(false)
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: { ...snapshot, visitor: { nickname: '当前访客', memberType: 'vip' } } })
+  await click('重试')
+  expect(document.querySelector('header [data-arkme-membership="vip"]')).not.toBeNull()
+  expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('当前访客的聊天预览')
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
+})
+
+it('clears current membership after a later preview failure without regressing identity or passing the stale snapshot to the conversation', async () => {
+  const snapshot: TeamConversation = { ...conversation, visitor: { nickname: '旧目录访客', memberType: 'vip' } }
+  const current: TeamConversation = { ...snapshot, visitor: { nickname: '当前访客', memberType: 'svip' } }
+  mocks.call.mockResolvedValueOnce({ ...timeline(), conversation: current, hasMore: true, beforeSeq: 4 })
+  await render(<TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation: snapshot }} onClose={close} />)
+  expect(document.querySelector('header [data-arkme-membership="svip"]')).not.toBeNull()
+  mocks.call.mockRejectedValueOnce(new Error('网络暂不可用'))
+  await click('加载更早消息')
+  expect(Boolean(document.querySelector('header [data-arkme-membership]'))).toBe(false)
+  expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('当前访客的聊天预览')
+  expect(document.body.textContent).toContain('预览正文')
+  await click('打开对话')
+  expect(mocks.open).toHaveBeenCalledWith({ kind: 'conversation', conversation: { ...current, visitor: { ...current.visitor, memberType: 'unknown' } } })
+  expect(mocks.call.mock.calls.every(([operation]) => operation === 'team.app.timeline')).toBe(true)
 })
 
 it('appends older messages without duplicating overlap or changing unread state', async () => {
