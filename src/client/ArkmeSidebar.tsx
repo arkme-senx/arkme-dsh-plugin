@@ -4,6 +4,7 @@ import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
 import { ArkmeComposerResourcePicker } from './ArkmeComposerResourcePicker.js'
 import { detailExtensionSends, useDetailExtensionSends, publicTimelineExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
+import { continuesTeamRepresentation } from './team-identity-presentation.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
 import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
@@ -1510,17 +1511,19 @@ export function ArkmeTimelineMessageHeader({
   profile,
   member,
   presentationIsMe = false,
+  showRepresentation = true,
 }: {
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
   member?: Pick<ArkmeConversationMemberItem, 'displayName'>
   presentationIsMe?: boolean
+  showRepresentation?: boolean
 }) {
   const memberDisplayName = member?.displayName.trim()
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
   return <span style={{ ...styles.messageHeader, ...(presentationIsMe ? { alignSelf: 'flex-end' } : {}), minWidth: 0, maxWidth: '100%' }}>
     {!presentationIsMe && (item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>)}
-    {item.representation&&<TeamRepresentationBadge value={item.representation}/>}
+    {showRepresentation && item.representation && <TeamRepresentationBadge value={item.representation}/>}
   </span>
 }
 
@@ -8117,9 +8120,14 @@ export function ArkmeSurface({
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
-                const messageHeader = source.kind === 'private_chat' || presentationIsMe && !item.representation ? null : <ArkmeTimelineMessageHeader
+                const previousMessage = previous?.kind === 'message' ? previous.item : undefined
+                const showRepresentation = item.representation !== undefined &&
+                  (startsDay || previousMessage !== undefined && personalExtensionParents.has(previousMessage.itemUid)
+                    || !continuesTeamRepresentation(previousMessage, item))
+                const messageHeader = source.kind === 'private_chat' || presentationIsMe && !showRepresentation ? null : <ArkmeTimelineMessageHeader
                   item={item}
                   presentationIsMe={presentationIsMe}
+                  showRepresentation={showRepresentation}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}
                   {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
                 />
@@ -8160,7 +8168,8 @@ export function ArkmeSurface({
                     data-arkme-width-sender-kind={item.senderKind ?? 'human'}
                     data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid}
                     data-arkme-message-version={item.recordVersion ?? 0} data-arkme-message-sequence={item.sequence}
-                    data-arkme-message-owner-id={item.recordOwnerUserId} style={{
+                    data-arkme-message-owner-id={item.recordOwnerUserId}
+                    aria-description={item.representation ? tr('代表 · {v0}', { v0: item.representation.name }) : undefined} style={{
                     ...styles.row,
                     ...(activeSelectMode === undefined
                       ? isSharedRecordingCard

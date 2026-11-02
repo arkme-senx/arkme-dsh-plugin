@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
+import { continuesTeamRepresentation } from '../src/client/team-identity-presentation.js'
 import { TeamRepresentationBadge } from '../src/client/TeamRepresentationBadge.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext } from '../src/team-group-contract.js'
@@ -15,6 +16,20 @@ const selection={teamRef:'sealed-team',membershipKind:'member' as const,membersh
 const teams: Array<ArkmeTeam & {representation:typeof selection}> = [{representation:selection, teamRef: 'sealed-team', jotmoId: 'our_team', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 }]
 const eligible: TeamGroupContext = { state: 'ready', membershipPolicy: 'independent', teams }
 const source: ArkmeSourceItem = { kind: 'group_chat', sourceRef: 'group-ref', sourceKey: 'chat:group-id', displayName: '产品反馈群', activeAtMillis: 1, unreadCount: 0 }
+
+it('only groups accepted identities within the same local day and five-minute gap', () => {
+  const at = new Date(2026, 10, 2, 23, 59).getTime()
+  const item = { itemUid: 'one', senderName: '本人', isMe: true, sendAtMillis: at,
+    title: '', textContent: '', status: 1, representation: { ...selection, name: '接待', jotmoId: 'team' } }
+  expect(continuesTeamRepresentation(item, { ...item, itemUid: 'two', sendAtMillis: at + 1 })).toBe(true)
+  expect(continuesTeamRepresentation(item, { ...item, sendAtMillis: at + 60_000 })).toBe(false)
+  expect(continuesTeamRepresentation(item, { ...item, sendAtMillis: at + 300_001 })).toBe(false)
+  expect(continuesTeamRepresentation(item, { ...item, sendAtMillis: 0 })).toBe(false)
+  expect(continuesTeamRepresentation(item, { ...item, extensionParentRecordUid: 'parent' })).toBe(false)
+  expect(continuesTeamRepresentation({ ...item, extensionParentRecordUid: 'parent' }, item)).toBe(false)
+  expect(continuesTeamRepresentation({ ...item, isMe: false }, { ...item, isMe: false })).toBe(false)
+  expect(continuesTeamRepresentation(undefined, item)).toBe(false)
+})
 
 it('keeps the avatar marker decorative and the named Team label as the only card entry', async () => {
   const value = { name: '接待团队', jotmoId: 'team' }
