@@ -39,7 +39,7 @@ describe('DSH compatibility contract', () => {
       peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     const peers = Object.entries(manifest.peerDependencies)
-      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-') && name !== '@deepseek-ai/dsh-api-gateway')
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
 
     expect(manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-api-gateway']?.optional).toBe(true)
     expect(satisfies('0.2.1-rc.2', manifest.peerDependencies['@deepseek-ai/dsh-api-gateway']!)).toBe(true)
