@@ -29,18 +29,15 @@ it('only opens the existing team-link flow on explicit contact, without sending 
   expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card'])
 })
 
-it('distinguishes a closed channel from missing backend support', async () => {
+it('disables contact for a closed channel', async () => {
   call.mockResolvedValue({ ...card, contact: { state: 'disabled' } })
   await mount(); expect(button('联系团队').disabled).toBe(true)
   expect(document.body.textContent).toContain('暂未开放消息通道')
-  call.mockResolvedValue({ ...card, contact: { state: 'backend_pending' } })
-  await mount('prod:91'); await act(async () => button('联系团队').click())
-  expect(document.body.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
-  expect(document.body.textContent).toContain('尚未打开团队通道，也未发送消息')
   expect(open).not.toHaveBeenCalled()
 })
 
 it.each([
+  { ...card, contact: { state: 'backend_pending' } },
   { ...card, jotmoId: 'other-team' },
   { ...card, contact: { state: 'available' } },
 ])('rejects mismatched or incomplete public cards and offers retry: %j', async result => {

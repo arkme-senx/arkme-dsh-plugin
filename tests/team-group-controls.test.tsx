@@ -142,7 +142,7 @@ it('hides the menu after membership is removed on refresh, without polling', asy
 
 it('opens a team card from a clearly labelled identity preview without sending or changing the draft', async () => {
   call.mockImplementation(async op => op === 'team.app.public-card'
-    ? { name: '即我', jotmoId: 'our_team', contact: { state: 'backend_pending' } } : { ...eligible })
+    ? { name: '即我', jotmoId: 'our_team', contact: { state: 'disabled' } } : { ...eligible })
   await mount(<><textarea defaultValue="个人草稿" /><TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" selfName="本人名称" /></>)
   await click('我')
   await act(async () => document.querySelector<HTMLButtonElement>('[data-role-action="team:our_team"]')!.click())

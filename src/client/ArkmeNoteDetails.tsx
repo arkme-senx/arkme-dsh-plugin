@@ -2,6 +2,7 @@ import { arkmeExtensionDetailListStyles } from './extension-detail-list-styles.j
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
@@ -1082,6 +1083,7 @@ export function ArkmeTimelineDetailDrawer({
       {canOpenTopic && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
     </button>}
     {sourceBadge}
+    {personalSource && item.isMe && normalizedSourceRef && messageActionRef && <NoteWorldReactionArchive sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} />}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
     {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
       type="button" aria-label={tr("已编辑")} className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}

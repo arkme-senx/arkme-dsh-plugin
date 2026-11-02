@@ -20,5 +20,5 @@ export interface TeamPublicCard {
   name: string
   jotmoId: string
   avatar?: ArkmeTeam['avatar']
-  contact: { state: 'available'; publicRef: string } | { state: 'disabled' } | { state: 'backend_pending' }
+  contact: { state: 'available'; publicRef: string } | { state: 'disabled' }
 }

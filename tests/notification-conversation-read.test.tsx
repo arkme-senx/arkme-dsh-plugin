@@ -12,7 +12,7 @@ vi.mock('../src/client/official-notification-store.js', () => ({
   useOfficialNotifications: () => ({ items: [{ id: 'official-one', title: '公告', summary: '公告内容', publishedAtMillis: 100, readAtMillis: 0 }], summary: { total: 1, unreadCount: 1 }, ready: true }),
   officialNotifications: { read: mocks.officialRead },
 }))
-vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => [] }))
+vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => ({ items: [], hasMore: false }) }))
 import { ArkmeNotificationCenter } from '../src/client/ArkmeNotificationCenter.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeNotificationPreview } from '../src/client/ArkmeNotificationPreview.js'

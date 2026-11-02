@@ -806,6 +806,8 @@ export interface ArkmeWorldExtensionPublication {
 }
 
 export interface ArkmeWorldFeedItem {
+  teamAuthor?: { jotmoId: string; name: string }
+  publisher?: { name: string; avatarRef?: string }
   memberType?: ArkmeSourceItem['peerMemberType']
   /** Account-bound private annotation target; never a public reaction/share capability. */
   localReactionTarget?: import('./reaction-contract.js').ReactionTargetRef
@@ -838,8 +840,10 @@ export interface ArkmeWorldShareResult {
 }
 
 export interface ArkmeWorldFeedPage {
+  nextCursor?: string
   items: ArkmeWorldFeedItem[]
-  total: number
+  /** Present only when the query provides an exact total. */
+  total?: number
   hasMore: boolean
   nextOffset?: number
 }
@@ -900,6 +904,8 @@ export interface ArkmeWorldVoiceprintInviteResult {
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
+  teamAuthor?: ArkmeWorldFeedItem['teamAuthor']
+  publisher?: ArkmeWorldFeedItem['publisher']
   memberType?: ArkmeSourceItem['peerMemberType']
   isSelf?: boolean
   interactionRef: string
@@ -925,6 +931,19 @@ export interface ArkmeWorldInteractionPage {
   nextOffset?: number
 }
 
+/** One level of public replies; each parent's continuation is independently scoped. */
+export interface ArkmeWorldRepliesPage {
+  items: ArkmeWorldInteractionItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeWorldCommentNotificationPage {
+  items: Array<ArkmeWorldInteractionItem & { unavailable: boolean; replyToComment?: boolean }>
+  hasMore: boolean
+  nextCursor?: string
+}
+
 /** Existing World owner records, including comments made in another person's World. */
 export interface ArkmeWorldNotificationSourcePage {
   items: Array<{ recordRef: string; isComment: boolean }>
@@ -935,6 +954,7 @@ export interface ArkmeWorldNotificationSourcePage {
 export interface ArkmeWorldNotificationTarget {
   root: ArkmeWorldFeedItem
   interactionRef: string
+  path: ArkmeWorldInteractionItem[]
 }
 
 /** Server-owned aggregate read state for the current account's World interactions. */
@@ -1559,6 +1579,8 @@ arkoImagesV1?:true
     directMessageAdmission?: true
     messageTextAnchorsV1?: true
     reactionsV1?: true
+    worldReactionsV1?: true
+    teamWorldV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -4420,6 +4442,9 @@ export type ArkmePluginOperation =
   | 'chat.official-author.profile'
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
+  | 'team.world'
+  | 'world.reactions.archive'
+  | 'world.reactions.from-note'
   | 'world.reactions.prepare'
   | 'world.reactions'
   | 'world.reactions.local'
@@ -4428,6 +4453,7 @@ export type ArkmePluginOperation =
   | 'world.voiceprint.invite'
   | 'world.interactions.list'
   | 'world.notification-sources'
+  | 'world.comment-notifications'
   | 'world.notification-target'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
@@ -4436,6 +4462,7 @@ export type ArkmePluginOperation =
   | 'ai-letter.unread'
   | 'ai-letter.mark-read'
   | 'world.image.read'
+  | 'world.replies'
   | 'world.publish-text'
   | 'world.publish-file-assets'
   | 'arrangements.board-cache'

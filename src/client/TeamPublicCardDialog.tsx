@@ -1,7 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { TeamPublicCard } from '../team-group-contract.js'
 import type { TeamChannel } from '../team-app-contract.js'
-import { TEAM_GROUP_PENDING_TEXT } from '../team-group-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -20,24 +19,24 @@ export function TeamPublicCardDialog(props: Props) {
 function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
   useArkmeLocale()
   const [card, setCard] = useState<TeamPublicCard>(), [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0), [notice, setNotice] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   const [creating, setCreating] = useState(false)
   const inCurrentConversation = currentChannel?.jotmoId === jotmoId
   useEffect(() => {
     // The current conversation already provides authorized, live public team
     // information. Reading its badge needs neither member APIs nor another open.
     if (currentChannel?.jotmoId === jotmoId) {
-      setError(''); setNotice(false)
+      setError('')
       setCard({ name: currentChannel.name, jotmoId, avatar: currentChannel.avatar,
         contact: !currentChannel.enabled ? { state: 'disabled' }
-          : currentChannel.publicRef ? { state: 'available', publicRef: currentChannel.publicRef } : { state: 'backend_pending' } })
+          : currentChannel.publicRef ? { state: 'available', publicRef: currentChannel.publicRef } : { state: 'disabled' } })
       return
     }
     const controller = new AbortController()
-    setCard(undefined); setError(''); setNotice(false)
+    setCard(undefined); setError('')
     void callArkme<TeamPublicCard>('team.app.public-card', { expectedAccountKey: accountKey, jotmoId }, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      if (value.jotmoId !== jotmoId || !value.name || !['available', 'disabled', 'backend_pending'].includes(value.contact?.state)
+      if (value.jotmoId !== jotmoId || !value.name || !['available', 'disabled'].includes(value.contact?.state)
         || (value.contact.state === 'available' && !value.contact.publicRef)) throw new Error(tr('团队资料返回异常，请重试'))
       setCard(value)
     }).catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : tr('团队资料加载失败，请重试')) })
@@ -45,7 +44,6 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
   }, [accountKey, jotmoId, attempt, currentChannel])
   const contact = () => {
     if (!card || card.contact.state === 'disabled') return
-    if (card.contact.state === 'backend_pending') { setNotice(true); return }
     onClose()
     // Existing link navigation opens the canonical team conversation/inbox.
     // Merely reading the card never opens a conversation or sends a message.
@@ -81,10 +79,7 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
           {!inCurrentConversation && <button type="button" disabled={card.contact.state === 'disabled'} style={styles.link} onClick={contact}>{tr('联系团队')}</button>}
         </div>
         {card.contact.state === 'disabled' && <p role="status" style={styles.hint}>{tr('该团队暂未开放消息通道。')}</p>}
-        {!inCurrentConversation && card.contact.state === 'backend_pending' && <div role="status" style={styles.notice}>
-          <strong>{tr(TEAM_GROUP_PENDING_TEXT)}</strong>
-          <p style={{ ...styles.hint, marginBottom: 0 }}>{tr(notice ? '尚未打开团队通道，也未发送消息。' : '该团队的公开联系入口尚待接入。')}</p>
-        </div>}
+
       </>}
       {!card && !inCurrentConversation && <div style={styles.contact}><button type="button" disabled>{tr('联系团队')}</button></div>}
       <section aria-label={tr('团队功能介绍')} style={styles.features}>

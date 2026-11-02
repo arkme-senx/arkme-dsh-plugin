@@ -303,14 +303,14 @@ describe('InMemoryArkmeAvatarImageStore', () => {
 })
 
 describe('avatar image ownership boundary', () => {
-  it('keeps image.read behind the shared avatar runtime', () => {
+  it('keeps avatar reads in their runtime and private team originals outside the avatar cache', () => {
     const clientDirectory = new URL('../src/client/', import.meta.url)
     const directReaders = clientSourceFiles(clientDirectory)
       // Match invocations, not the read-only transport scheduling allowlist.
       .filter(file => /\(\s*['"]image\.read['"]/.test(file.source))
       .map(file => file.name)
 
-    expect(directReaders).toEqual(['avatar-image-runtime.ts'])
+    expect(directReaders).toEqual(['WorldPreviewImages.tsx', 'avatar-image-runtime.ts'])
   })
 })
 

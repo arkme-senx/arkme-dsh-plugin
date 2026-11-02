@@ -62,13 +62,13 @@ async function assertImageCapableRoute(ctx: Context, exec: ToolRunContext): Prom
 export function createArkmeImageToolDefinition(ctx: Context, service: ArkmeImageReadService): ToolDefinition {
   return defineTool({
     name: 'arkme_image_read',
-    description: 'Read an image reference returned by the Arkme Provider and return the image itself. This includes image-library items, the signed-in profile avatar, and authorized private/group chat avatars. The Provider refreshes Arkme authorization without exposing signed OSS URLs and rejects guessed or cross-account references. Requires the current model to accept image input.',
+    description: 'Read an image reference returned by the Arkme Provider and return the image itself. This includes image-library items, the signed-in profile avatar, authorized private/group chat avatars, and team World original images (current owner/admin access is rechecked, including deleted originals). The Provider refreshes Arkme authorization without exposing signed OSS URLs and rejects guessed or cross-account references. Requires the current model to accept image input.',
     parameters: {
       cache_only: { type: 'boolean', description: 'Only read locally cached immutable file-asset bytes; never query or download upstream. A miss returns image-cache-miss.' },
       image_ref: {
         type: 'string',
         required: true,
-        description: 'An image reference returned by arkme_images_list, arkme_user_profile, or arkme_sources_list. Never construct, parse, or guess this value.',
+        description: 'An image reference returned by arkme_images_list, arkme_user_profile, arkme_sources_list or arkme_team_world_read originals/original. Never construct, parse, or guess this value.',
       },
     },
     output: {

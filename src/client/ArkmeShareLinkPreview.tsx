@@ -16,7 +16,7 @@ export function sharePreviewInlineLabel(target: ShareLinkTarget, preview?: Share
     const stateLabel = preview && stateLabels[preview.state as keyof typeof stateLabels]
     return stateLabel ? `${label} · ${tr(stateLabel)}` : label
   }
-  const author = preview.authorIsMe ? tr('我') : preview.author
+  const author = preview.authorKind === 'team' ? `${preview.author} · ${tr('团队')}` : preview.authorIsMe ? tr('我') : preview.author
   const content = previewText(preview.summary, 100)
   const byAuthor = (value: string) => author ? `${author}：${value}` : value
   if (kind === 'conversation') return [preview.title || label, preview.count ? tr('{count} 条记录', { count: preview.count }) : ''].filter(Boolean).join(' · ')

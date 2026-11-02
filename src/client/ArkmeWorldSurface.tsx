@@ -1,7 +1,13 @@
+import { loadWorldCommentPage, type WorldCommentContinuation } from './world-comment-page.js'
+import { cachedWorldImageDataUrl, loadWorldImageDataUrl, invalidateWorldImages, subscribeWorldImageInvalidation } from './world-image-cache.js'
+export { cachedWorldImageDataUrl, loadWorldImageDataUrl, invalidateWorldImages, subscribeWorldImageInvalidation } from './world-image-cache.js'
+import { ArkmeWorldReactionHistory } from './ArkmeWorldReactionHistory.js'
+import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { worldPublishSourceLabel } from '../world-publish-source.js'
 import { WorldPublishGuide } from './WorldPublishGuide.js'
+import { TeamPublicCardDialog } from './TeamPublicCardDialog.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
-import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { createContext, useContext, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
@@ -21,14 +27,14 @@ import type {
   ArkmeWorldAuthorLabel,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
-  ArkmeWorldInteractionPage,
+  ArkmeWorldRepliesPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldVoiceprintSocialContext,
   ArkmeTeam,
 } from '../types.js'
-import { TEAM_WORLD_PENDING_TEXT, type TeamWorldPrepareResult } from '../team-world-contract.js'
+import type { TeamWorldReceipt, TeamWorldAsset, TeamWorldRequest } from '../team-world-contract.js'
 import { TeamWorldPublisherPicker, useTeamWorldPublisher } from './TeamWorldPublisher.js'
 import { ArkmePublishComposer } from './ArkmePublishComposer.js'
 import { WorldPublishAttachments, worldPublishAttachmentBlocked, type WorldPublishAttachment } from './WorldPublishAttachments.js'
@@ -40,6 +46,7 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ARKME_LINK_FALLBACK_LABEL, ArkmeTextLink, type ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
@@ -83,6 +90,7 @@ export type ArkmeWorldViewState = {
   loadingMore?: boolean
   hasMore?: boolean
   nextOffset?: number
+  nextCursor?: string
 }
 
 export function updateWorldViewItem(
@@ -107,6 +115,7 @@ export function applyWorldAuthorLabels(
 ): ArkmeWorldViewState {
   let changed = false
   const items = view.items.map(item => {
+    if (item.teamAuthor) return item
     const ref = item.authorRef ?? item.recordRef
     const authorName = labelsByRef.get(ref) ?? item.authorName
     const memberType = memberships?.get(ref) ?? item.memberType
@@ -340,12 +349,13 @@ function invalidateWorldVoiceprintAvailability(recordRefs: readonly string[]): v
 }
 
 export function pendingWorldVoiceprintRecordRefs(
-  items: readonly Pick<ArkmeWorldFeedItem, 'recordRef'>[],
+  items: readonly Pick<ArkmeWorldFeedItem, 'recordRef' | 'teamAuthor'>[],
   resolvedRefs: ReadonlySet<string>,
 ): string[] {
   const pending: string[] = []
   const seen = new Set<string>()
   for (const item of items) {
+    if (item.teamAuthor) continue
     const recordRef = item.recordRef.trim()
     if (recordRef === '' || resolvedRefs.has(recordRef) || seen.has(recordRef)) continue
     seen.add(recordRef)
@@ -383,101 +393,6 @@ async function withTimeout<T>(promise: Promise<T>, millis: number, message: stri
   })
   try { return await Promise.race([promise, timeout]) }
   finally { if (timer !== undefined) clearTimeout(timer) }
-}
-
-const WORLD_IMAGE_CACHE_TTL_MILLIS = 10 * 60 * 1000
-const MAX_WORLD_IMAGE_CACHE_ENTRIES = 96
-const MAX_WORLD_IMAGE_CACHE_BYTES = 32 * 1024 * 1024
-
-interface WorldImageCacheEntry {
-  dataUrl: string | undefined
-  pending: Promise<string> | undefined
-  estimatedBytes: number
-  expiresAtMillis: number
-}
-
-const worldImageDataUrlCache = new Map<string, WorldImageCacheEntry>()
-let worldImageCacheBytes = 0
-
-function deleteWorldImageCacheEntry(imageRef: string): void {
-  const entry = worldImageDataUrlCache.get(imageRef)
-  if (entry === undefined) return
-  worldImageCacheBytes = Math.max(0, worldImageCacheBytes - entry.estimatedBytes)
-  worldImageDataUrlCache.delete(imageRef)
-}
-
-function pruneWorldImageCache(now = Date.now()): void {
-  for (const [imageRef, entry] of worldImageDataUrlCache) {
-    if (entry.expiresAtMillis <= now) deleteWorldImageCacheEntry(imageRef)
-  }
-  while (worldImageDataUrlCache.size > MAX_WORLD_IMAGE_CACHE_ENTRIES || worldImageCacheBytes > MAX_WORLD_IMAGE_CACHE_BYTES) {
-    const oldestResolved = [...worldImageDataUrlCache].find(([, entry]) => entry.pending === undefined)?.[0]
-    const oldest = oldestResolved ?? worldImageDataUrlCache.keys().next().value as string | undefined
-    if (oldest === undefined) break
-    deleteWorldImageCacheEntry(oldest)
-  }
-}
-
-function touchWorldImageCacheEntry(imageRef: string, entry: WorldImageCacheEntry): void {
-  worldImageDataUrlCache.delete(imageRef)
-  worldImageDataUrlCache.set(imageRef, entry)
-}
-
-export function cachedWorldImageDataUrl(imageRef: string): string | undefined {
-  const normalized = imageRef.trim()
-  if (normalized === '') return undefined
-  const entry = worldImageDataUrlCache.get(normalized)
-  if (entry === undefined) return undefined
-  if (entry.expiresAtMillis <= Date.now()) {
-    deleteWorldImageCacheEntry(normalized)
-    return undefined
-  }
-  touchWorldImageCacheEntry(normalized, entry)
-  return entry.dataUrl
-}
-
-type WorldImageReader = (imageRef: string) => Promise<ArkmeImagePayload>
-
-const readWorldImage: WorldImageReader = async imageRef => await callArkme<ArkmeImagePayload>('world.image.read', { imageRef })
-
-export function loadWorldImageDataUrl(imageRef: string, reader: WorldImageReader = readWorldImage): Promise<string> {
-  const normalized = imageRef.trim()
-  if (normalized === '') return Promise.reject(new Error('世界图片引用为空'))
-  const cached = worldImageDataUrlCache.get(normalized)
-  if (cached !== undefined && cached.expiresAtMillis > Date.now()) {
-    touchWorldImageCacheEntry(normalized, cached)
-    if (cached.dataUrl !== undefined) return Promise.resolve(cached.dataUrl)
-    if (cached.pending !== undefined) return cached.pending
-  } else if (cached !== undefined) {
-    deleteWorldImageCacheEntry(normalized)
-  }
-
-  const entry: WorldImageCacheEntry = {
-    dataUrl: undefined,
-    pending: undefined,
-    estimatedBytes: 0,
-    expiresAtMillis: Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS,
-  }
-  const pending = reader(normalized).then(image => {
-    const dataUrl = `data:${image.mediaType};base64,${image.dataBase64}`
-    if (worldImageDataUrlCache.get(normalized) === entry) {
-      entry.dataUrl = dataUrl
-      entry.pending = undefined
-      entry.estimatedBytes = Math.ceil(image.dataBase64.length * 0.75)
-      entry.expiresAtMillis = Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS
-      worldImageCacheBytes += entry.estimatedBytes
-      touchWorldImageCacheEntry(normalized, entry)
-      pruneWorldImageCache()
-    }
-    return dataUrl
-  }).catch(error => {
-    if (worldImageDataUrlCache.get(normalized) === entry) deleteWorldImageCacheEntry(normalized)
-    throw error
-  })
-  entry.pending = pending
-  worldImageDataUrlCache.set(normalized, entry)
-  pruneWorldImageCache()
-  return pending
 }
 
 const WORLD_IMAGE_OPTIMIZE_THRESHOLD_BYTES = 2 * 1024 * 1024
@@ -525,12 +440,21 @@ export async function optimizeWorldPublishImage(file: File): Promise<File> {
   }
 }
 
-function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
+function WorldImage(props: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  return <ScopedWorldImage key={`${auth?.environment}:${auth?.status}:${auth?.userId}:${props.imageRef}`} {...props} />
+}
+function ScopedWorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
   useArkmeLocale()
   const [source, setSource] = useState(() => cachedWorldImageDataUrl(imageRef) ?? '')
   const [failed, setFailed] = useState(false)
   const [readyToLoad, setReadyToLoad] = useState(() => avatar || preview || cachedWorldImageDataUrl(imageRef) !== undefined)
   const placeholderRef = useRef<HTMLSpanElement>(null)
+  const revoked = useRef(false)
+  useEffect(() => {
+    revoked.current = false
+    return subscribeWorldImageInvalidation(imageRef, () => { revoked.current = true; setSource(''); setFailed(true) })
+  }, [imageRef])
   useEffect(() => {
     const cached = cachedWorldImageDataUrl(imageRef)
     setSource(cached ?? '')
@@ -557,7 +481,7 @@ function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageR
     if (!readyToLoad || source !== '' || failed) return
     let active = true
     void loadWorldImageDataUrl(imageRef)
-      .then(dataUrl => { if (active) setSource(dataUrl) })
+      .then(dataUrl => { if (active && !revoked.current) setSource(dataUrl) })
       .catch(() => { if (active) setFailed(true) })
     return () => { active = false }
   }, [failed, imageRef, readyToLoad, source])
@@ -590,8 +514,9 @@ export function worldImagePreviewDragPosition(origin: WorldImagePreviewDragOrigi
   }
 }
 
-export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect }: {
-  item: ArkmeWorldFeedItem
+export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect, renderMedia }: {
+  item: Pick<ArkmeWorldFeedItem, 'imageRefs' | 'authorName'>
+  renderMedia?(imageRef: string): React.ReactNode
   previewIndex: number
   onClose(): void
   onSelect(index: number): void
@@ -745,7 +670,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
           onPointerUp={endPreviewDrag}
           onPointerCancel={endPreviewDrag}
         >
-          <WorldImagePreviewMedia imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(previewIndex + 1) })} zoomed={zoomed} />
+          {renderMedia ? <div style={{ width: zoomed ? '200%' : '100%', height: zoomed ? '200%' : '100%' }}>{renderMedia(imageRef)}</div> : <WorldImagePreviewMedia imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(previewIndex + 1) })} zoomed={zoomed} />}
         </div>
         {multiple && <>
           <button data-arkme-feedback="neutral" type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label={tr("上一张图片")} disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
@@ -921,6 +846,7 @@ export function worldInteractionThreads(rootRef: string, items: readonly ArkmeWo
 
 function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteractionItem; reply: boolean; compact: boolean }) {
   const size = compact ? (reply ? 20 : 24) : (reply ? 22 : 28)
+  if (item.teamAuthor && !item.avatarRef) return <ArkmeTeamAvatar name={item.teamAuthor.name} size={size} />
   return <span style={{
     ...styles.interactionAvatar,
     ...(reply ? styles.interactionReplyAvatar : {}),
@@ -965,7 +891,7 @@ function InteractionRow({ item, replyToName, replyToMemberType, compact, replyTa
       <header style={styles.interactionMeta}>
         <span style={styles.interactionAuthorLine}>
           <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}) }}>{item.authorName}</strong>
-          <WorldMembershipBadge memberType={item.memberType} />
+          <WorldMembershipBadge memberType={item.memberType} /><WorldPublisher item={item} />
           {replyToName !== undefined && <span style={styles.interactionReplyTarget}>{tr("回复 {v0}", { v0: replyToName })}<WorldMembershipBadge memberType={replyToMemberType} /></span>}
         </span>
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
@@ -1027,7 +953,7 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
       return
     }
     const controller = new AbortController()
-    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
+    void callArkme<ArkmeWorldRepliesPage>('world.replies', { recordRef: item.recordRef, limit: 20 }, controller.signal)
       .then(page => {
         if (controller.signal.aborted) return
         setItems(page.items)
@@ -1099,13 +1025,22 @@ function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
   </section>
 }
 
-function WorldAuthorAvatar({ item }: { item: ArkmeWorldFeedItem }) {
-  return <span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
+export function WorldPublisher({ item }: { item: { teamAuthor?: ArkmeWorldFeedItem['teamAuthor']; publisher?: ArkmeWorldFeedItem['publisher'] } }) {
+  if (!item.teamAuthor || !item.publisher) return null
+  return <span data-world-publisher style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: arkmeTheme.tertiary }}>
+    {item.publisher.avatarRef && <span style={{ width: 16, height: 16, display: 'inline-flex', borderRadius: '50%', overflow: 'hidden' }}><WorldImage imageRef={item.publisher.avatarRef} alt={tr('发布人头像')} avatar /></span>}
+    {tr('{v0} 发布', { v0: item.publisher.name })}
+  </span>
+}
+
+export function WorldAuthorAvatar({ item, size }: { item: ArkmeWorldFeedItem; size?: number | undefined }) {
+  if (item.teamAuthor && !item.avatarRef) return <ArkmeTeamAvatar name={item.teamAuthor.name} size={size ?? 42} />
+  return <span data-arkme-avatar style={{ ...styles.avatar, ...(size ? { width: size, height: size, fontSize: 11 } : {}) }}>{item.avatarRef === undefined
     ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
     : <WorldImage imageRef={item.avatarRef} alt={tr('{v0}的头像', { v0: item.authorName })} avatar />}</span>
 }
 
-export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenDetail, selected = false, detail = false }: {
+export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenDetail, context, selected = false, detail = false, compact = false, commentsRefreshKey }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
@@ -1117,13 +1052,18 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onOpenAuthor?(item: ArkmeWorldFeedItem): void
   onOpenDetail?(item: ArkmeWorldFeedItem): void
+  context?: ReactNode
   selected?: boolean
   detail?: boolean
+  /** Compact comment row inside a parent note; full actions remain in detail. */
+  compact?: boolean
+  /** Refresh authorized replies without remounting the composer. */
+  commentsRefreshKey?: object | undefined
 }) {
   useArkmeLocale()
   const [previewIndex, setPreviewIndex] = useState<number>()
   const [reactionUnavailable, setReactionUnavailable] = useState(false)
-  const onReactionUnavailable = useCallback(() => { setReactionUnavailable(true); setPreviewIndex(undefined) }, [])
+  const onReactionUnavailable = useCallback(() => { invalidateWorldImages(item.imageRefs); setReactionUnavailable(true); setPreviewIndex(undefined) }, [item.imageRefs])
   useEffect(() => { setReactionUnavailable(false) }, [item.recordRef, item.publishedAtMillis])
   const commentInputRef = useRef<HTMLTextAreaElement>(null)
   const composeComment = () => {
@@ -1148,7 +1088,8 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     return () => { window.removeEventListener('keydown', closeOnEscape) }
   }, [previewIndex])
   if (reactionUnavailable) return <article style={styles.card} data-world-record-ref={item.recordRef}><p role="status" style={styles.subtitle}>{tr('这条内容已更新或不再公开，请刷新世界')}</p></article>
-  return <article style={{ ...styles.card, ...(detail ? { padding: 0, border: 0, borderRadius: 0, background: 'transparent' } : {}), ...(selected ? { borderColor: arkmeTheme.accent } : {}) }} data-world-record-ref={item.recordRef}
+  return <article style={{ ...styles.card, ...(detail ? { padding: 0, border: 0, borderRadius: 0, background: 'transparent' } : {}), ...(compact ? { padding: '14px 0', border: 0, borderRadius: 0, background: selected ? arkmeTheme.hover : 'transparent' } : {}), ...(selected ? { borderColor: arkmeTheme.accent } : {}) }} data-world-record-ref={item.recordRef}
+    data-world-compact={compact || undefined}
     data-world-detail-open={selected || undefined} data-world-detail-content={detail || undefined}
     {...(onOpenDetail === undefined ? {} : { tabIndex: 0, 'aria-label': tr('{v0}的世界动态', { v0: item.authorName }),
       onClick: (event: ReactMouseEvent<HTMLElement>) => {
@@ -1161,29 +1102,31 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
         event.preventDefault(); onOpenDetail(item)
       },
     })}>
-    {!detail && <header style={styles.cardHeader}>
-      {item.authorRef === undefined
-        ? <WorldAuthorAvatar item={item} />
-        : <button type="button" style={styles.avatarButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><WorldAuthorAvatar item={item} /></button>}
+    {!detail && <header style={{ ...styles.cardHeader, ...(compact ? { gridTemplateColumns: '28px minmax(0,1fr) auto' } : {}) }}>
+      {item.authorRef === undefined && !item.teamAuthor
+        ? <WorldAuthorAvatar item={item} size={compact ? 28 : undefined} />
+        : <button type="button" style={styles.avatarButton} aria-label={tr(item.teamAuthor ? "查看{v0}的团队卡片" : "查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><WorldAuthorAvatar item={item} size={compact ? 28 : undefined} /></button>}
       <span style={styles.authorMeta}>
         <span style={styles.authorRow}>
-          {item.authorRef === undefined
+          {item.authorRef === undefined && !item.teamAuthor
             ? <strong style={styles.author}>{item.authorName}</strong>
-            : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
-          <WorldMembershipBadge memberType={item.memberType} />
+            : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={tr(item.teamAuthor ? "查看{v0}的团队卡片" : "查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
+          {item.teamAuthor ? <small>{tr('团队')}</small> : <WorldMembershipBadge memberType={item.memberType} />}
+          <WorldPublisher item={item} />
           {playable
             ? <button data-arkme-feedback="neutral" data-arkme-feedback-selected={voiceprintActive} type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? tr("正在生成{v0}的声纹，点击停止", { v0: item.authorName }) : voiceprintActive ? tr("停止播放{v0}的声纹", { v0: item.authorName }) : tr("播放{v0}的声纹", { v0: item.authorName })} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
                 : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : onInviteVoiceprint === undefined ? null : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+            : onInviteVoiceprint === undefined || item.teamAuthor ? null : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
             </button>}
         </span>
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>}
+    {context}
     {item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
     {textContent.trim() !== '' && (detail ? <div style={{ ...styles.text, marginTop: 0 }}><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></div> : <WorldCollapsibleText
       recordRef={item.recordRef}
@@ -1192,7 +1135,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
       {...(extensionShareLink === undefined ? {} : { extensionShareLink })}
     />)}
-    {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
+    {visibleImageRefs.length > 0 && <div style={{ ...styles.imageGrid, ...(compact ? { width: 'calc(100% - 38px)', maxWidth: 300, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' } : {}) }}>{visibleImageRefs.map((imageRef, index) => {
       const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
       return <button
         key={imageRef}
@@ -1205,16 +1148,16 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
         {overflowCount > 0 && <span style={styles.imageOverflow} data-world-image-overflow={overflowCount}>+{overflowCount}</span>}
       </button>
     })}</div>}
-    <footer style={styles.cardFooter}>
+    {compact ? <button type="button" style={{ ...styles.commentButton, marginTop: 8, color: arkmeTheme.tertiary, fontSize: 11 }} onClick={composeComment}>{tr('回复')}</button> : <footer style={styles.cardFooter}>
       <ArkmeWorldReactions item={item} onUnavailable={onReactionUnavailable}>
       <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} title={tr("评论")} aria-label={tr("评论")} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={composeComment}>
         <ChatCircleDots size={18} weight="light" aria-hidden />
       </button>
       <ArkmeWorldShareActions item={item} />
       </ArkmeWorldReactions>
-    </footer>
-    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
-    {interactionsOpen && <InteractionPanel item={item} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} detail={detail} />}
+    </footer>}
+    {!compact && !interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
+    {interactionsOpen && <InteractionPanel item={item} commentsRefreshKey={commentsRefreshKey} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} detail={detail} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
@@ -1326,6 +1269,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   onLoadMore?(): void
 }) {
   useArkmeLocale()
+  const [reactionHistoryOpen, setReactionHistoryOpen] = useState(false)
+  const [teamActivityOpen, setTeamActivityOpen] = useState(false)
   const detailContext = `${scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
   const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
   const selectedDetail = detailSelection?.context === detailContext ? detailSelection.item : undefined
@@ -1378,6 +1323,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   return <>
     <style>{`.arkme-world-columns { position:relative; width:100%; max-width:1020px; padding:0 clamp(12px,2vw,24px); margin:0 auto; box-sizing:border-box; flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,min(640px,100%)) minmax(0,1fr); column-gap:clamp(0px,calc(100% - 688px),32px); }
       .arkme-world-primary { min-width:0; min-height:0; display:flex; flex-direction:column; }`}</style>
+    {reactionHistoryOpen && <ArkmeWorldReactionHistory onClose={() => setReactionHistoryOpen(false)} />}
+    {teamActivityOpen && <TeamWorldActivity onClose={() => setTeamActivityOpen(false)} />}
     <div className="arkme-world-columns" data-world-columns>
     <div className="arkme-world-primary" data-world-primary-column>
     <header style={styles.header}>
@@ -1397,6 +1344,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
         <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? tr("刷新中") : tr("刷新")} aria-label={state.refreshing ? tr("刷新中") : tr("刷新")} onClick={onRefresh}>
           <ArrowClockwise size={18} weight="light" />
         </button>
+        {target === undefined && <button type="button" style={styles.button} onClick={() => setReactionHistoryOpen(true)}>{tr("表态记录")}</button>}
+        {target === undefined && <button type="button" style={styles.button} onClick={() => setTeamActivityOpen(true)}>{tr('我的团队操作')}</button>}
         {target === undefined && <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label={tr("发世界")} onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />{tr("发布")}</button>}
       </div>
     </header>
@@ -1495,6 +1444,9 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
   const sendingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
+  const composerAt = useRef(Date.now())
+  const pendingTeamCommand = useRef<TeamWorldRequest>()
+  const [teamPending, setTeamPending] = useState(false)
   const requestRef = useRef<AbortController>()
   useEffect(() => () => { requestRef.current?.abort(); for (const url of previewUrls.current) URL.revokeObjectURL(url) }, [])
   useEffect(() => {
@@ -1540,8 +1492,28 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     resetMutationId()
     setMessage('')
   }
+  const applyTeamReceipt = (result: TeamWorldReceipt) => {
+    if (result.pending || !result.result) { setMessage(tr('团队已接收稿件，正在完成发布；请使用原请求重试确认。')); return }
+    pendingTeamCommand.current = undefined; setTeamPending(false)
+    if (result.result.visibility === 'rejected') { setMessage(tr('内容审核未通过，团队原件已保存。')); resetMutationId(); return }
+    if (!['published','pending'].includes(result.result.visibility)) { setMessage(tr('团队原件已保存，当前未公开。')); resetMutationId(); return }
+    resetMutationId()
+    onPublished({ recordSaved: true, recordState: 'synced', worldPublished: true, visibility: result.result.visibility === 'pending' ? 'pending_review' : 'visible', checkStatus: result.result.visibility === 'pending' ? 1 : 2, retryable: false })
+    onClose()
+  }
+  const retryTeamCommand = async () => {
+    if (!pendingTeamCommand.current || sendingRef.current) return
+    sendingRef.current = true; setSending(true)
+    const c = new AbortController(); requestRef.current = c
+    const owner = arkmeAuthStore.getSnapshot().auth
+    const stop = arkmeAuthStore.subscribe(() => { const current = arkmeAuthStore.getSnapshot().auth; if (current?.userId !== owner?.userId || current?.environment !== owner?.environment || current?.status !== owner?.status) c.abort() })
+    try { const result = await callArkme<TeamWorldReceipt>('team.world', pendingTeamCommand.current, c.signal); c.signal.throwIfAborted(); applyTeamReceipt(result) }
+    catch (e) { if (!c.signal.aborted) setMessage(messageOf(e, '结果尚未确认，请重试原请求')) }
+    finally { stop(); sendingRef.current = false; if (!c.signal.aborted) setSending(false) }
+  }
   const submit = async () => {
     if (sendingRef.current) return
+    if (pendingTeamCommand.current) { await retryTeamCommand(); return }
     if (sourceState.loading || sourceState.error) return
     const textContent = text.trim()
     if (textContent === '') { setMessage(attachments.length > 0 ? '图片动态也需要写一点文字' : '请输入要发到世界的内容'); return }
@@ -1560,15 +1532,22 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     setSending(true)
     try {
       if (publisher.selected) {
-        setSending(true); setMessage(tr('正在核验团队身份…'))
-        const result = await callArkme<TeamWorldPrepareResult>('team.app.world.prepare', {
-          expectedAccountKey: accountKey, teamRef: publisher.team!.teamRef, requestUid: mutationIdRef.current,
-          ...(sourceState.snapshot && (!origin?.kind || origin.kind === 'record') ? { origin: { sourceRef: sourceState.snapshot.sourceRef, itemUid: sourceState.snapshot.itemUid, version: sourceState.snapshot.version } } : {}),
-        }, controller.signal)
-        controller.signal.throwIfAborted()
-        if (result.state !== 'backend_pending') throw new Error(tr('团队发布协议需要更新插件后使用'))
-        setMessage(`${tr(TEAM_WORLD_PENDING_TEXT)} ${tr('草稿已保留，尚未发布。')}`)
-        return
+        await requirePhoneForSocialAction('代表团队发布到世界', controller.signal)
+        setMessage(tr('正在准备团队稿件…'))
+        const source = await callArkme<{ sourceRef: string }>('team.world', { action: 'source', accountKey, origin: origin ?? { kind: 'local', sourceRef: 'world-composer', itemUid: mutationIdRef.current, textContent, sourceLabel: '世界编辑器', sendAtMillis: composerAt.current, hasAttachments: false }, version: sourceState.snapshot?.version ?? 1 }, controller.signal)
+        const imageRefs: string[] = [], sourceAssetUids: string[] = []
+        for (const attachment of attachments) {
+          if (attachment.asset) { sourceAssetUids.push(attachment.asset.fileAssetUid); continue }
+          const file = await optimizeWorldPublishImage(attachment.file!)
+          const contentBase64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error('图片读取失败')); reader.onload = () => resolve(String(reader.result).split(',')[1] ?? ''); reader.readAsDataURL(file) })
+          controller.signal.throwIfAborted()
+          const asset = await callArkme<TeamWorldAsset>('team.world', { action: 'image-upload', accountKey, teamRef: publisher.team!.teamRef, contentUid: mutationIdRef.current, uploadUid: attachment.id, contentBase64, mimeType: file.type }, controller.signal)
+          imageRefs.push(asset.imageRef)
+        }
+        pendingTeamCommand.current = { action: 'submit', accountKey, teamRef: publisher.team!.teamRef, requestUid: mutationIdRef.current, expectedRevision: 0, change: 'publish', draft: { title: '', text: textContent, format: 'plain', sourceRef: source.sourceRef, imageRefs, sourceAssetUids } }
+        setTeamPending(true)
+        const result = await callArkme<TeamWorldReceipt>('team.world', pendingTeamCommand.current, controller.signal)
+        controller.signal.throwIfAborted(); applyTeamReceipt(result); return
       }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
       setSending(true)
@@ -1622,7 +1601,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     }
   }
   const blocked = text.length > 2000 || attachments.length > ARKME_WORLD_PUBLISH_MAX_IMAGES || attachments.some(worldPublishAttachmentBlocked)
-  const disabled = sending || sourceState.loading || !!sourceState.error
+  const disabled = sending || teamPending || sourceState.loading || !!sourceState.error
   const destination = publisher.selected
     ? tr('发布到{v0}的世界 · 由{v1}发布', { v0: publisher.displayTeam?.name ?? tr('团队'), v1: actorName ?? tr('我') })
     : tr('发布到世界')
@@ -1646,15 +1625,29 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         identity={<TeamWorldPublisherPicker compact state={publisher} actorName={actorName} actorAvatarRef={actorAvatarRef} disabled={disabled}
           onSelect={id => { publisher.select(id); resetMutationId(); setMessage('') }} />} />
       {blocked && <p role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{text.length > 2000 ? tr('世界正文最多 2000 字，请调整发布副本后继续。') : tr('请从发布副本中移除世界暂不支持或不可用的附件；原快记不受影响。')}</p>}
-      <div role="status" style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: arkmeTheme.secondary }}>{message || (publisher.selected ? tr(TEAM_WORLD_PENDING_TEXT) : '')}</div>
+      {teamPending && !sending && <p role="status">{tr('发布结果待确认，重试不会重复发布。')} <button type="button" disabled={sending} onClick={() => void retryTeamCommand()}>{tr('确认原发布结果')}</button></p>}
+      <div role="status" style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: arkmeTheme.secondary }}>{message || (publisher.selected ? tr('团队图片仍占用上传者存储额度，离队后不会自动释放。') : '')}</div>
     </section>
   </div>
 }
 
-function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, detail = false }: { item: ArkmeWorldFeedItem; textareaRef: RefObject<HTMLTextAreaElement>; onClose(): void; onInteractionCreated(recordRef: string): void; detail?: boolean }) {
+interface InteractionPanelProps { item: ArkmeWorldFeedItem; commentsRefreshKey?: object | undefined; textareaRef: RefObject<HTMLTextAreaElement>; onClose(): void; onInteractionCreated(recordRef: string): void; detail?: boolean }
+function InteractionPanel(props: InteractionPanelProps) {
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
+  return <ScopedInteractionPanel key={`${accountKey}:${props.item.recordRef}`} {...props} accountKey={accountKey} />
+}
+function ScopedInteractionPanel({ item, textareaRef, onClose, onInteractionCreated, detail = false, accountKey, commentsRefreshKey }: InteractionPanelProps & { accountKey: string }) {
   useArkmeLocale()
+  const publisher = useTeamWorldPublisher(accountKey)
+  const pending = useRef<{ operation: 'team.world' | 'world.interactions.create-text'; params: Record<string, unknown> }>()
+  const [frozen, setFrozen] = useState(false)
+  const sendController = useRef<AbortController>()
+  useEffect(() => () => sendController.current?.abort(), [])
   const focusRef = useContext(WorldNotificationFocus)
-  const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
+  const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
+  const continuation = useRef<WorldCommentContinuation[]>([])
+  const moreInFlight = useRef(false)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
@@ -1675,28 +1668,27 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
     })
   }, [])
   const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldInteractionItem[], signal?: AbortSignal) => {
-    void hydrateWorldAuthorLabels(items.map(interaction => interaction.authorRef ?? interaction.interactionRef), signal, applyViewerAuthorLabels).catch(() => {})
+    void hydrateWorldAuthorLabels(items.filter(interaction => !interaction.teamAuthor).map(interaction => interaction.authorRef ?? interaction.interactionRef), signal, applyViewerAuthorLabels).catch(() => {})
   }, [applyViewerAuthorLabels])
   const load = useCallback(() => {
     loadController.current?.abort()
     const controller = new AbortController()
     loadController.current = controller
-    setState({ status: 'loading', items: [], hasMore: false })
+    // Keep the authorized page visible while refreshing; a failed read still clears it.
+    setState(current => { const { message: _message, ...rest } = current; return current.items.length ? rest : { status: 'loading', items: [], hasMore: false } })
+    continuation.current = []; moreInFlight.current = false
     void (async () => {
-      let page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
-      const items = [...page.items]
-      for (let count = 0; focusRef && !items.some(value => value.interactionRef === focusRef) && page.hasMore && count < 100; count++) {
-        const offset = page.nextOffset
-        if (offset === undefined) throw new Error('评论分页数据不完整')
-        page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset }, controller.signal)
-        if (page.hasMore && (page.nextOffset === undefined || page.nextOffset <= offset)) throw new Error('评论分页未推进')
-        items.push(...page.items)
-      }
-      return { ...page, items: [...new Map(items.map(value => [value.interactionRef, value])).values()] }
+      const page = await loadWorldCommentPage([{ parentRef: item.recordRef, path: [item.recordRef] }],
+        (recordRef, limit, cursor) => callArkme<ArkmeWorldRepliesPage>('world.replies', { recordRef, limit, ...(cursor ? { cursor } : {}) }, controller.signal), controller.signal)
+      if (!focusRef || page.items.some(value => value.interactionRef === focusRef)) return page
+      const target = await callArkme<ArkmeWorldNotificationTarget>('world.notification-target', { interactionRef: focusRef }, controller.signal)
+      if (target.root.recordRef !== item.recordRef) throw new Error('回复不属于当前帖子')
+      return { ...page, items: [...new Map([...page.items, ...target.path].map(value => [value.interactionRef, value])).values()] }
     })()
       .then(page => {
         if (controller.signal.aborted) return
-        setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(focusRef && !page.items.some(value => value.interactionRef === focusRef) ? { message: tr('未找到这条回复，可能已删除或不可查看') } : {}), ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
+        continuation.current = page.pending
+        setState({ status: 'ready', items: page.items, hasMore: page.pending.length > 0, ...(focusRef && !page.items.some(value => value.interactionRef === focusRef) ? { message: tr('未找到这条回复，可能已删除或不可查看') } : {}) })
         hydrateViewerAuthorLabels(page.items, controller.signal)
       })
       .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
@@ -1705,7 +1697,7 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
     load()
     if (!focusRef && !detail) textareaRef.current?.focus()
     return () => { loadController.current?.abort() }
-  }, [load])
+  }, [load, commentsRefreshKey])
   useEffect(() => {
     if (detail) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -1713,34 +1705,68 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
     return () => { window.removeEventListener('keydown', closeOnEscape) }
   }, [onClose, detail])
   const loadMore = async () => {
-    if (state.loadingMore || state.nextOffset === undefined) return
+    if (moreInFlight.current || !continuation.current.length) return
+    const controller = loadController.current
+    if (!controller || controller.signal.aborted) return
+    moreInFlight.current = true
     setState(current => {
       const { message: _message, ...rest } = current
       return { ...rest, loadingMore: true }
     })
     try {
-      const page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: state.nextOffset })
-      setState(current => ({ ...current, status: 'ready', items: [...current.items, ...page.items], hasMore: page.hasMore, loadingMore: false, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }))
-      hydrateViewerAuthorLabels(page.items)
-    } catch (error) { setState(current => ({ ...current, loadingMore: false, message: messageOf(error, '更多互动加载失败，请重试') })) }
+      const page = await loadWorldCommentPage(continuation.current,
+        (recordRef, limit, cursor) => callArkme<ArkmeWorldRepliesPage>('world.replies', { recordRef, limit, ...(cursor ? { cursor } : {}) }, controller.signal), controller.signal)
+      if (controller.signal.aborted) return
+      continuation.current = page.pending
+      setState(current => ({ ...current, status: 'ready', items: [...new Map([...current.items, ...page.items].map(value => [value.interactionRef, value])).values()], hasMore: page.pending.length > 0, loadingMore: false }))
+      hydrateViewerAuthorLabels(page.items, controller.signal)
+    } catch (error) {
+      // A parent may have been withdrawn between pages. Do not retain a stale branch.
+      if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '更多评论加载失败，请重试') })
+    } finally { if (!controller.signal.aborted) moreInFlight.current = false }
   }
   const send = async () => {
     const textContent = draft.trim()
-    if (textContent === '' || sendingRef.current) return
-    sendingRef.current = true
-    setSending(true)
+    if (sendingRef.current || (!pending.current && !textContent)) return
+    if (!pending.current && publisher.selected && (publisher.loading || !publisher.team || textContent.length > 2000)) {
+      setState(current => ({ ...current, message: tr('请确认当前团队发布权限；团队回复最多 2000 字。') })); return
+    }
+    sendingRef.current = true; setSending(true)
+    const controller = new AbortController(); sendController.current = controller
     try {
-      const result = await callArkme<ArkmeWorldInteractionCreateResult>('world.interactions.create-text', { targetRef: replyTarget?.interactionRef ?? item.recordRef, textContent, clientMutationId: uuid() })
-      setState(current => {
-        const { message: _message, ...rest } = current
-        return { ...rest, status: 'ready', items: [...current.items, result.interaction] }
-      })
+      if (!pending.current) {
+        const targetRef = replyTarget?.interactionRef ?? item.recordRef, requestUid = uuid()
+        if (publisher.selected) {
+          await requirePhoneForSocialAction('代表团队回复', controller.signal)
+          const source = await callArkme<{ sourceRef: string }>('team.world', { action: 'source', accountKey, version: 1, origin: { kind: 'local', sourceRef: 'world-reply', itemUid: requestUid, textContent, sourceLabel: '世界回复', sendAtMillis: Date.now(), hasAttachments: false } }, controller.signal)
+          pending.current = { operation: 'team.world', params: { action: 'submit', accountKey, teamRef: publisher.team!.teamRef, requestUid, expectedRevision: 0, change: 'publish', draft: { title: '', text: textContent, format: 'plain', sourceRef: source.sourceRef, imageRefs: [], parentRef: targetRef } } }
+        } else pending.current = { operation: 'world.interactions.create-text', params: { targetRef, textContent, clientMutationId: requestUid } }
+        setFrozen(true)
+      }
+      if (pending.current.operation === 'team.world') {
+        const result = await callArkme<TeamWorldReceipt>('team.world', pending.current.params, controller.signal)
+        if (controller.signal.aborted) return
+        if (result.pending || !result.result) throw new Error(tr('团队已接受回复，正在完成；请重试确认原请求。'))
+        pending.current = undefined; setFrozen(false)
+        if (result.result.visibility !== 'published') {
+          setState(current => ({ ...current, message: tr(result.result?.visibility === 'pending' ? '回复已保存，等待审核通过后显示。' : '回复已保存，但尚未公开；可在团队原件中查看。') })); return
+        }
+        load()
+      } else {
+        const result = await callArkme<ArkmeWorldInteractionCreateResult>('world.interactions.create-text', pending.current.params, controller.signal)
+        if (controller.signal.aborted) return
+        pending.current = undefined; setFrozen(false)
+        setState(current => {
+          const { message: _message, ...rest } = current
+          return { ...rest, status: 'ready', items: [...new Map([...current.items, result.interaction].map(value => [value.interactionRef, value])).values()] }
+        })
+      }
       setDraft('')
       if (textareaRef.current !== null) textareaRef.current.style.height = '40px'
       setReplyTarget(undefined)
       onInteractionCreated(item.recordRef)
-    } catch (error) { if (!isSocialBindingRequired(error)) setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
-    finally { sendingRef.current = false; setSending(false) }
+    } catch (error) { if (!controller.signal.aborted && !isSocialBindingRequired(error)) setState(current => ({ ...current, message: messageOf(error, '评论结果未确认，请重试原请求') })) }
+    finally { sendingRef.current = false; if (!controller.signal.aborted) setSending(false) }
   }
   return <section id={interactionRegionId(item.recordRef, detail)} aria-label={tr("{v0}的评论区", { v0: item.authorName })} style={styles.interactionPanel} data-world-comment-panel={detail ? 'detail' : 'inline'}>
     <div style={styles.interactionPanelSticky} data-world-comment-toolbar="sticky">
@@ -1749,9 +1775,11 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
         {!detail && <button data-arkme-feedback="neutral" type="button" style={styles.interactionPanelClose} aria-label={tr("收起评论")} onClick={onClose}>{tr("收起")}</button>}
       </header>
       <div style={styles.interactionComposer}>
-        {replyTarget !== undefined && <div style={styles.replyTarget}><span>{tr("回复")} {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>{tr("取消回复")}</button></div>}
+        <TeamWorldPublisherPicker compact state={publisher} disabled={sending || frozen} onSelect={publisher.select} />
+        {frozen && !sending && <p role="status">{tr('发送结果待确认，重试不会重复发送。')}</p>}
+        {replyTarget !== undefined && <div style={styles.replyTarget}><span>{tr("回复")} {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} disabled={sending || frozen} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>{tr("取消回复")}</button></div>}
         <div style={styles.interactionComposerRow}>
-          <textarea ref={textareaRef} aria-label={tr("评论内容")} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : tr("回复 {v0}…", { v0: replyTarget.authorName })} onChange={event => {
+          <textarea ref={textareaRef} aria-label={tr("评论内容")} rows={1} style={styles.interactionInput} value={draft} disabled={sending || frozen} maxLength={publisher.selected ? 2000 : 20_000} placeholder={replyTarget === undefined ? '写一条评论…' : tr("回复 {v0}…", { v0: replyTarget.authorName })} onChange={event => {
             setDraft(event.currentTarget.value)
             event.currentTarget.style.height = '40px'
             event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
@@ -1768,11 +1796,12 @@ function InteractionPanel({ item, textareaRef, onClose, onInteractionCreated, de
         items={state.items}
         {...(replyTarget === undefined ? {} : { replyTargetRef: replyTarget.interactionRef })}
         onReply={interaction => {
+          if (sending || frozen) return
           setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction)
           textareaRef.current?.focus()
         }}
       />
-      {state.hasMore && <div style={styles.loadMore}><button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? tr("加载中…") : '加载更多评论'}</button></div>}
+      {state.hasMore && <div style={styles.loadMore}><button data-arkme-feedback="neutral" type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? tr("加载中…") : tr('加载更多评论')}</button></div>}
       {state.status === 'ready' && state.items.length === 0 && <div style={styles.interactionEmpty}>{tr("还没有评论")}</div>}
     </div>
   </section>
@@ -1806,6 +1835,9 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
   const [interactionRecordRef, setInteractionRecordRef] = useState<string>()
+  const worldAuth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const worldAccountKey = worldAuth?.status === 'authenticated' ? `${worldAuth.environment}:${worldAuth.userId}` : ''
+  const [teamAuthorCard, setTeamAuthorCard] = useState<ArkmeWorldFeedItem['teamAuthor']>()
   const [authorCardItem, setAuthorCardItem] = useState<ArkmeWorldFeedItem>()
   const [authorCardBusy, setAuthorCardBusy] = useState(false)
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
@@ -1848,7 +1880,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   }, [])
 
   const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldFeedItem[], signal: AbortSignal) => {
-    void hydrateWorldAuthorLabels(items.map(item => item.authorRef ?? item.recordRef), signal, applyViewerAuthorLabels).catch(() => {})
+    void hydrateWorldAuthorLabels(items.filter(item => !item.teamAuthor).map(item => item.authorRef ?? item.recordRef), signal, applyViewerAuthorLabels).catch(() => {})
   }, [applyViewerAuthorLabels])
 
   const stopVoiceprintMedia = () => {
@@ -1868,26 +1900,26 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     audioRef.current = undefined
   }
 
-  const load = useCallback((target: WorldScope, offset = 0, preserveItems = false) => {
+  const load = useCallback((target: WorldScope, position: number | string = 0, preserveItems = false) => {
     loadControllers.current[target]?.abort()
     const controller = new AbortController()
     loadControllers.current[target] = controller
     setViews(current => ({
       ...current,
-      [target]: offset === 0
+      [target]: position === 0
         ? preserveItems && current[target].items.length > 0
           ? { ...current[target], refreshing: true, message: undefined }
           : loadingState()
         : { ...current[target], loadingMore: true, message: undefined },
     }))
     const operation = target === 'mine' ? 'world.mine' : 'world.feed'
-    void callArkme<ArkmeWorldFeedPage>(operation, { limit: 20, offset }, controller.signal).then(page => {
+    void callArkme<ArkmeWorldFeedPage>(operation, { limit: 20, ...(typeof position === 'string' ? { cursor: position } : { offset: position }) }, controller.signal).then(page => {
       if (controller.signal.aborted) return
       setLoaded(current => ({ ...current, [target]: true }))
       setViews(current => {
-        const items = offset === 0 ? page.items : appendWorldFeedItems(current[target].items, page.items)
-        const hasMore = page.hasMore && page.nextOffset !== undefined && page.nextOffset > offset
-        return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? { nextOffset: page.nextOffset } : {}) } }
+        const items = position === 0 ? page.items : appendWorldFeedItems(current[target].items, page.items)
+        const hasMore = page.hasMore && (target === 'mine' ? page.nextOffset !== undefined && page.nextOffset > Number(position) : !!page.nextCursor && page.nextCursor !== position)
+        return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? target === 'mine' ? { nextOffset: page.nextOffset } : { nextCursor: page.nextCursor } : {}) } }
       })
       hydrateViewerAuthorLabels(page.items, controller.signal)
     }).catch(error => {
@@ -2168,14 +2200,16 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       onRefresh={refresh} {...(onBackToWorld === undefined ? {} : { onBackToWorld })} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
       onOpenInteractions={toggleInteractions} onInteractionCreated={recordInteractionCreated} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
       onInviteVoiceprint={item => { void openVoiceprintInvite(item) }} onLoadMore={() => {
+        if (target === undefined && scope !== 'mine') { if (state.nextCursor) load(scope, state.nextCursor); return }
         if (state.nextOffset === undefined) return
         if (target === undefined) load(scope, state.nextOffset)
         else loadUser(target, state.nextOffset)
-      }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
+      }} onOpenAuthor={item => { if (item.teamAuthor) setTeamAuthorCard(item.teamAuthor); else if (item.authorRef !== undefined) setAuthorCardItem(item) }}
       onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
       onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
     {composerOpen && <WorldPublishGuide onClose={() => { setComposerOpen(false) }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
+    {teamAuthorCard && <TeamPublicCardDialog accountKey={worldAccountKey} jotmoId={teamAuthorCard.jotmoId} onClose={() => setTeamAuthorCard(undefined)} />}
     {authorCardItem !== undefined && <ArkmeMemberProfileCard
       member={worldAuthorCardMember(authorCardItem)} busy={authorCardBusy}
       onClose={() => { if (!authorCardBusy) setAuthorCardItem(undefined) }}

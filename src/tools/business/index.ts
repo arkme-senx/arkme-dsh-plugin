@@ -1,3 +1,6 @@
+import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
+import { worldReplyTool } from './world/reply.js'
+import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
@@ -92,6 +95,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reeditRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
+  worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,
   worldMineToolModule,
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,

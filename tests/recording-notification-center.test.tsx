@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call, ArkmeClientError: class extends Error {} }))
 vi.mock('../src/client/official-notification-store.js', () => ({ useOfficialNotifications: () => ({ items: [], summary: { total: 0, unreadCount: 0 }, ready: true }), officialNotifications: {} }))
-vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => [] }))
+vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => ({ items: [], hasMore: false }) }))
 import { ArkmeNotificationCenter, useArkmeNotificationSummary } from '../src/client/ArkmeNotificationCenter.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 let renderer: ReactTestRenderer | undefined

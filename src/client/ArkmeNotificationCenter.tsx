@@ -53,6 +53,8 @@ interface NotificationSnapshot {
   arrangementItems: ArkmeArrangementReminderEvent[]
   worldItems: ArkmeNotificationItem[]
   worldUnreadCount: number
+  worldCursor: string | undefined
+  worldMoreLoading: boolean
   worldSeenThroughSequence: number
   worldError: string | undefined
   aiItems: ArkmeNotificationItem[]
@@ -70,6 +72,8 @@ const EMPTY_SNAPSHOT: NotificationSnapshot = {
   arrangementItems: [],
   worldItems: [],
   worldUnreadCount: 0,
+  worldCursor: undefined,
+  worldMoreLoading: false,
   worldSeenThroughSequence: 0,
   worldError: undefined,
   aiItems: [],
@@ -131,10 +135,10 @@ export function reactionItem(item: ReactionNotification): ArkmeNotificationItem 
 function worldItem(item: WorldNotificationInteraction): ArkmeNotificationItem {
   return {
     id: `world:${item.interactionRef}`, kind: 'world',
-    title: tr(item.replyToComment ? '{name} 回复了你的评论' : '{name} 回复了你的世界', { name: item.authorName || tr('有人') }),
+    title: tr(item.unavailable ? '世界回复已不可访问' : item.replyToComment ? '{name} 回复了你的评论' : '{name} 回复了你的世界', { name: item.authorName || tr('有人') }),
     preview: item.textContent || tr('查看世界互动'),
     atMillis: item.publishedAtMillis || item.createdAtMillis,
-    unread: false, worldInteractionRef: item.interactionRef,
+    unread: false, ...(item.unavailable ? {} : { worldInteractionRef: item.interactionRef }),
   }
 }
 
@@ -221,7 +225,7 @@ class ArkmeNotificationStore {
       }
 
       const worldItems = worldNotificationsResult.status === 'fulfilled'
-        ? worldNotificationsResult.value.map(worldItem) : this.snapshot.worldItems
+        ? worldNotificationsResult.value.items.map(worldItem) : this.snapshot.worldItems
       if (worldNotificationsResult.status === 'rejected') {
         worldError ??= worldNotificationsResult.reason instanceof Error ? worldNotificationsResult.reason.message : tr('世界互动暂时无法加载')
       }
@@ -251,6 +255,8 @@ class ArkmeNotificationStore {
         error,
         arrangementItems,
         worldItems,
+        worldCursor: worldNotificationsResult.status === 'fulfilled' ? worldNotificationsResult.value.nextCursor : this.snapshot.worldCursor,
+        worldMoreLoading: false,
         worldUnreadCount,
         worldSeenThroughSequence,
         worldError,
@@ -263,6 +269,21 @@ class ArkmeNotificationStore {
     this.inflight = operation
     try { await operation } finally {
       if (this.inflight === operation) this.inflight = undefined
+    }
+  }
+
+  async loadMoreWorld(): Promise<void> {
+    const { scope, worldCursor: cursor } = this.snapshot
+    const controller = this.controller
+    if (!scope || accountScope() !== scope || !cursor || !controller || controller.signal.aborted || this.snapshot.worldMoreLoading || this.snapshot.loading) return
+    this.publish({ ...this.snapshot, worldMoreLoading: true, worldError: undefined })
+    try {
+      const page = await readWorldNotifications(controller.signal, callArkme, cursor)
+      if (controller.signal.aborted || this.controller !== controller || accountScope() !== scope) return
+      this.publish({ ...this.snapshot, worldMoreLoading: false, worldCursor: page.nextCursor,
+        worldItems: [...new Map([...this.snapshot.worldItems, ...page.items.map(worldItem)].map(item => [item.id, item])).values()] })
+    } catch (error) {
+      if (!controller.signal.aborted && this.controller === controller) this.publish({ ...this.snapshot, worldMoreLoading: false, worldError: error instanceof Error ? error.message : tr('世界通知读取失败') })
     }
   }
 
@@ -507,6 +528,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
       <div ref={listRef} className="arkme-notification-scroll" onScroll={scroll.onScroll}>
         <div className="arkme-notification-messages">
           <div className="arkme-notification-history">
+            {(activeKind === 'all' || activeKind === 'world') && snapshot.worldCursor && <button className="arkme-notification-link" type="button" disabled={snapshot.loading || snapshot.worldMoreLoading} onClick={() => void arkmeNotificationStore.loadMoreWorld()}>{tr(snapshot.worldMoreLoading ? '正在加载世界通知…' : '加载更多世界通知')}</button>}
             {(activeKind === 'recording' || activeKind === 'all') && recording.nextCursor && <button type="button" className="arkme-notification-link" disabled={recording.loading} onClick={() => { void recordingNotifications.refresh(true) }}>{tr('加载更多录音通知')}</button>}
             {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button type="button" className="arkme-notification-link" disabled={official.foregroundLoading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
           </div>

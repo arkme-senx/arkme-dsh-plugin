@@ -20,8 +20,9 @@ beforeEach(() => {
   pending = new Map(); openAuthor.mockClear()
   read = vi.spyOn(api, 'callArkme').mockImplementation(async (operation, params, signal) => {
     if (operation === 'world.record.read') return new Promise((resolve, reject) => pending.set(String(params?.recordRef), { resolve, reject, signal: signal! }))
-    if (operation === 'world.interactions.list') return { items: [], hasMore: false }
+    if (operation === 'world.replies') return { items: [], hasMore: false }
     if (operation === 'world.author-labels') return []
+    if (operation === 'team.app.teams') return []
     if (operation === 'world.image.read') return { mediaType: 'image/png', bytes: 1, dataBase64: 'aQ==' }
     throw new Error(`Unexpected operation: ${operation}`)
   })
@@ -110,7 +111,7 @@ describe('World public detail interactions', () => {
     await click(detail()!.querySelector('[role="alert"] button')!)
     await act(async () => pending.get(first.recordRef)!.resolve(first))
     expect(detail()!.textContent).toContain(first.textContent)
-    expect(read.mock.calls.every(([operation]) => operation === 'world.record.read' || operation === 'world.interactions.list')).toBe(true)
+    expect(read.mock.calls.map(([operation]) => operation).filter(operation => !['world.record.read', 'world.replies', 'world.reactions.prepare', 'team.world', 'team.app.teams'].includes(operation))).toEqual([])
   })
 
   it('aborts and hides the old detail immediately when the signed-in account changes', async () => {

@@ -79,7 +79,8 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
   return { searchScope: value }
 }
 
-function requestBytesLimit(operation: string): number {
+function requestBytesLimit(operation: string, params?: unknown): number {
+  if (operation === 'team.world' && params && typeof params === 'object' && (params as Record<string, unknown>).action === 'image-upload') return Math.ceil(ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES / 3) * 4 + 64 * 1024
   if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
@@ -122,7 +123,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   if (typeof source.operation !== 'string') {
     throw new ArkmePluginError('operation-required', '缺少操作类型', false)
   }
-  if (bytes > requestBytesLimit(source.operation)) {
+  if (bytes > requestBytesLimit(source.operation, source.params)) {
     throw new ArkmePluginError('request-too-large', '请求内容过大', false, 413)
   }
   return {
@@ -2014,8 +2015,8 @@ export async function dispatchArkmeHostOperation(
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
       const image = params.cacheOnly === true
-        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true })
-        : await service.readImage(stringParam(params, 'imageRef'))
+        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true, ...(requestSignal ? { signal: requestSignal } : {}) })
+        : await service.readImage(stringParam(params, 'imageRef'), requestSignal ? { signal: requestSignal } : {})
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,
@@ -2106,7 +2107,8 @@ export async function dispatchArkmeHostOperation(
     })
     case 'world.feed': return await service.listWorldFeed({
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
-      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
     })
     case 'world.mine': return await service.listMyWorldFeed({
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
@@ -2145,6 +2147,11 @@ export async function dispatchArkmeHostOperation(
     case 'world.voiceprint.invite': return await service.inviteWorldVoiceprint(
       stringParam(params, 'recordRef').trim(),
     )
+    case 'world.replies': return await service.listWorldReplies(stringParam(params, 'recordRef'), {
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
+    })
     case 'world.interactions.list': return await service.listWorldInteractions(
       stringParam(params, 'recordRef'),
       {
@@ -2154,6 +2161,7 @@ export async function dispatchArkmeHostOperation(
       },
     )
     case 'world.notification-sources': return await service.worldNotificationSources(Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), requestSignal)
+    case 'world.comment-notifications': return await service.worldCommentNotifications({ limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'world.notification-target': return await service.worldNotificationTarget(stringParam(params, 'interactionRef'), requestSignal)
     case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
     case 'world.interactions.mark-viewed': {
@@ -2805,8 +2813,11 @@ export async function dispatchArkmeHostOperation(
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
+    case 'team.world': return await service.teamWorld(params as unknown as import('./team-world-contract.js').TeamWorldRequest, requestSignal)
+    case 'world.reactions.archive': return await service.worldReactionArchive(params as unknown as import('./world-reaction-contract.js').WorldReactionArchiveRequest, requestSignal)
     case 'world.reactions': return await service.worldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'world.reactions.local': return await service.localWorldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
+    case 'world.reactions.from-note': return await service.prepareNoteWorldReactions(stringParam(params, 'accountKey'), stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), requestSignal)
     case 'world.reactions.prepare': return await service.prepareWorldReactions(stringParam(params, 'accountKey'), stringListParam(params, 'recordRefs'), requestSignal)
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(

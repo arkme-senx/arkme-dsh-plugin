@@ -18,6 +18,7 @@ export interface ShareLinkPreview {
   author?: string
   /** Derived from authenticated source ownership, never from a matching name. */
   authorIsMe?: boolean
+  authorKind?: 'team'
   avatarUrl?: string
   summary?: string
   thumbnailUrl?: string
@@ -232,7 +233,11 @@ export function projectSharePreview(target: ShareLinkTarget, raw: unknown): Shar
     const user = list(data.items)[0] ?? {}
     return Object.keys(user).length ? assign(user.nick_name, undefined, user.head_img, user.jotmo_id) : { ...base, state: 'unavailable' }
   }
-  if (target.kind === 'public-record') return assign(undefined, data.nick_name, data.avatar, data.text_content ?? data.content)
+  if (target.kind === 'public-record') {
+    const principal = previewObject(data.principal)
+    if (!['person', 'team'].includes(String(principal.kind)) || !previewText(principal.name)) return { ...base, state: 'unavailable' }
+    return { ...assign(data.headline, principal.name, principal.avatar, data.text_content ?? data.content), ...(principal.kind === 'team' ? { authorKind: 'team' as const } : {}) }
+  }
   if (target.kind === 'topic') return assign(data.title, data.creator_display_name, undefined, undefined)
   if (target.kind === 'call-invite') {
     const user = previewObject(data.sharer_profile)

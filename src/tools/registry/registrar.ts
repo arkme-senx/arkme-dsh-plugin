@@ -25,7 +25,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_speaker_correct',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_notification_policy_set',
-  'arkme_reactions_write',
+  'arkme_reactions_write', 'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -111,7 +111,15 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'
-  if (name === 'arkme_reactions_write') {
+  if (name === 'arkme_team_world_write') {
+    const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
+    if (request.action === 'feedback-read') return '是否将刚才展示的团队世界反馈标记为已读？'
+    if (request.action === 'image-upload') return '是否上传所选团队内容图片？图片仍占用你的存储额度，离队后不会自动释放。'
+    const labels: Record<string,string> = { publish: '公开发布', edit: '编辑', unpublish: '撤回公开', delete: '删除', restore: '恢复为未公开' }
+    return `是否代表刚才选定的团队${labels[String(request.change)] ?? '操作'}这份内容？内容归团队所有，记录实际操作者，个人来源保持不变。`
+  }
+  if (name === 'arkme_world_reply') return `是否以你的个人身份公开回复刚才选定的世界内容：“${cleanArgument(args.text, 120)}”？`
+  if (name === 'arkme_reactions_write' || name === 'arkme_world_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
     if (request.action === 'history-policy-set') return request.locked === true
       ? '是否确认锁定自己的表态操作记录？锁定后时间轴、数据管理和 AI 都不能读取这些记录。'

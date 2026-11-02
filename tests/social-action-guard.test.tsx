@@ -39,7 +39,7 @@ const mount = async (content: React.ReactNode) => {
 const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label)!
 
 describe('browse without binding; prompt only on social writes', () => {
-  it.each(['world.feed', 'world.user', 'world.record.read', 'world.image.read', 'world.interactions.list', 'world.interactions.mark-viewed', 'sources.list', 'contacts.search', 'calls.history.list', 'team.app.official', 'team.app.timeline', 'source.send-text', 'recordings.day'] as const)('does not gate %s or fetch a profile for a read/personal operation', async operation => {
+  it.each(['world.feed', 'world.user', 'world.record.read', 'world.image.read', 'world.replies', 'world.interactions.mark-viewed', 'sources.list', 'contacts.search', 'calls.history.list', 'team.app.official', 'team.app.timeline', 'source.send-text', 'recordings.day'] as const)('does not gate %s or fetch a profile for a read/personal operation', async operation => {
     socialAccessStore.confirm('test:42', false)
     await expect(callArkme(operation)).resolves.toEqual({ ok: true })
     expect(provider.call).toHaveBeenCalledExactlyOnceWith(operation, operation.startsWith('team.app.') ? { expectedAccountKey: 'test:42' } : undefined, undefined)
@@ -107,9 +107,9 @@ describe('browse without binding; prompt only on social writes', () => {
   })
   it('renders a world post and its comments without binding and retains a rejected comment draft', async () => {
     socialAccessStore.confirm('test:42', false)
-    provider.call.mockImplementation(async operation => {
+    provider.call.mockImplementation(async (operation, params) => {
       if (operation === 'user.profile.refresh') return profile()
-      if (operation === 'world.interactions.list') return { items: [{ interactionRef: 'comment', authorName: '读者', textContent: '已有评论可阅读', createdAtMillis: 1700000000000, publishedAtMillis: 1700000000000, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0 }], hasMore: false }
+      if (operation === 'world.replies' && params?.recordRef !== 'comment') return { items: [{ interactionRef: 'comment', parentRef: String(params?.recordRef), authorName: '读者', textContent: '已有评论可阅读', createdAtMillis: 1700000000000, publishedAtMillis: 1700000000000, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0 }], hasMore: false }
       if (operation === 'world.author-labels') return []
       return { items: [], hasMore: false }
     })
