@@ -4111,7 +4111,25 @@ describe('conversation send directory projection', () => {
     })
   })
 
-  it.each([false, true])('keeps distinct represented Team names visible on own messages extension=%s', async extension => {
+  it('uses the existing recording title row when the card has no personal avatar', async () => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    timeline = [{ itemUid: 'represented-recording', senderName: '本人', isMe: true,
+      sendAtMillis: 1, title: '', textContent: '', status: 1,
+      representation: { name: '接待', jotmoId: 'team', teamRef: 'sealed', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 },
+      sharedRecording: { sourceDigest: 'digest', sharedByUserId: 42, sharedAtMillis: 1,
+        displayAtMillis: 1, endAtMillis: 60_001, timeRangeText: '10:00 - 10:01', title: '项目沟通', summary: '摘要',
+        transcriptAvailable: true, participants: [] } }]
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'represented-recording' })
+    expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(0)
+    expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(0)
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const card = row.findByProps({ 'data-arkme-shared-recording-card': 'true' })
+    expect(card.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(1)
+  })
+
+  it.each([false, true])('keeps accepted Team identity on the existing personal avatar extension=%s', async extension => {
     activeSource = group
     arkmeUi.selectSource(group)
     const representation = { name: '接待团队', jotmoId: 'team', teamRef: 'sealed-team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
@@ -4127,15 +4145,16 @@ describe('conversation send directory projection', () => {
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     for (const [index, name] of ['接待团队', '设计团队'].entries()) {
       const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': `own-team-${index}` })
-      const header = row.findByType(ArkmeTimelineMessageHeader)
-      expect(renderedText(header)).toContain(`代表 · ${name}`)
-      expect(renderedText(header)).not.toContain('真实本人')
-      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(1)
-      expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(extension ? 0 : 1)
+      expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(0)
+      const markers = row.findAllByProps({ 'data-arkme-team-representation': 'marker' })
+      expect(markers).toHaveLength(1)
+      expect(markers[0]!.props.title).toContain(name)
+      expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(1)
     }
   })
 
-  it('shares one named Team entry across consecutive own messages and restores it at identity boundaries', async () => {
+  it('keeps per-message identity without adding a Team header or grouping rule', async () => {
     activeSource = group
     arkmeUi.selectSource(group)
     const representation = { name: '接待团队', jotmoId: 'team', teamRef: 'sealed-team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
@@ -4150,11 +4169,13 @@ describe('conversation send directory projection', () => {
     ].map((extra, i) => ({ itemUid: `grouped-${i}`, senderName: '发言人', isMe: true,
       sendAtMillis: at + i, title: '', textContent: `正文${i}`, status: 1, ...extra }))
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
-    for (const [index, labels] of [1, 0, 0, 1, 1, 0, 1, 1, 1].entries()) {
+    for (const [index, markers] of [1, 1, 0, 1, 1, 1, 1, 1, 1].entries()) {
       const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': `grouped-${index}` })
-      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(labels)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(0)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(markers)
       expect(renderedText(row)).toContain(`正文${index}`)
-      if (index !== 2) expect(row.props['aria-description']).toContain('代表 · ')
+      if (index !== 2) expect(row.props['aria-description']).toContain('代表')
+      expect(renderedText(row)).not.toContain('代表 · ')
     }
   })
 

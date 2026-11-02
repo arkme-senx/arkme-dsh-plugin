@@ -4,7 +4,6 @@ import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
 import { ArkmeComposerResourcePicker } from './ArkmeComposerResourcePicker.js'
 import { detailExtensionSends, useDetailExtensionSends, publicTimelineExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
-import { continuesTeamRepresentation } from './team-identity-presentation.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
 import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
@@ -1510,20 +1509,15 @@ export function ArkmeTimelineMessageHeader({
   item,
   profile,
   member,
-  presentationIsMe = false,
-  showRepresentation = true,
 }: {
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
   member?: Pick<ArkmeConversationMemberItem, 'displayName'>
-  presentationIsMe?: boolean
-  showRepresentation?: boolean
 }) {
   const memberDisplayName = member?.displayName.trim()
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
-  return <span style={{ ...styles.messageHeader, ...(presentationIsMe ? { alignSelf: 'flex-end' } : {}), minWidth: 0, maxWidth: '100%' }}>
-    {!presentationIsMe && (item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>)}
-    {showRepresentation && item.representation && <TeamRepresentationBadge value={item.representation}/>}
+  return <span style={styles.messageHeader}>
+    {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
   </span>
 }
 
@@ -8120,14 +8114,8 @@ export function ArkmeSurface({
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
                   : conversationMemberByRef.get(item.memberRef)
-                const previousMessage = previous?.kind === 'message' ? previous.item : undefined
-                const showRepresentation = item.representation !== undefined &&
-                  (startsDay || previousMessage !== undefined && personalExtensionParents.has(previousMessage.itemUid)
-                    || !continuesTeamRepresentation(previousMessage, item))
-                const messageHeader = source.kind === 'private_chat' || presentationIsMe && !showRepresentation ? null : <ArkmeTimelineMessageHeader
+                const messageHeader = presentationIsMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
                   item={item}
-                  presentationIsMe={presentationIsMe}
-                  showRepresentation={showRepresentation}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}
                   {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
                 />
@@ -8137,7 +8125,7 @@ export function ArkmeSurface({
                 const isSharedRecordingCard = item.sharedRecording !== undefined
                 const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
                 const isExtensionMessage = !isSharedRecordingCard && item.extensionParent !== undefined
-                const messageAvatar = showMessageAvatars && !isSharedRecordingCard
+                const personalMessageAvatar = showMessageAvatars && !isSharedRecordingCard
                   ? <MessageAvatar senderKind={item.senderKind}
                     {...(avatarRef === undefined ? {} : { avatarRef })}
                     {...(roleFallback === undefined ? {} : { fallback: roleFallback, label: `${role?.name ?? ''}的角色头像` })}
@@ -8157,6 +8145,10 @@ export function ArkmeSurface({
                     onBotOpen={(...args) => timelineActions.current.openBotProfile(...args)}
                   />
                   : null
+                const messageAvatar = personalMessageAvatar && item.representation
+                  ? <span style={{ position: 'relative', display: 'inline-flex', alignSelf: 'flex-start' }}>
+                    {personalMessageAvatar}<TeamRepresentationBadge value={item.representation} compact />
+                  </span> : personalMessageAvatar
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
                 const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
@@ -8169,7 +8161,7 @@ export function ArkmeSurface({
                     data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid}
                     data-arkme-message-version={item.recordVersion ?? 0} data-arkme-message-sequence={item.sequence}
                     data-arkme-message-owner-id={item.recordOwnerUserId}
-                    aria-description={item.representation ? tr('代表 · {v0}', { v0: item.representation.name }) : undefined} style={{
+                    aria-description={item.representation ? tr('代表{v0}发言', { v0: item.representation.name }) : undefined} style={{
                     ...styles.row,
                     ...(activeSelectMode === undefined
                       ? isSharedRecordingCard
@@ -8211,7 +8203,7 @@ export function ArkmeSurface({
                       // The viewport already supplies the gap above the composer.
                       marginBottom: messageLineBottomGap,
                     }}>
-                      {!isExtensionMessage && (item.representation?<span style={{position:'relative',display:'inline-flex',alignSelf:'flex-start'}}>{messageAvatar}<TeamRepresentationBadge value={item.representation} compact/></span>:messageAvatar)}
+                      {!isExtensionMessage && messageAvatar}
                       <div style={{
                         ...styles.messageBody,
                         ...(presentationIsMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),

@@ -86,12 +86,13 @@ try{
  assert(uiCall?.input.representation,'UI send must carry explicit team selection')
  const uiRow=page.locator(`[data-arkme-message-item-uid="${uiCall.input.record_uid}"]`)
  await uiRow.locator('[data-arkme-team-representation="marker"]').waitFor()
- assert.equal(await uiRow.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).count(),0,
-   'a consecutive accepted Team message shares the earlier named entry, before reload')
+ assert.equal(await uiRow.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).count(),1,
+   'the accepted avatar marker opens the original card without a separate Team header')
+ assert.equal(await uiRow.locator('[data-arkme-team-representation="label"]').count(),0)
  for(let attempt=0;attempt<100;attempt++){const receipt=await ownerPost('chat','/api/v1/chats/records/receipt/get',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid});if(receipt.accepted)break;if(attempt===99)throw new Error('UI acceptance missing');await new Promise(resolve=>setTimeout(resolve,100))}
  const detail=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:uiCall.input.record_uid,rel_uid:uiCall.input.rel_uid,record_owner_user_id:actor})
  assert.equal(detail.item.relation.representation.team_id,'7');assert.equal(detail.item.relation.sender_user_id,actor)
- await page.screenshot({path:join(capture,'consecutive-team-messages.png')})
+ await page.screenshot({path:join(capture,'existing-team-markers.png')})
  // Browser uses the colleague's existing picker/editor fallback and pending-article send.
  await page.getByRole('button',{name:'添加内容',exact:true}).click()
  await page.getByRole('menuitem',{name:'添加长文',exact:true}).click()
