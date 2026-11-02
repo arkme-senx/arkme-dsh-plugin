@@ -77,14 +77,21 @@ function TeamHistoryAnalysis(props: Props) {
   }
   const currentPerson = people.people.find(value => value.personKey === person) ?? selectedPerson.current
   const options: TeamHistoryOptions = { ...historyMonthWindow(month), ...(person === 'self' ? { sender: 'self' } : person !== 'all' && currentPerson?.personRef ? { personRef: currentPerson.personRef } : {}) }
-  const signature = JSON.stringify([scope, tab, options, revision])
+  const operationScope = JSON.stringify([scope, options, revision])
+  const signature = JSON.stringify([operationScope, tab])
+  // Keep only operation IDs for the two tabs, never result bodies or ACLs.
+  // Re-entering a tab still verifies its existing snapshot on the server.
+  const operations = useRef<{ scope: string; requests: Map<string, string> }>({ scope: '', requests: new Map() })
   const current = useRef({ ref: conversation.ref, options }); current.current = { ref: conversation.ref, options }
   const active = useRef<AbortController>()
   const [state, setState] = useState<{ signature: string; manifest?: TeamHistoryResponse; result?: TeamHistoryResponse; error: string }>({ signature: '', error: '' })
   useEffect(() => {
     const controller = new AbortController(); active.current = controller
     setState({ signature, error: '' })
-    void prepareHistory(current.current.ref, accountKey, 'analysis/create', { ...current.current.options, analysisKind: tab, requestId: crypto.randomUUID() }, controller.signal, manifest => {
+    if (operations.current.scope !== operationScope) operations.current = { scope: operationScope, requests: new Map() }
+    let requestId = operations.current.requests.get(tab)
+    if (!requestId) { requestId = crypto.randomUUID(); operations.current.requests.set(tab, requestId) }
+    void prepareHistory(current.current.ref, accountKey, 'analysis/create', { ...current.current.options, analysisKind: tab, requestId }, controller.signal, manifest => {
       if (!controller.signal.aborted) setState({ signature, manifest, error: '' })
     }).then(async manifest => {
       if (!manifest.resultRef) throw new Error('分析结果无效，请重试')
@@ -95,9 +102,9 @@ function TeamHistoryAnalysis(props: Props) {
       if (!controller.signal.aborted) setState({ signature, error: error instanceof Error ? error.message : '分析失败，请重试' })
     })
     return () => controller.abort()
-  }, [signature, accountKey, tab])
+  }, [signature, accountKey, tab, operationScope])
   useEffect(() => subscribeTeamMessageChanges((account, receiptOnly, change) => {
-    if (account === accountKey && !receiptOnly && teamChangeAffectsSource(change, { conversationKey: conversation.key })) { active.current?.abort(); setState({ signature, error: '团队内容已更新，请刷新查询' }) }
+    if (account === accountKey && !receiptOnly && teamChangeAffectsSource(change, { conversationKey: conversation.key })) { active.current?.abort(); operations.current.requests.clear(); setState({ signature, error: '团队内容已更新，请刷新查询' }) }
   }), [accountKey, signature, conversation.key])
   const result = state.signature === signature && !people.error ? state.result : undefined
   const words = useTeamHistoryPage(conversation.ref, accountKey, 'analysis/words', { resultRef: result?.resultRef ?? '', limit: 100 }, !!result && tab === 'words', { key: scope, conversationKey: conversation.key })
