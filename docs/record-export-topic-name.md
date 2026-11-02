@@ -6,11 +6,11 @@ Record 导出分页返回可选的 `topic_core`，插件在每条记录的时间
 
 | 能力面 | 实现与验收 |
 | --- | --- |
-| Host | 既有 `RecordExportService` 唯一执行 owner；共用分页、授权、取消、ZIP 及文件引用机制。验证真实 ZIP 中主题、正文、附件及旧字段兼容。 |
-| Tools | 既有 `arkme_records_export` / preflight 与显式用户授权保持不变；下载同一 owner 生成的 ZIP。验证正式 DSH 会话发现与调用。 |
-| SDK | 既有 `recordExportV1`、`exportRecords`、下载引用与 dispose 合同保持不变；无需新增可见字段。验证不可变包的仓外 Consumer。 |
-| UI | 数据管理 → 导出备份 → 确认 → 下载，既有进度、取消、错误与恢复保持不变；验证实际页面下载的 ZIP。 |
-| Client/Harness | 既有同源下载和 ZIP 文件合同足够承载，客户端源码和原生桥不变。插件制品验证不等同已安装客户端更新。 |
+| Host | 既有 `RecordExportService` 唯一执行 owner；共用分页、授权、取消、ZIP 及文件引用机制。38 项相关测试通过，覆盖真实 ZIP 中主题、正文、附件及旧字段兼容。 |
+| Tools | 官方 DSH 0.2.1-rc.2 全新 Profile 中，真实会话发现导出工具，完成 preflight、拒绝未确认调用、消费用户确认后生成 ZIP。 |
+| SDK | 既有 `recordExportV1`、`exportRecords`、下载引用与 dispose 合同保持不变。不可变包安装后的仓外 Consumer 编译、能力探测、调用、旧能力拒绝和 dispose 检查通过。 |
+| UI | 官方 DSH 实际页面完成数据管理 → 导出备份 → 确认 → 下载；ZIP CRC、两条正文、特殊字符主题和未命名主题检查通过。UI 与 Tools 的 Markdown 逐字节一致。 |
+| Client/Harness | 静态核对客户端 47689d83 的同源导航与下载承载，无需改变源码或原生桥。官方 DSH 插件制品验证通过；未发布运行环境，未验收已安装桌面客户端或 Windows/Linux。 |
 
 ## 性能与兼容
 
@@ -19,3 +19,15 @@ Record 导出分页返回可选的 `topic_core`，插件在每条记录的时间
 后端依赖 Record 导出可选字段（Record MR !473）；旧后端不返回字段时仍可正常导出。发布时先部署后端，再更新插件。回退插件不影响后端或数据；没有数据库写入语义变化。
 
 本次不修改根 README、插件版本或依赖锁文件，不发布 npm / Release Set，也不替换常驻 DSH。
+
+## 2026-11-02 验证结果
+
+- 插件基线 `19ccadb5f6f9f8cb10e5d3fa7a3c9944d6e4951b`（official/dev），源码提交 `af5e890a`；Node 24.22.1、pnpm 11.7.0，macOS。
+- 相关基线复验 25/25，通过后新增失败测试证明缺口，实施后相关测试 38/38；`pnpm run typecheck`、`pnpm run build`、通话资产和凭据 helper 校验通过。
+- 完整执行 `pnpm test --maxWorkers=2 --testTimeout=60000`：1317 文件通过、2 失败、19 跳过；15034 用例通过、3 失败、26 跳过，耗时 1979.45 秒。未过滤、跳过或提前中止该全量运行。
+- 失败的两个会话目录用例在原始基线均复现（400 条刷新超过用例自身 90 秒上限，随后 renderer 未建立）；远端大事件集上传超过自身 30 秒上限，原始基线和当前提交单项复验均通过。相关源码与测试不在本次变更范围；全量门禁仍未通过，单项复验不替代全量结果。
+- 版本保持 3.0.39。源码提交的不可变 tgz 共 3303 个条目，必需入口和本机路径扫描通过；SHA256 `610a56925f684beeb898a29a3a5c600d58be16d9a2fcbf3a27ece3943660affe`。
+- 实际 Profile 验证使用隔离 HTTPS 样例，包含真实正文与主题；并非真实 TEST/生产账号数据。已验证文件内容和消费链路，不声称新增桌面安装、生产发布或跨平台验收。
+- DSH 只读参考 `dsh-v0.2.1-rc.2`（687f282e），tracked 状态保持不变。初次从客户端开发依赖树启动 CLI 被旧插件 3.0.18 遮蔽并被官方兼容校验拒绝；改用未包含 Arkme 的官方 DSH 安装后成功，未增加版本豁免。
+
+运行证据保存在任务制品目录 `arkme-export-topic-name-20261102`，包括全量及基线日志、不可变包、官方 Profile 的 UI/Tools ZIP、SDK Consumer 结果和页面截图。后续提交仅补充本交付文档，运行时代码保持 `af5e890a`。
