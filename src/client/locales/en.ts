@@ -110,6 +110,9 @@ AI 自动分析|Automatic AI analysis
 快记建议|Note suggestions
 个人档案|Personal profile
 根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+录音语音触发|Recording voice triggers
+录音日历「更多 → 语音触发」|Recording calendar → More → Voice triggers
+根据启用后新上传录音中的口令生成记事候选，语境分析会消耗 AI 额度。可靠本人且内容完整时可按规则自动保存快记，其他命中由你确认；不会回扫已有云端录音。|Create note candidates from voice commands in recordings newly uploaded after opt-in. Context analysis uses AI allowance. Rules may automatically save complete notes reliably attributed to you; other matches await your confirmation. Existing cloud recordings are not rescanned.
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
 持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI

@@ -16,7 +16,7 @@ const sdk = createArkmeSdk({ fetchImpl: async (_, init) => {
   return new Response(JSON.stringify({ok:true,value:request.operation==='provider.capabilities'?{contractVersion:1,features:{automaticCapabilitiesV1:true}}:state}))
 } })
 assert.equal((await sdk.automaticCapabilities('prod:7')).settings[0]?.enabled,false)
-const update: ArkmeCapabilityUpdate = {key:'record_thought',enabled:true,expectedVersion:0,billingConsent:true}
+const update: ArkmeCapabilityUpdate = {key:'recording_voice_trigger',enabled:true,expectedVersion:0,billingConsent:true}
 await sdk.updateAutomaticCapability('prod:7',update)
 assert.deepEqual(calls.at(-1),{operation:'account.capabilities.update',params:{expectedAccountScope:'prod:7',...update}})
 let unsupportedWrites = 0

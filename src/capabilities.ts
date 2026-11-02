@@ -1,4 +1,4 @@
-export const automaticCapabilityKeys = ['personal_profile', 'record_thought', 'chat_thought', 'arrangement_recognition', 'goal_insight', 'offline_context'] as const
+export const automaticCapabilityKeys = ['personal_profile', 'record_thought', 'chat_thought', 'arrangement_recognition', 'goal_insight', 'offline_context', 'recording_voice_trigger'] as const
 export type AutomaticCapabilityKey = typeof automaticCapabilityKeys[number]
 export interface ArkmeCapabilitySetting { key: AutomaticCapabilityKey; title: string; enabled: boolean; version: number; enabledAt: number }
 export interface ArkmeCapabilitySettings { accountScope: string; settings: ArkmeCapabilitySetting[] }
@@ -10,4 +10,5 @@ export const automaticCapabilityDescriptions: Record<AutomaticCapabilityKey, str
   arrangement_recognition: '从开启后的快记、录音总结和通话中识别自己的安排。',
   offline_context: '开启后会检查历史及新增的录音和聊天，自动发现线下交流与聊天的关联，仅你自己可见。分析文本或附件会消耗 AI 额度；相同内容的分析结果会复用，重复开关不会重复计费。关闭后暂停自动处理。',
   goal_insight: '根据开启后的新材料自动更新目标。',
+  recording_voice_trigger: '根据启用后新上传录音中的口令生成记事候选，语境分析会消耗 AI 额度。可靠本人且内容完整时可按规则自动保存快记，其他命中由你确认；不会回扫已有云端录音。',
 }

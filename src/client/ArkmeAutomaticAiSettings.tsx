@@ -11,6 +11,7 @@ const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
   arrangement_recognition: '左侧「安排」',
   offline_context: '聊天中的线下交流关联',
   goal_insight: '「探索 → 目标」',
+  recording_voice_trigger: '录音日历「更多 → 语音触发」',
 }
 
 export function ArkmeAutomaticAiSettings({ accountScope, only, title = '自动使用额度', compact = false }: { accountScope: string; only?: readonly ArkmeCapabilitySetting['key'][]; title?: string; compact?: boolean }) {
