@@ -144,6 +144,7 @@ export function startTeamDirectory(key: string): () => void {
       ++revision
       const invalidate=(row:TeamConversation)=>teamChangeAffectsConversationPreview(change,row)?withoutTeamConversationMaterial(row):row
       for (const [side,page] of pages) pages.set(side,{...page,items:page.items.map(invalidate)})
+      for (const [id, row] of pins) pins.set(id, invalidate(row))
       snapshot={...snapshot,items:snapshot.items.map(invalidate)};emit()
     }
     void refresh(false, receiptOnly === true)

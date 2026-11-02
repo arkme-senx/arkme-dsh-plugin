@@ -56,6 +56,16 @@ const timelineChangedHint = {
 }
 
 describe('Arkme Chat realtime', () => {
+  it('keeps private Team entry hints distinct from material changes and validates overflow metadata', () => {
+    const event = { t: 28, event_uid: 'entry-hint', event_at: 123456, kind: 'team.entry-preference.changed', team_id: 7, revision: 2 }
+    const decode = (value: unknown) => decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(value)}`)
+    expect(decode(event)).toMatchObject({ receiptOnly: false, change: { kind: event.kind } })
+    expect(decode({ ...event, reconcile: true })).toEqual({ eventUid: event.event_uid, eventAtMillis: event.event_at, receiptOnly: false })
+    for (const invalid of [{ team_id: 0 }, { conversation_uid: 'private' }, { message_uid: 'private' }, { message_revision: 1 }]) {
+      expect(decode({ ...event, ...invalid })).toBeUndefined()
+      expect(decode({ ...event, ...invalid, reconcile: true })).toBeUndefined()
+    }
+  })
   it('decodes message and conversation revisions separately and makes overflow a full reconciliation',()=>{
     const event={t:28,event_uid:'versioned',event_at:123456,kind:'team.message.changed',conversation_uid:'c',message_uid:'m',revision:99,message_revision:2,seq:4}
     expect(decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(event)}`)).toMatchObject({change:{messageRevision:2,conversationRevision:99,sequence:4}})

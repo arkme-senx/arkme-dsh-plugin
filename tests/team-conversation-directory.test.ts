@@ -237,3 +237,28 @@ it('off-page pins do not grow the pagination window and share receipt/revocation
   await refreshTeamDirectory('pin-pagination', false, true)
   expect(readTeamDirectory('pin-pagination').items.map(c => c.key)).toEqual([ordinary.key])
 })
+
+it('a changed off-page pin cannot regain its old preview on a receipt or failed list refresh', async () => {
+  const pinned = { ...item('external'), key: 'recalled-pin', entryKey: 'recalled-pin-key', ref: 'recalled-pin-ref', preview: { status: 'available', text: 'old pinned preview', hasMedia: false } }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: pinned.ref }])
+  vi.spyOn(teamDirectoryPreferences, 'read').mockReturnValue({ [pinned.entryKey]: { pinned: true, dismissed: false } })
+  let offline = false
+  mock.mockImplementation(async (op, p) => {
+    if (op === 'team.app.read-states') return [{ key: pinned.key, accessible: true, lastSeq: 1, myReadSeq: 1, unread: 0 }]
+    if (offline) throw new Error('offline')
+    if (op === 'team.app.timeline') return { conversation: pinned }
+    return { items: [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('changed-pin'))
+  await vi.waitFor(() => expect(readTeamDirectory('changed-pin').items).toHaveLength(1))
+  expect(readTeamDirectory('changed-pin').items[0]!.preview?.text).toBe('old pinned preview')
+  offline = true
+  invalidateTeamMessages('changed-pin', false, { kind: 'team.message.changed', conversationKeys: [pinned.key] })
+  expect(readTeamDirectory('changed-pin').items[0]!.preview?.text).toBe('')
+  await vi.waitFor(() => expect(readTeamDirectory('changed-pin').loading).toBe(false))
+  await refreshTeamDirectory('changed-pin', false, true)
+  expect(readTeamDirectory('changed-pin').items[0]!.unread).toBe(0)
+  expect(readTeamDirectory('changed-pin').items[0]!.preview?.text).toBe('')
+})
