@@ -28,7 +28,7 @@
 | `social.people.listing.set` | `/people/listing/set` |
 | `social.people.chat` | `/people/chat` |
 
-除直接打开已加入群外，Chat 路由前缀为 `/api/v1/chats/discovery`。现有 `group.create` 额外转发 `isPublic` 和 `introduction`，旧调用者可继续省略。完整后端契约见 `jotmo-chat/docs/api/public-social-discovery.md`，对应 Chat 提交 `25af1996496f7d3b75a10b8f265804c516ee6ffc`。
+除直接打开已加入群外，Chat 路由前缀为 `/api/v1/chats/discovery`。现有 `group.create` 额外转发 `isPublic` 和 `introduction`，旧调用者可继续省略。完整后端契约见 `jotmo-chat/docs/api/public-social-discovery.md`，对应 Chat 提交 `a25dfd34a374bf165cf38bfdf0cf9373d7c14314`。
 
 成功加入或建聊后，Host 用原 `/api/v1/chats/detail` 验证本人有效成员身份，生成原 sourceRef 并刷新原会话目录。不会另建一套会话或自动发送消息。未部署的 discovery 路由返回可重试的“公开社交服务尚未开放”提示；发布桌面版本前应先提供上述后端能力。
 
