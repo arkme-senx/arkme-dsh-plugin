@@ -37,6 +37,7 @@ import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp } from './MessageQuoteThreads.js'
+import { RecordThoughtContent, RecordThoughtEntry, RecordThoughtsProvider } from './RecordThoughts.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
@@ -330,6 +331,7 @@ import {
   arkmeGroupMentionCandidates,
   arkmeMemberForMention,
   arkmePrivateMentionCandidates,
+  arkmeReservedAsenMentionCandidate,
   type ArkmeComposerMentionTrigger,
   type ArkmeMentionCandidate,
 } from './mention-candidates.js'
@@ -5403,7 +5405,7 @@ export function ArkmeSurface({
       }
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
       providerWriteStarted = true
-      const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0
+      const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0 || (isArkmeSelfWorkspaceSource(targetSource) && pendingBotMentions.length > 0)
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           ...(representation?{representation}:{}), sendAtMillis:now,
           sourceRef: targetSource.sourceRef, title: '', textContent: rawTextContent, textFormat, displayKind: 0,
@@ -5806,7 +5808,7 @@ export function ArkmeSurface({
         : actor.memberRef ? localReactionActors.get(actor.memberRef) : undefined
     return local ? { ...actor, ...local, presentationPending: false } : undefined
   }, [authenticatedUserId, source, selfProfile, conversationMembers, localReactionActors])
-  const composerMentionsEnabled = source?.kind === 'group_chat' || source?.kind === 'private_chat'
+  const composerMentionsEnabled = source?.kind === 'group_chat' || source?.kind === 'private_chat' || isArkmeSelfWorkspaceSource(source)
   const mentionCandidates = useMemo(
     (): ArkmeMentionCandidate[] => {
       if (!composerMentionsEnabled || mentionTrigger === undefined) return []
@@ -5819,11 +5821,11 @@ export function ArkmeSurface({
       } else if (source?.kind === 'private_chat') {
         return arkmePrivateMentionCandidates(mentionTrigger.query, mentionBots.private)
       }
-      return []
+      return arkmeReservedAsenMentionCandidate(mentionTrigger.query)
     },
     [composerMentionsEnabled, conversationMembers, mentionBots.group, mentionTrigger, mentionBots.private, source?.kind],
   )
-  const mentionSession = useMentionSuggestions(JSON.stringify([authenticatedAccountKey, conversationKey, activeRecordReeditComposer?.generation]), mentionTrigger, mentionCandidates, mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing)
+  const mentionSession = useMentionSuggestions(JSON.stringify([authenticatedAccountKey, conversationKey, activeRecordReeditComposer?.generation]), mentionTrigger, mentionCandidates, sourceIsChat && (mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing))
   const hashTagCandidates = useMemo(() => {
     if (hashTagTrigger === undefined) return []
     const query = hashTagTrigger.query.toLocaleLowerCase()
@@ -6059,6 +6061,20 @@ export function ArkmeSurface({
     if (cursor !== undefined) focusEditedComposer(cursor)
   }, [activeRecordReeditComposer, composerDraftKey, composerMentionsEnabled, draft.length,
     focusEditedComposer, insertReeditMentionAt, syncComposerUserInput])
+  const fillThoughtSuggestion = useCallback((text: string, mentionAsen?: boolean) => {
+    if (!composerDraftKey || directAdmission.blocked || activeRecordReeditComposer) return
+    const current = arkmeComposerDraftStore.get(composerDraftKey).text
+    syncComposerUserInput(true)
+    let cursor: number | undefined
+    if (mentionAsen) cursor = arkmeComposerDraftStore.insertBotMention(composerDraftKey, 'asen', '阿森', current.length, current.length)
+    else {
+      const next = current.trim() ? `${current}\n${text}` : text
+      arkmeComposerDraftStore.setText(composerDraftKey, next)
+      cursor = next.length
+    }
+    setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined
+    if (cursor !== undefined) focusEditedComposer(cursor)
+  }, [composerDraftKey, directAdmission.blocked, activeRecordReeditComposer, syncComposerUserInput, focusEditedComposer])
   const insertMentionCandidate = useCallback((member: ArkmeMentionCandidate) => {
     if (mentionTrigger === undefined) return
     if (activeRecordReeditComposer !== undefined && member.kind !== 'member') {
@@ -8301,6 +8317,7 @@ export function ArkmeSurface({
                             {fileSendStatus}
                             {textSendStatus}
                             {topicBadge}
+                            {(selfWorkspace || sourceIsChat) && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={() => timelineActions.current.openNoteDetail(item)} />}
                           </>
                           return <div
                             data-arkme-extension-message-cluster="true"
@@ -8333,6 +8350,7 @@ export function ArkmeSurface({
                                 {fileSendStatus}
                                 {textSendStatus}
                                 {topicBadge}
+                                {(selfWorkspace || sourceIsChat) && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={() => timelineActions.current.openNoteDetail(item)} />}
                               </div>
                             </div>
                           </div>
@@ -8420,6 +8438,8 @@ export function ArkmeSurface({
   </MessageQuoteThreadsProvider>
 
   return (
+    <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
+      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
     <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={activeConversation ? source?.sourceRef : undefined}
       chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
     <ArkmeBotIdentityStyles />
@@ -9130,8 +9150,8 @@ export function ArkmeSurface({
             </div>}
             {mentionTrigger !== undefined && <ArkmeMentionSuggestions session={mentionSession}
               style={styles.mentionSuggestions!}
-              loading={mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing}
-              error={mentionBots.error} onRetry={mentionBots.retry} onSelect={insertMentionCandidate}
+              loading={sourceIsChat && (mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing)}
+              error={sourceIsChat && mentionBots.error} onRetry={mentionBots.retry} onSelect={insertMentionCandidate}
               rowStyles={{ row: styles.mentionSuggestionRow!, rowActive: styles.mentionSuggestionRowActive!,
                 avatar: styles.mentionSuggestionAvatar!, botAvatar: styles.mentionSuggestionBotAvatar!,
                 text: styles.mentionSuggestionText!, name: styles.mentionSuggestionName!, secondary: styles.mentionSuggestionSecondary! }}
@@ -9530,6 +9550,7 @@ export function ArkmeSurface({
           {detailSharedRecording !== undefined && <RelatedRecordingDetail
             key={detailItem.itemUid}
             item={detailSharedRecording}
+            thoughts={<RecordThoughtContent item={detailItem}/>}
             showReadOnlyLabel={false}
             {...(detailSharedRecording.sharedRecordingDetailRef === undefined ? {} : {
               loadDetail: async (_item: ArkmeRelatedRecordingItem, signal?: AbortSignal) => arkmeRelatedRecordingItemFromSharedRecordingPreview(
@@ -9730,5 +9751,6 @@ export function ArkmeSurface({
     {recordingImportOwner}
     {directRecordingNotice}
     </MessageQuoteThreadsProvider>
+    </RecordThoughtsProvider>
   )
 }

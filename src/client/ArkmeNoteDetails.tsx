@@ -9,6 +9,7 @@ import { subscribeMessageQuoteInvalidations } from './message-quote-invalidation
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
+import { RecordThoughtContent } from './RecordThoughts.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
@@ -1105,6 +1106,7 @@ export function ArkmeTimelineDetailDrawer({
         if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop
         setEditHistoryTarget(historyTarget)
       }}>{tr("已编辑")}<CaretRight size={12} style={{ flex: 'none' }} aria-hidden /></button>}
+    <RecordThoughtContent item={item} />
     {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
       onOpen={() => { navigateRelated('related-list') }}
@@ -1249,6 +1251,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
           </div>
         })}
       </div>
+      <RecordThoughtContent item={item} />
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
     </ArkmeDetailShell>
   }
@@ -1305,6 +1308,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}>
     {sourceBadge}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
+    <RecordThoughtContent item={item} />
     {rows.length === 0 && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
     {forward.truncated && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
   </ArkmeDetailShell>

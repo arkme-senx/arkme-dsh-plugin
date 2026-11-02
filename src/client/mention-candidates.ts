@@ -98,7 +98,7 @@ function arkmeLooksLikeReservedAsenBot(value: { botRef?: string; name?: string; 
   return botRef === ARKME_RESERVED_ASEN_BOT_REF || displayName === ARKME_RESERVED_ASEN_DISPLAY_NAME
 }
 
-function arkmeReservedAsenMentionCandidate(query: string): ArkmeMentionCandidate[] {
+export function arkmeReservedAsenMentionCandidate(query: string): ArkmeMentionCandidate[] {
   if (!arkmeReservedAsenMentionMatches(query)) return []
   return [{
     kind: 'bot',

@@ -4057,6 +4057,10 @@ export class ChatService {
           })),
         }),
       }
+      if (contentPayload !== undefined && (options.humanMentions?.length || options.botMentions?.length)) {
+        const evidence = await this.mentionContentPayload(source, textContent, normalizedText, options.humanMentions ?? [], options.botMentions ?? [], session, options.signal, options.textFormat)
+        Object.assign(contentPayload, { mention_metadata: evidence.mention_metadata })
+      }
       const data = await this.record.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/topics/records/extensions/create',
         {
@@ -4125,6 +4129,7 @@ export class ChatService {
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       const sendAtMillis = Date.now()
+      const evidence = options.botMentions?.length ? await this.mentionContentPayload(source, textContent, normalizedText, [], options.botMentions, session, options.signal, options.textFormat) : undefined
       const recordResult = await this.record.createExtensionForConversation(
         reference.recordUid,
         normalizedUid,
@@ -4132,6 +4137,7 @@ export class ChatService {
         assets,
         options.textFormat,
         options.quote,
+        ...(evidence === undefined ? [] : [objectValue(evidence.mention_metadata)]),
       )
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({
@@ -4853,8 +4859,9 @@ export class ChatService {
     textFormat: 'plain' | 'markdown' = 'plain',
   ): Promise<Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }>> {
     if (inputs.length === 0) return []
-    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
-      throw new ArkmePluginError('mention-chat-required', 'Bot mention 只能发送到聊天', false)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat'
+      && (!['send_to_self', 'default_category', 'topic'].includes(source.kind) || inputs.some(input => input.botRef.trim().toLowerCase() !== RESERVED_ASEN_BOT_UID))) {
+      throw new ArkmePluginError('mention-chat-required', '当前会话仅支持 @阿森', false)
     }
     const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
     const uniqueRefs = [...new Set(inputs.map(input => input.botRef.trim()))]
@@ -5139,7 +5146,7 @@ export class ChatService {
         if ((input.humanMentions?.length ?? 0) > 0 && source.kind !== 'group_chat') {
           throw new ArkmePluginError('mention-group-required', '真人 mention 只能发送到群聊', false)
         }
-        if ((input.botMentions?.length ?? 0) > 0 && source.kind !== 'group_chat' && source.kind !== 'private_chat') {
+        if ((input.botMentions?.length ?? 0) > 0 && source.kind !== 'group_chat' && source.kind !== 'private_chat' && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) {
           throw new ArkmePluginError('mention-chat-required', 'Bot mention 只能发送到聊天', false)
         }
         if (longArticle) throw new ArkmePluginError('mention-rich-invalid', '长文暂不支持 mention', false)

@@ -3911,3 +3911,21 @@ it('preserves adjacent int64 member refs through paging, presentation and live t
  expect(await chat.memberWorldTarget('source',ref)).toEqual({userId:ids[1]})
  expect(ref).not.toBe(first.items[0]!.memberRef)
 })
+
+it.each(['send_to_self', 'default_category', 'topic'])('sends structured @Asen metadata through the existing %s record contract', async kind => {
+  const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+  const createPersonalRecord = vi.fn(async (_path: string, body: Record<string, unknown>) => ({ record_uid: body.record_uid, status: 1, record_status: 1 }))
+  const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'signing-key' } }
+  const source = { openSourceRef: async () => ({ kind, ownerRef: 'owned-source' }) }
+  const record = { createPersonalRecord, syncCreatedRecordTags: vi.fn() }
+  const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, record as never, {} as never, {} as never, {} as never,
+    { invalidateRecordProjection: vi.fn() } as never)
+  await chat.sendSourceRich('signed-source', { textContent: '  @阿森 看看 ', botMentions: [{ botRef: 'asen', startIndex: 2, length: 3 }] }, { recordUid: 'note' })
+  expect(createPersonalRecord).toHaveBeenCalledOnce()
+  expect(createPersonalRecord.mock.calls[0]?.[0]).toBe(kind === 'topic' ? '/api/v1/topics/records/create' : '/api/v1/records/create')
+  expect(createPersonalRecord.mock.calls[0]?.[1]).toMatchObject({ text_content: '@阿森 看看', content_payload: { mention_metadata: { bot_mentions: [
+    { bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 },
+  ] } } })
+  await expect(chat.sendSourceRich('signed-source', { textContent: '@别的机器人 看看', botMentions: [{ botRef: 'other', startIndex: 0, length: 6 }] })).rejects.toThrow('当前会话仅支持 @阿森')
+  expect(createPersonalRecord).toHaveBeenCalledOnce()
+})

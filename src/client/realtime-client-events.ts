@@ -1,3 +1,4 @@
+import { publishThoughtInvalidation } from './thought-invalidations.js'
 import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
 import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
 import { invalidateMessageMarks } from './message-mark-invalidations.js'
@@ -249,6 +250,10 @@ export function useArkmeRealtimeClientEvents(
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
         diagnoseAttention('accepted', update)
+        if (update.type === 'thought-invalidated') {
+          if (update.accountScope === authenticatedAccountScope) publishThoughtInvalidation(update)
+          return
+        }
         if (update.type === 'message-sync-progress') {
           arkmeMessageSync.apply(update.progress)
           if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
@@ -284,6 +289,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'reconcile') {
+          publishThoughtInvalidation({ accountScope: authenticatedAccountScope })
           invalidateMessageQuoteSources()
           invalidateMessageMarks(true)
           publishNativeAnnotationInvalidation(authenticatedAccountScope)
@@ -336,6 +342,7 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
+          if (update.projection === 'record') publishThoughtInvalidation({ accountScope: authenticatedAccountScope })
           if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
           if (update.projection === 'offline_context') {
             const active = arkmeUi.getSnapshot().selectedSource
@@ -370,6 +377,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'timeline-changed') {
+          publishThoughtInvalidation({ accountScope: authenticatedAccountScope, sourceKey: update.sourceKey, timelineItemKey: update.timelineItemKey, clear: update.changeKind !== 'extended' })
           invalidateMessageQuoteSources(update.sourceKey)
           invalidateMessageMarks(true)
           arkmeChatTimelineDelta.applyTimelineChange(update)
