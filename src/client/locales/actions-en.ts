@@ -19,7 +19,7 @@ export const actionEnglish: Record<string,string> = {
   "分析模型": "Analysis models",
   "查看 Arko 的想法": "View Arko’s thoughts",
   "查看 Arko 的回应": "View Arko’s response",
-  "Arko · 快记想法": "Arko · Note insight",
+  "Arko有想法": "Arko has a thought",
   "Arko · 回应": "Arko · Response",
   "Arko · 私密想法": "Arko · Private thought",
   "Arko · 回复建议": "Arko · Reply suggestion",
