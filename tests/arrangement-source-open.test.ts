@@ -14,7 +14,7 @@ function fixture(evidence: Record<string, unknown>) {
     source: { searchTargetSource: vi.fn(async (): Promise<unknown> => ({ ref: 'conversation-ref' })) },
     privacy: { lockedRecordUids: vi.fn(async () => new Set<string>()) },
     record: { personalRecordDetail: vi.fn(async () => ({ text: 'original' })) },
-    callHistory: { arrangementCallDetail: vi.fn(async () => ({ startedAtMillis: 1791800000000, transcriptSegments: [] })) },
+    callHistory: { arrangementCallDetail: vi.fn(async () => ({ startedAtMillis: 1791800000000, transcriptSegments: [] as Array<{text:string;startMillis:number}> })) },
   }
   const open = () => ArrangementSourceService.prototype.arrangementSourceOpen.call(host as unknown as ArrangementSourceService, 'opaque-arrangement', 'evidence-id')
   return { host, open }
@@ -44,6 +44,7 @@ describe('arrangement source access boundary', () => {
   })
   it('uses the owned call detail and converts an absolute source time to its transcript offset', async () => {
     const {host,open} = fixture({kind:'call',room_id:'room-a',start_ms:1791800002500,text:'检查'})
+    host.callHistory.arrangementCallDetail.mockResolvedValue({startedAtMillis:1791800000000,transcriptSegments:[{text:'检查',startMillis:2500}]})
     expect(await open()).toMatchObject({kind:'call',startMillis:2500,quote:'检查'})
     expect(host.callHistory.arrangementCallDetail).toHaveBeenCalledWith('room-a',undefined,{quote:'检查',startMillis:1791800002500})
   })
@@ -92,4 +93,18 @@ describe('arrangement source access boundary', () => {
 it('opens an agent instruction from the freshly resolved evidence without reading an unvalidated document', async () => {
   const { open } = fixture({ kind: 'agent', text: '原始用户指令' })
   expect(await open()).toEqual({ kind: 'document', title: '来源指令', text: '原始用户指令' })
+})
+
+
+it.each(['unlocated', 'ambiguous', 'version_changed', 'pending'])('opens readable %s calls without stale highlights', async quoteState => {
+  const {open,host} = fixture({kind:'call',room_id:'room-a',text:'',start_ms:1200,quoteState})
+  expect(await open()).toMatchObject({kind:'call',quote:'',quoteState})
+  expect(await open()).not.toHaveProperty('startMillis')
+  expect(host.callHistory.arrangementCallDetail).toHaveBeenCalledWith('room-a',undefined,{quote:''})
+})
+it('does not highlight changed text at the same timestamp between owner reads', async () => {
+  const {open,host} = fixture({kind:'call',room_id:'room-a',text:'原句',locatedStartMs:1200,quoteState:'exact'})
+  host.callHistory.arrangementCallDetail.mockResolvedValue({startedAtMillis:0,transcriptSegments:[{text:'另一句',startMillis:1200}]})
+  expect(await open()).toMatchObject({kind:'call',quote:'',quoteState:'unlocated'})
+  expect(await open()).not.toHaveProperty('startMillis')
 })
