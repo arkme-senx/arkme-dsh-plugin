@@ -392,7 +392,7 @@ export class GroupService {
   async createGroup(
     title: string,
     clientMutationId: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; isPublic?: boolean; introduction?: string; accountScope?: string; memberUserIds?: readonly number[] } = {},
   ): Promise<ArkmeSourceItem> {
     const normalizedTitle = title.trim()
     if (normalizedTitle === '' || Array.from(normalizedTitle).length > 80) {
@@ -402,6 +402,10 @@ export class GroupService {
       throw new ArkmePluginError('client-mutation-id-invalid', '群聊操作标识无效', false)
     }
     const session = await this.runtime.requireSession()
+    const memberUserIds = [...new Set(options.memberUserIds ?? [])]
+    if (memberUserIds.length > 99 || memberUserIds.some(id => !Number.isSafeInteger(id) || id <= 0 || id === session.userId)) throw new ArkmePluginError('group-members-invalid', '群成员无效，请重新选择', false, 400)
+    if (options.accountScope !== undefined && options.accountScope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('group-create-account-changed', '账号已切换，请重新打开创建群聊', false, 409)
+    if (Array.from(options.introduction ?? '').length > 500) throw new ArkmePluginError('group-introduction-invalid', '群介绍最多 500 个字符', false, 400)
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -409,7 +413,9 @@ export class GroupService {
         {
           chat_session_uid: clientMutationId,
           title: normalizedTitle,
-          member_user_ids: [],
+          ...(options.isPublic === undefined ? {} : { is_public: options.isPublic }),
+          ...(options.introduction === undefined ? {} : { introduction: options.introduction.trim() }),
+          member_user_ids: memberUserIds,
           create_at: Date.now(),
         },
         session,
@@ -426,6 +432,10 @@ export class GroupService {
         )
       }
       throw error
+    }
+    if (options.accountScope !== undefined) {
+      const current = await this.runtime.requireSession()
+      if (options.accountScope !== `${this.runtime.config.environment}:${current.userId}`) throw new ArkmePluginError('group-create-account-changed', '账号已切换，请刷新后确认创建结果', false, 409)
     }
     const source = await this.source.chatSourceFromBundle(data, session, undefined, [])
     this.source.setChatSourceByKey(`${String(session.userId)}:${clientMutationId}`, source)

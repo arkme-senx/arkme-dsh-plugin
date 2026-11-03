@@ -1569,7 +1569,31 @@ export async function dispatchArkmeHostOperation(
     case 'group.create': return await service.createGroup(
       stringParam(params, 'title'),
       stringParam(params, 'clientMutationId'),
+      { ...(params.isPublic === undefined ? {} : { isPublic: requiredBooleanParam(params, 'isPublic') }), ...(params.introduction === undefined ? {} : { introduction: stringParam(params, 'introduction') }), ...(params.accountScope === undefined ? {} : { accountScope: stringParam(params, 'accountScope') }), ...(requestSignal ? { signal: requestSignal } : {}) },
     )
+    case 'group.private.context': return await service.privateGroupContext({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope') }, requestSignal)
+    case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
+    case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
+    case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
+    case 'social.groups.query': {
+      const userId = optionalPositiveIntegerParam(params, 'userId')
+      const relation = params.relation
+      if (relation !== undefined && relation !== 'created' && relation !== 'joined') throw new ArkmePluginError('public-social-query-invalid', '群聊查询范围无效', false, 400)
+      return await service.queryPublicGroups({ accountScope: stringParam(params, 'accountScope'), query: stringParam(params, 'query'), cursor: stringParam(params, 'cursor'), ...(userId ? { userId } : {}), ...(relation ? { relation } : {}) }, requestSignal)
+    }
+    case 'social.groups.read': return await service.readPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.join': return await service.joinPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'requestUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.open': return await service.openPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.settings': return await service.publicGroupSettings(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.settings.set': return await service.setPublicGroup(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isPublic'), stringParam(params, 'introduction'), requestSignal)
+    case 'social.groups.showcase.set': return await service.setPublicGroupShowcase(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isShown'), requestSignal)
+    case 'social.people.query': {
+      const cursor = optionalPositiveIntegerParam(params, 'cursor')
+      return await service.queryPublicPeople({ accountScope: stringParam(params, 'accountScope'), query: stringParam(params, 'query'), ...(cursor ? { cursor } : {}) }, requestSignal)
+    }
+    case 'social.people.read': return await service.readPublicPerson(optionalPositiveIntegerParam(params, 'userId'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.people.listing.set': return await service.setPublicPerson(stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isListed'), stringParam(params, 'introduction'), requestSignal)
+    case 'social.people.chat': return await service.openPublicPerson(numberParam(params, 'userId', 0), stringParam(params, 'accountScope'), requestSignal)
     case 'bots.create': {
       const avatar = botAvatarParam(params)
       return await service.createBotSummary({
