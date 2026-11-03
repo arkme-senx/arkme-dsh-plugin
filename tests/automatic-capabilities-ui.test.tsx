@@ -124,7 +124,8 @@ it('explains the command and saved result without enabling on open or cancel', a
   await render()
   await click(host.querySelector('[role="switch"]')!)
   const dialog = document.querySelector('[role="dialog"]')!
-  for (const text of ['录音口令记事', '如「帮我记一下」', '录音上传转写后', '提取口令后的原话', '按规则自动保存到「发给自己」或由你确认', '消耗 AI 额度', '仅处理开启后新上传的录音']) expect(dialog.textContent).toContain(text)
+  for (const text of ['录音口令记事', '录音时说「帮我记一下」', '上传后保存为快记', '必要时由你确认', '使用 AI 额度', '仅处理开启后新上传的录音']) expect(dialog.textContent).toContain(text)
+  expect(dialog.textContent).not.toContain('电脑版启用')
   expect(writes()).toHaveLength(0)
   await click(button('取消'))
   expect(document.querySelector('[role="dialog"]')).toBeNull()

@@ -60,7 +60,7 @@ export function recordingVoiceRules(value: unknown): RecordingVoiceRule[] {
   })
 }
 export function defaultRecordingVoiceRule(): RecordingVoiceRule {
-  return { id: 'note-to-self', phrase: '帮我记一下', aliases: [], enabled: false, autoSaveSelf: true, action: 'save-self' }
+  return { id: 'note-to-self', phrase: '帮我记一下', aliases: [], enabled: true, autoSaveSelf: true, action: 'save-self' }
 }
 
 /** Prefer self within a loaded page, without hiding unknown or differently attributed voices. */

@@ -107,7 +107,7 @@ it('captures the existing voice UI and confirms uncertain text once on its card'
     await automatic.screenshot({ path: join(output, 'plugin-allowance.png') })
     await voice.click()
     const consent = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: '同意并开启', exact: true }) })
-    expect(await consent.innerText()).toContain('如「帮我记一下」')
+    expect(await consent.innerText()).toContain('录音时说「帮我记一下」')
     expect(await consent.innerText()).toContain('仅处理开启后新上传的录音')
     await consent.screenshot({ path: join(output, 'plugin-allowance-consent.png') })
     await consent.getByRole('button', { name: '取消', exact: true }).click()

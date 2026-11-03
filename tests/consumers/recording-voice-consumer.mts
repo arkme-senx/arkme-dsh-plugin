@@ -11,7 +11,9 @@ const sdk=createArkmeSdk({fetchImpl:async(_,init)=>{
  const value=request.operation==='provider.capabilities'?{contractVersion:1,features:{recordingVoiceTriggersV2:true}}:request.operation==='recordings.voice-triggers.decide'?candidate:request.operation==='recordings.voice-triggers.rules.set'?settings:request.params.action==='page'?{items:[candidate]}:request.params.action==='detail'?{items:[]}:settings
  return new Response(JSON.stringify({ok:true,value}))
 }})
-check((await sdk.voiceTriggerSettings('prod:7')).available)
+const initial = await sdk.voiceTriggerSettings('prod:7')
+check(initial.available && initial.rules[0]?.enabled === true)
+check(calls.every(call => call.operation !== 'recordings.voice-triggers.rules.set' && call.operation !== 'account.capabilities.update'))
 check((await sdk.voiceTriggerPage('prod:7')).items[0]?.recordUID==='native-record')
 await sdk.voiceTriggerDetail('prod:7','opaque-ref')
 await sdk.setVoiceTriggerRules('prod:7',{rules,revision:2,localRevision:0})
