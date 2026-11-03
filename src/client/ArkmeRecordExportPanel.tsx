@@ -4,7 +4,7 @@ import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
 import { FileZip } from '@phosphor-icons/react/dist/icons/FileZip'
 import exportCss from './record-export.css?inline'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { ArkmeExportPreflight, ArkmeRecordExport } from '../data-management.js'
+import type { ArkmeExportPreflight, ArkmeRangeExportPreview, ArkmeRecordExport } from '../data-management.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
@@ -24,6 +24,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
   const [count, setCount] = useState(0)
   const [error, setError] = useState('')
   const [result, setResult] = useState<ArkmeRecordExport>()
+  const [taskSnapshot, setTaskSnapshot] = useState<{ scope: string; rangeSupported: boolean; statistics: ArkmeExportPreflight | ArkmeRangeExportPreview; preview?: ArkmeRangeExportPreview }>()
   const [downloadRequested, setDownloadRequested] = useState(false)
   const [saveConfirm, setSaveConfirm] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -36,18 +37,20 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
   const legacyAvailable = legacyRecordExportAvailable(range, includeAttachments)
   const dateError = range === 'dates' ? recordExportDateError(dates) : ''
   const scopedPreflight = preflight?.accountScope === scope ? preflight : undefined
-  const rangeSupported = scopedPreflight?.rangeExportV2 !== undefined
-  const rangeState = useRecordExportRange(scope, rangeSupported, range, dates, includeAttachments, order)
-  const preview = rangeState.preview
+  const retained = taskSnapshot?.scope === scope ? taskSnapshot : undefined
+  const liveRangeSupported = scopedPreflight?.rangeExportV2 !== undefined
+  const rangeSupported = retained?.rangeSupported ?? liveRangeSupported
+  const rangeState = useRecordExportRange(scope, liveRangeSupported && !retained, range, dates, includeAttachments, order)
+  const preview = retained ? retained.preview : rangeState.preview
   const available = rangeSupported || legacyAvailable
-  const statistics = rangeSupported ? preview : scopedPreflight
+  const statistics = retained?.statistics ?? (rangeSupported ? preview : scopedPreflight)
   const empty = statistics !== undefined && statistics.recordCount + (preview?.removedCount ?? 0) === 0
   const canRun = available && !!statistics?.canExport && !empty && !loading && !rangeState.loading && (!rangeSupported || !!preview?.previewUid && !preview.baselineRequired)
   const locked = busy || confirm || !!result || saving
   useEffect(() => {
     controller.current = undefined; saveController.current = undefined
     defaultApplied.current = false; manualRange.current = false
-    setResult(undefined); setBusy(false); setSaving(false); setSaved(false); setSaveConfirm(false); setConfirm(false); setError(''); setDownloadRequested(false)
+    setResult(undefined); setTaskSnapshot(undefined); setBusy(false); setSaving(false); setSaved(false); setSaveConfirm(false); setConfirm(false); setError(''); setDownloadRequested(false)
     return () => { controller.current?.abort(); saveController.current?.abort() }
   }, [scope])
   useEffect(() => {
@@ -58,9 +61,10 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
   const run = async () => {
     // The legacy protocol cannot filter. Never silently turn a range request
     // into a quota-consuming full export, even after a stale confirmation.
-    if (controller.current || !canRun) return
+    if (controller.current || !canRun || !statistics) return
     const current = new AbortController(), sdk = createArkmeSdk()
     controller.current = current
+    setTaskSnapshot({ scope, rangeSupported, statistics, ...(preview ? { preview } : {}) })
     setConfirm(false); setBusy(true); setError(''); setCount(0); setResult(undefined)
     try {
       const value = await sdk.exportRecords({ expectedAccountScope: scope, orderKind: order, confirmed: true,
@@ -68,7 +72,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
         progress => { if (!current.signal.aborted) setCount(progress.count) })
       if (!current.signal.aborted) setResult(value)
     } catch (caught) {
-      if (!current.signal.aborted) setError(caught instanceof Error ? caught.message : tr('导出失败，请重试'))
+      if (!current.signal.aborted) { setTaskSnapshot(undefined); setError(caught instanceof Error ? caught.message : tr('导出失败，请重试')) }
     } finally {
       sdk.dispose()
       if (controller.current === current) { controller.current = undefined; if (!current.signal.aborted) setBusy(false) }
@@ -76,7 +80,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
   }
   const cancel = () => {
     controller.current?.abort(); controller.current = undefined
-    setBusy(false); setError(tr('导出已取消，未完成的备份已清理。'))
+    setBusy(false); setTaskSnapshot(undefined); setError(tr('导出已取消，未完成的备份已清理。'))
   }
   const confirmSaved = async () => {
     if (!result?.savedConfirmationRef || saveController.current) return
@@ -84,15 +88,15 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
     setSaving(true); setError('')
     try {
       await sdk.confirmRecordExportSaved(scope, result.savedConfirmationRef, current.signal)
-      if (!current.signal.aborted) { setSaved(true); setSaveConfirm(false); onRefresh?.() }
+      if (!current.signal.aborted) { setSaved(true); setSaveConfirm(false) }
     } catch (caught) { if (!current.signal.aborted) setError(caught instanceof Error ? caught.message : tr('保存确认失败，请重试。')) }
     finally { sdk.dispose(); if (saveController.current === current) { saveController.current = undefined; if (!current.signal.aborted) setSaving(false) } }
   }
-  return <div className="arkme-record-export" aria-busy={busy || loading}>
+  return <div className="arkme-record-export" aria-busy={busy || !retained && loading}>
     <style>{exportCss}</style>
     <div className="arkme-export-intro">
       <p>{tr('将快记与附件保存到本地，随时查看。')}</p>
-      {onRefresh && <button type="button" className="arkme-export-refresh" disabled={loading || busy} onClick={onRefresh} aria-label={tr('刷新导出信息')} title={tr('刷新导出信息')}><ArrowClockwise size={17} className={loading ? 'is-spinning' : ''} aria-hidden /></button>}
+      {onRefresh && <button type="button" className="arkme-export-refresh" disabled={loading || locked} onClick={onRefresh} aria-label={tr('刷新导出信息')} title={tr('刷新导出信息')}><ArrowClockwise size={17} className={loading && !retained ? 'is-spinning' : ''} aria-hidden /></button>}
     </div>
     <div className="arkme-export-option arkme-export-range">
       <label htmlFor={`${id}-range`}>{tr('导出范围')}</label>
