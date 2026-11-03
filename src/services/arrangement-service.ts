@@ -597,7 +597,8 @@ export class ArrangementService {
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     const session = await this.runtime.requireSession()
     const reference = this.openArrangementRef(arrangementRef, session.userId)
-    return await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    const item = await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    return item.arrangementRef === arrangementRef ? item : { ...item, resolvedFromRef: arrangementRef }
   }
 
   async listArrangementReminders(

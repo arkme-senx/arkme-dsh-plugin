@@ -11,7 +11,7 @@ import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpeakerSlash } from '@phosphor-icons/react/dist/icons/SpeakerSlash'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
-import type { ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
+import type { ArkmeArrangementDetail, ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
@@ -180,7 +180,7 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
         <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>
-    {selected ? <ArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
+    {selected ? <ArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} onRedirect={next => { setSelected(next); void latestData.current.refresh() }} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
       : <aside className="arkme-arrangement-detail-empty"><p>{tr('选择一个安排查看详情')}</p></aside>}
     {reviewInbox && <ArkmeArrangementReviewInbox key={accountScope} accountScope={accountScope} onClose={()=>setReviewInbox(false)} onApplied={apply}/>}
     {recognitionSettings && <ArkmeArrangementRecognitionSettings key={accountScope} accountScope={accountScope} onClose={() => setRecognitionSettings(false)} />}
@@ -190,8 +190,8 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
   </div>
 }
 
-function ArrangementDetailPane({ accountScope, onSettings, onApplied, item, busy, onClose, onComplete, onDelete, onReminder }: {
-  accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void;
+function ArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect, item, busy, onClose, onComplete, onDelete, onReminder }: {
+  accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void; onRedirect(item: ArkmeArrangementItem): void;
   item: ArrangementWorkspaceItem; busy: boolean; onClose(): void; onComplete(item: ArkmeArrangementItem): Promise<void>; onDelete(item: ArkmeArrangementItem): void; onReminder(item: ArkmeArrangementItem): Promise<void>
 }) {
   const [detail, setDetail] = useState<ArrangementWorkspaceItem>()
@@ -219,8 +219,14 @@ function ArrangementDetailPane({ accountScope, onSettings, onApplied, item, busy
   }, [current.title])
   useEffect(() => {
     const controller = new AbortController(); lifetime.current = controller; setLoading(true); setError(false)
-    void withArkmeReadDeadline(signal => callArkme<ArrangementWorkspaceItem>(item.status === 'deleted' ? 'arrangements.deleted.detail' : 'arrangements.detail', { arrangementRef: item.arrangementRef }, signal), controller.signal)
-      .then(value => { if (!controller.signal.aborted) { if (value.arrangementRef !== item.arrangementRef) throw new Error('Arrangement identity mismatch'); setDetail(value) } })
+    void withArkmeReadDeadline(signal => callArkme<ArrangementWorkspaceItem & Pick<ArkmeArrangementDetail, 'resolvedFromRef'>>(item.status === 'deleted' ? 'arrangements.deleted.detail' : 'arrangements.detail', { arrangementRef: item.arrangementRef }, signal), controller.signal)
+      .then(value => {
+        if (controller.signal.aborted) return
+        if (value.arrangementRef !== item.arrangementRef) {
+          if (item.status === 'deleted' || value.status === 'deleted' || value.resolvedFromRef !== item.arrangementRef) throw new Error('Arrangement identity mismatch')
+          onRedirect(value)
+        } else setDetail(value)
+      })
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()

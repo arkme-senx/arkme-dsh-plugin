@@ -29,13 +29,13 @@ beforeEach(() => {
   vi.clearAllMocks(); call.mockReset(); host=document.createElement('div');document.body.append(host);root=createRoot(host)
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
-const button=(text:string)=>[...host.querySelectorAll('button')].find(b=>b.textContent===text)!
+const button=(text:string)=>[...document.querySelectorAll('button')].find(b=>b.textContent===text)!
 it('uses a verified internal person ref for private chat, and the same person for records',async()=>{
   const activate=vi.spyOn(arkmeUi,'activateNotificationSource').mockImplementation(()=>{})
   call.mockResolvedValue({source:{sourceRef:'chat'}})
   await act(async()=>root.render(<Actions/>));await act(async()=>host.querySelector('button')!.click())
-  expect(host.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('同事昵称 的用户卡片')
-  await act(async()=>button('发送消息').click())
+  expect(document.getElementById(document.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('同事昵称 的用户卡片')
+  await act(async()=>button('发消息').click())
   expect(call).toHaveBeenCalledWith('team.app.person.private.open',{conversationRef:'conversation',expectedAccountKey:'prod:90',personRef:'person-ref'},expect.any(AbortSignal))
   expect(activate).toHaveBeenCalledWith({sourceRef:'chat'})
   await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
@@ -44,8 +44,8 @@ it('uses a verified internal person ref for private chat, and the same person fo
 })
 it('shows own profile without a private-chat send button and supports own records',async()=>{
   await act(async()=>root.render(<Actions who={{...person,isMe:true}}/>));await act(async()=>host.querySelector('button')!.click())
-  expect(button('发送消息')).toBeUndefined();expect(call).not.toHaveBeenCalled()
-  await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
+  expect(button('发消息')).toBeUndefined();expect(call).not.toHaveBeenCalled()
+  await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
   await act(async()=>host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true})))
   expect(document.querySelector('[role="menu"]')?.textContent).toContain('看我的快记')
 })
