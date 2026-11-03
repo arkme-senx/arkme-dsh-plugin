@@ -23,7 +23,7 @@ const expectedPublicMethods = [
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
-  'deletedArrangements', 'deletedArrangementDetail',
+  'deletedArrangements', 'deletedArrangementDetail', 'restoreArrangement',
   'arrangementOccurrenceRequest', 'arrangementRecognitionRequest', 'conversationArrangements', 'conversationArrangementDetail',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
   'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',

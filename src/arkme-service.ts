@@ -3397,6 +3397,9 @@ arkoImagesV1:true,
   async deletedArrangements(options: { limit?: number; offset?: number; signal?: AbortSignal } = {}) {
     return this.arrangement.deletedArrangements(options)
   }
+  async restoreArrangement(input: import('./types.js').ArkmeArrangementRestoreInput, resultOnly = false, signal?: AbortSignal) {
+    return this.arrangement.restoreArrangement(input, resultOnly, signal)
+  }
   async deletedArrangementDetail(arrangementRef: string, signal?: AbortSignal) {
     return this.arrangement.deletedArrangementDetail(arrangementRef, signal)
   }

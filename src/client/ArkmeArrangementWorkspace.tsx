@@ -1,3 +1,5 @@
+import { ArkmeArrangementRestore } from './ArkmeArrangementRestore.js'
+import { ArkmeArrangementSources } from './ArkmeArrangementSources.js'
 import { useOccurrenceReviewCount } from './use-arrangement-occurrences.js'
 import { ArkmeArrangementOccurrenceTimeline } from "./ArkmeArrangementOccurrenceTimeline.js"
 import { ArkmeArrangementReviewInbox } from "./ArkmeArrangementOccurrenceActions.js"
@@ -286,8 +288,12 @@ function ArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect
         <div><dt>{tr('更新时间')}</dt><dd>{fullTime(current.updatedAtMillis)}</dd></div></dl>
       {loading && <p role="status" className="arkme-arrangement-detail-progress">{tr('正在补充详情…')}</p>}
       {error && <div role="alert" className="arkme-arrangement-list-error">{tr('详情加载失败，已保留当前信息')} <button type="button" onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></div>}
+      {current.status === 'deleted' && <ArkmeArrangementRestore key={`${current.arrangementRef}:${current.restore?.expectedVersion ?? 'unsupported'}`} item={current} disabled={loading || error || busy}
+        onRestored={next => { onApplied(next); onRedirect(next) }} onRefresh={() => setAttempt(value => value + 1)} />}
       <section className="arkme-arrangement-detail-sources" aria-label={tr('安排来源')}>
-        {current.status === 'deleted' ? <><h3>{tr('来源')}</h3>{current.provenance?.map(evidence => <div key={evidence.id}><p>{tr(({record:'快记或聊天',audio_summary:'录音总结',call:'通话',input:'直接输入',voice_input:'语音输入',agent:'助手创建',manual:'手动创建'})[evidence.kind])}{evidence.sourceDate ? ` · ${evidence.sourceDate}` : ''}</p>{evidence.text && <p className="arkme-arrangement-detail-description">{evidence.text}</p>}</div>)}<p className="arkme-arrangement-detail-progress">{tr('已删除安排的恢复与来源原文访问，后端接口开发中。')}</p></>
+        {current.status === 'deleted' ? <><h3>{tr('来源')}</h3>{current.provenance?.length
+          ? <ArkmeArrangementSources arrangementRef={current.arrangementRef} sources={current.provenance} expanded />
+          : <p className="arkme-arrangement-detail-progress">{tr('历史记录未保存定位信息')}</p>}</>
           : <ArkmeArrangementOccurrenceTimeline accountScope={accountScope} item={current} fallback={<ArkmeArrangementContent item={current} expanded readDetail={false} />} />}
       </section>
       {current.status !== 'deleted' && <ArkmeArrangementRecognitionProcess key={current.arrangementRef} accountScope={accountScope} item={current} onSettings={onSettings} onApplied={next => {setDetail(next);onApplied(next)}} />}

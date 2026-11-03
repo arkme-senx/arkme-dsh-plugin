@@ -153,3 +153,10 @@ it('passes occurrence preview and apply only through account-scoped opaque refer
  await dispatchArkmeHostOperation({arrangementOccurrenceRequest} as unknown as ArkmeService,'arrangements.occurrences.history.apply',{expectedAccountScope:'test:42',arrangementRef:'master-ref',reviewId:'preview',selectedRefs:['child-ref'],userId:99,uid:'untrusted'},undefined,undefined,undefined,undefined,signal)
  expect(arrangementOccurrenceRequest).toHaveBeenCalledWith('history/apply','test:42',{arrangementRef:'master-ref',reviewId:'preview',selectedRefs:['child-ref']},signal)
 })
+
+it('routes restore with an opaque reference and version, ignoring client owner IDs', async()=>{
+ const service={restoreArrangement:vi.fn().mockResolvedValue({state:'unknown'})} as unknown as ArkmeService
+ const signal=new AbortController().signal
+ await dispatchArkmeHostOperation(service,'arrangements.restore.result',{arrangementRef:'opaque',requestId:'once',expectedVersion:10,uid:'ignored',userId:999},undefined,undefined,undefined,undefined,signal)
+ expect(service.restoreArrangement).toHaveBeenCalledWith({arrangementRef:'opaque',requestId:'once',expectedVersion:10},true,signal)
+})

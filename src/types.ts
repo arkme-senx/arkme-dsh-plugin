@@ -1105,8 +1105,17 @@ export type ArkmeArrangementDetail = ArkmeArrangementItem & {
   resolvedFromRef?: string
 }
 
-/** Read-only deleted owner projection; deliberately excluded from live mutations. */
-export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }
+export interface ArkmeArrangementRestoreInput {
+  arrangementRef: string
+  requestId: string
+  expectedVersion: number
+}
+export interface ArkmeArrangementRestoreResult {
+  state: 'completed' | 'superseded' | 'conflict' | 'unknown'
+  item?: ArkmeArrangementItem
+}
+/** Deleted items use a dedicated version-bound restore command. */
+export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted'; restore?: { expectedVersion: number; targetStatus: 'identified' | 'following' | 'completed'; historicalFallback: boolean } }
 export type ArkmeDeletedArrangementPage = Omit<ArkmeArrangementPage, 'items'> & { items: ArkmeDeletedArrangementItem[] }
 
 /** Reminder-event identity is intentionally separate from Arrangement identity. */
@@ -4605,6 +4614,8 @@ export type ArkmePluginOperation =
   | 'arrangements.list'
   | 'arrangements.deleted.list'
   | 'arrangements.deleted.detail'
+  | 'arrangements.restore'
+  | 'arrangements.restore.result'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
   | 'arrangements.occurrences.events'
