@@ -1651,6 +1651,7 @@ arkoImagesV1?:true
     directMessageAdmission?: true
     publicSocialV1?: true
     messageTextAnchorsV1?: true
+    arkoThoughtRepliesV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     teamWorldV1?: true
@@ -4428,6 +4429,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve'
   | 'provider.capabilities'
   | 'source.message-extension.capabilities'
+  | 'source.message-thoughts.query'
   | 'transcript.local.read'
   | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'

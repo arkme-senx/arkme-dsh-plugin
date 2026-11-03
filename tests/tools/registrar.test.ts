@@ -82,6 +82,22 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
+    const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('thought-confirmation'), session: { events } } as unknown as Agent
+    const args = { source_ref: 'source', message_action_ref: 'action', thought_reply_ref: 'signed-target', text: '继续讨论', operation_uid: 'stable' }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_thought_reply', arguments: args, agent, signal: new AbortController().signal })
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认发送回复' }] } })
+    expect((await run('confirmed')).isError).toBe(false)
+    expect(extendSourceMessage).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
   it('requires a subsequent trusted human confirmation for public social writes', async () => {
     const ctx=await setup(), publicSocialWrite=vi.fn(async()=>({operation:'resolve',status:2,requestRef:'opaque'}))
     const mounted=await mountArkmeTools(ctx,'business',{...ports,publicSocialWrite} as unknown as ArkmeToolPorts)
@@ -436,6 +452,7 @@ describe('registerArkmeTools', () => {
       'arkme_favorite_stickers_list',
       'arkme_reactions_read', 'arkme_reactions_write',
       'arkme_message_marks_read', 'arkme_message_mark', 'arkme_message_quote_reply',
+      'arkme_message_thoughts', 'arkme_thought_reply',
       'arkme_favorite_sticker_add',
       'arkme_favorite_sticker_send',
       'arkme_favorite_sticker_manage',

@@ -50,3 +50,18 @@
 ## 回退边界
 
 新锚点 7、私密引用和冻结命令出现后，旧 reader/worker 不具备完整兼容性。优先前向修复；需要停新写时保留新 reader/worker、加密密钥，结清并核对新类型命令后再走团队 MR 与 Jenkins 回退。禁止直接 reset master 或用 rollout undo 回退 rsync 的可变二进制。
+
+## 合并前补齐：Tools 与 SDK
+
+用户确认将同一能力补齐到 Tools 和仓外 SDK，保持现有页面交互。
+
+| 能力面 | 入口 | 共同 owner 与约束 |
+| --- | --- | --- |
+| UI | 详情内点击 Arko 或普通延展，引用后发送 | 原 `source.message-extension.extend`；正式能力与签名引用校验 |
+| SDK | `sourceMessageThoughts`、`sourceMessageExtensionPage`、`extendSourceMessage` | 类型化想法、快照与不透明引用；`arkoThoughtRepliesV1` 探测；取消传播；旧 Provider 明确不支持 |
+| Tools | `arkme_message_thoughts`，`action=thoughts/replies` | 只读已有结果，不触发模型；回复分页；正文预览最多 8000 字，明确标识截断 |
+| Tools | `arkme_thought_reply` | 必须经过真实后续人类确认；两种引用互斥；稳定操作 UID 重试，不知结果时保留原身份 |
+| Host | `source.message-thoughts.query` 与既有写入 owner | 目标取自账号/来源绑定的 actionRef；个人来源读取前后复查现有删除及隐私权限；账号或登录会话变化拒绝结果 |
+| Client/Harness | 沿用现有插件装配及工具注册 | 本轮不修改桌面宿主或 DSH 源码；官方 DSH 制品安装和工具调用另存验收记录 |
+
+SDK 消费者只从 `@senguoyun/dsh-arkme/sdk` 导入，不依赖插件私有路径。测试入口为 `tests/consumers/arko-thought-consumer.mts`。真实 DSH 验收驱动为 `scripts/arko-thought-dsh-acceptance.mjs`，只允许用于隔离 Profile 和合成 owner，不向生产写入。
