@@ -88,6 +88,12 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage
+阅读新快记，有想法时在快记下方回应你。|Reads new notes and responds beneath them when it has an insight.
+根据私聊和群聊内容，在相关消息下方提供仅你可见的想法和建议。|Uses private and group chats to offer thoughts and suggestions beneath related messages, visible only to you.
+自动关联线下录音与相关聊天，方便回看当时的交流，仅你可见。|Links in-person recordings to related chats so you can revisit the conversation; only you can see these links.
+先在电脑版「语音触发」中启用记事口令，例如「帮我记一下」。录音上传并转成文字后，会提取口令后面的原话，供你核对并保存为快记。若规则允许自动保存，且可靠识别为本人、内容完整，会保存到「发给自己」。分析会使用 AI 额度；只处理开启后新上传的录音，已有云端录音不会自动重新处理。|First enable a note-taking phrase, such as “帮我记一下”, in Voice triggers on desktop. After a recording is uploaded and transcribed, the original words after the phrase are extracted for you to review and save as a note. If the rule permits automatic saving, the content is complete and the speaker is reliably identified as you, it is saved to Send to myself. Analysis uses AI allowance. Only recordings newly uploaded after enabling are processed; existing cloud recordings are not automatically reprocessed.
+开启后会自动使用 AI 额度。|Uses AI allowance automatically when enabled.
+持续更新个人档案。首次开启会分析所选来源的历史材料。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources.
 目标|Goals
 自动识别设置|Automatic recognition settings
 开启功能|Enable feature
@@ -116,9 +122,7 @@ AI 自动分析|Automatic AI analysis
 原文或原音已更新，这条旧识别记录无法保存。请查看当前录音，或忽略此记录。|The transcript or audio has changed, so this old candidate cannot be saved. Review the current recording or ignore this candidate.
 上下文超出处理范围，仅保留可核验的原音范围，无法生成完整记事。|The context exceeds the processing limit. Only the verifiable source audio range is retained; a complete note could not be produced.
 录音日历「更多 → 语音触发」|Recording calendar → More → Voice triggers
-根据启用后新上传录音中的口令生成记事候选，语境分析会消耗 AI 额度。可靠本人且内容完整时可按规则自动保存快记，其他命中由你确认；不会回扫已有云端录音。|Create note candidates from voice commands in recordings newly uploaded after opt-in. Context analysis uses AI allowance. Rules may automatically save complete notes reliably attributed to you; other matches await your confirmation. Existing cloud recordings are not rescanned.
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
-持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
 当天录音实体|Entities from this recording day
 实体|Entities
