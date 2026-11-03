@@ -3688,10 +3688,16 @@ export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
   coverage?: ArkmeRecordingCoverage
+  /** Independently loaded storage/input metrics; textCount is not a day total. */
+  metrics?: ArkmeRecordingDailyMetrics
   transcript: ArkmeRecordingTranscriptPage
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
+
+/** Independent workbench reads. Omitted sections have not been requested. */
+export type ArkmeRecordingDayPart = 'transcript' | 'coverage' | 'metrics' | 'summary' | 'timeline'
+export type ArkmeRecordingDayPartial = Pick<ArkmeRecordingDay, 'dateStamp'> & Partial<Omit<ArkmeRecordingDay, 'dateStamp'>>
 
 export interface ArkmeRecordingComparison {
   dateStamp: number
@@ -4850,6 +4856,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.totals.day'
   | 'recordings.day.review'
   | 'recordings.day.overview'
   | 'recordings.day'

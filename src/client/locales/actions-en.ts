@@ -518,6 +518,9 @@ export const actionEnglish: Record<string,string> = {
 
   '当天录音统计': 'Daily recording metrics',
   '所有录音累计': 'All recordings',
+  '当月录音累计': 'Monthly recordings',
+  '正在读取当月统计…': 'Loading monthly totals…',
+  '按当前月份每天详情中的云端录音存储和转写输入时长累加。转写输入包含已记录的系统模型重试，不包含豆包。': 'Sum of the daily cloud audio storage and ASR input duration shown for this month. Includes recorded system ASR retries; excludes Doubao.',
   '云端录音存储': 'Cloud audio storage',
   '云端录音存储 {size}': 'Cloud audio storage {size}',
   'VAD 人声主档 {size}': 'VAD speech archives {size}',

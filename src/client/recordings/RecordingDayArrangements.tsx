@@ -58,7 +58,7 @@ function DayArrangements({ dateStamp, accountScope, active, refreshRevision }: P
     return () => clearTimeout(timer)
   }, [active, loading, error, page])
 
-  const value = !page ? (loading ? '—' : tr('暂不可用')) : page.state === 'unavailable' ? tr('暂不可用')
+  const value = !active ? '—' : !page ? (loading ? '—' : tr('暂不可用')) : page.state === 'unavailable' ? tr('暂不可用')
     : page.state === 'ready' ? tr('{count} 项', { count: page.total }) : page.total > 0 ? tr('已识别 {count} 项', { count: page.total }) : tr(page.state === 'processing' ? '处理中' : '暂不可用')
   return <>
     <button type="button" className="arkme-recording-arrangement-entry" aria-haspopup="dialog" title={tr('查看当天录音识别的安排')}
