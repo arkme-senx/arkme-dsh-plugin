@@ -135,8 +135,9 @@ export class ReactionService {
       if (this.endpoint?.reference) {
         const items = await Promise.all(array(result.items, 50).map(async raw => {
           const item = objectValue(raw)
-          return { id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1), unread: boolean(item.unread), target: await this.endpoint!.reference!(objectValue(item.target)), selections: state({ revision: item.revision, selections: item.selections }).selections }
+          return { id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1), unread: boolean(item.unread), target: await this.endpoint!.reference!(objectValue(item.target)), ...(this.worldReference ? { recordRef: await this.worldReference(String(objectValue(item.target).record_uid)) } : {}), selections: state({ revision: item.revision, selections: item.selections }).selections }
         }))
+        if (signal?.aborted || `${this.runtime.config.environment}:${(await this.runtime.requireSession()).userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
         return { items, has_more: boolean(result.has_more), after_id: result.after_id === '' ? '' : key(result.after_id) }
       }
       if (!this.chatSourceKey) return invalid()

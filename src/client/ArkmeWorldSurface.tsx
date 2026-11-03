@@ -131,6 +131,7 @@ export function applyWorldAuthorLabels(
 export function applyWorldInteractionAuthorLabels(items: readonly ArkmeWorldInteractionItem[], labels: readonly ArkmeWorldAuthorLabel[]): ArkmeWorldInteractionItem[] {
   const byRef = new Map(labels.map(label => [label.authorRef, label]))
   return items.map(item => {
+    if (item.teamAuthor) return item
     const label = byRef.get(item.authorRef ?? item.interactionRef)
     return label ? { ...item, authorName: label.authorName, ...(label.memberType === undefined ? {} : { memberType: label.memberType }) } : item
   })
@@ -958,7 +959,7 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
         if (controller.signal.aborted) return
         setItems(page.items)
         const visible = worldInteractionThreads(item.recordRef, page.items).flatMap(thread => [thread.root, ...thread.replies.map(reply => reply.item)]).slice(0, 3)
-        void hydrateWorldAuthorLabels(visible.map(comment => comment.authorRef ?? comment.interactionRef), controller.signal,
+        void hydrateWorldAuthorLabels(visible.filter(comment => !comment.teamAuthor).map(comment => comment.authorRef ?? comment.interactionRef), controller.signal,
           labels => setItems(current => applyWorldInteractionAuthorLabels(current, labels))).catch(() => {})
       })
       .catch(() => { if (!controller.signal.aborted) setItems([]) })
@@ -1791,6 +1792,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
 } = {}) {
   useArkmeLocale()
   const [notificationTarget, setNotificationTarget] = useState(notificationRef)
+  const [notificationFocus, setNotificationFocus] = useState<string>()
   const [scope, setScope] = useState<WorldScope>(initialScope)
   const [publicTab, setPublicTab] = useState<PublicSocialTab>()
   const [profileGroupView, setProfileGroupView] = useState<{ uid?: string }>()
@@ -1950,12 +1952,14 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       if (controller.signal.aborted) return
       setViews(current => ({ ...current, all: { status: 'success', items: [value.root], hasMore: false } }))
       setLoaded(current => ({ ...current, all: true }))
+      setNotificationFocus(value.path.at(-1)?.interactionRef)
       setInteractionRecordRef(value.root.recordRef)
+      hydrateViewerAuthorLabels([value.root], controller.signal)
     }).catch(error => {
       if (!controller.signal.aborted) setViews(current => ({ ...current, all: { status: 'error', items: [], message: messageOf(error, tr('这条世界动态或评论已不可查看')) } }))
     })
     return () => controller.abort()
-  }, [notificationTarget])
+  }, [notificationTarget, hydrateViewerAuthorLabels])
   useEffect(loadNotification, [loadNotification])
   useEffect(() => { if (!publicTab && !profileGroupView && !notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget, publicTab, profileGroupView])
   useEffect(() => {
@@ -2155,7 +2159,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   }
 
   const profileUserId = target?.userId ?? (scope === 'mine' ? currentUserId : undefined)
-  return <WorldNotificationFocus.Provider value={notificationTarget}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
+  return <WorldNotificationFocus.Provider value={notificationTarget ? notificationFocus : undefined}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
     {accountScope && profileUserId && !profileGroupView && !publicTab && <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 20px 0' }}><IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: profileUserId }} label={profileUserId === currentUserId ? '复制我的链接' : '复制个人链接'} /></div>}
     {accountScope && (profileGroupView || publicTab && target === undefined) ? <PublicSocialDirectory
       key={`${accountScope}:${profileGroupView ? profileUserId : 'all'}:${publicTab ?? 'groups'}`}

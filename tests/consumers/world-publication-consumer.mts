@@ -9,6 +9,7 @@ const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
     : call.operation === 'team.world' && call.params.action === 'feedback' ? { items: [{ actorName:'小李',reaction:{active:false,expression:{text:'收到'}},preview:{teamName:'团队',text:'当前正文',title:'',imageCount:1,deleted:false,publicRequested:false} }],hasMore:false }
     : call.operation === 'team.world' && call.params.action === 'activity' ? { items: [] as TeamWorldActivity[], hasMore: false }
     : call.operation === 'team.world' ? { sourceRef: 'opaque-source' }
+    : call.operation === 'world.reactions' && call.params.action === 'notifications' ? { items: [{ id: 'notice', revision: 1, actorUserId: 8, unread: true, recordRef: 'public-navigation', target: { id: 'version', worldRecordRef: 'reaction-context' }, selections: [] }], has_more: false, after_id: '' }
     : { items: [], hasMore: false, unavailableRecordRefs: [] }
   return new Response(JSON.stringify({ ok: true, value }), { headers: { 'content-type': 'application/json' } })
 } })
@@ -29,6 +30,9 @@ assert(!notifications.hasMore, 'typed notifications')
 await sdk.worldReplies('opaque-parent', { cursor: 'opaque-reply-page', signal: lifetime.signal })
 await sdk.worldReactions({ action: 'query', accountKey: 'test:9', targets: [] }, lifetime.signal)
 assert(calls.find(c => c.operation === 'world.comment-notifications')?.params.cursor === 'opaque-page', 'cursor preserved')
+const reactionNotices = await sdk.worldReactions({ action: 'notifications', accountKey: 'test:9', limit: 50, include_read: true })
+assert(reactionNotices.items[0]?.recordRef === 'public-navigation', 'typed public notification navigation')
+assert(reactionNotices.items[0]?.target.worldRecordRef === 'reaction-context', 'version-bound reaction reference stays separate')
 enabled = false
 let rejected = false
 try { await sdk.teamWorld(input) } catch { rejected = true }
