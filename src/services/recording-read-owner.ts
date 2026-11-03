@@ -310,9 +310,21 @@ export class RecordingReadOwner {
     const pages = new Map<string, RecordingOwnerTranscriptPage>()
     for (let offset = 0; offset < positions.length; offset += 20) {
       const batch = positions.slice(offset, offset + 20)
-      const value = record(await this.read('/api/v1/audio/recordings/transcript/metadata', {
-        recording_uids: batch.map(position => position.fact.recording_uid), source, start_at: window.startAt, end_at: window.endAt,
-      }, session, signal))
+      let raw: unknown
+      try {
+        raw = await this.read('/api/v1/audio/recordings/transcript/metadata', {
+          recording_uids: batch.map(position => position.fact.recording_uid), source, start_at: window.startAt, end_at: window.endAt,
+        }, session, signal)
+      } catch (error) {
+        // A capability reply and its follow-up may hit different rollout nodes.
+        // Only a missing route permits the established per-recording read path.
+        if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? 0)) {
+          this.metadataBatch = false
+          return undefined
+        }
+        throw error
+      }
+      const value = record(raw)
       if (!Array.isArray(value.items) || value.items.length !== batch.length) return invalid()
       for (let i = 0; i < batch.length; i++) {
         const position = batch[i]!, raw = record(value.items[i])
@@ -331,6 +343,7 @@ export class RecordingReadOwner {
     if (!this.metadataBatch) return undefined
     const positions = facts.map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false }))
     const pages = await this.batchMetadata(positions, window, 'primary', session, signal)
+    if (!pages) return undefined
     const storage: RecordingStorageMetrics = { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
     const input: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
     for (const page of pages.values()) { addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(input, page.asrInput) }
@@ -343,7 +356,10 @@ export class RecordingReadOwner {
     const state: RecordingDayReadCursor = continuation === undefined
       ? { ...window, source, positions: (await this.recordings(window, session, signal)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
       : structuredClone(continuation)
-    if (this.metadataBatch) return await this.dayPageWithMetadata(state, window, source, session, signal)
+    if (this.metadataBatch) {
+      const metadata = await this.batchMetadata(state.positions, window, source, session, signal)
+      if (metadata) return await this.dayPageWithMetadata(state, window, source, session, metadata, signal)
+    }
     const pages = new Map<string, RecordingOwnerTranscriptPage>()
     const total = emptyCoverage()
     const asrInput = { duration_ms:0,confirmed_count:0,pending_count:0,unknown_count:0,estimated_count:0 }
@@ -418,8 +434,7 @@ export class RecordingReadOwner {
     }
   }
 
-  private async dayPageWithMetadata(state: RecordingDayReadCursor, window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
-    const metadata = await this.batchMetadata(state.positions, window, source, session, signal)
+  private async dayPageWithMetadata(state: RecordingDayReadCursor, window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, metadata: Map<string, RecordingOwnerTranscriptPage>, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
     const storage: RecordingStorageMetrics = { bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
     const asrInput: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
     const total = emptyCoverage(), pages = new Map<string, RecordingOwnerTranscriptPage>()
@@ -541,8 +556,8 @@ export class RecordingReadOwner {
     const facts = await this.recordings(window, session, readSignal)
     const identities = (values: RecordingOwnerFact[]) => JSON.stringify(values.toSorted((a,b) => a.recording_uid.localeCompare(b.recording_uid)))
     if (identities(facts) !== identities(snapshot.positions.map(position => position.fact))) return stale()
-    if (this.metadataBatch) await this.batchMetadata(snapshot.positions, window, source, session, readSignal)
-    else await parallel(async position => {
+    const metadata = this.metadataBatch ? await this.batchMetadata(snapshot.positions, window, source, session, readSignal) : undefined
+    if (!metadata) await parallel(async position => {
       await this.transcript(position.fact.recording_uid, source, window, session, { limit: 1, revision: position.revision }, readSignal)
     })
     readSignal.throwIfAborted()

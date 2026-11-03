@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingReadOwner, type RecordingReadSource } from '../../src/services/recording-read-owner.js'
-import { ArkmeUpstreamResponseError, type ServiceRuntime } from '../../src/services/service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from '../../src/services/service.js'
 
 const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
 const start = 1_780_000_000_000
@@ -87,6 +87,65 @@ function enableMetadata(f: ReturnType<typeof fixture>, stagger = false) {
 }
 
 describe('RecordingReadOwner', () => {
+  it.each([404, 405, 501])('keeps text readable if a rolling deployment advertises metadata but the next node returns %s', async status => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f)
+    const original = post.getMockImplementation()!
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'route unavailable', true, 502, { upstreamStatus: status })
+      return await original(path, ...rest)
+    })
+    const page = await f.owner.dayPage(window, 'primary', session)
+    expect(page.items).toHaveLength(100)
+    expect(page.items[0]!.startAt).toBe(start)
+  })
+
+  it.each([400, 401, 403, 409, 429, 500])('does not hide metadata authority, version or service errors (%s)', async status => {
+    const f = fixture([rows(250)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const error = new ArkmeUpstreamResponseError('arkme-http-error', 'failure', true, 502, {}, { upstreamStatus: status })
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw error
+      return await original(path, ...rest)
+    })
+    await expect(f.owner.dayPage(window, 'primary', session)).rejects.toBe(error)
+    expect(post.mock.calls.some(([path]) => path.endsWith('/transcript/query'))).toBe(false)
+  })
+
+  it('preserves continuation across a backend rollback and still rejects a changed recording', async () => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const first = await f.owner.dayPage(window, 'primary', session)
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    const second = await f.owner.dayPage(window, 'primary', session, first.next)
+    expect(second.items).toHaveLength(100)
+    expect([...first.items, ...second.items].map(item => item.startAt)).toEqual(Array.from({length:200},(_,i)=>start+i))
+    f.versions[1] = 'b'.repeat(64)
+    await expect(f.owner.dayPage(window, 'primary', session, second.next)).rejects.toMatchObject({code:'recording-view-changed'})
+  })
+
+  it('does not scan bodies solely for metrics when an advertised route is missing', async () => {
+    const f = fixture([rows(250)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    expect(await f.owner.dayMetrics(window, session)).toBeUndefined()
+    expect(post.mock.calls.map(([path])=>path.split('/').at(-1))).toEqual(['query','metadata'])
+  })
+
+  it('uses legacy revision checks if the route disappears during a complete overview', async () => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const first = await f.owner.dayPage(window, 'primary', session)
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    const overview = await f.owner.dayOverview(window,'primary',session,first.next!)
+    expect(overview.items).toHaveLength(500)
+    expect(overview.items.map(item=>item.startAt)).toEqual(Array.from({length:500},(_,i)=>start+i))
+  })
+
   it('reads metrics without any text-page request when supported, and does not scan bodies on an older owner', async () => {
     const f = fixture([rows(300), rows(300, 1)]), post = enableMetadata(f)
     expect(await f.owner.dayMetrics(window, session)).toMatchObject({ textCount: 0 })
