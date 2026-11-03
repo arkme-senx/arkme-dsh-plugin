@@ -13,6 +13,26 @@
 .arkme-export-options { margin-top: 16px; }
 .arkme-export-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 0; border-bottom: 1px solid var(--export-line); box-sizing: border-box; }
 .arkme-export-option > span:first-child { flex: none; font-weight: 500; }
+.arkme-export-option > label:first-child { flex: none; font-weight: 500; }
+.arkme-export-range { margin: 0 0 16px; }
+.arkme-export-range select, .arkme-export-date-inputs input { font: inherit; font-size: 13px; color: inherit; border: 1px solid var(--export-line); background: var(--dsw-alias-bg-layer-1, #f8f9fa); border-radius: 8px; padding: 7px 10px; min-height: 36px; box-sizing: border-box; }
+.arkme-export-range select { min-width: 120px; }
+.arkme-export-dates, .arkme-export-incremental { margin: 0 0 16px; }
+.arkme-export-date-inputs { display: flex; align-items: flex-end; gap: 10px; }
+.arkme-export-date-inputs label { display: flex; flex: 1; flex-direction: column; gap: 7px; min-width: 0; color: var(--export-muted); font-size: 12px; }
+.arkme-export-date-inputs input { width: 100%; min-width: 0; color: var(--dsw-alias-label-primary, #17191c); }
+.arkme-export-date-inputs > span { padding-bottom: 9px; color: var(--export-muted); }
+.arkme-export-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.arkme-record-export .arkme-export-presets button { background: var(--dsw-alias-bg-layer-1, #f8f9fa); border: 1px solid var(--export-line); border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 12px; color: inherit; }
+.arkme-export-presets button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #00000008); }
+.arkme-export-dates p, .arkme-export-incremental p, .arkme-export-pending-count { color: var(--export-muted); font-size: 12px; line-height: 1.7; margin: 8px 0 0; }
+.arkme-export-dates .arkme-export-error { color: var(--dsw-alias-state-error-primary, #c2413b); }
+.arkme-export-incremental strong { font-size: 13px; font-weight: 500; }
+.arkme-export-pending-count { padding: 16px; border: 1px solid var(--export-line); border-radius: 10px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); }
+.arkme-export-attachments { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+.arkme-export-attachments input { flex: none; margin: 0; }
+.arkme-record-export :is(button, select, input):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }
+.arkme-record-export :is(button, select, input):disabled { opacity: .5; cursor: default; }
 .arkme-export-option-value { text-align: right; }
 .arkme-export-option-value small { display: block; color: var(--export-muted); font-size: 11px; margin-top: 2px; }
 .arkme-export-format { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; font-size: 12px; }
@@ -50,6 +70,8 @@
 .arkme-export-file > div { flex: 1; min-width: 0; }
 .arkme-export-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .arkme-export-file small { display: block; color: var(--export-muted); font-size: 11px; margin-top: 4px; }
+.arkme-export-save-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.arkme-export-save-confirm p { flex: 1; min-width: 180px; color: var(--export-muted); font-size: 12px; line-height: 1.7; margin: 0; }
 @keyframes arkme-export-refresh { to { transform: rotate(360deg); } }
 .arkme-export-refresh .is-spinning { animation: arkme-export-refresh 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .arkme-export-refresh .is-spinning { animation: none; } }
@@ -58,4 +80,10 @@
   .arkme-export-summary strong { font-size: 24px; }
   .arkme-export-file { flex-wrap: wrap; }
   .arkme-export-file > a { margin-left: auto; }
+  .arkme-export-option { gap: 10px; }
+  .arkme-export-date-inputs { flex-wrap: wrap; }
+  .arkme-export-date-inputs label { flex-basis: 100%; }
+  .arkme-export-date-inputs > span { display: none; }
+  .arkme-export-footer { flex-wrap: wrap; }
+  .arkme-export-footer > button { margin-left: auto; }
 }

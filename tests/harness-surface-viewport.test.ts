@@ -102,6 +102,36 @@ it('exposes only the menu while DSH is inactive, without activating or reloading
   expect(frame.contentDocument).toBe(native)
 })
 
+it.each([true, false])('exposes the complete native modal mask and restores clipping when it closes (active: %s)', async visible => {
+  const { native, surface, frame } = fixture(visible)
+  const draft = native.querySelector('textarea'), frameStyle = frame.style.cssText
+  const dialog = native.createElement('div')
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
+  vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue(rect(280, 100, 800, 600))
+  vi.spyOn(dialog, 'getClientRects').mockReturnValue([rect(280, 100, 800, 600)] as unknown as DOMRectList)
+  native.body.append(dialog)
+  await flush()
+  const wholeWindow = `M 0 0 H ${window.innerWidth} V ${window.innerHeight} H 0 Z`
+  expect(surface.style.clipPath).toContain(wholeWindow)
+  expect(surface.style.pointerEvents).toBe('auto')
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(native.querySelector('textarea')).toBe(draft)
+  // A non-modal dialog (such as the session chooser) must remain a local layer.
+  dialog.setAttribute('aria-modal', 'false')
+  await flush()
+  expect(surface.style.clipPath).not.toContain(wholeWindow)
+  dialog.setAttribute('aria-modal', 'true')
+  await flush()
+  expect(surface.style.clipPath).toContain(wholeWindow)
+  dialog.remove()
+  await flush()
+  expect(surface.style.clipPath).not.toContain(wholeWindow)
+  expect(surface.style.visibility).toBe(visible ? 'visible' : 'hidden')
+  expect(frame.style.cssText).toBe(frameStyle)
+  expect(native.querySelector('textarea')).toBe(draft)
+})
+
 it.each([true, false])('keeps list shadow below overlapping native menus without double painting (DSH visible: %s)', async visible => {
   const { surface, frame, native, column } = fixture(visible)
   column.setAttribute('data-arkme-session-open', '')

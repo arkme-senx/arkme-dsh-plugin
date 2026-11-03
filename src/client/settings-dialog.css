@@ -1,28 +1,78 @@
+/* Match native Harness settings; overrides are scoped to this dialog. */
 .arkme-settings-dialog {
-  width: min(920px, calc(100vw - 32px)); max-width: none;
-  height: min(720px, calc(100dvh - 48px)); max-height: calc(100dvh - 32px);
-  background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #17191c);
+  width: min(800px, calc(100vw - 48px)); max-width: 100%;
+  height: min(800px, calc(100dvh - 48px)); max-height: 100%;
+  padding: 0; gap: 0; box-sizing: border-box;
+  background: var(--dsw-alias-bg-layer-2, #fff); color: var(--dsw-alias-label-primary, #17191c);
 }
-.arkme-settings-dialog-body { display: flex; min-height: 0; padding: 0 !important; overflow: hidden !important; }
-.arkme-settings-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.arkme-settings-layout { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .arkme-settings-layout > nav {
-  flex: 0 0 160px; display: flex; flex-direction: column; gap: 4px; padding: 14px 10px;
-  border-right: 1px solid var(--dsw-alias-border-l1, #eee); overflow-y: auto;
+  box-sizing: border-box; flex: 0 0 188px; display: flex; flex-direction: column;
+  gap: 18px; padding: 22px 12px 16px; overflow-y: auto;
 }
-.arkme-settings-layout > nav > button {
-  flex: none; min-height: 38px; padding: 0 12px; border: 0; border-radius: 8px;
-  text-align: left; font: inherit; font-size: 13px; background: transparent; color: inherit; cursor: pointer;
+.arkme-settings-nav-title { flex: none; min-height: 48px; margin: 0; padding: 0 12px; font-size: 16px; line-height: 24px; font-weight: 500; }
+.arkme-settings-nav-items { display: flex; flex-direction: column; gap: 4px; }
+.arkme-settings-nav-items > button {
+  display: flex; align-items: center; gap: 8px; flex: none; width: 100%; min-height: 40px;
+  box-sizing: border-box; padding: 9px 16px 9px 12px; border: 0; border-radius: var(--dsw-radius-md, 12px);
+  text-align: left; font: inherit; font-size: 14px; line-height: 22px; background: transparent; color: inherit; cursor: pointer;
 }
-.arkme-settings-layout > nav > button[aria-current="page"] { background: var(--dsw-alias-interactive-bg-active, #eaecef); }
-.arkme-settings-dialog-content { flex: 1; min-width: 0; overflow: auto; padding: 12px 28px 28px; }
+.arkme-settings-nav-items > button > svg { flex: none; }
+.arkme-settings-nav-items > button:hover, .arkme-settings-close:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.arkme-settings-nav-items > button[aria-current="page"] { background: var(--dsw-alias-interactive-bg-active, #ebeef2); }
+.arkme-settings-nav-items > button:focus-visible, .arkme-settings-close:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 2px; }
+.arkme-settings-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.arkme-settings-toolbar { flex: none; display: flex; justify-content: flex-end; padding: 16px 16px 4px; }
+.arkme-settings-close { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-secondary, #68707c); cursor: pointer; }
+.arkme-settings-dialog-content { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 24px 24px; font-size: 14px; line-height: 22px; }
 .arkme-settings-common { display: grid; }
-.arkme-settings-preference { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--dsw-alias-border-l1, #eee); font-size: 13px; }
-.arkme-settings-preference select, .arkme-settings-preference button { min-height: 32px; border: 1px solid var(--dsw-alias-border-l2, #ddd); border-radius: 7px; padding: 0 10px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); color: inherit; font: inherit; cursor: pointer; }
+.arkme-settings-preference { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; box-sizing: border-box; border-bottom: 1px solid var(--dsw-alias-border-l1, #eee); font-size: 14px; line-height: 22px; }
+.arkme-settings-preference select, .arkme-settings-preference button { min-height: 36px; border: 0; border-radius: var(--dsw-radius-md, 12px); padding: 0 12px; background: var(--dsw-alias-bg-layer-1, #f5f6f8); color: inherit; font: inherit; cursor: pointer; }
 .arkme-settings-preference [role="group"] { display: flex; flex-wrap: wrap; gap: 4px; }
-.arkme-settings-preference button[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-active, #eaecef); }
+.arkme-settings-preference button[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-active, #ebeef2); }
+
+/* These pages also mount elsewhere; normalize nested spacing only here. */
+.arkme-settings-dialog-content .arkme-redesign-settings-surface { color: inherit; }
+.arkme-settings-dialog-content .arkme-redesign-settings-shell,
+.arkme-settings-dialog-content .arkme-usage-settings,
+.arkme-settings-dialog-content .arkme-data-settings { padding: 0; max-width: none; }
+.arkme-settings-dialog-content .arkme-redesign-setting-row { min-height: 72px; padding: 16px 0; gap: 8px; border-color: var(--dsw-alias-border-l1, #eee); }
+.arkme-settings-dialog-content .arkme-redesign-setting-row strong,
+.arkme-settings-dialog-content .arkme-account-info-copy > strong { font-size: 14px; line-height: 22px; font-weight: 400; }
+.arkme-settings-dialog-content .arkme-redesign-setting-summary,
+.arkme-settings-dialog-content .arkme-account-info-copy > small,
+.arkme-settings-dialog-content .arkme-account-info-value > small,
+.arkme-settings-dialog-content .arkme-account-info-action { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-settings-dialog-content .arkme-redesign-settings-group { border-color: var(--dsw-alias-border-l1, #eee); }
+.arkme-settings-dialog-content .arkme-redesign-settings-group > h2 { padding: 20px 0 8px; border: 0; color: var(--dsw-alias-label-secondary, #68707c); font-size: 12px; line-height: 18px; font-weight: 400; }
+.arkme-settings-dialog-content [data-arkme-settings-view="account"] .arkme-account-info-row { min-height: 64px; padding: 16px 0; }
+.arkme-settings-dialog-content .arkme-account-info-icon { width: 20px; height: 20px; }
+.arkme-settings-dialog-content .arkme-profile-edit-row { font-size: 14px; line-height: 22px; padding: 16px 0; border-color: var(--dsw-alias-border-l1, #eee); }
+.arkme-settings-dialog-content .arkme-account-logout { align-items: flex-start; gap: 8px; padding: 20px 0 0; margin-top: 16px; border-top: 1px solid var(--dsw-alias-border-l1, #eee); }
+.arkme-settings-dialog-content .arkme-account-logout > button { min-width: 0; min-height: 36px; padding: 6px 12px; border: 0; font-size: 14px; line-height: 22px; font-weight: 400; background: transparent; color: var(--dsw-alias-state-error-primary, #dc4d43); }
+.arkme-settings-dialog-content .arkme-account-logout > button:hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6); }
+.arkme-settings-dialog-content .arkme-data-settings h2,
+.arkme-settings-dialog-content .arkme-account-usage h3,
+.arkme-settings-dialog-content .arkme-about-heading { margin: 0 0 12px; font-size: 16px; line-height: 24px; font-weight: 500; }
+.arkme-settings-dialog-content .arkme-data-settings h3 { font-size: 14px; line-height: 22px; font-weight: 500; }
+.arkme-settings-dialog-content .arkme-settings-toggle-copy > p,
+.arkme-settings-dialog-content .arkme-data-hint { font-size: 12px; line-height: 18px; }
+
 @media (max-width: 600px) {
+  .arkme-settings-dialog { width: calc(100vw - 32px); height: calc(100dvh - 48px); }
+  .arkme-settings-layout > nav { flex-basis: 156px; padding-left: 8px; padding-right: 8px; }
+  .arkme-settings-nav-items > button { padding-left: 10px; padding-right: 8px; }
+  .arkme-settings-dialog-content { padding: 0 16px 20px; }
+  .arkme-settings-preference { flex-wrap: wrap; }
+  .arkme-settings-dialog-content [data-arkme-settings-view="account"] .arkme-account-info-copy { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .arkme-settings-dialog-content .arkme-account-info-copy > small { text-align: left; }
+}
+@media (max-width: 420px) {
   .arkme-settings-layout { flex-direction: column; }
-  .arkme-settings-layout > nav { flex: none; flex-direction: row; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1, #eee); }
-  .arkme-settings-dialog-content { padding: 8px 16px 20px; }
-  .arkme-settings-preference { flex-wrap: wrap; padding: 12px 0; }
+  .arkme-settings-layout > nav { flex: none; padding: 16px 12px 8px; gap: 8px; overflow: visible; }
+  .arkme-settings-nav-title { min-height: 24px; padding: 0 4px; }
+  .arkme-settings-nav-items { flex-direction: row; overflow-x: auto; gap: 4px; }
+  .arkme-settings-nav-items > button { width: auto; white-space: nowrap; padding: 8px; }
+  .arkme-settings-nav-items > button > svg { display: none; }
+  .arkme-settings-toolbar { position: absolute; top: 12px; right: 12px; padding: 0; }
 }
