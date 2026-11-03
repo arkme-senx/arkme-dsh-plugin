@@ -38,13 +38,26 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   }
   const selected = choices.find(model => model.id === resolveId(selectedId))
   const requiresConfirmation = scene === 'recording' || scene === 'explore'
+  const actualCurrentId = resolveId(currentId)
   const checkedId = resolveId(requiresConfirmation ? selectedId : currentId)
-  const groups = (['official', 'user-provided'] as const).map(origin => [origin, choices.filter(model => model.origin === origin)] as const)
+  const rank = (model: ModelChoice) => model.id === actualCurrentId ? 0 : model[scene] ? 1 : 2
+  const groups = (['official', 'user-provided'] as const).map(origin => [origin, choices.filter(model => model.origin === origin).sort((a, b) => rank(a) - rank(b))] as const)
     .filter(([, models]) => models.length)
+  const nameKey = (model: ModelChoice) => `${model.origin}:${model.name.trim().toLowerCase().replace(/\s+/g, ' ')}`
+  const nameCounts = new Map<string, number>()
+  for (const model of choices) nameCounts.set(nameKey(model), (nameCounts.get(nameKey(model)) ?? 0) + 1)
+  const supplierLabel = (model: ModelChoice) => {
+    const supplier = model.supplierCode || (['分析模型', 'Arkme 托管'].includes(model.channel)
+      ? model.exploreRouteKey?.split('/')[0] || model.channel : model.channel)
+    return ({ dashscope: '百炼', 'aliyun-bailian': '百炼', deepseek: 'DeepSeek', volcengine: '火山引擎', openai: 'OpenAI' } as Record<string, string>)[supplier] ?? supplier
+  }
+  const hasDraftChange = resolveId(selectedId) !== actualCurrentId || effort !== (currentEffort ?? '')
+  // Recording's explicit generation action is meaningful even without a model change.
+  const showConfirmation = requiresConfirmation && (scene === 'recording' || hasDraftChange || busy || applying)
   const originLabel = (origin: ModelOrigin) => tr(origin === 'official' ? '即我官方' : '用户自提供')
   const hasReadError = !!(data.catalogError || data.accountError || data.catalog?.failures.length)
   const restoreSelection = () => { setSelectedId(currentId); setEffort(currentEffort ?? '') }
-  useEffect(() => { mounted.current = true; void data.refresh(); return () => { mounted.current = false } }, [])
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => { restoreSelection() }, [currentId, currentEffort])
   useLayoutEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return
@@ -93,11 +106,11 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   }
   const choose = (model: ModelChoice) => {
     if (busy || applyingRef.current) return
-    const nextEffort = model.id === currentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''
+    const nextEffort = model.id === actualCurrentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''
     setSelectedId(model.id); setEffort(nextEffort); setNotice('')
     if (!model[scene]) { setNotice('此模型在当前场景的支持情况待确认'); return }
     if (!requiresConfirmation) {
-      if (model.id === currentId) onClose()
+      if (model.id === actualCurrentId) onClose()
       else void apply(model, nextEffort)
     }
   }
@@ -125,7 +138,9 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
         }}>
         <header className="arkme-unified-model-header">
           {view !== 'models' && initialView === 'models' && <button type="button" aria-label={tr('返回模型')} onClick={() => setView('models')}><ArrowLeft size={18}/></button>}
-          <strong id={title}>{tr(view === 'usage' ? 'Arkme 积分与用量' : view === 'pricing' ? '计费详情' : '选择模型')}</strong>
+          <strong id={title}>{tr(view === 'usage' ? 'Arkme 积分与用量' : view === 'pricing' ? '计费详情' : '选择模型')}
+            {view === 'models' && <span className="arkme-unified-model-scope" title={tr(scopeLabel)}> · {tr(scopeLabel)}</span>}
+          </strong>
           <button type="button" aria-label={tr('关闭模型面板')} onClick={onClose}><X size={18}/></button>
         </header>
         {view === 'models' ? <>
@@ -144,9 +159,12 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
               <div role="listbox" aria-label={originLabel(origin)}>
               {models.map(model => <button key={model.id} type="button" role="option" aria-selected={model.id === checkedId} disabled={busy || applying}
                 className="arkme-unified-model-option" onClick={() => choose(model)}>
-                <span className="arkme-unified-model-name">{model.name}
+                <span className="arkme-unified-model-name"><span className="arkme-unified-model-primary">{model.name}
+                  {origin === 'official' && nameCounts.get(nameKey(model))! > 1 && <small className="arkme-unified-model-supplier">{tr(supplierLabel(model))}</small>}
+                </span>
                   {origin === 'user-provided' && <small className="arkme-unified-model-bound-account">{model.channel}</small>}
                 </span>
+                {model.id === actualCurrentId && <small className="arkme-unified-model-current">{tr('当前')}</small>}
                 {!model[scene] && <small>{tr('支持待确认')}</small>}
                 <span className="arkme-unified-model-check" aria-hidden>{model.id === checkedId && <Check size={16} weight="bold"/>}</span>
               </button>)}
@@ -155,7 +173,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
             {!choices.length && <p className="arkme-unified-model-empty" role="status">{tr(data.loading ? '正在读取模型…' : '模型暂不可用')}</p>}
           </div>
           <footer className="arkme-unified-model-footer">
-            {confirmationDescription && <p className="arkme-unified-model-muted">{tr(confirmationDescription)}</p>}
+            {showConfirmation && confirmationDescription && <p className="arkme-unified-model-muted">{tr(confirmationDescription)}</p>}
             {selected?.reasoning && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
               disabled={busy || applying || !selected[scene]} onPreview={setEffort} onCommit={value => {
                 setNotice('')
@@ -167,7 +185,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
             {(notice || error) && <p className="arkme-unified-model-notice" role="alert">{notice || error}</p>}
             {error && onRefresh && !hasReadError && <div className="arkme-unified-model-read-error"><button type="button" disabled={busy || applying} onClick={retry}>{tr('重新读取模型')}</button></div>}
             {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr(data.catalogError || data.catalog?.failures.length ? '部分模型信息暂不可用' : '积分暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr(data.loading ? '重试中…' : '重试')}</button></div>}
-            {requiresConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected?.[scene] || busy || applying || scene === 'explore' && resolveId(selectedId) === resolveId(currentId)}
+            {showConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected?.[scene] || busy || applying}
               onClick={() => { if (selected) void apply(selected, effort) }}>{tr(applying || busy ? '正在提交…' : confirmLabel)}</button>}
           </footer>
         </> : <div className="arkme-unified-model-content">

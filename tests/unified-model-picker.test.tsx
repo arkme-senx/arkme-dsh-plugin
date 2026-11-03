@@ -119,7 +119,7 @@ it('does not apply while navigating with arrow keys and serializes a pending act
   await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available]} currentId={available.id} onApply={apply} onClose={close}/>))
   expect(document.activeElement).toBe(option('模型 A'))
   await act(async () => option('模型 A').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
-  expect(document.activeElement).toBe(option('模型 B')); expect(apply).not.toHaveBeenCalled()
+  expect(document.activeElement).toBe(option('模型 C')); expect(apply).not.toHaveBeenCalled()
   await choose('模型 C'); await choose('模型 C')
   expect(apply).toHaveBeenCalledOnce(); expect(close).not.toHaveBeenCalled()
   await act(async () => complete(true)); expect(close).toHaveBeenCalledOnce()
@@ -270,4 +270,68 @@ it('serializes pending effort saves and skips unchanged effort', async () => {
   await act(async () => complete(true))
   expect(slider().disabled).toBe(false)
   expect(document.querySelector('.arkme-unified-model-panel')).not.toBeNull()
+})
+
+it('ranks the actual current model and supported models first without reshuffling when a draft is selected', async () => {
+  const apply = vi.fn(async () => true)
+  await act(async () => root.render(<UnifiedModelPicker scene="recording" scopeLabel="录音" models={[]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
+  const names = () => [...document.querySelectorAll('[role="listbox"][aria-label="即我官方"] [role="option"] .arkme-unified-model-primary')].map(node => node.textContent)
+  expect(names()).toEqual(['模型 B', '模型 C', '模型 A'])
+  expect(option('模型 B').querySelector('.arkme-unified-model-current')?.textContent).toBe('当前')
+  await choose('模型 C')
+  expect(names()).toEqual(['模型 B', '模型 C', '模型 A'])
+  expect(option('模型 B').querySelector('.arkme-unified-model-current')).not.toBeNull()
+  expect(option('模型 C').getAttribute('aria-selected')).toBe('true')
+  expect(apply).not.toHaveBeenCalled()
+})
+
+it('disambiguates identical official names by supplier while preserving their separate routes', async () => {
+  const bailian: ModelChoice = { ...other, id: 'official-bailian', name: 'DeepSeek V4 Flash', channel: '分析模型', exploreRouteKey: 'dashscope/deepseek-v4-flash', recording: 'dashscope/deepseek-v4-flash' }
+  const deepseek: ModelChoice = { ...other, id: 'official-deepseek', name: 'DeepSeek V4 Flash', channel: 'deepseek', recording: 'deepseek/deepseek-v4-flash' }
+  const original = mocks.callArkme.getMockImplementation()!
+  mocks.callArkme.mockImplementation(async (op, ...args) => op === 'models.directory'
+    ? { accountScope: 'production:42', observedAt: 1, models: [bailian, deepseek], failures: [] } : original(op, ...args))
+  const apply = vi.fn(async () => true)
+  await act(async () => root.render(<UnifiedModelPicker scene="recording" scopeLabel="录音" models={[]} currentId={bailian.id} onApply={apply} onClose={() => {}}/>))
+  expect([...document.querySelectorAll('.arkme-unified-model-supplier')].map(node => node.textContent)).toEqual(['百炼', 'DeepSeek'])
+  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]!.click())
+  expect(apply).not.toHaveBeenCalled()
+  await click('确认并生成')
+  expect(apply).toHaveBeenCalledExactlyOnceWith(deepseek, undefined)
+})
+
+it('shows the Explore action and its explanation only after a change and clears them when returning to the current model', async () => {
+  const current: ModelChoice = { ...available, explore: 'events/a' }, next: ModelChoice = { ...alternative, explore: 'events/c' }
+  const apply = vi.fn(async () => true)
+  await act(async () => root.render(<UnifiedModelPicker scene="explore" scopeLabel="事件" models={[current, next]} currentId={current.id} confirmationDescription="切换后将启动后台分析。" onApply={apply} onClose={() => {}}/>))
+  expect(document.querySelector('.arkme-unified-model-header')?.textContent).toContain('选择模型 · 事件')
+  expect(document.querySelector('.arkme-unified-model-confirm')).toBeNull()
+  expect(document.body.textContent).not.toContain('切换后将启动后台分析。')
+  await choose('模型 C')
+  expect(document.querySelector<HTMLButtonElement>('.arkme-unified-model-confirm')?.disabled).toBe(false)
+  expect(document.body.textContent).toContain('切换后将启动后台分析。')
+  expect(apply).not.toHaveBeenCalled()
+  await choose('模型 A')
+  expect(document.querySelector('.arkme-unified-model-confirm')).toBeNull()
+  expect(document.body.textContent).not.toContain('切换后将启动后台分析。')
+})
+
+it('retains the explicit recording generation action when using the unchanged model', async () => {
+  const apply = vi.fn(async () => true)
+  await act(async () => root.render(<UnifiedModelPicker scene="recording" scopeLabel="录音" models={[other]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
+  expect(button('确认并生成').disabled).toBe(false)
+  await click('确认并生成')
+  expect(apply).toHaveBeenCalledExactlyOnceWith(other, undefined)
+})
+
+it('reuses a fresh catalog when reopened or focused and keeps manual retries available', async () => {
+  const render = () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available]} currentId={available.id} onApply={async () => true} onClose={() => {}}/>)
+  await act(async () => render())
+  expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'models.directory')).toHaveLength(1)
+  await act(async () => root.render(null))
+  await act(async () => render())
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'models.directory')).toHaveLength(1)
+  await act(async () => unifiedModelStore.refresh('production:42', true))
+  expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'models.directory')).toHaveLength(2)
 })

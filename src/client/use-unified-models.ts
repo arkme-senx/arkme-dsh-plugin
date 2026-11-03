@@ -14,7 +14,7 @@ export function useUnifiedModels() {
   useEffect(() => {
     unifiedModelStore.activate(scope)
     if (scope) void unifiedModelStore.refresh(scope)
-    const focus = () => { if (scope) void unifiedModelStore.refresh(scope, true) }
+    const focus = () => { if (scope) void unifiedModelStore.refresh(scope) }
     if (typeof window === 'undefined') return
     window.addEventListener('focus', focus)
     return () => window.removeEventListener('focus', focus)
