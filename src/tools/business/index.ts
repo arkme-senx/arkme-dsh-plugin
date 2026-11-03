@@ -13,6 +13,7 @@ import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import { thoughtReplyToolModules } from './conversation/thought-replies.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
 import {teamNotificationTools} from './contacts/team-notifications.js'
@@ -152,6 +153,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   readReactionsToolModule,
   writeReactionsToolModule,
   readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
+  ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,
