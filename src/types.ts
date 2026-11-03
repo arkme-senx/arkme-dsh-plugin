@@ -753,6 +753,7 @@ export interface ArkmeBotConversationReadResult {
 }
 
 export interface ArkmeConversationWriteResult {
+ thoughtReply?: import('./thought-reply.js').ArkmeThoughtReplySnapshot
   recordUid: string
   status: number
   localState: 'synced' | 'failed'
@@ -2146,6 +2147,10 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  thoughtReply?: import('./thought-reply.js').ArkmeThoughtReplySnapshot
+  privateThoughtReplyRef?: string
+  privateThoughtReply?: boolean
+
  excerptSource?:import('./record-excerpt.js').RecordExcerptSource
   representation?: TeamRepresentationSnapshot
   originRepresentation?: TeamRepresentationSnapshot
@@ -2726,6 +2731,10 @@ export interface ArkmeSourceMessageExtensionContext extends ArkmeMessageCopyLink
 }
 
 export interface ArkmeSourceMessageExtendResult {
+  thoughtReply?: import('./thought-reply.js').ArkmeThoughtReplySnapshot
+  privateThoughtReplyRef?: string
+  privateThoughtReply?: boolean
+
   recordUid: string
   parentRecordUid: string
   relationUid?: string
@@ -2790,6 +2799,9 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 }
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
+  thoughtReply?: import('./thought-reply.js').ArkmeThoughtReplySnapshot
+  privateThoughtReplyRef?: string
+  privateThoughtReply?: boolean
   /** Server-validated partial quotation on this comment's own parent edge. */
   quote?: import('./message-quote.js').ArkmeMessageQuote
   quoteState?: 'available' | 'edited' | 'unavailable'

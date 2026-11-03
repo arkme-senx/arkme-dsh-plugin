@@ -1,3 +1,4 @@
+import { thoughtReplyFromWire } from '../thought-reply.js'
 import { readRecordExcerpt, recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { projectForwardRecordsPreview, projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
 import type { ProfileService } from './profile-service.js'
@@ -1731,6 +1732,7 @@ export class RecordService {
     textFormat?: 'plain' | 'markdown',
     quote?: ArkmeMessageQuote,
     mentionMetadata?: Record<string, unknown>,
+ thoughtReplyRef?: string,
   ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
     const session = await this.runtime.requireSession()
     const normalizedParentUid = parentRecordUid.trim()
@@ -1754,9 +1756,10 @@ export class RecordService {
     const hashTags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(normalizedText).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(normalizedText)
     const senderSnapshot = await this.currentSenderSnapshot?.(session)
     const data = await this.createPersonalRecord<Record<string, unknown>>(
-      '/api/v1/records/extensions/create',
+      thoughtReplyRef ? '/api/v1/records/extensions/thought-replies/create' : '/api/v1/records/extensions/create',
       {
         parent_record_uid: normalizedParentUid,
+ ...(thoughtReplyRef ? { thought_reply_ref:thoughtReplyRef } : {}),
         ...(quote === undefined ? {} : { quote_reply: quote }),
         record_uid: normalizedUid,
         template_kind: assets.length === 0 ? 1 : 2,
@@ -1787,9 +1790,9 @@ export class RecordService {
       },
       session,
       undefined,
-      quote === undefined ? {} : { trackWriteOutcome: true },
+      quote === undefined && !thoughtReplyRef ? {} : { trackWriteOutcome: true },
     )
-    if (quote !== undefined && data.accepted !== true) {
+    if ((quote !== undefined || thoughtReplyRef) && data.accepted !== true) {
       throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
     }
     const createdRecordUid = stringValue(data.record_uid).trim() || normalizedUid
@@ -1800,7 +1803,8 @@ export class RecordService {
     }
     await this.syncCreatedRecordTags(createdRecordUid, normalizedText, session.userId, undefined, textFormat)
     return {
-      recordUid: createdRecordUid,
+      ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
+ recordUid: createdRecordUid,
       status: numberValue(data.record_status ?? data.status),
       localState: 'synced',
     }

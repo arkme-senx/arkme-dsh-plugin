@@ -2620,7 +2620,7 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
@@ -2633,6 +2633,8 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+ ...(options.thoughtReplyRef ? { thoughtReplyRef: options.thoughtReplyRef } : {}),
+ ...(options.privateThoughtReplyRef ? { privateThoughtReplyRef: options.privateThoughtReplyRef } : {}),
       ...(options.quote === undefined ? {} : { quote: options.quote }),
       fileRefs,
     }, options.signal)
