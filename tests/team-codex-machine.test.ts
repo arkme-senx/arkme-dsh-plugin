@@ -533,17 +533,20 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
 })
 
 it('keeps the current input in the same turn namespace as its reader, including offline and personal views',async()=>{
- let offline=false
+ let offline=false,duringRead:undefined|(()=>void)
  const f=fixture({post:async(_owner:number,path:string)=>{
   if(offline)throw Error('offline')
   if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+  if(path.endsWith('/tasks/list')){duringRead?.();duringRead=undefined}
   return {items:[],page:1,has_more:false}
  },selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort)
  await f.enroll();expect(f.record().status).toBe(0)
  const local=await f.task(),original=await f.service.events(teamRef,local.id)
  expect(local.currentInput?.turnId).toBe(original.items[0]?.turnId)
- const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
- try{new TeamCodexCloudJournal(journal).reconcile(11,teamRef,'101',[local],()=>original.items)}finally{journal.close()}
+ duringRead=()=>{
+  const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+  try{new TeamCodexCloudJournal(journal).reconcile(11,teamRef,'101',[local],()=>original.items)}finally{journal.close()}
+ }
  for(const view of [teamRef,'self']){
   const task=(await f.service.state(view)).tasks.find(t=>t.id===local.id)!
   const page=await f.service.events(view,local.id)
