@@ -68,11 +68,16 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setFailed(false)
     void request<LoginDevicePage | LoginEventPage>({ action: page, accountScope, ...(cursor ? { cursor } : {}) }, controller.signal)
-      .then(value => { if (!controller.signal.aborted && value.accountScope === accountScope) setResult({ page, cursor, value }) })
+      .then(value => { if (!controller.signal.aborted && value.accountScope === accountScope) setResult(previous => {
+        if (page === 'events' && cursor && previous?.page === page && previous.value.accountScope === accountScope && previous.value.cursor === cursor && 'coverageStart' in previous.value && 'coverageStart' in value) {
+          value = { ...value, items: [...new Map([...previous.value.items, ...value.items].map(event => [event.id, event])).values()], coverageStart: Math.max(previous.value.coverageStart, value.coverageStart) }
+        }
+        return { page, cursor, value }
+      }) })
       .catch(() => { if (!controller.signal.aborted) setFailed(true) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [accountScope, page, cursor, refresh])
-  const value = result?.page === page && result.cursor === cursor ? result.value : undefined
+  const value = result?.page === page && result.value.accountScope === accountScope && (result.cursor === cursor || page === 'events') ? result.value : undefined
   const devices = value && 'total' in value ? value : undefined, events = value && 'coverageStart' in value ? value : undefined
   const title = tr(page === 'trusted' ? '常用设备管理' : page === 'events' ? '登录日志' : '登录设备管理')
   const navigate = (next: typeof page) => { setPage(next); setCursor(undefined); setEditing(false); setExpanded(undefined); setFeedback('') }
@@ -128,7 +133,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
         })}
       </>}
       {events && <><div className="device-log-toolbar"><p>{tr('最近 30 天')}</p><span>{tr('时间按本机时区显示')}</span></div><div className="device-card">{events.items.map(e => <div className="device-log-row" key={e.id}><span className="device-log-dot" /><div><small>{date(e.at)}</small><strong>{e.name}</strong><span>{tr(({ password: '密码登录', phone_code: '验证码登录', email_code: '验证码登录', app_scan: '即我扫码登录', oauth: '授权登录' } as Record<string, string>)[e.method] ?? '账号验证')}</span></div><span className="device-log-result">{tr(e.kind === 'login' ? '登录成功' : e.kind === 'forget' ? '已取消信任' : '已退出')}</span></div>)}</div>{events.items.length === 0 && <p>{tr('暂无登录日志')}</p>}{events.coverageStart > 0 && <p className="device-footnote">{tr('完整记录起点：{time}', { time: date(events.coverageStart) })}</p>}</>}
-      {value?.cursor && <button className="device-text-button" disabled={loading} onClick={() => setCursor(value.cursor)}>{tr('下一页')}</button>}
+      {value?.cursor && <button className="device-text-button" disabled={loading} onClick={() => { if (value.cursor === cursor) setRefresh(v => v + 1); else setCursor(value.cursor) }}>{tr(page === 'events' ? '加载更多' : '下一页')}</button>}
       {cursor && <button className="device-text-button" disabled={loading} onClick={() => setCursor(undefined)}>{tr('返回第一页')}</button>}
       {page === 'list' && <section className="device-section"><h3>{tr('登录设置')}</h3><div className="device-card device-links"><button onClick={() => navigate('trusted')}><ShieldCheck size={22} /><span><strong>{tr('常用设备管理')}</strong><small>{tr('管理已记住的设备，下次登录更安心')}</small></span><CaretRight size={17} /></button><button onClick={() => navigate('events')}><ClockCounterClockwise size={22} /><span><strong>{tr('登录日志')}</strong><small>{tr('查看近期登录与退出记录')}</small></span><CaretRight size={17} /></button></div></section>}
     </div>

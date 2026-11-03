@@ -15,7 +15,9 @@ const page = await sdk.loginDevices({ action: 'list', accountScope: 'test:当前
 
 查询 action：`list`、`trusted`、`events`、`notifications`。退出/移除：`prepare` 返回短效 ticket，真人确认后使用 `confirm`；不明结果使用原 ticket 调用 `operation`。通知写入使用 `set-notifications`，同时携带原 revision 和稳定 requestId。Tools 的写入口依赖宿主真人确认上下文，不接受模型提交的 confirmed 标记。
 
-device ref、cursor、ticket 为账号/登录会话绑定的不透明引用。device ref 和 cursor 有效期 15 分钟，ticket 5 分钟；过期 ticket 只可核实既有操作，不能提交新写入。同用户重新登录也会使旧写引用失效。单页 50 条；前端仅保留当前页，无后台轮询或新增 WebSocket。
+device ref、cursor、ticket 为账号/登录会话绑定的不透明引用。device ref 和 cursor 有效期 15 分钟，ticket 5 分钟；过期 ticket 只可核实既有操作，不能提交新写入。同用户重新登录也会使旧写引用失效。单页 50 条；设备列表只保留当前页，日志按用户点击“加载更多”追加并按事件 ID 去重，返回第一页或关闭即释放已加载历史。没有后台轮询或新增 WebSocket。
+
+读取复用 Host 请求协调器，按账号、登录会话、路由与参数合并并发请求，不缓存完成结果；单个调用方取消不影响其他调用方。写入前后使该登录会话的读取失效，即使写入回执丢失也不接受旧响应。其他设备发起的变化由手动刷新/重新打开读取，不宣称实时推送。
 
 后端登录会话是权限真相，device-control 只负责本地清理和在线实例。旧凭据不能完整纳管时 `countComplete=false`，入口显示“登录设备管理”，不能展示不完整总数。手机只有声明完整通知协议后才开放开关；设置失败/未知不显示成功。日志有覆盖起点，不补造历史；初版后端每设备最多保留 100 条/30 天。
 

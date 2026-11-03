@@ -4,6 +4,7 @@ import { patchChatPolicy } from '../src/services/chat-policy.js'
 import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { ProfileService } from '../src/services/profile-service.js'
+import { LoginDevicesService } from '../src/services/login-devices-service.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -46,6 +47,33 @@ function runtimeFixture(
 }
 
 afterEach(() => { vi.useRealTimers() })
+
+it('coalesces login device reads without caching and keeps the remaining observer alive', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let transportSignal: AbortSignal | undefined
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    transportSignal = init?.signal ?? undefined
+    await gate
+    return new Response(JSON.stringify({ code: 200, data: { items: [], total: 0, count_complete: false, next_client_id: 0, server_time: 1, capabilities: {} } }))
+  })
+  const runtime = runtimeFixture(fetcher, { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} })
+  try {
+    const devices = new LoginDevicesService(runtime), controller = new AbortController()
+    const input = { action: 'list' as const, accountScope: 'test:42' }
+    const first = devices.execute(input, controller.signal), second = devices.execute(input)
+    const cancelled = expect(first).rejects.toBeDefined()
+    await vi.waitFor(() => expect(runtime.requestStats()['interactive-read:auth']?.joined).toBe(1))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    controller.abort()
+    await cancelled
+    expect(transportSignal?.aborted).toBe(false)
+    release()
+    await expect(second).resolves.toMatchObject({ total: 0 })
+    await devices.execute(input)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { release(); runtime.dispose() }
+})
 
 describe('registered owner read recovery', () => {
   it.each([false, true])('finishes profile recovery before contact degradation and preserves known names: exhausted=%s', async exhausted => {

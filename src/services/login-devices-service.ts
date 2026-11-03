@@ -54,16 +54,24 @@ export class LoginDevicesService {
       return createHash('sha256').update(typeof sid === 'string' && sid ? sid : credentials.refreshToken).digest('hex')
     }
     const login = binding(session), refScope = `${scope}:${login}`
+    const requestScope = this.runtime.requestScope(session.userId), readPrefix = `login-devices:${login}:`
     const check = async () => { if (binding(await this.session(scope)) !== login) throw new ArkmePluginError('login-devices-account-changed', '登录状态已变化，请重新打开设备管理', false, 409) }
     const read = async (path: string, body: Record<string, unknown>) => {
-      const raw = await this.runtime.authenticatedAuthReadPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal)
+      const revision = this.runtime.readRevision(requestScope)
+      const raw = await this.runtime.authenticatedAuthReadPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal, {
+        key: `${readPrefix}${path}:${JSON.stringify(body)}`, cacheMs: 0, failureCooldownMs: 0, cancelWhenUnobserved: true,
+      })
       await check()
+      if (this.runtime.readRevision(requestScope) !== revision) throw invalid()
       return object(raw)
     }
     const write = async (path: string, body: Record<string, unknown>) => {
-      const raw = await this.runtime.authenticatedAuthPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal)
-      await check()
-      return object(raw)
+      this.runtime.invalidateKey(requestScope, readPrefix)
+      try {
+        const raw = await this.runtime.authenticatedAuthPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal)
+        await check()
+        return object(raw)
+      } finally { this.runtime.invalidateKey(requestScope, readPrefix) }
     }
     switch (request.action) {
       case 'list': case 'trusted': {

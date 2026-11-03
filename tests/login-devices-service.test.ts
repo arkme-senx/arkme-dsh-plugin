@@ -6,11 +6,14 @@ import type { LoginDevicePage, DeviceConfirmation, DeviceOperation } from '../sr
 function fixture() {
   const credentials = { userId: 7, accessToken: 'access', refreshToken: 'refresh' }
   let clock = 1_800_000_000_000
+  let revision = 0
   const row = { client_id: 2, session_ref: 'original_login_session_123', revision: 4, name: 'Phone', platform: 'android', is_current: false, presence: 'unknown', last_active_at: clock }
   const page = () => ({ items: [row], total: 1, count_complete: false, next_client_id: 0, server_time: clock, capabilities: { logout: true, trusted: true } })
   const read = vi.fn(async (_path: string, _body: Record<string, unknown>): Promise<unknown> => page())
   const write = vi.fn(async (_path: string, body: Record<string, unknown>): Promise<unknown> => ({ operation: { request_id: body.request_id, kind: 'logout', revision: 5 }, credential_revoked: true, cleanup_state: 'pending' }))
-  const runtime = { config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'private-profile-secret' }, requireSession: async () => credentials, authenticatedAuthReadPost: read, authenticatedAuthPost: write } as unknown as ServiceRuntime
+  const runtime = { config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'private-profile-secret' }, requireSession: async () => credentials, authenticatedAuthReadPost: read, authenticatedAuthPost: write,
+    requestScope: (user: number) => `test:${user}`, readRevision: () => revision, invalidateKey: () => { revision++ },
+  } as unknown as ServiceRuntime
   const service = new LoginDevicesService(runtime, () => clock)
   const list = () => service.execute({ action: 'list', accountScope: 'test:7' }) as Promise<LoginDevicePage>
   const prepare = async () => service.execute({ action: 'prepare', accountScope: 'test:7', ref: (await list()).items[0]!.ref, kind: 'logout' }) as Promise<DeviceConfirmation>
@@ -87,5 +90,20 @@ describe('login device Host owner', () => {
     const f = fixture()
     f.read.mockImplementation(async () => { f.credentials.userId = 8; return {} })
     await expect(f.list()).rejects.toThrow('账号已切换')
+  })
+  it('rejects a pre-mutation response even when the write acknowledgement is lost', async () => {
+    const f = fixture(), p = await f.prepare()
+    let release!: (value: unknown) => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    f.read.mockImplementationOnce(() => { entered(); return new Promise(resolve => { release = resolve }) })
+    const stale = f.list()
+    const rejected = expect(stale).rejects.toThrow('设备状态已变化')
+    await started
+    f.write.mockRejectedValue(new Error('lost response'))
+    f.read.mockResolvedValue({ found: false })
+    await f.service.execute({ action: 'confirm', accountScope: p.accountScope, ticket: p.ticket })
+    release({})
+    await rejected
   })
 })

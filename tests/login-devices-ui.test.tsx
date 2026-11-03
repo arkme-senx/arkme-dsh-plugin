@@ -77,4 +77,31 @@ describe('confirmed login devices UI', () => {
     await act(async () => root.render(null)); expect(signal.aborted).toBe(true)
     await act(async () => resolve(page)); expect(document.querySelector('.device-dialog')).toBeNull()
   })
+  it('appends log pages, preserves existing rows on failure and retries the same cursor', async () => {
+    const event = (id: string) => ({ id, name: `日志设备${id}`, at: 1800000000000, kind: 'login', method: 'password' })
+    let attempts = 0
+    mocks.call.mockImplementation(async (_op, input) => {
+      if (input.action !== 'events') return page
+      if (!input.cursor) return { accountScope: 'test:7', items: [event('1')], coverageStart: 1, cursor: 'older' }
+      if (++attempts === 1) throw new Error('offline')
+      return { accountScope: 'test:7', items: [event('1'), event('2')], coverageStart: 1 }
+    })
+    await render()
+    await act(async () => button('登录日志查看近期登录与退出记录').click())
+    await act(async () => button('加载更多').click())
+    expect(document.body.textContent).toContain('日志设备1')
+    expect(document.body.textContent).toContain('暂时无法刷新')
+    await act(async () => button('加载更多').click())
+    expect(mocks.call.mock.lastCall?.[1]).toMatchObject({ action: 'events', cursor: 'older' })
+    expect(document.querySelectorAll('.device-log-row')).toHaveLength(2)
+    expect(document.body.textContent).toContain('日志设备2')
+    await act(async () => button('返回第一页').click())
+    expect(document.querySelectorAll('.device-log-row')).toHaveLength(1)
+  })
+  it('never displays the preceding account while the new account loads', async () => {
+    await render()
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await act(async () => root.render(<ArkmeLoginDevices accountScope="test:8" onClose={() => {}} returnFocusRef={{ current: null }} />))
+    expect(document.body.textContent).not.toContain('工作电脑')
+  })
 })
