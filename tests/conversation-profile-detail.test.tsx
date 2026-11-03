@@ -14,7 +14,7 @@ describe('conversation profile actions', () => {
     const activated = vi.fn()
     let renderer!: ReactTestRenderer
     act(() => { renderer = create(<ConversationProfileDetail item={group} onSourceActivated={activated} />) })
-    const button = renderer.root.findByType('button')
+    const button = renderer.root.findAllByType('button').find(node => node.findAllByType('span').some(span => span.children.includes('发消息')))!
     await act(async () => { await Promise.resolve() })
     expect(JSON.stringify(renderer.toJSON())).toContain('设计师')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('群名称')

@@ -68,3 +68,34 @@ it('replaces the snapshot close subscription when navigating to an editable docu
   expect(close).toHaveBeenCalledOnce()
   expect(mocks.call.mock.calls.find(call=>call[0]==='source.long-article.update')?.[1].itemUid).toBe('B')
 })
+
+it('returns to the library only after saving successfully, retaining content on failure', async () => {
+  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source-A" windowMode={mode} returnToLibrary onClose={close} />) })
+  act(() => renderer!.root.findByProps({'aria-label':'长文正文'}).props.onChange({target:{value:'未完成的草稿'}}))
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async (op, p) => { if (op === 'source.long-article.draft.put') throw new Error('草稿保存失败'); return original(op, p) })
+  await act(async () => button('← 返回').props.onClick())
+  expect(close).not.toHaveBeenCalled()
+  expect(text(renderer!.toJSON())).toContain('草稿保存失败')
+  expect(renderer!.root.findByProps({'aria-label':'长文正文'}).props.value).toBe('未完成的草稿')
+  mocks.call.mockImplementation(original)
+  await act(async () => button('← 返回').props.onClick())
+  expect(close).toHaveBeenCalledOnce()
+  expect(mocks.call.mock.calls.some(([op]) => op === 'source.long-article.draft.put')).toBe(true)
+})
+
+it.each(['', '   '])('saves an existing article with cleared body (%j) as a draft and returns without publishing', async body => {
+  await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source-A" item={{itemUid:'A',title:'文章A',textContent:'原始正文',sendAtMillis:1}} windowMode={mode} returnToLibrary onClose={close} />) })
+  act(() => renderer!.root.findByProps({'aria-label':'长文正文'}).props.onChange({target:{value:body}}))
+  await act(async () => button('← 返回').props.onClick())
+  expect(close).toHaveBeenCalledOnce()
+  expect(mocks.call.mock.calls.filter(([op]) => op === 'source.long-article.update')).toHaveLength(0)
+  const draft = mocks.call.mock.calls.filter(([op]) => op === 'source.long-article.draft.put').at(-1)![1]
+  expect(draft).toMatchObject({itemUid:'A',title:'文章A',textContent:body,autoPublish:true,baseVersion:1})
+  expect(text(renderer!.toJSON())).not.toContain('发布失败')
+  await act(async () => renderer!.unmount()); renderer = undefined
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async (op, p) => op === 'source.long-article.draft.get' ? draft : original(op, p))
+  await mount(mode)
+  expect(renderer!.root.findByProps({'aria-label':'长文正文'}).props.value).toBe(body)
+})

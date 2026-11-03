@@ -16,7 +16,7 @@ function sourceReadReason(e: ArkmeArrangementEvidence, reason: string) {
   return e.kind === 'call' && reason === '原通话已删除或当前无权查看'
     ? '这条通话依据暂未通过核验' : reason
 }
-export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onNavigate }: {arrangementRef:string;sources:ArkmeArrangementEvidence[];expanded:boolean;onNavigate?():void}) {
+export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onNavigate, hideHeadings=false }: {arrangementRef:string;sources:ArkmeArrangementEvidence[];expanded:boolean;onNavigate?():void;hideHeadings?:boolean}) {
   const [target,setTarget]=useState<ArkmeArrangementSourceTarget>()
   const [pending,setPending]=useState(''), [error,setError]=useState(''), [original,setOriginal]=useState(false)
   const [failedRequest,setFailedRequest]=useState<{evidence:ArkmeArrangementEvidence;alternatives:boolean}>()
@@ -79,8 +79,8 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
   let history:ArkmeCallHistoryItem|undefined
   if(target?.kind==='call') {const d=target.detail; history={...d,peerDisplayName:d.title,canOpenDetail:true,canRedial:false,stableId:d.stableId??d.callRef}}
   return <>
-    {expanded?<>{!!initial.length&&<strong>{tr('识别依据')}</strong>}{initial.map(e=>row(e,true))}
-      {!!supplementary.length&&<><strong>{tr('后续补充依据')}</strong>{supplementary.map(e=>row(e,true))}</>}
+    {expanded?<>{!!initial.length&&!hideHeadings&&<strong>{tr('识别依据')}</strong>}{initial.map(e=>row(e,true))}
+      {!!supplementary.length&&<>{!hideHeadings&&<strong>{tr('后续补充依据')}</strong>}{supplementary.map(e=>row(e,true))}</>}
       {!!related.length&&<details onClick={event=>event.stopPropagation()}><summary>{tr('关联资料')} ({related.length})</summary>{related.map(e=>row(e,true))}</details>}</>
       : primary&&row(primary,false)}
     {!expanded&&unavailableCount>0&&<div className="arkme-arrangement-content-empty">{unavailableCount} {tr('条依据暂未通过核验，可展开核对')}</div>}

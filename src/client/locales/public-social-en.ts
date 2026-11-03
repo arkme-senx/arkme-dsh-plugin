@@ -1,5 +1,14 @@
 /** Public social interface copy; never translate user-authored introductions or names. */
 export const publicSocialEnglish: Record<string, string> = Object.fromEntries(`
+入群申请|Join requests
+刷新申请|Refresh requests
+正在读取入群申请…|Loading join requests…
+暂无待处理的入群申请|No pending join requests
+加载更多申请|Load more requests
+同意|Approve
+拒绝|Reject
+已同意入群申请|Join request approved
+已拒绝入群申请|Join request rejected
 公开群聊|Public groups
 展示群聊|Show a group publicly
 找人聊聊|Find people to chat

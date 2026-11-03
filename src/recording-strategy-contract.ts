@@ -1,16 +1,23 @@
 /** Algorithm identity is separate from the formal/enhanced transcript source. */
 export const RECORDING_STRATEGIES = [
-  { id: 'baseline-sd-asr/20261026', name: '默认版' },
-  { id: 'system-sd-asr/v1', name: '测试版v1' },
+  { id: 'baseline-sd-asr/20261026', name: 'v2025-12' },
+  { id: 'system-sd-asr/v1', name: 'v2026-10' },
 ] as const
+export const CURRENT_RECORDING_STRATEGY = RECORDING_STRATEGIES[1]
 export type RecordingStrategy = typeof RECORDING_STRATEGIES[number]['id']
 export function recordingStrategy(value: unknown): RecordingStrategy {
   if (value === undefined || value === '' || value === 'system-sd-asr/v1') return 'system-sd-asr/v1'
   if (value === 'baseline-sd-asr/20261026') return value
   throw new Error('不支持的录音处理策略')
 }
+export type RecordingComparisonAvailabilityState = 'available' | 'unavailable' | 'unknown'
+export interface RecordingComparisonAvailability {
+  strategy: RecordingComparisonAvailabilityState
+  doubao: RecordingComparisonAvailabilityState
+  expiresAtMillis?: number
+}
 export interface RecordingStrategySources {
-  items: Array<{ sourceRef: string; fileName: string; startAtMillis: number; endAtMillis?: number }>
+  items: Array<{ sourceRef: string; fileName: string; startAtMillis: number; endAtMillis?: number; availability?: RecordingComparisonAvailability }>
   nextCursor?: string
 }
 export interface RecordingStrategyRecordings {
@@ -37,8 +44,8 @@ export type RecordingStrategyRequest =
   | { action: 'recordings'; startAtMillis: number; endAtMillis: number; cursor?: string }
   | { action: 'preference'; expectedUserId?: number }
   | { action: 'preference-set'; strategy: RecordingStrategy; expectedUserId?: number }
-  | { action: 'sources'; sessionRef: string; cursor?: string }
-  | { action: 'sources'; importRef: string; cursor?: string }
+  | { action: 'sources'; sessionRef: string; cursor?: string; includeAvailability?: boolean; startAtMillis?: number; endAtMillis?: number }
+  | { action: 'sources'; importRef: string; cursor?: string; includeAvailability?: boolean; startAtMillis?: number; endAtMillis?: number }
   | { action: 'options'; sourceRef: string }
   | { action: 'page'; sourceRef: string; strategy: RecordingStrategy; cursor?: string }
   | { action: 'playback'; itemRef: string }
