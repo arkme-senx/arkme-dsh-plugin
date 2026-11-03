@@ -56,6 +56,9 @@ export function RecordingComparisonMenu({ dateStamp, disabled, busy, buttonStyle
       onBlur={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && e.relatedTarget !== trigger.current) close() }}
       style={{ position: 'fixed', ...position, zIndex: 1100, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'min(460px, calc(100dvh - 16px))', overflowY: 'auto', boxSizing: 'border-box', padding: 14, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: '0 8px 32px #0002' }}>
       <RecordingComparisonChoices availability={discovery.availability} dateStamp={dateStamp} onResult={strategy => { onOpenResult(); setComparison(strategy); close() }} onDoubao={() => { close(); onDoubao() }} />
+      {discovery.error && <div role="status" style={{ marginTop: 10, fontSize: 12, color: theme.secondary }}>
+        部分对比状态暂未确认。<button type="button" aria-label="重试读取转写对比状态" onClick={discovery.retry} style={{ border: 0, padding: '2px 4px', background: 'transparent', color: theme.text, cursor: 'pointer' }}>重试</button>
+      </div>}
     </div>, document.body)}
     {comparison && <RecordingDayStrategyComparison key={`${dateStamp}:${comparison}`} dateStamp={dateStamp} strategy={comparison} mediaPath={mediaPath} onClose={() => setComparison(undefined)} />}
   </>

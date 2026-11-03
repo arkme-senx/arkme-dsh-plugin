@@ -1,6 +1,6 @@
 # PC 录音处理版本
 
-插件基线：`origin/dev`，`546c5d95175961c626706bc7cd6d4c268153f606`。Audio 基线：`origin/master`，`5de71cf3217fd51a0bb60c822a4d13fd91c2ca83`。
+插件基线：`origin/dev`，`a0ecfce4c7e1fc0eadf70f0554205b02c76dcc7d`。Audio 基线：`origin/master`，`5de71cf3217fd51a0bb60c822a4d13fd91c2ca83`。
 
 PC 新录音和新导入不读取账号偏好、不登记策略，也不发送策略参数；Audio 接纳时统一固定 `system-sd-asr/v1`，展示为 `v2026-10`。移除账号策略选择器；音频文件 tab 右侧显示只读处理版本，并说明它用于新录音，历史结果保留原处理版本。已提交、排队、恢复和重试的任务沿用已冻结的策略，不批量修改账号偏好或历史数据。
 
@@ -17,6 +17,6 @@ Audio 继续接受旧客户端的已知策略参数，旧偏好 API 和字段保
 | Tools | 扩展已有策略 Tool 的 Sources 可选可用性读取；真实 DSH Session 发现、调用及失败合同通过，保留旧参数兼容 |
 | SDK | 扩展已有公开 Sources 类型的可选可用性字段；独立安装包 Consumer 经真实 Host 读取通过，新任务由 Audio 固定算法 |
 
-最终验证以 [上线前审查记录](recording-version-pre-release-review.md) 为准：最新 dev 上 15,355 项通过，27 项跳过，3 项失败均在未修改的同一基线复现；类型检查、构建、不可变包安装、真实 DSH Tool 会话、独立 SDK Consumer 及录音 UI 验收通过。相关真实本机 Mongo/API/compound、Completion 架构门禁与 backend guard 通过。
+最终验证以 [上线前审查记录](recording-version-pre-release-review.md) 为准：最新 dev 上 15,359 项通过，27 项跳过，3 项失败均在未修改的同一基线复现；扩大后端验证另有一项旧统计断言在干净 master 复现；类型检查、构建、不可变包安装、真实 DSH Tool 会话、独立 SDK Consumer 及录音 UI 验收通过。相关真实本机 Mongo/API/compound、Completion 架构门禁与 backend guard 通过。
 
 本地协议夹具不代表生产存储、模型质量或其他操作系统验收。两个仓库使用同名 `codex/c20261102-recording-version` 任务分支，分别待合入插件 `dev` 和 Audio `master`，部署时先 Audio、后插件。

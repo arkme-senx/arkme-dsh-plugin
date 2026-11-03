@@ -56,6 +56,18 @@ it('keeps failures retryable without presenting an empty comparison page', async
   expect(retry.props.disabled).toBe(false)
   expect(view.root.findAllByProps({ 'aria-label': '选择转写对比' })).toHaveLength(0)
 })
+it('can retry an unknown choice while the other comparison remains available', async () => {
+  availability = { strategy: 'unknown', doubao: 'available' }
+  await act(async () => { view = create(<RecordingComparisonMenu dateStamp={day} disabled={false} busy={false} mediaPath="/media" onDoubao={onDoubao} onOpenResult={() => {}} />) })
+  await act(async () => view.root.findByProps({ 'aria-label': '转写对比' }).props.onMouseEnter())
+  expect(choice('豆包')).toBeDefined(); expect(choice('v2025-12')).toBeUndefined()
+  const retry = view.root.findByProps({ 'aria-label': '选择转写对比' }).findByProps({ 'aria-label': '重试读取转写对比状态' })
+  availability = { strategy: 'available', doubao: 'available' }
+  await act(async () => retry.props.onClick())
+  await act(async () => view.root.findByProps({ 'aria-label': '转写对比' }).props.onMouseEnter())
+  expect(choice('v2025-12')).toBeDefined(); expect(choice('豆包')).toBeDefined()
+  expect(mock.call.mock.calls.every(([, params]) => ['recordings', 'sources'].includes(params.action))).toBe(true)
+})
 it('expires original-only availability while keeping retained Doubao results visible', async () => {
   vi.useFakeTimers()
   availability = { strategy: 'available', doubao: 'available', expiresAtMillis: Date.now() + 1000 }

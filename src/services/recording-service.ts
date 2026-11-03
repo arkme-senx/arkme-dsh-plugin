@@ -1361,7 +1361,10 @@ export class RecordingService {
       : receipt ? receipt.strategy
       : registeredStrategy !== undefined ? registeredStrategy
       : undefined
-    if (registeredStrategy !== undefined && selectedStrategy !== registeredStrategy) {
+    // Old clients may register the equivalent current recipe after a new
+    // parameterless receipt exists. Compare identities without adding a wire
+    // parameter to that receipt or weakening rejection of a different recipe.
+    if (registeredStrategy !== undefined && recordingStrategy(selectedStrategy) !== registeredStrategy) {
       throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试', false, 409)
     }
     const identity = {
