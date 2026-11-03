@@ -70,15 +70,15 @@ describe('Arkme product navigation', () => {
     }
   })
 
-  it('uses a 52px icon rail with square 36px controls and a permanent membership label above the 36px footer avatar', () => {
+  it('uses a 60px icon rail with square 36px controls and a permanent membership label above the 36px footer avatar', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
     arkmeUi.showConversations()
     let renderer!: ReactTestRenderer
     act(() => { renderer = create(<ArkmeProductNavigation compact={false} hosted taskExpanded />) })
     try {
       const nav = renderer.root.findByType('nav')
-      expect(nav.props.style.width).toBe(52)
-      expect(nav.props.style.minWidth).toBe(52)
+      expect(nav.props.style.width).toBe(60)
+      expect(nav.props.style.minWidth).toBe(60)
       const brand = renderer.root.findByProps({ 'data-arkme-owned': 'product-brand' })
       const version = brand.findByType('span')
       expect(version.children).toEqual([`v3.${version.props['data-arkme-plugin-version'].split('.')[2]}`])

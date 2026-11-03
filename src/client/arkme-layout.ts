@@ -5,5 +5,5 @@ export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
 export const ARKME_CONVERSATION_ROW_HEIGHT = 58
 
 /** Shared first-column dimensions, including portaled surfaces anchored to it. */
-export const ARKME_NAVIGATION_WIDTH = 52
+export const ARKME_NAVIGATION_WIDTH = 60
 export const ARKME_PROFILE_AVATAR_SIZE = 36
