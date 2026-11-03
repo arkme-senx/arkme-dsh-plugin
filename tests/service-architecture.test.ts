@@ -19,7 +19,7 @@ const expectedPublicMethods = [
   'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
-  'dataExport',
+  'dataExport', 'dataExportRangePreview', 'dataExportSaved',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldCommentNotifications',
@@ -160,7 +160,7 @@ const expectedServiceFiles = [
   'composer-document.ts',
   'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
-  'record-export-service.ts',
+  'record-export-service.ts', 'record-export-range-service.ts',
   'team-world-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'personal-keyword-service.ts',
