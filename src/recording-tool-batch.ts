@@ -41,7 +41,7 @@ export function planRecordingToolBatch(
   if (fresh.length) {
     const batchId = recordingImportBatchID()
     fresh.forEach((row, itemIndex) => {
-      journal[row.key] = { strategy: recordingStrategy(row.strategy), clientTaskId: recordingImportBatchID(), batch: { batchId, itemIndex, itemCount: fresh.length, timeZone } }
+      journal[row.key] = { ...(row.strategy === undefined ? {} : { strategy: recordingStrategy(row.strategy) }), clientTaskId: recordingImportBatchID(), batch: { batchId, itemIndex, itemCount: fresh.length, timeZone } }
     })
   }
   const members: Record<string, RecordingToolBatchMember> = {}

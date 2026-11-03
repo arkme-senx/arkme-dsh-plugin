@@ -1627,11 +1627,11 @@ export class WorldService {
   }
 
   /** Resolve an opaque World author reference only inside the trusted Provider. */
-  async worldAuthorFromRef(recordRef: string): Promise<{ userId: number; displayName: string }> {
+  async worldAuthorFromRef(recordRef: string, allowSelf = false): Promise<{ userId: number; displayName: string }> {
     const session = await this.runtime.requireSession()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const userId = entry.ownerUserId ?? 0
-    if (!Number.isSafeInteger(userId) || userId <= 0 || userId === session.userId) {
+    if (!Number.isSafeInteger(userId) || userId <= 0 || (!allowSelf && userId === session.userId)) {
       throw new ArkmePluginError('world-author-target-invalid', '无法确认这位用户，请刷新世界后重试', false, 403)
     }
     const labels = this.viewerLabels === undefined

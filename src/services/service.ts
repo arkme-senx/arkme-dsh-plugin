@@ -1,3 +1,5 @@
+import { ArkmePluginError } from './service-error.js'
+export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
@@ -26,7 +28,6 @@ import type {
   ArkmeSelfSummary,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
-  ArkmePluginErrorBody,
 } from '../types.js'
 import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
@@ -195,6 +196,8 @@ export interface ArkmeRemoteRequestOptions {
   key?: string
   cacheMs?: number
   failureCooldownMs?: number
+  /** Per-request owner budget, shared by transport and read recovery. */
+  requestTimeoutMs?: number
   bypassCache?: boolean
   /** Cancel a shared read transport once its last subscriber leaves. */
   cancelWhenUnobserved?: boolean
@@ -202,38 +205,6 @@ export interface ArkmeRemoteRequestOptions {
   publishServiceCooldown?: boolean
   /** Mark only transport outcomes where a mutation may have reached its owner without a usable acknowledgement. */
   trackWriteOutcome?: boolean
-}
-
-export class ArkmePluginError extends Error {
-  readonly publishReceipt?: ArkmePluginErrorBody['publishReceipt']
-  readonly upstreamStatus?: number
-  readonly retryAfterMillis?: number
-  readonly failureKind?: ArkmePluginErrorBody['failureKind']
-  readonly retryScope?: ArkmePluginErrorBody['retryScope']
-  readonly recovery?: ArkmePluginErrorBody['recovery']
-  readonly imageFailures?: ArkmePluginErrorBody['imageFailures']
-  /** The owner mutation may have completed, but the caller did not receive a usable acknowledgement. */
-  readonly writeOutcomeUnknown?: true
-
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly retryable: boolean,
-    readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean; publishReceipt?: ArkmePluginErrorBody['publishReceipt'];
-      failureKind?: ArkmePluginErrorBody['failureKind']; retryScope?: ArkmePluginErrorBody['retryScope']; recovery?: ArkmePluginErrorBody['recovery']; imageFailures?: ArkmePluginErrorBody['imageFailures'] },
-  ) {
-    super(message, options)
-    this.name = 'ArkmePluginError'
-    if (options?.publishReceipt !== undefined) this.publishReceipt = options.publishReceipt
-    if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
-    if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
-    if (options?.failureKind !== undefined) this.failureKind = options.failureKind
-    if (options?.retryScope !== undefined) this.retryScope = options.retryScope
-    if (options?.recovery !== undefined) this.recovery = options.recovery
-    if (options?.imageFailures !== undefined) this.imageFailures = options.imageFailures
-    if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
-  }
 }
 
 /** Opaque upstream body, for the owning business adapter only. Never serialize this error wholesale. */
@@ -682,6 +653,7 @@ export class ServiceRuntime {
     preserveForbiddenError = false,
   ): Promise<T> {
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
+    const requestTimeoutMs = options.requestTimeoutMs ?? this.config.requestTimeoutMs
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
@@ -722,7 +694,7 @@ export class ServiceRuntime {
         cacheMs: 0,
         failureCooldownMs: 0,
         cancelWhenUnobserved: true,
-        recovery: { maxAttempts: 3, deadlineMs: this.config.requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
+        recovery: { maxAttempts: 3, deadlineMs: requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
           timeout: () => new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504) },
       } : {}),
       shouldCooldown: error => !(error instanceof ArkmePluginError)
@@ -734,7 +706,7 @@ export class ServiceRuntime {
         let errorCode: string | undefined
         try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-          preserveHttpError, preserveForbiddenError,
+          preserveHttpError, preserveForbiddenError, requestTimeoutMs,
         )) } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
@@ -765,6 +737,7 @@ export class ServiceRuntime {
     preferDataError = false,
     preserveHttpError = false,
     preserveForbiddenError = false,
+    requestTimeoutMs = this.config.requestTimeoutMs,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -778,7 +751,7 @@ export class ServiceRuntime {
     // Intake verifies the owned originals before acceptance (a two-minute
     // server budget). Keep that receipt reachable without a new user setting.
     const requestBudget = imageIntake ? 150_000 : publishing ? 100_000 : 0
-    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, this.config.requestTimeoutMs))
+    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
@@ -1199,7 +1172,15 @@ export class ServiceRuntime {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
-    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', { bypassCache: true, cacheMs: 0 })
+    // Full snapshot verification may use the Record owner's 120s read budget.
+    // Keep ordinary messages, status polling and source pages at their normal budget.
+    const snapshotRead = typeof body.result_id === 'string' && body.result_id.length > 0 && [
+      'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
+    ].some(action => path === `/api/v1/team/conversations/history/${action}`)
+    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
+      bypassCache: true, cacheMs: 0,
+      ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
+    })
     try {
       return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
     } catch (error) {

@@ -245,7 +245,8 @@ describe('reaction review UI', () => {
     let ui: ReturnType<typeof create>
     await act(async () => { ui = create(<ArkmeReactionSelections scope="test:1" target={target} actorName="小陈" />) })
     await act(async () => ui!.root.findByProps({ 'aria-label': '查看小陈的资料' }).props.onClick({ stopPropagation() {} }))
-    expect(ui!.root.findByProps({ role: 'dialog' }).props['aria-label']).toBe('小陈 的用户卡片')
+    const titleId = ui!.root.findByProps({ role: 'dialog' }).props['aria-labelledby']
+    expect(ui!.root.findByProps({ id: titleId }).children.join('')).toBe('小陈 的用户卡片')
     expect(reactionPreview.selections('m')).toEqual(['👌 收到'])
     await act(async () => ui!.root.findByProps({ 'aria-label': '取消我的👌 收到' }).props.onClick({ stopPropagation() {} }))
     expect(reactionPreview.selections('m')).toEqual([])

@@ -13,7 +13,8 @@ import type { PublicGroup, PublicGroupPage, PublicGroupJoinResult, PublicGroupSe
 const bridge = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', async () => ({ ...await vi.importActual('../src/client/api.js'), callArkme: bridge.call }))
 import { PublicSocialDirectory } from '../src/client/PublicSocialDirectory.js'
-import { PublicPersonListingDialog } from '../src/client/PublicSocialDialogs.js'
+import { PublicPersonListingDialog, PublicGroupSettingsDialog } from '../src/client/PublicSocialDialogs.js'
+import { publicSocialToolModules } from '../src/tools/business/groups/public-social.js'
 import { ArkmeGroupCreateDialog } from '../src/client/ArkmeQuickAdd.js'
 
 const backendUrl = process.env.ARKME_PUBLIC_SOCIAL_E2E_URL
@@ -83,6 +84,14 @@ it.skipIf(!backendUrl || !fixtureDirectory)('desktop UI and Host cross real Chat
     const ownSettings = await owner.sdk.call<PublicGroupSettings>('social.groups.settings', { accountScope: 'test:99101', sourceRef: ownerSource.sourceRef })
     expect(ownSettings).toMatchObject({ canManage: true, isPublic: true })
     const uid = ownSettings.chatSessionUid
+    const safeGroups = await owner.sdk.publicSocialRead({ operation: 'groups', accountScope: 'test:99101' })
+    expect(safeGroups.operation).toBe('groups')
+    expect(JSON.stringify(safeGroups)).not.toContain(uid)
+    const toolRead = publicSocialToolModules[0].create(owner.service as never)
+    const toolResult = await toolRead.execute({ operation: 'groups', account_scope: 'test:99101' }, { signal: new AbortController().signal } as never)
+    expect(String(toolResult)).toContain('桌面真实接口联调群')
+    expect(String(toolResult)).not.toContain(uid)
+    proof.push('named SDK and registered Tool use the real owner with opaque directory references')
     proof.push('UI default-public creation persists through real Chat transaction')
 
     await mount(<PublicSocialDirectory accountScope="test:99102" mode="groups" onSourceActivated={activated} />, member.sdk)
@@ -115,12 +124,35 @@ it.skipIf(!backendUrl || !fixtureDirectory)('desktop UI and Host cross real Chat
     const requestUid = pending.joinRequest!.requestUid
     const again = await applicant.sdk.call<PublicGroupJoinResult>('social.groups.join', { accountScope: 'test:99103', chatSessionUid: uid, requestUid })
     expect(again.status).toBe('pending')
-    await raw(99101, '/governance/join/resolve', { request_uid: requestUid, status: 2, update_at: Date.now() })
-    await click('刷新'); await click('进入群聊')
+    await mount(<PublicGroupSettingsDialog accountScope="test:99101" sourceRef={ownerSource.sourceRef} onClose={() => {}} />, owner.sdk)
+    await click('拒绝')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('已拒绝入群申请')
+    await mount(<PublicSocialDirectory accountScope="test:99103" mode="groups" onSourceActivated={approved} />, applicant.sdk)
+    await click('重新申请')
+    const retried = await applicant.sdk.call<PublicGroup>('social.groups.read', { accountScope: 'test:99103', chatSessionUid: uid })
+    expect(retried.joinRequest!.requestUid).not.toBe(requestUid)
+    await mount(<PublicGroupSettingsDialog accountScope="test:99101" sourceRef={ownerSource.sourceRef} onClose={() => {}} />, owner.sdk)
+    await click('同意')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('已同意入群申请')
+    await mount(<PublicSocialDirectory accountScope="test:99103" mode="groups" onSourceActivated={approved} />, applicant.sdk)
+    await click('进入群聊')
     expect(approved).toHaveBeenCalledOnce()
     await raw(99101, '/members/update', { chat_session_uid: uid, target_user_id: 99103, action: 2 })
-    await expect(applicant.sdk.call('social.groups.join', { accountScope: 'test:99103', chatSessionUid: uid, requestUid })).rejects.toBeDefined()
+    await expect(applicant.sdk.call('social.groups.join', { accountScope: 'test:99103', chatSessionUid: uid, requestUid: retried.joinRequest!.requestUid })).rejects.toBeDefined()
     await expect(applicant.sdk.call('social.groups.open', { accountScope: 'test:99103', chatSessionUid: uid })).rejects.toBeDefined()
+    await click('刷新')
+    await click('申请加入')
+    expect(button('等待审批').props.disabled).toBe(true)
+    const pendingForTool = await owner.sdk.publicSocialRead({ operation: 'requests', accountScope: 'test:99101', reference: ownerSource.sourceRef })
+    expect(pendingForTool.operation).toBe('requests')
+    if (pendingForTool.operation !== 'requests') throw new Error('wrong request page')
+    expect(pendingForTool.items).toHaveLength(1)
+    const toolWrite = publicSocialToolModules[1].create(owner.service as never)
+    const toolApproval = await toolWrite.execute({ operation: 'resolve', account_scope: 'test:99101', reference: ownerSource.sourceRef, request_ref: pendingForTool.items[0]!.requestRef, enabled: true }, { signal: new AbortController().signal } as never)
+    expect(String(toolApproval)).toContain('"status": 2')
+    await click('刷新'); await click('进入群聊')
+    expect(approved).toHaveBeenCalledTimes(2)
+    proof.push('owner UI lists/rejects/approves real requests; applicant can reapply after rejection or removal')
     proof.push('pending does not grant membership; original approval joins once; removal prevents approval replay')
 
     const listed = vi.fn()
@@ -147,9 +179,9 @@ it.skipIf(!backendUrl || !fixtureDirectory)('desktop UI and Host cross real Chat
     proof.push('existing pair refusal blocks public-directory initiation')
 
     const removed = vi.fn()
-    await mount(<PublicPersonListingDialog accountScope="test:99101" onClose={() => {}} onSaved={removed} />, owner.sdk)
     await writeFile(fixtureDirectory! + '/profiles-unavailable', '')
     try {
+      await mount(<PublicPersonListingDialog accountScope="test:99101" onClose={() => {}} onSaved={removed} />, owner.sdk)
       await click('下架我的展示')
       expect(removed).toHaveBeenCalledWith(expect.objectContaining({ isListed: false, introduction: '公开介绍，想聊桌面产品' }))
     } finally { await rm(fixtureDirectory! + '/profiles-unavailable', { force: true }) }

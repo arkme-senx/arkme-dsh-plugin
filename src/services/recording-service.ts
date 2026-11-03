@@ -1,5 +1,6 @@
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
+import { RecordingFileStorageService } from './recording-file-storage-service.js'
 import { recordingStrategy, type RecordingStrategy } from '../recording-strategy-contract.js'
 import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
@@ -356,6 +357,11 @@ export class RecordingService {
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-forward-account-changed', '账号已切换，请重新选择录音', false, 409)
     selected.sort((left, right) => left.startAtMillis - right.startAtMillis || left.childId.localeCompare(right.childId) || left.asrItemIndex - right.asrItemIndex)
     return { session, selection: { sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) } }
+  }
+
+  async recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../recording-file-storage.js').RecordingFileStoragePage> {
+    this.assertWorkbenchEnabled()
+    return new RecordingFileStorageService(this.runtime, ref => this.openRecordingImportSessionRef(ref)).query(input, signal)
   }
 
   async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -1360,14 +1366,17 @@ export class RecordingService {
       ? (await this.runtime.stateStore.recordingImportStrategies(`${this.runtime.config.environment}:${expectedUserId}`, [{ taskId: metadata.clientTaskId }], signal))[metadata.clientTaskId]
       : undefined
     const selectedStrategy = metadata.strategy !== undefined ? recordingStrategy(metadata.strategy)
-      : receipt ? recordingStrategy(receipt.strategy)
+      : receipt ? receipt.strategy
       : registeredStrategy !== undefined ? registeredStrategy
-      : recordingStrategy((await this.recordingStrategies({ action: 'preference', expectedUserId }, signal) as { strategy: string }).strategy)
-    if (registeredStrategy !== undefined && selectedStrategy !== registeredStrategy) {
+      : undefined
+    // Old clients may register the equivalent current recipe after a new
+    // parameterless receipt exists. Compare identities without adding a wire
+    // parameter to that receipt or weakening rejection of a different recipe.
+    if (registeredStrategy !== undefined && recordingStrategy(selectedStrategy) !== registeredStrategy) {
       throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试', false, 409)
     }
     const identity = {
-      strategy: selectedStrategy,
+      ...(selectedStrategy === undefined ? {} : { strategy: selectedStrategy }),
       userId: session.userId,
       fileName: metadata.fileName,
       fileSize: metadata.fileSize,
@@ -1422,7 +1431,7 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
       recordingKind,
-      strategy: selectedStrategy,
+      ...(selectedStrategy === undefined ? {} : { strategy: selectedStrategy }),
       sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,

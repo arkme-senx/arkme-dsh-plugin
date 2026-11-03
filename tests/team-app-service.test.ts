@@ -865,6 +865,15 @@ it('projects scoped conversation cursor metadata without fetching bodies and rej
 })
 
 describe('Team visitor private chat authority', () => {
+  it('resolves a world target from a fresh authorized visitor without opening a private chat', async () => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客', kind: 'person', account_state: 'active' } }, messages: [] }))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.world-target', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', userId: 999 })).resolves.toEqual({ userId: 200 })
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(f.requests.at(-1)?.path).toContain('conversations/timeline/page')
+    f.changeAccount()
+    await expect(f.service.execute('team.app.visitor.world-target', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  })
   it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
     const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客',kind:'person',account_state:'active' } }, messages: [] }))
     const opened = await open(f)

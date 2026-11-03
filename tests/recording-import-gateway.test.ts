@@ -790,6 +790,7 @@ describe('AudioRecordingImportGateway', () => {
 
     await expect(new AudioRecordingImportGateway(runtime).ensureSession(job({ recordingKind }))).resolves.toBe('session-1')
     expect(posts.find(item => item.path.endsWith('/new-session'))?.body).toMatchObject({ recording_kind: recordingKind })
+    expect(posts.find(item => item.path.endsWith('/new-session'))?.body).not.toHaveProperty('strategy')
   })
 
   it('passes the durable batch identity atomically with cloud session creation', async () => {

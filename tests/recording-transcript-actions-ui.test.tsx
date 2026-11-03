@@ -9,6 +9,7 @@ import { RecordingTranscriptComparison } from '../src/client/recordings/Recordin
 import { RecordingTranscriptForward } from '../src/client/recordings/RecordingTranscriptForward.js'
 import { createRecordingForwardAttempt } from '../src/client/recordings/recording-forward-client.js'
 import { RecordingComparisonMenu } from '../src/client/recordings/RecordingComparisonMenu.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const item = (id: string, sessionKey = 'session'): ArkmeRecordingWorkbenchItem => ({
@@ -19,7 +20,7 @@ const section = (items: ArkmeRecordingWorkbenchItem[]) => ({ items, dateStamp: 0
 const comparison = (): ArkmeRecordingComparison => ({ dateStamp: 0, system: section([item('system')]), doubao: section([]), candidateCount: 0, failedCount: 0, silentCount: 0 })
 let renderer: ReactTestRenderer
 beforeEach(() => {
-  vi.useFakeTimers(); mocks.call.mockReset()
+  vi.useFakeTimers(); mocks.call.mockReset(); arkmeUi.showRecordings()
   vi.stubGlobal('document', { activeElement: null, addEventListener() {}, removeEventListener() {} })
   vi.stubGlobal('HTMLElement', class {})
 })
@@ -426,6 +427,7 @@ it('does not open a comparison for a previously selected date when its response 
   vi.setSystemTime(new Date(2026, 8, 4, 12))
   let resolveComparison!: (value: ArkmeRecordingComparison) => void
   mocks.call.mockImplementation(async (operation, params) => {
+    if (operation === 'recordings.strategies') return params.action === 'recordings' ? { items: [{ sessionRef: 'owned' }] } : { items: [{ sourceRef: 'source', fileName: 'history.wav', startAtMillis: params.startAtMillis, availability: { strategy: 'available', doubao: 'available' } }] }
     if (operation === 'recordings.calendar') return { days: [] }
     if (operation === 'recordings.summary-model-config') return { options: [] }
     if (operation === 'recordings.compare') return await new Promise(resolve => { resolveComparison = resolve })
@@ -446,6 +448,7 @@ it('does not open a comparison for a previously selected date when its response 
 
 it('keeps comparison discovery available when a recording has no formal transcript text', async () => {
   mocks.call.mockImplementation(async (operation, params) => {
+    if (operation === 'recordings.strategies') return params.action === 'recordings' ? { items: [{ sessionRef: 'owned' }] } : { items: [{ sourceRef: 'source', fileName: 'history.wav', startAtMillis: params.startAtMillis, availability: { strategy: 'available', doubao: 'available' } }] }
     if (operation === 'recordings.calendar') return { days: [] }
     if (operation === 'recordings.summary-model-config') return { options: [] }
     if (operation === 'recordings.day') return { dateStamp: params.dateStamp, transcript: section([]), summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } }

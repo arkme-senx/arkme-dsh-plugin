@@ -6,12 +6,14 @@ import { previewText, shareLinkLabels, type ShareLinkPreview, type ShareLinkTarg
 import { arkmeAuthStore } from './auth-store.js'
 import { sharePreviewAccountKey, sharePreviewClient } from './share-preview-client.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { identityShareTarget } from '../identity-share-link.js'
+import { identityShareUi } from './identity-share-ui.js'
 
 const stateLabels = { unavailable: '分享内容暂不可用', expired: '分享已失效', auditing: '分享内容审核中', restricted: '请打开链接确认访问权限' }
 
 export function sharePreviewInlineLabel(target: ShareLinkTarget, preview?: ShareLinkPreview | null): string {
   const kind = preview?.kind ?? target.kind
-  const label = tr(kind === 'message' ? '快记分享链接' : shareLinkLabels[kind])
+  const label = tr(kind === 'message' ? '快记分享链接' : identityShareTarget(target.url) ? target.kind === 'world' ? '联系人名片' : '群聊名片' : shareLinkLabels[kind])
   if (preview?.state !== 'ready') {
     const stateLabel = preview && stateLabels[preview.state as keyof typeof stateLabels]
     return stateLabel ? `${label} · ${tr(stateLabel)}` : label
@@ -21,7 +23,7 @@ export function sharePreviewInlineLabel(target: ShareLinkTarget, preview?: Share
   const byAuthor = (value: string) => author ? `${author}：${value}` : value
   if (kind === 'conversation') return [preview.title || label, preview.count ? tr('{count} 条记录', { count: preview.count }) : ''].filter(Boolean).join(' · ')
   if (kind === 'article') return preview.title || byAuthor(content || label)
-  if (kind === 'topic' || kind === 'world') return [preview.title, label].filter(Boolean).join(' · ')
+  if (kind === 'topic' || kind === 'world') return [preview.title, identityShareTarget(target.url) ? tr(kind === 'world' ? '联系人名片' : '群聊名片') : label].filter(Boolean).join(' · ')
   if (kind === 'extension') return preview.title || label
   if (kind === 'call-invite') return [author, tr(preview.callMediaType === 'audio' ? '语音通话邀请' : preview.callMediaType === 'video' ? '视频通话邀请' : '通话邀请')].filter(Boolean).join(' · ')
   if (kind === 'voiceprint') return [author, label].filter(Boolean).join(' · ')
@@ -67,6 +69,9 @@ export function ArkmeShareLinkPreview({ target, text, onMessageCopyLinkOpen }: {
     data-arkme-inline-link={target.kind === 'message' ? 'message-copy-link' : 'share-preview'}
     aria-label={arkmeEmojiPlainText(label)} title={arkmeEmojiPlainText(label)} onClick={event => {
       event.stopPropagation()
+      if (identityShareTarget(target.url) && scope.startsWith(`${target.environment}:`) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault(); identityShareUi.open(scope, target.url, preview?.state === 'ready' ? preview.title : undefined); return
+      }
       if (target.kind === 'message' && scope.startsWith(`${target.environment}:`) && onMessageCopyLinkOpen
         && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault(); onMessageCopyLinkOpen(target.id)

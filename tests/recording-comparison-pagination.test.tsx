@@ -13,7 +13,7 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); api.call.mockReset() })
 async function render(ui: React.ReactNode) { const host = document.createElement('div'); document.body.append(host); root = createRoot(host); await act(async () => root!.render(ui)) }
-const options = { strategies: [{ id: 'system-sd-asr/v1', name: '测试版v1' }], officialStrategy: 'system-sd-asr/v1', officialComplete: true, officialFailed: false, canStart: false, expiresAtMillis: 0, results: [] }
+const options = { strategies: [{ id: 'system-sd-asr/v1', name: 'v2026-10' }], officialStrategy: 'system-sd-asr/v1', officialComplete: true, officialFailed: false, canStart: false, expiresAtMillis: 0, results: [] }
 const item = (n: number) => ({ itemRef: String(n), startAtMillis: n * 1000, endAtMillis: n * 1000 + 500, speaker: 0, text: `发言${n}` })
 function sourceRead(_op: string, input: any) {
   if (input.action === 'sources') return { items: [{ sourceRef: 'source', fileName: 'audio.wav', startAtMillis: 0 }] }

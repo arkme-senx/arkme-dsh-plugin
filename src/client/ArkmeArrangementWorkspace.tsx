@@ -1,3 +1,7 @@
+import { useOccurrenceReviewCount } from './use-arrangement-occurrences.js'
+import { ArkmeArrangementOccurrenceTimeline } from "./ArkmeArrangementOccurrenceTimeline.js"
+import { ArkmeArrangementReviewInbox } from "./ArkmeArrangementOccurrenceActions.js"
+import { ArkmeArrangementRecognitionSettings, ArkmeArrangementRecognitionProcess } from "./ArkmeArrangementRecognitionInspector.js"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Square } from '@phosphor-icons/react/dist/icons/Square'
 import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
@@ -7,9 +11,8 @@ import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpeakerSlash } from '@phosphor-icons/react/dist/icons/SpeakerSlash'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
-import type { ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
+import type { ArkmeArrangementDetail, ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
 import { callArkme } from './api.js'
-import { arkmeUi } from './ui-controller.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { moveArrangement } from './arrangement-board-model.js'
@@ -32,15 +35,29 @@ function rowTime(value: number | undefined, now: number) {
 }
 function readSound(scope: string) { try { return localStorage.getItem(`arkme:arrangements:sound:${scope}`) !== 'off' } catch { return true } }
 
-export function ArkmeArrangementWorkspace(props: { accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
+export function ArkmeArrangementWorkspace(props: { initialArrangementRef?: string | undefined; accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
   return <ArrangementWorkspace key={props.accountScope} {...props} />
 }
-function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: { accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
+function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrangement, createdItems }: { initialArrangementRef?: string | undefined; accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
   useArkmeLocale()
+  const [recognitionSettings, setRecognitionSettings] = useState(false)
+  const [reviewInbox,setReviewInbox]=useState(false)
+  const reviewCount = useOccurrenceReviewCount(accountScope)
   const [view, setView] = useState<ArrangementView>('today')
   const [now, setNow] = useState(Date.now)
   const data = useArrangementWorkspace(accountScope, view, now)
   const [selected, setSelected] = useState<ArrangementWorkspaceItem>()
+  const [targetError, setTargetError] = useState(false)
+  const [targetAttempt, setTargetAttempt] = useState(0)
+  useEffect(() => {
+    if (!initialArrangementRef) return
+    const controller = new AbortController()
+    setTargetError(false)
+    void withArkmeReadDeadline(signal => callArkme<ArkmeArrangementItem>('arrangements.detail', { arrangementRef: initialArrangementRef }, signal), controller.signal)
+      .then(item => { if (!controller.signal.aborted) { if (item.arrangementRef !== initialArrangementRef) throw new Error('安排引用已变化'); setSelected(item) } })
+      .catch(() => { if (!controller.signal.aborted) setTargetError(true) })
+    return () => controller.abort()
+  }, [initialArrangementRef, targetAttempt])
   type Pending = 'completing' | 'restoring' | 'deleting' | 'reminder'
   const [pending, setPending] = useState(new Map<string, Pending>())
   const writes = useRef(new Set<string>())
@@ -57,6 +74,8 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
     window.addEventListener('focus', refreshClock)
     return () => { clearTimeout(timer); window.removeEventListener('focus', refreshClock) }
   }, [now])
+  useEffect(()=>{const refresh=()=>{void latestData.current.refresh()};window.addEventListener('arkme-arrangement-occurrences-changed',refresh);return()=>window.removeEventListener('arkme-arrangement-occurrences-changed',refresh)},[])
+
   const previousCreated = useRef(createdItems)
   useEffect(() => {
     if (previousCreated.current === createdItems) return
@@ -128,7 +147,8 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
       <div className="arkme-arrangement-view-links">{arrangementViews.map(key => <button key={key} type="button" aria-current={view === key ? 'page' : undefined}
         onClick={() => { setView(key); setSelected(undefined); setDeleting(undefined) }}>{tr(arrangementViewLabels[key])}</button>)}</div>
       <div className="arkme-arrangement-navigation-footer">
-        <button type="button" onClick={() => arkmeUi.openDshSettings('arkme-usage')}>{tr('自动识别设置')}</button>
+        <button type="button" onClick={() => setReviewInbox(true)}>{tr('待确认识别')}{reviewCount ? ` (${reviewCount})` : ''}</button>
+        <button type="button" onClick={() => setRecognitionSettings(true)}>{tr('自动识别设置')}</button>
         <button type="button" aria-label={tr('完成提示音')} aria-pressed={sound} title={tr(sound ? '关闭完成提示音' : '开启完成提示音')}
           onClick={() => { const next = !sound; setSound(next); try { localStorage.setItem(`arkme:arrangements:sound:${accountScope}`, next ? 'on' : 'off') } catch {} }}>
           {sound ? <SpeakerHigh size={17} /> : <SpeakerSlash size={17} />}<span>{tr('完成提示音')}</span>
@@ -171,15 +191,19 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
         <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>
-    {selected ? <ArrangementDetailPane key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
+    {targetError && <div role="alert">{tr('指定安排加载失败')} <button type="button" onClick={() => setTargetAttempt(n => n + 1)}>{tr('重试')}</button></div>}
+    {selected ? <ArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} onRedirect={next => { setSelected(next); void latestData.current.refresh() }} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
       : <aside className="arkme-arrangement-detail-empty"><p>{tr('选择一个安排查看详情')}</p></aside>}
+    {reviewInbox && <ArkmeArrangementReviewInbox key={accountScope} accountScope={accountScope} onClose={()=>setReviewInbox(false)} onApplied={apply}/>}
+    {recognitionSettings && <ArkmeArrangementRecognitionSettings key={accountScope} accountScope={accountScope} onClose={() => setRecognitionSettings(false)} />}
     {deleting && <ArkmeConfirmDialog titleId="arkme-arrangement-delete-title" title={tr('删除安排')}
       description={tr('将「{title}」移入已删除？', { title: deleting.title })} busy={pending.has(deleting.arrangementRef)}
       confirmLabel={tr('删除')} busyLabel={tr('正在删除…')} confirmTone="danger" onClose={() => setDeleting(undefined)} onConfirm={() => { void deleteArrangement(deleting) }} />}
   </div>
 }
 
-function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onReminder }: {
+function ArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect, item, busy, onClose, onComplete, onDelete, onReminder }: {
+  accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void; onRedirect(item: ArkmeArrangementItem): void;
   item: ArrangementWorkspaceItem; busy: boolean; onClose(): void; onComplete(item: ArkmeArrangementItem): Promise<void>; onDelete(item: ArkmeArrangementItem): void; onReminder(item: ArkmeArrangementItem): Promise<void>
 }) {
   const [detail, setDetail] = useState<ArrangementWorkspaceItem>()
@@ -207,8 +231,14 @@ function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onRe
   }, [current.title])
   useEffect(() => {
     const controller = new AbortController(); lifetime.current = controller; setLoading(true); setError(false)
-    void withArkmeReadDeadline(signal => callArkme<ArrangementWorkspaceItem>(item.status === 'deleted' ? 'arrangements.deleted.detail' : 'arrangements.detail', { arrangementRef: item.arrangementRef }, signal), controller.signal)
-      .then(value => { if (!controller.signal.aborted) { if (value.arrangementRef !== item.arrangementRef) throw new Error('Arrangement identity mismatch'); setDetail(value) } })
+    void withArkmeReadDeadline(signal => callArkme<ArrangementWorkspaceItem & Pick<ArkmeArrangementDetail, 'resolvedFromRef'>>(item.status === 'deleted' ? 'arrangements.deleted.detail' : 'arrangements.detail', { arrangementRef: item.arrangementRef }, signal), controller.signal)
+      .then(value => {
+        if (controller.signal.aborted) return
+        if (value.arrangementRef !== item.arrangementRef) {
+          if (item.status === 'deleted' || value.status === 'deleted' || value.resolvedFromRef !== item.arrangementRef) throw new Error('Arrangement identity mismatch')
+          onRedirect(value)
+        } else setDetail(value)
+      })
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
@@ -258,8 +288,9 @@ function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onRe
       {error && <div role="alert" className="arkme-arrangement-list-error">{tr('详情加载失败，已保留当前信息')} <button type="button" onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></div>}
       <section className="arkme-arrangement-detail-sources" aria-label={tr('安排来源')}>
         {current.status === 'deleted' ? <><h3>{tr('来源')}</h3>{current.provenance?.map(evidence => <div key={evidence.id}><p>{tr(({record:'快记或聊天',audio_summary:'录音总结',call:'通话',input:'直接输入',voice_input:'语音输入',agent:'助手创建',manual:'手动创建'})[evidence.kind])}{evidence.sourceDate ? ` · ${evidence.sourceDate}` : ''}</p>{evidence.text && <p className="arkme-arrangement-detail-description">{evidence.text}</p>}</div>)}<p className="arkme-arrangement-detail-progress">{tr('已删除安排的恢复与来源原文访问，后端接口开发中。')}</p></>
-          : <ArkmeArrangementContent item={current} expanded readDetail={false} />}
+          : <ArkmeArrangementOccurrenceTimeline accountScope={accountScope} item={current} fallback={<ArkmeArrangementContent item={current} expanded readDetail={false} />} />}
       </section>
+      {current.status !== 'deleted' && <ArkmeArrangementRecognitionProcess key={current.arrangementRef} accountScope={accountScope} item={current} onSettings={onSettings} onApplied={next => {setDetail(next);onApplied(next)}} />}
     </div>
   </aside>
 }
