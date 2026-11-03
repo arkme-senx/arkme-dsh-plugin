@@ -9,6 +9,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingFiles } from '../src/client/recordings/ArkmeRecordingFiles.js'
+import * as monthTotals from '../src/client/recordings/use-recording-month-totals.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import type { ArkmeRecordingDailyMetrics, ArkmeRecordingDay } from '../src/types.js'
 
@@ -48,6 +49,26 @@ describe('recording calendar selection', () => {
   afterEach(async () => {
     await act(async () => { renderer?.unmount() })
     vi.useRealTimers()
+  })
+
+  it('keeps month reuse aligned with the independent day metrics when the body arrives later', async () => {
+    const dateStamp = new Date(2026, 8, 4).getTime(), publish = vi.spyOn(monthTotals, 'cacheRecordingDayTotals')
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') return { days: [] }
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp, metrics: inputMetrics('ready') }
+      if (operation === 'recordings.day') {
+        const value = recordingDay(dateStamp, '正文')
+        value.transcript.dailyMetrics = { ...inputMetrics('ready'), asrInputDurationMillis: 9000 }
+        return value
+      }
+      return { options: [] }
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+      expect(publish).toHaveBeenCalled()
+      expect(publish.mock.calls.at(-1)?.[2].asrInputDurationMillis).toBe(6000)
+    } finally { publish.mockRestore() }
   })
 
   it.each(['import-dialog', 'day-files'] as const)('replaces the calendar duration after a %s mutation and shows progress until the read settles', async source => {

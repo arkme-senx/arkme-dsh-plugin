@@ -51,7 +51,7 @@ it('keeps long cumulative durations, partial known values and estimates explicit
 it('localizes cumulative metrics without exposing the proposed contract in the product', () => {
   setLocale('en')
   const html = renderToStaticMarkup(<RecordingTotalMetrics loading={false} />)
-  expect(html).toContain('All recordings'); expect(html).toContain('Cloud audio storage'); expect(html).toContain('ASR input duration')
+  expect(html).toContain('Monthly recordings'); expect(html).toContain('Cloud audio storage'); expect(html).toContain('ASR input duration')
   expect(html).not.toContain('recording_totals')
 })
 

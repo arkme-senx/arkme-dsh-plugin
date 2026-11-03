@@ -12,7 +12,7 @@ import { validRecordingImportBatch, type RecordingImportBatch } from '../recordi
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
 import { parseRecordingTotalMetrics } from '../recording-total-metrics.js'
 import type { RecordingTotalsIndexPage } from '../recording-total-metrics.js'
-import { projectRecordingTotalsBucket } from '../recording-total-projection.js'
+import { projectRecordingTotalsBucket, recordingTotalsFromDaily } from '../recording-total-projection.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
@@ -1976,6 +1976,19 @@ export class RecordingService {
     const data = await new RecordingReadOwner(this.runtime, 'background-read').startDayMetrics(
       { startAt: day.getTime(), endAt: end.getTime() }, session, signal)
     return projectRecordingTotalsBucket(data)
+  }
+
+  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    if (!Number.isSafeInteger(dateStamp)) throw new ArkmePluginError('recording-date-invalid', '录音日期必须是本地零点', false)
+    const day = this.recordingDayStart(dateStamp), end = new Date(day); end.setDate(end.getDate() + 1)
+    const session = await this.runtime.requireSession()
+    if (account !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换', false)
+    const metrics = await new RecordingReadOwner(this.runtime, 'background-read').calendarDayMetrics(
+      { startAt: day.getTime(), endAt: end.getTime() }, session, signal)
+    await this.ensureRecordingSession(session, signal)
+    if (!metrics) throw new ArkmePluginError('recording-metrics-unavailable', '录音统计暂不可用', true)
+    return recordingTotalsFromDaily(metrics)
   }
 
   async recordingCalendar(

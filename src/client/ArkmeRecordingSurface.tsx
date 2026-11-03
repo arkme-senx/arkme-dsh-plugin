@@ -23,6 +23,7 @@ import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeRecordingFiles, type RecordingFilesCount } from './recordings/ArkmeRecordingFiles.js'
 import { ArkmeRecordingPresence } from './recordings/ArkmeRecordingPresence.js'
 import { RecordingTotalMetricsLoader } from './recordings/RecordingTotalMetrics.js'
+import { cacheRecordingDayTotals } from './recordings/use-recording-month-totals.js'
 import { reconcileRecordingDayRefresh } from './recordings/recording-day-refresh.js'
 import { mergeRecordingDayParts } from './recordings/recording-day-parts.js'
 import { resolveRecordingSearchTarget } from './recordings/recording-search-target.js'
@@ -724,6 +725,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }
   const publishDayPart = (value: ArkmeRecordingDayPartial) => {
     if (currentDayScope.current !== dayScope) return
+    // Only accepted network results can refresh month numbers. A retained
+    // readable day snapshot may be older than the separately loaded month.
+    if (!tour.sample && !notificationWindow && value.metrics) cacheRecordingDayTotals(entityAccount, value.dateStamp, value.metrics)
     const next = { scope: dayScope, value: { ...(readPartsRef.current?.scope === dayScope ? readPartsRef.current.value : {}), ...value } }
     setDay(current => mergeRecordingDayParts(current, value))
     readPartsRef.current = next; setReadParts(next)
@@ -1016,6 +1020,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         if (controller.signal.aborted || currentDayScope.current !== dayScope || readRevision !== dayReadRevision.current || mutationRevision !== speakerMutationRevision.current) return
         const merged = mergeRecordingDayParts(dayRef.current, { ...(readPartsRef.current?.scope === dayScope ? readPartsRef.current.value : {}), ...result })
         if (!merged || !result.transcript) throw new Error('录音正文读取不完整')
+        const acceptedMetrics = (readPartsRef.current?.scope === dayScope ? readPartsRef.current.value.metrics : undefined)
+          ?? result.metrics ?? dayRef.current?.metrics ?? result.transcript.dailyMetrics
+        if (!tour.sample && !notificationWindow && acceptedMetrics) cacheRecordingDayTotals(entityAccount, result.dateStamp, acceptedMetrics)
         const { day: value, error } = reconcileRecordingDayRefresh(dayRef.current, merged)
         const transcript = await pages.refresh(value.transcript, controller.signal)
         if (controller.signal.aborted || currentDayScope.current !== dayScope || readRevision !== dayReadRevision.current || mutationRevision !== speakerMutationRevision.current) return
@@ -1649,7 +1656,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         <RecordingVoiceTriggerEntry style={styles.calendarActionButton} mediaPath={recordingMediaPath} />
       </>}</div>
       {workbenchEnabled && <RecordingProcessingSetting key={entityAccount} userId={auth.auth?.status === 'authenticated' ? auth.auth.userId ?? 0 : 0} active={active && ui.mode === 'recordings'} />}
-      {workbenchEnabled && <RecordingTotalMetricsLoader account={entityAccount} active={active && workbenchEnabled && !tour.sample} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />}
+      {workbenchEnabled && <RecordingTotalMetricsLoader account={entityAccount} monthStamp={visibleMonth.getTime()} active={active && workbenchEnabled && !tour.sample} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />}
       {workbenchEnabled && <ArkmeRecordingPresence accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined} active={active && ui.mode === 'recordings'} />}
       {workbenchEnabled && <ArkmeDirectRecordingStatus onShowTasks={() => onOpenRecordingImport(selectedDate.getTime())} />}
       {calendarError !== '' && <div style={styles.error} role="alert">{tr("录音日历更新失败")}：{calendarError} <button type="button" style={{ color: 'inherit', background: 'transparent', border: 0, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setFileRefreshRevision(value => value + 1)}>{tr("重试更新日历")}</button></div>}{calendarLoading && calendar === undefined && <div style={styles.status}>{tr("正在读取录音…")}</div>}

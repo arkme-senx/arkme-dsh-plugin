@@ -337,13 +337,39 @@ export class RecordingReadOwner {
   }
 
   async dayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    return await this.readDayMetrics(window, session, signal, false)
+  }
+
+  /** Old servers expose metrics on a small text page. Never follow its cursor. */
+  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    return await this.readDayMetrics(window, session, signal, true)
+  }
+
+  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean) {
     const facts = await this.recordings(window, session, signal)
     // Older owners keep supplying metrics on the first text page. Do not add
     // another body scan solely to make the loading indicator disappear.
-    if (!this.metadataBatch) return undefined
+    if (!this.metadataBatch && !allowLegacy) return undefined
     const positions = facts.map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false }))
-    const pages = await this.batchMetadata(positions, window, 'primary', session, signal)
-    if (!pages) return undefined
+    let pages = this.metadataBatch ? await this.batchMetadata(positions, window, 'primary', session, signal) : undefined
+    if (!pages) {
+      if (!allowLegacy) return undefined
+      pages = new Map<string, RecordingOwnerTranscriptPage>()
+      const controller = new AbortController()
+      const readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+      let next = 0
+      const lanes = Array.from({ length: Math.min(2, facts.length) }, async () => {
+        for (;;) {
+          readSignal.throwIfAborted()
+          const fact = facts[next++]
+          if (!fact) return
+          const page = await this.transcript(fact.recording_uid, 'primary', window, session, { limit: 1 }, readSignal)
+          pages!.set(fact.recording_uid, page)
+        }
+      })
+      try { await Promise.all(lanes) }
+      catch (error) { controller.abort(); await Promise.allSettled(lanes); throw error }
+    }
     const storage: RecordingStorageMetrics = { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
     const input: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
     for (const page of pages.values()) { addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(input, page.asrInput) }
