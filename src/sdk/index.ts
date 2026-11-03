@@ -1875,6 +1875,16 @@ export class ArkmeSdk {
     return await this.call<ArkmeArrangementReorderResult>('arrangements.reorder', { ...input }, signal)
   }
 
+  async conversationArrangements(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeConversationArrangementPage> {
+    if (!sourceRef.trim()) throw new TypeError('Conversation source reference is required')
+    return this.call('arrangements.conversation.list', { sourceRef, cursor: options.cursor ?? '' }, options.signal)
+  }
+
+  async conversationArrangementDetail(sourceRef: string, relatedRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeConversationArrangement> {
+    if (!sourceRef.trim() || !relatedRef.trim()) throw new TypeError('Conversation and arrangement references are required')
+    return this.call('arrangements.conversation.detail', { sourceRef, relatedRef }, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
     return await this.call<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal)

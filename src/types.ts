@@ -1020,12 +1020,35 @@ export interface ArkmeArrangementEvidence {
   unavailableReason?: string
 }
 export type ArkmeArrangementSourceRead =
-  | { evidenceId: string; state: 'ready'; text: string }
+  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation }
   | { evidenceId: string; state: 'unavailable'; reason: string }
+export interface ArkmeArrangementSourceConversation {
+  source: ArkmeSourceItem
+  itemUid: string
+  recordOwnerUserId: number
+  sendAtMillis: number
+  sender?: string
+}
+export interface ArkmeConversationArrangement {
+  id: string
+  relatedRef: string
+  title: string
+  description: string
+  status: ArkmeArrangementStatus
+  dueAtMillis?: number
+  /** Present only for the signed-in owner's existing management path. */
+  arrangementRef?: string
+  sources: { itemUid: string; recordOwnerUserId: number; sender: string; sendAtMillis: number; text: string }[]
+}
+export interface ArkmeConversationArrangementPage {
+  items: ArkmeConversationArrangement[]
+  hasMore: boolean
+  nextCursor: string
+}
 export type ArkmeArrangementSourceTarget =
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
-  | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number }
+  | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
   | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string }
   | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
 
@@ -4588,6 +4611,8 @@ export type ArkmePluginOperation =
   | 'arrangements.recognition.apply'
   | 'arrangements.source.open'
   | 'arrangements.source.read'
+  | 'arrangements.conversation.list'
+  | 'arrangements.conversation.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'
