@@ -83,3 +83,21 @@ it('keeps stable historical values for a day and refreshes processing dates inde
   await scanRecordingMonth({ cache, signal: new AbortController().signal, now: () => now + 3600_000, bucket: read, publish: () => {} })
   expect(read).toHaveBeenCalledTimes(1)
 })
+
+it('persists unfinished forced-refresh invalidations and resumes only those dates after reload', async () => {
+  const cache = emptyRecordingMonthCache(month)
+  await scanRecordingMonth({ cache, signal: new AbortController().signal, now: () => now, bucket: async () => bucket(10), publish: () => {} })
+  const abort = new AbortController(), pending: Array<(value: RecordingTotalsBucket) => void> = []
+  const work = scanRecordingMonth({ cache, signal: abort.signal, now: () => now, force: true,
+    bucket: async day => day === month ? bucket(20) : await new Promise(resolve => pending.push(resolve)), publish: () => {} })
+  await vi.waitFor(() => expect(pending).toHaveLength(2))
+  abort.abort(); for (const resolve of pending) resolve(bucket(9999))
+  await expect(work).rejects.toThrow()
+  const restored = readRecordingMonthCache(JSON.stringify(cache), month, now)
+  expect(restored.entries[month]!.needsRefresh).toBeUndefined()
+  expect(Object.values(restored.entries).filter(entry => entry.needsRefresh)).toHaveLength(30)
+  const read = vi.fn(async () => bucket(0, 0))
+  await scanRecordingMonth({ cache: restored, signal: new AbortController().signal, now: () => now, bucket: read, publish: () => {} })
+  expect(read).toHaveBeenCalledTimes(30)
+  expect(restored.snapshot).toMatchObject({ phase: 'complete', failedDays: 0, metrics: { storage: { state: 'ready', bytes: 20 } } })
+})

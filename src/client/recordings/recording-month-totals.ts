@@ -40,6 +40,7 @@ export async function scanRecordingMonth(input: {
   bucket: (dateStamp: number) => Promise<RecordingTotalsBucket>; publish: (value: RecordingTotalsProgress) => void
 }) {
   const { cache, signal } = input, now = input.now ?? Date.now, started = now()
+  signal.throwIfAborted()
   const days = recordingMonthDays(cache.monthStamp, started), done = new Set<number>(), failed = new Set<number>()
   const fresh = (day: number) => {
     const old = cache.entries[day]
@@ -49,6 +50,12 @@ export async function scanRecordingMonth(input: {
     return current >= old.checkedAt && current - old.checkedAt < ttl
   }
   const queue = days.filter(day => { if (!input.force && fresh(day)) { done.add(day); return false }; return true })
+  // A refresh revision invalidates every affected day before work starts.
+  // Cancellation can leave old numbers visible, but never make them fresh again.
+  if (input.force) for (const day of queue) {
+    const old = cache.entries[day]
+    if (old) cache.entries[day] = { ...old, needsRefresh: true }
+  }
   const queuedEntries = new Map(queue.map(day => [day, cache.entries[day]]))
   let error = ''
   const emit = (phase: RecordingTotalsProgress['phase']) => {

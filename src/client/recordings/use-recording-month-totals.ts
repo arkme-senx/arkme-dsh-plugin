@@ -31,12 +31,15 @@ export function cacheRecordingDayTotals(account: string, dateStamp: number, metr
   // Let the independent bounded read fill the month instead of caching a hole.
   if (!account || !metrics.storage) return
   const date = new Date(dateStamp), monthStamp = new Date(date.getFullYear(), date.getMonth(), 1).getTime()
-  if (!recordingMonthDays(monthStamp).includes(dateStamp)) return
+  let days: number[]
+  // This optional display cache must not fail a readable future/deep-linked day.
+  try { days = recordingMonthDays(monthStamp) } catch { return }
+  if (!days.includes(dateStamp)) return
   const key = scopeKey(account, monthStamp), value = load(key, monthStamp)
   const bucket = { metrics: recordingTotalsFromDaily(metrics), sessionCount: 0 }
   if (!validBucket(bucket)) return
   value.cache.entries[dateStamp] = { checkedAt: Date.now(), bucket }
-  if (value.cache.snapshot) value.cache.snapshot = recordingMonthSnapshot(value.cache, recordingMonthDays(monthStamp), value.cache.snapshot.phase,
+  if (value.cache.snapshot) value.cache.snapshot = recordingMonthSnapshot(value.cache, days, value.cache.snapshot.phase,
     value.cache.snapshot.completedDays, value.cache.snapshot.failedDays, value.cache.snapshot.error)
   persist(key, value); for (const notify of value.listeners) notify()
 }
@@ -58,7 +61,14 @@ export function useRecordingMonthTotals(account: string, monthStamp: number, act
     void scanRecordingMonth({ cache: value.cache, signal: controller.signal, force,
       bucket: async dateStamp => ({ sessionCount: 0, metrics: await withArkmeReadDeadline(signal => callArkme<RecordingTotalMetrics>('recordings.totals.day', { account, dateStamp }, signal, { priority: 'background' }), controller.signal) }),
       publish: () => { update(); if (Date.now() - lastSaved > 1000) { persist(key, value); lastSaved = Date.now() } },
-    }).then(() => { if (!controller.signal.aborted) { running = false; persist(key, value); timer = setTimeout(recover, value.cache.snapshot?.phase === 'error' ? 30_000 : 120_000) } }).catch(() => {})
+    }).then(() => { if (!controller.signal.aborted) { running = false; persist(key, value); timer = setTimeout(recover, value.cache.snapshot?.phase === 'error' ? 30_000 : 120_000) } }).catch(error => {
+      if (controller.signal.aborted) return
+      running = false
+      value.cache.snapshot = { ...value.cache.snapshot, phase: 'error', completedDays: value.cache.snapshot?.completedDays ?? 0,
+        totalDays: value.cache.snapshot?.totalDays ?? 0, failedDays: value.cache.snapshot?.failedDays ?? 0,
+        error: error instanceof Error ? error.message : '录音统计读取失败' }
+      update(); persist(key, value); timer = setTimeout(recover, 30_000)
+    })
     return () => { controller.abort(); clearTimeout(timer); value.listeners.delete(update); window.removeEventListener('online', recover); document.removeEventListener('visibilitychange', recover); persist(key, value) }
   }, [key, monthStamp, account, active, refreshRevision, retry])
   const saved = stored.cache.snapshot ?? (Object.keys(stored.cache.entries).length ? recordingMonthSnapshot(stored.cache, recordingMonthDays(monthStamp), 'calculating', 0) : undefined)
