@@ -5,36 +5,46 @@ import type { ArkmeConversationArrangementPage, ArkmeConversationArrangement } f
 
 function fixture() {
   const session = { userId: 12, refreshToken: 'viewer-session' }
-  const item = { id: 'shared-a', uid: 'private-arrangement-id', owner_user_id: 11, can_manage: false,
+  const item = { uid: 'private-arrangement-id', user_id: 12,
     title: '周五15:00到研发会议室和李工确认样机', description: '带测试结果', status: 2, due_at: 1793948400000,
     sources: [{ record_uid: 'record-a', record_owner_user_id: 11, sender: '李工', sent_at: 1000, text: '周五下午三点确认样机' }] }
-  const page = { items: [item], has_more: false, next_cursor: '' }
+  const page = { list: [item], has_more: false, next_cursor: '', conversation_scope: { kind: 'personal', chat_session_uid: 'chat-a', user_id: 12 } }
   const runtime = { config: { environment: 'production' }, requireSession: vi.fn(async () => session),
-    authenticatedIntelligentPost: vi.fn(async (path: string): Promise<unknown> => path.endsWith('detail') ? item : page) }
+    authenticatedIntelligentPost: vi.fn(async (): Promise<unknown> => page) }
   const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-a' })) }
   const arrangement = { ownedArrangementReference: vi.fn(async () => 'owned-ref') }
   const service = new ConversationArrangementService(runtime as unknown as ServiceRuntime, source as never, arrangement)
   return { service, runtime, source, arrangement, item, page }
 }
 describe('conversation arrangements provider boundary', () => {
-  it('keeps shared references opaque and separate from personal mutations', async () => {
+  it('uses the personal list API and returns only opaque management references', async () => {
     const { service, runtime, arrangement } = fixture()
     const page = await service.read('source', '') as ArkmeConversationArrangementPage
     expect(JSON.stringify(page)).not.toContain('private-arrangement-id')
-    expect(page.items[0]?.arrangementRef).toBeUndefined()
-    expect(arrangement.ownedArrangementReference).not.toHaveBeenCalled()
+    expect(page.items[0]?.arrangementRef).toBe('owned-ref')
+    expect(arrangement.ownedArrangementReference).toHaveBeenCalledWith('private-arrangement-id', 12)
+    expect(runtime.authenticatedIntelligentPost).toHaveBeenLastCalledWith('/api/v1/arrangements/list',
+      { status: -1, limit: 20, chat_session_uid: 'chat-a', conversation_cursor: '' }, expect.objectContaining({ userId: 12 }), undefined, { lane: 'interactive-read', bypassCache: true })
     const item = await service.read('source', '', page.items[0]!.relatedRef) as ArkmeConversationArrangement
     expect(item.relatedRef).toBe(page.items[0]!.relatedRef)
-    expect(runtime.authenticatedIntelligentPost).toHaveBeenLastCalledWith('/api/v1/arrangements/conversation/detail',
-      { chat_session_uid: 'chat-a', uid: 'private-arrangement-id', owner_user_id: 11 }, expect.objectContaining({ userId: 12 }), undefined, { lane: 'interactive-read', bypassCache: true })
+    expect(runtime.authenticatedIntelligentPost).toHaveBeenLastCalledWith('/api/v1/arrangements/list',
+      { status: -1, limit: 20, chat_session_uid: 'chat-a', uids: ['private-arrangement-id'] }, expect.objectContaining({ userId: 12 }), undefined, { lane: 'interactive-read', bypassCache: true })
   })
-  it('only gives an existing management reference to the actual signed-in owner', async () => {
-    const { service, item, arrangement } = fixture()
-    item.can_manage = true
-    expect((await service.read('source', '') as ArkmeConversationArrangementPage).items[0]?.arrangementRef).toBeUndefined()
-    item.owner_user_id = 12
-    expect((await service.read('source', '') as ArkmeConversationArrangementPage).items[0]?.arrangementRef).toBe('owned-ref')
-    expect(arrangement.ownedArrangementReference).toHaveBeenCalledWith('private-arrangement-id', 12)
+  it('fails closed when an old server ignores the conversation filter', async () => {
+    const { service, runtime, arrangement, item } = fixture()
+    runtime.authenticatedIntelligentPost.mockResolvedValue({ list: [item], total: 27329 })
+    await expect(service.read('source', '')).rejects.toMatchObject({ code: 'conversation-arrangement-unavailable' })
+    expect(arrangement.ownedArrangementReference).not.toHaveBeenCalled()
+  })
+  it.each(['kind', 'chat_session_uid', 'user_id'])('rejects a substituted scope %s', async key => {
+    const { service, page } = fixture()
+    Object.assign(page.conversation_scope, { [key]: 'wrong' })
+    await expect(service.read('source', '')).rejects.toMatchObject({ code: 'conversation-arrangement-unavailable' })
+  })
+  it('rejects another account item even inside an acknowledged response', async () => {
+    const { service, item } = fixture()
+    item.user_id = 11
+    await expect(service.read('source', '')).rejects.toMatchObject({ code: 'conversation-arrangement-invalid' })
   })
   it.each(['default_category', 'topic'])('rejects non-conversation source %s', async kind => {
     const { service, source, runtime } = fixture(); source.openSourceRef.mockResolvedValue({ kind, ownerRef: 'chat-a' })
@@ -57,11 +67,11 @@ describe('conversation arrangements provider boundary', () => {
     runtime.requireSession.mockResolvedValueOnce({ userId: 12, refreshToken: 'viewer-session' }).mockResolvedValueOnce({ userId: 13, refreshToken: 'other' })
     await expect(service.read('source', '')).rejects.toMatchObject({ code: 'conversation-arrangement-account-changed' })
   })
-  it('keeps authority errors visible and rejects malformed source contracts', async () => {
+  it('keeps authority errors visible and rejects malformed arrangement contracts', async () => {
     const { service, runtime, item } = fixture()
     runtime.authenticatedIntelligentPost.mockRejectedValueOnce(new Error('authority unavailable'))
     await expect(service.read('source', '')).rejects.toThrow('authority unavailable')
-    item.sources[0]!.record_owner_user_id = -1
+    item.uid = ''
     await expect(service.read('source', '')).rejects.toMatchObject({ code: 'conversation-arrangement-invalid' })
   })
   it('rejects a non-advancing cursor and substituted detail identity', async () => {
