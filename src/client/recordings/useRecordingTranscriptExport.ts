@@ -10,9 +10,12 @@ export function useRecordingTranscriptExport(scope: string, through: ReadThrough
   const currentScope = useRef(scope), active = useRef<ExportJob>()
   currentScope.current = scope
   const [state, setState] = useState<ExportState>()
-  useLayoutEffect(() => () => {
-    active.current?.controller.abort()
-    active.current = undefined
+  useLayoutEffect(() => {
+    setState(undefined)
+    return () => {
+      active.current?.controller.abort()
+      active.current = undefined
+    }
   }, [scope])
 
   const run = useCallback(async (consume: (page: ArkmeRecordingTranscriptPage) => void) => {

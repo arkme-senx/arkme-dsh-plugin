@@ -102,6 +102,14 @@ describe('full-content workbench actions', () => {
     await act(async () => { pending.resolve(page(stamp, true)) })
     expect(click).not.toHaveBeenCalled()
     if (change !== 'unmount') expect(renderer.root.findAllByProps({ 'data-recording-export-status': true })).toHaveLength(0)
+    if (change !== 'unmount') {
+      await act(async () => {
+        if (change === 'date') renderer.root.findByProps({ 'aria-label': '9月10日' }).props.onClick()
+        else arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' })
+      })
+      expect(renderer.root.findByProps({ 'aria-label': '导出' }).props.disabled).toBe(false)
+      expect(renderer.root.findAllByProps({ 'data-recording-export-status': true })).toHaveLength(0)
+    }
   })
 
   it('keeps the tab panel in the content row while overview loading and failure notices change', async () => {
@@ -139,6 +147,9 @@ describe('full-content workbench actions', () => {
     expect(click).not.toHaveBeenCalled()
     expect(JSON.stringify(renderer.toJSON())).not.toContain('完整转写读取失败')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('正在读取完整转写')
+    await act(async () => { navigation.findAllByType('button').find(button => button.children.includes('转写'))!.props.onClick() })
+    expect(renderer.root.findByProps({ 'aria-label': '导出' }).props.disabled).toBe(false)
+    expect(renderer.root.findAllByProps({ 'data-recording-export-status': true })).toHaveLength(0)
   })
 
   it('preloads the overview while rendering only the first body page, then exports all original text once complete', async () => {
