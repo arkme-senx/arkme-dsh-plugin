@@ -90,6 +90,60 @@ const relatedList: ArkmeRelatedQuickNoteList = {
 }
 
 describe('normal timeline related quick note drawer', () => {
+  it('preserves the draft across human and Arko targets, blocks unsupported Arko writes, and sends to the selected human', async () => {
+    vi.useFakeTimers()
+    const toast = vi.fn()
+    const extension = (id: string, name: string) => ({ recordUid: id, parentRecordUid: timelineItem.itemUid, level: 2,
+      sourceKind: 'record_extension', senderDisplayName: name, title: '', textContent: `${name}的延展`, sendAtMillis: 100,
+      templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] })
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
+        { id: 'thought-not-a-record', recordUid: timelineItem.itemUid, content: 'Arko的想法', biz: 1 },
+      ] }
+      if (operation === 'source.related-quick-notes.from-message') return relatedList
+      if (operation === 'source.message-extension.context') return { parentRecordUid: timelineItem.itemUid, extensionCount: 2,
+        extensions: [extension('human-a', '小林'), extension('human-b', '小张')] }
+      if (operation === 'source.message-extension.extend') return { recordUid: params!.recordUid, parentRecordUid: params!.parentRecordUid,
+        status: 1, localState: 'synced', extension: { ...extension(String(params!.recordUid), '我'), level: 3,
+          parentRecordUid: params!.parentRecordUid, textContent: params!.textContent } }
+      return { features: { markdownQuickNotes: false } }
+    })
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<RecordThoughtsProvider accountScope="test:11" enabled>
+        <ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true }} sourceRef="source" sourceKind="send_to_self"
+          showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} onToast={toast}/>
+      </RecordThoughtsProvider>) })
+      await act(async () => vi.advanceTimersByTimeAsync(32))
+      act(() => view.root.findByType(ArkmeRichComposerInput).props.onTextChange('保留这份草稿'))
+      act(() => view.root.findByProps({ 'data-arkme-note-extension-item': 'human-a' }).props.onClick())
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('保留这份草稿')
+      expect(view.root.findByType(ArkmeRichComposerInput).props.ariaLabel).toBe('回复 小林')
+      act(() => view.root.findByProps({ 'aria-label': '取消回复' }).props.onClick())
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('保留这份草稿')
+      expect(view.root.findAllByProps({ 'data-arkme-detail-reply-target': 'extension' })).toHaveLength(0)
+      act(() => view.root.findByProps({ 'data-arkme-thought-reply': 'thought-not-a-record' }).props.onClick())
+      expect(view.root.findByType(ArkmeRichComposerInput).props.ariaLabel).toBe('回复 Arko')
+      expect(view.root.findByProps({ 'aria-label': '发送延展' }).props.disabled).toBe(true)
+      await act(async () => view.root.findByProps({ 'aria-label': '发送延展' }).props.onClick())
+      expect(toast).toHaveBeenCalledWith('暂时无法回复 Arko，输入内容会保留')
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')).toHaveLength(0)
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('保留这份草稿')
+      act(() => view.root.findByProps({ 'data-arkme-note-extension-item': 'human-b' }).props.onClick())
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('保留这份草稿')
+      await act(async () => view.root.findByProps({ 'aria-label': '发送延展' }).props.onClick())
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend', expect.objectContaining({
+        parentRecordUid: 'human-b', textContent: '保留这份草稿',
+      }), expect.any(AbortSignal))
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
+      expect(view.root.findAllByProps({ 'aria-label': '取消回复' })).toHaveLength(0)
+      const children = view.root.findAll(node => node.props['data-arkme-note-extension-item'] && node.props['data-arkme-note-extension-item'] !== 'human-a' && node.props['data-arkme-note-extension-item'] !== 'human-b')
+      expect(children).toHaveLength(1)
+      expect(children[0]!.findByProps({ 'data-arkme-comment-quote': true }).findAll(node => node.type === 'span' && node.children.includes('小张的延展')).length).toBeGreaterThan(0)
+      expect(view.root.findAllByProps({ 'data-arkme-quote-comments': true })).toHaveLength(0)
+    } finally { if (view) act(() => view.unmount()); vi.useRealTimers() }
+  })
+
   it.each(['send_to_self', 'topic'] as const)('places Arko after related notes in the same %s reply list and count', async sourceKind => {
     vi.useFakeTimers()
     mocks.callArkme.mockImplementation(async (operation: string) => {

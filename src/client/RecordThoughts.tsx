@@ -12,6 +12,7 @@ import { arkoReplyHistory } from './arko-reply-history.js'
 import { subscribeThoughtInvalidation } from './thought-invalidations.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { arkmeExtensionDetailListStyles as replyStyles } from './extension-detail-list-styles.js'
+import { activateDetailReplyKey, detailReplyClickAllowed } from './detail-reply-interaction.js'
 
 const Context = createContext<{ store: RecordThoughtStore; chat: boolean; accountScope: string; source?: ArkmeSourceItem | undefined; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined } | null>(null)
 const empty: RecordThoughtState = Object.freeze({ items: [], loading: false, error: '' })
@@ -137,7 +138,9 @@ function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {
     {display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
 }
-export function RecordThoughtContent({ item, embedded = false }: { item: RecordItem; embedded?: boolean }) {
+export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId }: {
+  item: RecordItem; embedded?: boolean; onReply?: ((thought: ArkmeRecordThought) => void) | undefined; selectedThoughtId?: string | undefined
+}) {
   const state = useThought(item), thoughts = visibleThoughts(state.items)
   const section = useRef<HTMLElement>(null)
   useEffect(() => { if (thoughts.length && state.takeFocus()) section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) }, [item.itemUid, state.items, state.focusRevision])
@@ -145,8 +148,14 @@ export function RecordThoughtContent({ item, embedded = false }: { item: RecordI
   return <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content
     style={{ ...(embedded ? {} : replyStyles.extensionContext), minWidth: 0 }}>
     {!embedded && thoughts.length > 0 && <div data-arkme-thought-reply-count style={replyStyles.extensionContextTitle}>{tr('共')}{thoughts.length}{tr('条延展')}</div>}
-    <div style={replyStyles.extensionContextList}>{thoughts.map(thought => <div key={thought.id} data-arkme-thought-reply={thought.id}
-      style={{ ...replyStyles.extensionContextRow, cursor: 'default' }}>
+    <div style={replyStyles.extensionContextList}>{thoughts.map(thought => {
+      const reply = onReply && thought.status !== 'generating' && thought.status !== 'failed' ? () => onReply(thought) : undefined
+      return <div key={thought.id} data-arkme-thought-reply={thought.id}
+      role={reply ? 'button' : undefined} tabIndex={reply ? 0 : undefined} aria-label={reply ? tr('回复 Arko') : undefined}
+      aria-pressed={reply ? thought.id === selectedThoughtId : undefined}
+      onClick={event => { if (reply && detailReplyClickAllowed(event)) reply() }}
+      onKeyDown={event => { if (reply) activateDetailReplyKey(event, reply) }}
+      style={{ ...replyStyles.extensionContextRow, ...(thought.id === selectedThoughtId ? replyStyles.extensionContextRowSelected : {}), cursor: reply ? 'pointer' : 'default' }}>
       <ArkmeArkoAvatar size={32}/>
       <div style={replyStyles.extensionContextBody}>
         <div style={replyStyles.extensionContextHead}>
@@ -164,7 +173,7 @@ export function RecordThoughtContent({ item, embedded = false }: { item: RecordI
           </div>) : thought.content && <ArkmeMarkdownBody text={thought.content} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }}/>}
         </>}
       </div>
-    </div>)}</div>
+    </div>})}</div>
     {state.error && <div role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr(state.error)}
       <button type="button" disabled={state.loading} onClick={state.retry} style={{ ...buttonStyle, marginLeft: 8 }}>{tr('重试')}</button>
     </div>}
