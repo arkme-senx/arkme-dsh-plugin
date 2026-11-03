@@ -1134,7 +1134,7 @@ export async function dispatchArkmeHostOperation(
   migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
   if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
-  if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
+  if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal, {part:params.part,expectedAccountScope:params.expectedAccountScope})
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
   if (operation === 'statistics.keywords') return service.personalKeywordsRead(params, requestSignal)
   if (operation === 'statistics.keyword-records') return service.personalKeywordRecords(params, requestSignal)
