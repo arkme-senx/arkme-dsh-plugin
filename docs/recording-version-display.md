@@ -1,6 +1,6 @@
 # PC 录音处理版本
 
-插件基线：`origin/dev`，`9b8ed12bcdcbba7cf69259f4b118d5329e7f7c32`。Audio 基线：`origin/master`，`5de71cf3217fd51a0bb60c822a4d13fd91c2ca83`。
+插件基线：`origin/dev`，`546c5d95175961c626706bc7cd6d4c268153f606`。Audio 基线：`origin/master`，`5de71cf3217fd51a0bb60c822a4d13fd91c2ca83`。
 
 PC 新录音和新导入不读取账号偏好、不登记策略，也不发送策略参数；Audio 接纳时统一固定 `system-sd-asr/v1`，展示为 `v2026-10`。移除账号策略选择器；音频文件 tab 右侧显示只读处理版本，并说明它用于新录音，历史结果保留原处理版本。已提交、排队、恢复和重试的任务沿用已冻结的策略，不批量修改账号偏好或历史数据。
 
@@ -14,11 +14,9 @@ Audio 继续接受旧客户端的已知策略参数，旧偏好 API 和字段保
 | --- | --- |
 | UI | 删除选择器、移除新任务策略参数、只读版本标记、精简菜单；复用已有导入和录音 owner |
 | Host owner | 复用既有 RecordingService 导入 owner，移除隐式账号偏好读取；旧登记、任务重试与账号校验不变 |
-| Tools | 没有新增工具；既有导入及策略能力继续由共同 owner 承接，保留显式旧参数兼容 |
-| SDK | 没有新增 SDK 能力；既有可选参数仍兼容传输，新任务由 Audio 固定算法 |
+| Tools | 扩展已有策略 Tool 的 Sources 可选可用性读取；真实 DSH Session 发现、调用及失败合同通过，保留旧参数兼容 |
+| SDK | 扩展已有公开 Sources 类型的可选可用性字段；独立安装包 Consumer 经真实 Host 读取通过，新任务由 Audio 固定算法 |
 
-验证：相关 14 个测试文件共 369 项通过，包含 UI、Host、SDK/Tool 共同导入链、无参云端请求、旧队列和幂等恢复；类型检查、构建、包清单检查通过。Audio 的 6 项真实本机 Mongo/API 回归、compound 策略测试、Completion 架构门禁和 backend guard 通过。全仓测试初始基线通过 15,003 项，有 19 项既有失败；使用未修改的 dev 快照复跑三个失败文件，19 个失败名称完全一致。
+最终验证以 [上线前审查记录](recording-version-pre-release-review.md) 为准：最新 dev 上 15,355 项通过，27 项跳过，3 项失败均在未修改的同一基线复现；类型检查、构建、不可变包安装、真实 DSH Tool 会话、独立 SDK Consumer 及录音 UI 验收通过。相关真实本机 Mongo/API/compound、Completion 架构门禁与 backend guard 通过。
 
-不可变 tgz 经官方 DSH 0.2.1-rc.2 CLI 安装至隔离的新 Profile，实际 Chrome 页面确认选择器已移除、版本标记含历史说明、菜单仅两项。使用本地协议夹具，不代表云端模型质量、生产服务或 Windows/Linux 验收。最终 worktree 继续快进吸收开发期间新合入的 dev 提交，重新检查相关测试、类型与构建。用户常驻实例未替换，未提交、推送或部署。
-
-上线前审查与最终入口合同见 [审查记录](recording-version-pre-release-review.md)。本轮使用仓库支持的 Node 24 完成全仓回归；早先 Node 23 下的 19 项失败在本轮运行中未再出现。
+本地协议夹具不代表生产存储、模型质量或其他操作系统验收。两个仓库使用同名 `codex/c20261102-recording-version` 任务分支，分别待合入插件 `dev` 和 Audio `master`，部署时先 Audio、后插件。
