@@ -57,6 +57,11 @@ describe('Arkme product navigation', () => {
       expect(arkmeUi.getViewSnapshot().mode).toBe('arrangements')
       expect(arkmeUi.getViewSnapshot().calendarOpen).toBeUndefined()
       expect(renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('安排')
+      const world = buttons.findIndex(button => button.props['aria-label'] === '世界')
+      expect(buttons[world + 1]?.props['aria-label']).toBe('探索')
+      act(() => renderer.root.findByProps({ 'aria-label': '世界' }).props.onClick())
+      expect(arkmeUi.getViewSnapshot().mode).toBe('world')
+      expect(renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('世界')
       act(() => renderer.root.findByProps({ 'aria-label': '录音' }).props.onClick())
       expect(arkmeUi.getViewSnapshot().mode).toBe('recordings')
     } finally {
@@ -65,15 +70,15 @@ describe('Arkme product navigation', () => {
     }
   })
 
-  it('uses a 60px icon rail with 44px navigation controls and a permanent membership label above the 36px footer avatar', () => {
+  it('uses a 52px icon rail with square 36px controls and a permanent membership label above the 36px footer avatar', () => {
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 10001 })
     arkmeUi.showConversations()
     let renderer!: ReactTestRenderer
     act(() => { renderer = create(<ArkmeProductNavigation compact={false} hosted taskExpanded />) })
     try {
       const nav = renderer.root.findByType('nav')
-      expect(nav.props.style.width).toBe(60)
-      expect(nav.props.style.minWidth).toBe(60)
+      expect(nav.props.style.width).toBe(52)
+      expect(nav.props.style.minWidth).toBe(52)
       const brand = renderer.root.findByProps({ 'data-arkme-owned': 'product-brand' })
       const version = brand.findByType('span')
       expect(version.children).toEqual([`v3.${version.props['data-arkme-plugin-version'].split('.')[2]}`])
@@ -84,8 +89,7 @@ describe('Arkme product navigation', () => {
       expect(avatar.props.style.width).toBe(36)
       expect(avatar.props.style.height).toBe(36)
       const active = renderer.root.findByProps({ 'aria-current': 'page' })
-      expect(active.props.style.minHeight).toBe(44)
-      expect(active.props.style.padding).toBe('0 2px')
+      expect(active.props.style).toMatchObject({ width: 36, minHeight: 36, height: 36, padding: 0, borderRadius: 10 })
     } finally {
       act(() => renderer.unmount())
     }
@@ -182,7 +186,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('width:48px;height:28px;object-fit:cover')
     expect(markup).toContain('min-height:44px')
     expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('aria-label="对话"'))
-    expect(markup).toContain('data-arkme-selection-marker="true"')
+    expect(markup).not.toContain('data-arkme-selection-marker="true"')
     expect(markup).toContain('aria-label="即我 功能导航"')
     expect(markup).toContain('aria-label="对话"')
     expect(markup).toContain('aria-label="通话"')
@@ -190,7 +194,7 @@ describe('Arkme product navigation', () => {
     expect(markup).not.toContain('>搜索<')
     expect(markup).toContain('aria-label="日历"')
     expect(markup).toContain('aria-label="探索"')
-    expect(markup).not.toContain('aria-label="世界"')
+    expect(markup).toContain('aria-label="世界"')
     expect(markup).toContain('aria-label="市集"')
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain(`background:${arkmeTheme.active}`)
@@ -284,8 +288,8 @@ describe('Arkme product navigation', () => {
   it('fits the permanent DSH sidebar seat without rendering official sidebar chrome', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation hosted compact={false} currentSessionId="session-1" />)
     expect(markup).toContain('width:100%')
-    expect(markup).toContain('padding:28px 4px 12px')
-    expect(markup).toContain('min-height:44px')
+    expect(markup).toContain('padding:28px 8px 12px')
+    expect(markup).toContain('width:36px;min-width:36px;min-height:36px')
     expect(markup).toContain('aria-label="即我 功能导航"')
     expect(markup).not.toContain('DSH')
   })
