@@ -104,4 +104,19 @@ describe('confirmed login devices UI', () => {
     await act(async () => root.render(<ArkmeLoginDevices accountScope="test:8" onClose={() => {}} returnFocusRef={{ current: null }} />))
     expect(document.body.textContent).not.toContain('工作电脑')
   })
+  it('bounds repeated log loading and can return to the newest page', async () => {
+    mocks.call.mockImplementation(async (_op, input) => {
+      if (input.action !== 'events') return page
+      const offset = Number(input.cursor ?? 0)
+      return { accountScope: 'test:7', items: Array.from({ length: 50 }, (_, n) => ({ id: String(offset + n), name: `日志设备${offset + n}`, at: 1800000000000 - offset - n, kind: 'login', method: 'password' })), coverageStart: 1, cursor: String(offset + 50) }
+    })
+    await render()
+    await act(async () => button('登录日志查看近期登录与退出记录').click())
+    for (let i = 0; i < 12; i++) await act(async () => button('加载更多').click())
+    expect(document.querySelectorAll('.device-log-row')).toHaveLength(500)
+    expect(document.querySelector('.device-log-row')?.textContent).toContain('日志设备150')
+    await act(async () => button('返回第一页').click())
+    expect(document.querySelectorAll('.device-log-row')).toHaveLength(50)
+    expect(document.querySelector('.device-log-row')?.textContent).toContain('日志设备0')
+  })
 })

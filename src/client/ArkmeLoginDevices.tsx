@@ -21,6 +21,8 @@ const request = <T extends LoginDeviceResult>(input: LoginDeviceRequest, signal?
 const date = (at: number | null) => at ? new Date(at).toLocaleString(arkmeIntlLocale()) : tr('活跃时间暂不可用')
 const mobile = (d: LoginDevice) => d.platform === 'ios' || d.platform === 'android'
 const computer = (d: LoginDevice) => ['macos', 'windows', 'linux'].includes(d.platform)
+// Retain ten requested pages; returning to the first page restores newer history.
+const maxVisibleEvents = 500
 function DeviceIcon({ device }: { device: LoginDevice }) { return <span className="device-icon">{mobile(device) ? <DeviceMobile size={25} /> : computer(device) ? <Desktop size={25} /> : <Devices size={25} />}</span> }
 function Dialog({ label, onClose, children, className = '', returnFocusRef }: { label: string; onClose: () => void; children: ReactNode; className?: string; returnFocusRef?: RefObject<HTMLElement> }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -70,7 +72,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
     void request<LoginDevicePage | LoginEventPage>({ action: page, accountScope, ...(cursor ? { cursor } : {}) }, controller.signal)
       .then(value => { if (!controller.signal.aborted && value.accountScope === accountScope) setResult(previous => {
         if (page === 'events' && cursor && previous?.page === page && previous.value.accountScope === accountScope && previous.value.cursor === cursor && 'coverageStart' in previous.value && 'coverageStart' in value) {
-          value = { ...value, items: [...new Map([...previous.value.items, ...value.items].map(event => [event.id, event])).values()], coverageStart: Math.max(previous.value.coverageStart, value.coverageStart) }
+          value = { ...value, items: [...new Map([...previous.value.items, ...value.items].map(event => [event.id, event])).values()].slice(-maxVisibleEvents), coverageStart: Math.max(previous.value.coverageStart, value.coverageStart) }
         }
         return { page, cursor, value }
       }) })
