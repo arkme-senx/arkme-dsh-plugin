@@ -88,10 +88,15 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage
+自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。|Automatically analyze recordings and chats to identify related in-person conversations. Enabling this also analyzes historical recordings and chats and uses AI allowance.
+自动整理个人档案|Automatically organize my profile
+自动识别安排|Automatically recognize plans
+自动分析目标|Automatically analyze goals
+录音口令记事|Voice-command notes
+在私聊和群聊消息下方提供建议，仅你可见。|Offers suggestions beneath private and group chat messages, visible only to you.
+在聊天中回看相关的线下交流，仅你可见。|Revisit related in-person conversations from your chats, visible only to you.
+先在电脑版启用记事口令，如「帮我记一下」。录音上传转写后，提取口令后的原话，按规则自动保存到「发给自己」或由你确认。仅处理开启后新上传的录音，分析会消耗 AI 额度。|Enable a note-taking phrase on desktop, such as “帮我记一下”. After upload and transcription, the words following it are extracted and saved to Send to myself according to your rules, or await your confirmation. Only recordings newly uploaded after enabling are processed. Analysis uses AI allowance.
 阅读新快记，有想法时在快记下方回应你。|Reads new notes and responds beneath them when it has an insight.
-根据私聊和群聊内容，在相关消息下方提供仅你可见的想法和建议。|Uses private and group chats to offer thoughts and suggestions beneath related messages, visible only to you.
-自动关联线下录音与相关聊天，方便回看当时的交流，仅你可见。|Links in-person recordings to related chats so you can revisit the conversation; only you can see these links.
-先在电脑版「语音触发」中启用记事口令，例如「帮我记一下」。录音上传并转成文字后，会提取口令后面的原话，供你核对并保存为快记。若规则允许自动保存，且可靠识别为本人、内容完整，会保存到「发给自己」。分析会使用 AI 额度；只处理开启后新上传的录音，已有云端录音不会自动重新处理。|First enable a note-taking phrase, such as “帮我记一下”, in Voice triggers on desktop. After a recording is uploaded and transcribed, the original words after the phrase are extracted for you to review and save as a note. If the rule permits automatic saving, the content is complete and the speaker is reliably identified as you, it is saved to Send to myself. Analysis uses AI allowance. Only recordings newly uploaded after enabling are processed; existing cloud recordings are not automatically reprocessed.
 开启后会自动使用 AI 额度。|Uses AI allowance automatically when enabled.
 持续更新个人档案。首次开启会分析所选来源的历史材料。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources.
 目标|Goals

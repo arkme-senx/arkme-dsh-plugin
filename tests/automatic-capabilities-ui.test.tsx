@@ -94,16 +94,17 @@ it('clears a transient read error after a successful focus refresh', async () =>
 
 it('shows fixed destinations and contextual effects beside every switch before consent', async () => {
   const names = { personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联', recording_voice_trigger: '录音语音触发' }
-  const expected = ['「探索 → 个人档案」', '阅读新快记，有想法时在快记下方回应你。', '根据私聊和群聊内容，在相关消息下方提供仅你可见的想法和建议。', '左侧「安排」', '「探索 → 目标」', '自动关联线下录音与相关聊天，方便回看当时的交流，仅你可见。', '录音日历「更多 → 语音触发」']
+  const expected = ['「探索 → 个人档案」', '阅读新快记，有想法时在快记下方回应你。', '在私聊和群聊消息下方提供建议，仅你可见。', '左侧「安排」', '「探索 → 目标」', '在聊天中回看相关的线下交流，仅你可见。', '录音日历「更多 → 语音触发」']
   mocks.call.mockResolvedValue({ accountScope: 'prod:1', settings: Object.entries(names).map(([key, title]) => ({ key, title, enabled: false, version: 0, enabledAt: 0 })) })
   await render()
   expect(host.querySelector('h3')?.textContent).toBe('自动使用额度')
   expect(host.querySelector('details')).toBeNull()
   const toggles = [...host.querySelectorAll('[role="switch"]')]
   expect(toggles).toHaveLength(7)
-  for (const [index, oldTitle] of Object.values(names).entries()) {
+  const labels = ['自动整理个人档案', 'Arko有想法（快记）', 'Arko有想法（聊天）', '自动识别安排', '自动分析目标', '线下交流关联', '录音口令记事']
+  for (const [index, label] of labels.entries()) {
     const toggle = toggles[index]!
-    expect(toggle.getAttribute('aria-label')).toBe(oldTitle.replaceAll('阿森', 'Arko'))
+    expect(toggle.getAttribute('aria-label')).toBe(label)
     expect(document.getElementById(toggle.getAttribute('aria-describedby')!)?.textContent).toBe(expected[index])
   }
   expect(writes()).toHaveLength(0)
@@ -113,7 +114,7 @@ it.each([false, true])('keeps contextual guidance in a filtered chat control wit
   mocks.call.mockResolvedValue({ accountScope: 'prod:1', settings: [{ key: 'chat_thought', title: '阿森有想法（聊天）', enabled: false, version: 0, enabledAt: 0 }] })
   await act(async () => root.render(<ArkmeAutomaticAiSettings accountScope="prod:1" only={['chat_thought']} compact={compact} />))
   expect(host.querySelector('[role="switch"]')?.getAttribute('aria-label')).toBe('聊天中的建议')
-  expect(host.textContent).toContain('根据私聊和群聊内容，在相关消息下方提供仅你可见的想法和建议。')
+  expect(host.textContent).toContain('在私聊和群聊消息下方提供建议，仅你可见。')
   expect(host.textContent).not.toContain('聊天自动回复')
   expect(writes()).toHaveLength(0)
 })
@@ -123,7 +124,7 @@ it('explains the command and saved result without enabling on open or cancel', a
   await render()
   await click(host.querySelector('[role="switch"]')!)
   const dialog = document.querySelector('[role="dialog"]')!
-  for (const text of ['例如「帮我记一下」', '提取口令后面的原话', '供你核对并保存为快记', '若规则允许自动保存', '保存到「发给自己」', '使用 AI 额度', '已有云端录音不会自动重新处理']) expect(dialog.textContent).toContain(text)
+  for (const text of ['录音口令记事', '如「帮我记一下」', '录音上传转写后', '提取口令后的原话', '按规则自动保存到「发给自己」或由你确认', '消耗 AI 额度', '仅处理开启后新上传的录音']) expect(dialog.textContent).toContain(text)
   expect(writes()).toHaveLength(0)
   await click(button('取消'))
   expect(document.querySelector('[role="dialog"]')).toBeNull()
