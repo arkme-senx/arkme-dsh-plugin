@@ -1,7 +1,7 @@
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from './types.js'
 import type { DshRemoteModelCatalog } from './dsh-remote/types.js'
 
-export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore'
+export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore' | 'arrangement'
 export type ModelOrigin = 'official' | 'user-provided'
 export type ModelBilling = 'arkme-points' | 'provider-account' | 'unknown'
 export interface ModelChoice {
@@ -23,6 +23,7 @@ export interface ModelChoice {
   reasoning?: { efforts: { id: string; name: string; description?: string }[]; defaultEffort?: string }
   dsh?: { provider: string; model: string }
   arko?: string
+  arrangement?: string
   recording?: string
   /** Account- and module-bound activation reference from the Explore owner. */
   explore?: string
