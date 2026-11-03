@@ -47,6 +47,8 @@ export function ArkmeMemberProfileCard(props: {
   showTopicNickname?: boolean
   busy: boolean
   loading?: boolean
+  pending?: boolean
+  accountName?: string
   browserUrl?: string
   onRefresh?: () => void
   onClose: () => void
@@ -105,9 +107,9 @@ export function ArkmeMemberProfileCard(props: {
   } : undefined)
   if (scope !== issuedScope.current) return null
   return <ArkmePersonProfileDialog displayName={names.displayName} topicNickname={names.topicNickname}
-    accountName={person?.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef} avatarFallback={props.member.avatarFallback}
+    accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef} avatarFallback={props.member.avatarFallback}
     imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target}
-    busy={props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false}
+    busy={props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
     onContactAsTeam={team} onWorld={() => { void world() }} browserUrl={props.browserUrl}
     onRefresh={props.onRefresh ?? (target ? () => { setError(''); setRevision(value => value + 1) } : undefined)} />

@@ -20,7 +20,7 @@ export function ArkmePersonProfileDialog(props: {
   imagePort?: ArkmeAvatarImagePort | undefined; imageKey?: string | undefined
   isSelf?: boolean | undefined; hideSend?: boolean | undefined
   accountScope: string; copyLinkTarget?: IdentityShareTarget | undefined
-  busy: boolean; worldBusy?: boolean; worldDisabled?: boolean; loading?: boolean
+  busy: boolean; worldBusy?: boolean; worldDisabled?: boolean; loading?: boolean; pending?: boolean
   error?: string | undefined
   onClose(): void; onSend(): void; onWorld(): void
   onContactAsTeam?: (() => void) | undefined
@@ -32,7 +32,7 @@ export function ArkmePersonProfileDialog(props: {
   return <ArkmeConfirmDialog layout="picker" titleId={titleId}
     title={tr('{v0} 的用户卡片', { v0: props.displayName })} busy={props.busy || Boolean(props.worldBusy)}
     onClose={props.onClose} dialogStyle={{ width: 'min(390px, 100%)', borderRadius: 18 }}>
-    <div className="arkme-person-card" data-arkme-member-profile data-arkme-person-profile="unified">
+    <div className="arkme-person-card" data-arkme-member-profile data-arkme-person-profile="unified" data-arkme-person-profile-ready={props.pending ? undefined : "true"} aria-busy={props.pending || undefined}>
       <button type="button" className="arkme-person-icon arkme-person-close" aria-label={tr('关闭')}
         disabled={props.busy || props.worldBusy} onClick={props.onClose}><XIcon size={18} aria-hidden /></button>
       <header className="arkme-person-identity">
@@ -56,16 +56,16 @@ export function ArkmePersonProfileDialog(props: {
       {props.error && <p className="arkme-person-error" role="alert">{props.error}</p>}
       {!props.hideSend && <div className="arkme-person-actions">
         <button type="button" className="arkme-person-button arkme-person-primary" data-arkme-feedback="primary"
-          data-arkme-profile-send-state={props.busy ? 'loading' : sendState} disabled={props.busy || props.worldBusy}
+          data-arkme-profile-send-state={props.busy ? 'loading' : sendState} disabled={props.busy || props.worldBusy || props.pending}
           aria-busy={props.busy || undefined} onPointerEnter={() => setSendState('hover')} onPointerLeave={() => setSendState('idle')}
           onPointerDown={() => setSendState('active')} onPointerUp={() => setSendState('hover')} onClick={props.onSend}>
           <ChatCircleIcon size={18} aria-hidden />{tr(props.busy ? '正在打开…' : props.isSelf ? '发给自己' : '发消息')}
         </button>
-        {props.onContactAsTeam && !props.isSelf && <button type="button" className="arkme-person-button" data-arkme-feedback="neutral"
-          disabled={props.busy || props.worldBusy} onClick={props.onContactAsTeam}><UsersIcon size={18} aria-hidden />{tr('以团队联系')}</button>}
+        {(props.onContactAsTeam || props.pending) && !props.isSelf && <button type="button" className="arkme-person-button" data-arkme-feedback="neutral"
+          disabled={props.busy || props.worldBusy || props.pending} onClick={props.onContactAsTeam}><UsersIcon size={18} aria-hidden />{tr('以团队联系')}</button>}
       </div>}
-      {(props.copyLinkTarget || props.onRefresh || props.browserUrl) && <footer className="arkme-person-footer">
-        <div className="arkme-person-copy">{props.copyLinkTarget && <IdentityCopyLinkButton accountScope={props.accountScope} target={props.copyLinkTarget}
+      {(props.copyLinkTarget || props.onRefresh || props.browserUrl || props.pending) && <footer className="arkme-person-footer">
+        <div className="arkme-person-copy">{props.pending && <span className="arkme-person-skeleton" aria-hidden style={{ width: 100, height: 13 }} />}{props.copyLinkTarget && <IdentityCopyLinkButton accountScope={props.accountScope} target={props.copyLinkTarget}
           className="arkme-person-text-button" style={{}} label="复制个人链接" iconSize={15} />}</div>
         {(props.onRefresh || props.browserUrl) && <div className="arkme-person-more">
           <button type="button" className="arkme-person-icon" aria-label={tr('更多操作')} aria-expanded={more}

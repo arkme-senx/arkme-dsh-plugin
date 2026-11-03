@@ -119,6 +119,11 @@ export class IdentityShareService {
     return { kind: 'group', url: target.url, displayName: data.title, creatorDisplayName: data.creator_display_name, hasJoined: data.has_join,
       joinMode: data.join_mode, requestPending: data.my_request_status === 1, expireAtMillis: data.expire_at }
   }
+  async teamRecipient(scope: string, url: string, expectedUserId: number, signal?: AbortSignal): Promise<number> {
+    const card = await this.read(scope, url, signal)
+    if (card.kind !== 'person' || card.isSelf || card.userId !== expectedUserId) throw new ArkmePluginError('identity-share-person-changed', '联系人身份已变化，请刷新名片后再操作', false, 409)
+    return card.userId
+  }
   private async openGroup(scope: string, uid: string, signal?: AbortSignal): Promise<IdentityShareActionResult> {
     const session = await this.session(scope, signal)
     const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/detail', { chat_session_uid: uid }, session, signal, { lane: 'interactive-read', bypassCache: true })

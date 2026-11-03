@@ -39,6 +39,14 @@ describe('portable person and group links', () => {
     await expect(f.service.person(scope, { kind: 'member', sourceRef: 'group', memberRef: 'signed-member' })).rejects.toMatchObject({ code: 'identity-share-account-changed' })
     expect(f.profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
   })
+  it('rechecks a cached link target before team contact and rejects a reassigned public handle', async () => {
+    const f=fixture()
+    await expect(f.service.teamRecipient(scope,personUrl,8)).resolves.toBe(8)
+    f.profile.shareIdentityByArkmeId.mockResolvedValue({userId:999,accountName:'linshare',displayName:'新持有人'})
+    await expect(f.service.teamRecipient(scope,personUrl,8)).rejects.toMatchObject({code:'identity-share-person-changed'})
+    await expect(f.service.teamRecipient(scope,'https://jiwo.cc/myself',7)).rejects.toMatchObject({code:'identity-share-person-changed'})
+    expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+  })
   it('uses the existing test share host for a test account', async () => {
     const f = fixture(); f.runtime.config.environment = 'test'
     await expect(f.service.link('test:7', { kind: 'person', userId: 8 })).resolves.toEqual({ kind: 'person', url: 'https://jotmo-app.senguo.me/linshare' })
@@ -116,10 +124,18 @@ describe('portable person and group links', () => {
 })
 
 describe('public identity lookup contract', () => {
+  it('projects the optional avatar from the identity response without a second public lookup', async () => {
+    const read=vi.fn(async()=>({items:[{user_id:8,jotmo_id:'linshare',nick_name:'公开昵称',head_img:'phone_avatar://v1/7/林'}]}))
+    const service=new ProfileService({requireSession:async()=>({userId:7}),accountScopedPublicAuthReadPost:read} as never)
+    await expect(service.shareIdentityByArkmeId('linshare')).resolves.toMatchObject({userId:8,avatarFallback:{kind:'phone_default',colorIndex:7,label:'林'}})
+    expect(read).toHaveBeenCalledOnce()
+    expect(read.mock.calls[0]).toEqual(['/api/public/v1/auth/get-public-user-by-jotmo-ids',{jotmo_ids:['linshare']},7,undefined,{lane:'interactive-read',bypassCache:true}])
+  })
   it('reads only public names and handles, never the viewer remark, and rejects ambiguous identities', async () => {
     const read = vi.fn(async () => ({ items: [{ user_id: 8, jotmo_id: 'linshare', nick_name: '公开昵称', remark: '私有备注', head_img: '' }] }))
     const service = new ProfileService({ requireSession: async () => ({ userId: 7 }), accountScopedPublicAuthReadPost: read } as never)
     await expect(service.shareIdentityByArkmeId('linshare')).resolves.toMatchObject({ userId: 8, accountName: 'linshare', displayName: '公开昵称' })
+    expect(read).toHaveBeenCalledOnce()
     read.mockResolvedValue({ items: [{ user_id: 8, jotmo_id: 'other', nick_name: '同名者', remark: '', head_img: '' }] })
     await expect(service.shareIdentityByArkmeId('linshare')).rejects.toMatchObject({ code: 'identity-share-person-unavailable' })
   })

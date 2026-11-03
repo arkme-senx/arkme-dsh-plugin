@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { IdentityShareActionResult, IdentityShareCard } from '../identity-share-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { identityShareTarget } from '../identity-share-link.js'
+import { identityPersonCards } from './identity-person-card-client.js'
+import { openTeamOutbound } from './team-outbound.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { identityShareAccountScope, identityShareUi } from './identity-share-ui.js'
@@ -15,18 +18,66 @@ export function IdentityShareHost() {
   const request = useSyncExternalStore(identityShareUi.subscribe, identityShareUi.getSnapshot, () => undefined)
   const scope = useSyncExternalStore(arkmeAuthStore.subscribe, identityShareAccountScope, () => '')
   useEffect(() => { if (request && request.accountScope !== scope) identityShareUi.close() }, [scope, request])
-  return request && request.accountScope === scope ? <IdentityCard key={`${scope}:${request.url}`} accountScope={scope} url={request.url} /> : null
+  if (!request || request.accountScope !== scope) return null
+  return identityShareTarget(request.url)?.kind === 'world'
+    ? <IdentityPersonCard key={`${scope}:${request.url}`} accountScope={scope} url={request.url} {...(request.displayName ? { displayName: request.displayName } : {})} />
+    : <IdentityCard key={`${scope}:${request.url}`} accountScope={scope} url={request.url} />
+}
+
+function IdentityPersonCard({ accountScope, url, displayName }: { accountScope: string; url: string; displayName?: string }) {
+  useArkmeLocale()
+  const entry = useSyncExternalStore(identityPersonCards.subscribe, () => identityPersonCards.snapshot(accountScope, url), () => undefined)
+  const card = entry?.card, target = identityShareTarget(url)
+  const [error, setError] = useState(''), [loading, setLoading] = useState(!card)
+  const [busy, setBusy] = useState(false), [revision, setRevision] = useState(0)
+  const write = useRef<AbortController>(), locked = useRef(false)
+  useEffect(() => {
+    let active = true; setLoading(true); setError('')
+    const request = identityPersonCards.acquire(accountScope, url, revision > 0)
+    void request.promise.catch(caught => {
+      if (active && accountScope === identityShareAccountScope()) setError(caught instanceof Error ? caught.message : tr('名片暂时无法打开'))
+    }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false; request.release() }
+  }, [accountScope, url, revision])
+  useEffect(() => () => write.current?.abort(), [])
+  const submit = () => {
+    if (!card || locked.current || accountScope !== identityShareAccountScope()) return
+    if (card.isSelf) { arkmeUi.focusSendToSelf(); arkmeUi.chatChanged(); identityShareUi.close(); return }
+    const controller = new AbortController(); write.current = controller; locked.current = true; setBusy(true); setError('')
+    void callArkme<IdentityShareActionResult>('identity.share.open', { accountScope, url, expectedUserId: card.userId }, controller.signal)
+      .then(async result => {
+        if (controller.signal.aborted || accountScope !== identityShareAccountScope() || result.status !== 'opened') return
+        if (conversationWindowRequested()) await navigateConversationWindow(result.source)
+        else { arkmeChatDirectory.upsert(result.source); arkmeUi.selectSource(result.source); arkmeUi.chatChanged() }
+        if (!controller.signal.aborted && accountScope === identityShareAccountScope()) identityShareUi.close()
+      }).catch(caught => {
+        if (!controller.signal.aborted) {
+          if (['identity-share-person-changed', 'identity-share-person-unavailable'].includes(caught?.body?.code)) identityPersonCards.invalidate(accountScope, url)
+          setError(caught instanceof Error ? caught.message : tr('操作失败，请重试'))
+        }
+      }).finally(() => { if (write.current === controller) { locked.current = false; if (!controller.signal.aborted) setBusy(false) } })
+  }
+  return <ArkmeMemberProfileCard
+    member={{ displayName: card?.displayName || displayName || target?.id || tr('联系人名片'), ...(card?.avatarRef ? { avatarRef: card.avatarRef } : {}), ...(card?.avatarFallback ? { avatarFallback: card.avatarFallback } : {}) }}
+    person={card} pending={!card} loading={!card && loading} accountName={target?.id ?? ''}
+    hideSend={card?.isSelf === true && conversationWindowRequested()} copyLinkTarget={card ? { kind: 'person', userId: card.userId } : undefined} busy={busy} error={error}
+    onContactAsTeam={card && !card.isSelf && !conversationWindowRequested() ? () => {
+      if (accountScope !== identityShareAccountScope()) return
+      openTeamOutbound({ accountKey: accountScope, person: { recipient: { kind: 'profile-link', url, expectedUserId: card.userId }, displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}) } })
+      identityShareUi.close()
+    } : undefined}
+    browserUrl={url} onRefresh={() => setRevision(value => value + 1)} onClose={identityShareUi.close} onSend={submit} />
 }
 
 function IdentityCard({ accountScope, url }: { accountScope: string; url: string }) {
   useArkmeLocale()
-  const [card, setCard] = useState<IdentityShareCard>(), [error, setError] = useState(''), [loading, setLoading] = useState(true)
+  const [card, setCard] = useState<Extract<IdentityShareCard, { kind: 'group' }>>(), [error, setError] = useState(''), [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false), [revision, setRevision] = useState(0)
   const [copied, setCopied] = useState(false)
   const write = useRef<AbortController>(), locked = useRef(false)
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setError('')
-    void callArkme<IdentityShareCard>('identity.share.read', { accountScope, url }, controller.signal)
+    void callArkme<Extract<IdentityShareCard, { kind: 'group' }>>('identity.share.read', { accountScope, url }, controller.signal)
       .then(value => { if (!controller.signal.aborted) setCard(value) })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : tr('名片暂时无法打开')) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
@@ -35,10 +86,9 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
   useEffect(() => () => write.current?.abort(), [])
   const submit = () => {
     if (!card || locked.current || loading) return
-    if (card.kind === 'person' && card.isSelf) { arkmeUi.focusSendToSelf(); arkmeUi.chatChanged(); identityShareUi.close(); return }
     const controller = new AbortController(); write.current = controller; locked.current = true; setBusy(true); setError('')
     const operation = card.kind === 'group' && !card.hasJoined ? 'identity.share.join' : 'identity.share.open'
-    void callArkme<IdentityShareActionResult>(operation, { accountScope, url, ...(card.kind === 'person' ? { expectedUserId: card.userId } : {}) }, controller.signal)
+    void callArkme<IdentityShareActionResult>(operation, { accountScope, url }, controller.signal)
       .then(async result => {
         if (controller.signal.aborted || accountScope !== identityShareAccountScope()) return
         if (result.status === 'pending') { setCard(old => old?.kind === 'group' ? { ...old, requestPending: true } : old); return }
@@ -53,14 +103,10 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
     try { await navigator.clipboard.writeText(url); if (accountScope === identityShareAccountScope()) setCopied(true) }
     catch { setError(tr('复制失败，请重试')) }
   }
-  if (card?.kind === 'person') return <ArkmeMemberProfileCard
-    member={{ displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}), ...(card.avatarFallback ? { avatarFallback: card.avatarFallback } : {}) }}
-    person={card} hideSend={card.isSelf && conversationWindowRequested()} copyLinkTarget={{ kind: 'person', userId: card.userId }} busy={busy || loading} error={error}
-    browserUrl={url} onRefresh={() => setRevision(value => value + 1)} onClose={identityShareUi.close} onSend={submit} />
   const expired = card?.kind === 'group' && !card.hasJoined && card.expireAtMillis <= Date.now()
   const pending = card?.kind === 'group' && !card.hasJoined && card.requestPending
   const label = card?.hasJoined ? '打开群聊' : pending ? '等待审批' : expired ? '邀请已过期' : card?.joinMode === 2 ? '申请加入' : '加入群聊'
-  return <ArkmeConfirmDialog titleId="arkme-identity-card-title" dialogStyle={{ overflowWrap: 'anywhere' }} title={card?.displayName || tr('名片')} description={tr(card?.kind === 'group' ? '群聊名片' : '联系人名片')} busy={busy} error={error}
+  return <ArkmeConfirmDialog titleId="arkme-identity-card-title" dialogStyle={{ overflowWrap: 'anywhere' }} title={card?.displayName || tr('名片')} description={tr('群聊名片')} busy={busy} error={error}
     confirmLabel={tr(label)} busyLabel={tr('正在处理…')} confirmDisabled={!card || loading || Boolean(expired || pending)} onClose={identityShareUi.close} onConfirm={submit}>
     <div style={{ paddingTop: 18, display: 'grid', gap: 12, overflowWrap: 'anywhere' }}>
       {loading && <p role="status" style={{ color: t.secondary }}>{tr('正在读取名片…')}</p>}

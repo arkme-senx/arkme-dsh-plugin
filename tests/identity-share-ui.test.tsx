@@ -9,6 +9,7 @@ import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { subscribeTeamOutbound } from '../src/client/team-outbound.js'
 import { IdentityShareHost } from '../src/client/IdentityShareHost.js'
+import { identityPersonCards } from '../src/client/identity-person-card-client.js'
 import { IdentityCopyLinkButton } from '../src/client/IdentityCopyLinkButton.js'
 import { identityShareUi } from '../src/client/identity-share-ui.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -152,7 +153,7 @@ describe('one profile surface for avatars and portable links', () => {
     try {
       await mount(<IdentityShareHost />); await act(async () => identityShareUi.open(scope, url))
       await click(button('以团队联系'))
-      expect(team).toHaveBeenCalledWith({ accountKey: scope, person: { recipient: { kind: 'public-person', userId: 8 }, displayName: '小林' } })
+      expect(team).toHaveBeenCalledWith({ accountKey: scope, person: { recipient: { kind: 'profile-link', url, expectedUserId: 8 }, displayName: '小林' } })
       expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
       expect(document.querySelector('[role=dialog]')).toBeNull()
     } finally { unsubscribe() }
@@ -205,4 +206,65 @@ it('opens the verified public world from a fixed conversation window without cha
     expect(arkmeUi.getSnapshot().worldTarget).toBe(previousWorld)
     expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
   } finally { history.replaceState({}, '', original) }
+})
+
+
+it('shows the person shell immediately on a slow first read and keeps close usable', async () => {
+  let finish!: (value: unknown) => void
+  api.call.mockImplementation(async () => await new Promise(resolve => { finish = resolve }))
+  await mount(<IdentityShareHost />); await act(async () => identityShareUi.open(scope, url, '预览昵称'))
+  const element = document.querySelector('[data-arkme-person-profile]')!
+  expect(element.textContent).toContain('预览昵称')
+  expect(element.textContent).not.toContain('加入群聊')
+  expect(button('发消息').disabled).toBe(true)
+  expect(button('关闭').disabled).toBe(false)
+  await click(button('关闭')); await act(async () => finish(person))
+  expect(document.querySelector('[role=dialog]')).toBeNull()
+  expect(identityPersonCards.snapshot(scope, url)).toBeUndefined()
+})
+it('opens a preloaded card without another read, and repeats without a loading flash', async () => {
+  const preload = identityPersonCards.acquire(scope, url);await act(async () => { await preload.promise });preload.release()
+  api.call.mockClear()
+  await mount(<IdentityShareHost />)
+  for (let i = 0; i < 2; i++) {
+    await act(async () => identityShareUi.open(scope, url))
+    expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
+    expect(button('发消息').disabled).toBe(false)
+    expect(document.body.textContent).not.toContain('正在读取资料…')
+    await click(button('关闭'))
+  }
+  expect(api.call).not.toHaveBeenCalled()
+})
+it('shares an in-flight preview read with a clicked dialog without a duplicate request', async () => {
+  let finish!: (value: unknown) => void
+  api.call.mockImplementation(async () => await new Promise(resolve => { finish = resolve }))
+  const preload=identityPersonCards.acquire(scope,url)
+  await mount(<IdentityShareHost />);await act(async () => identityShareUi.open(scope,url))
+  expect(api.call).toHaveBeenCalledOnce();preload.release()
+  expect((api.call.mock.calls[0]![2] as AbortSignal).aborted).toBe(false)
+  await act(async () => {finish(person);await preload.promise})
+  expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
+  expect(api.call).toHaveBeenCalledOnce()
+})
+it('keeps a stale card usable during refresh and still sends with the displayed expected identity', async () => {
+  let now=100;vi.spyOn(Date,'now').mockImplementation(()=>now)
+  const preload=identityPersonCards.acquire(scope,url);await preload.promise;preload.release();now+=61_000
+  let refresh!: (value: unknown) => void
+  api.call.mockImplementation(async op=>op==='identity.share.read' ? await new Promise(resolve=>{refresh=resolve}) : {status:'opened',source})
+  await mount(<IdentityShareHost />);await act(async () => identityShareUi.open(scope,url))
+  expect(button('发消息').disabled).toBe(false)
+  await click(button('发消息'))
+  expect(api.call.mock.calls.at(-1)?.slice(0,2)).toEqual(['identity.share.open',{accountScope:scope,url,expectedUserId:8}])
+  await act(async()=>refresh(person))
+})
+
+it('prepares the actual visible message preview and the popup with one native identity read', async () => {
+  vi.mocked(sharePreviewClient.acquire).mockRestore()
+  await mount(<><ArkmeMessageContent item={{itemUid:'preload',senderName:'介绍人',isMe:false,sendAtMillis:1,status:1,title:'',textContent:url}} /><IdentityShareHost /></>)
+  const link=node.querySelector('a')!
+  expect(link.textContent).toContain('小林')
+  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read'])
+  await click(link)
+  expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
+  expect(api.call).toHaveBeenCalledOnce()
 })

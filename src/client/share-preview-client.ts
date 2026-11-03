@@ -1,10 +1,24 @@
 import type { ShareLinkPreview } from '../share-link-preview.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { identityShareTarget } from '../identity-share-link.js'
+import { identityPersonCards } from './identity-person-card-client.js'
 
 export function sharePreviewAccountKey(): string {
   const auth = arkmeAuthStore.getSnapshot().auth
   return auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
+}
+async function readPreview(url: string, signal: AbortSignal): Promise<ShareLinkPreview | null> {
+  if (identityShareTarget(url)?.kind !== 'world') return await callArkme<ShareLinkPreview | null>('share.preview', { url }, signal)
+  const lease = identityPersonCards.acquire(sharePreviewAccountKey(), url)
+  const abort = () => lease.release()
+  signal.addEventListener('abort', abort, { once: true })
+  if (signal.aborted) abort()
+  try {
+    const card = await lease.promise
+    return signal.aborted ? null : { kind: 'world', state: 'ready', title: card.displayName, summary: card.accountName }
+  } catch { return signal.aborted ? null : { kind: 'world', state: 'error' } }
+  finally { signal.removeEventListener('abort', abort); lease.release() }
 }
 type Job = { controller: AbortController; users: number; started: boolean; promise: Promise<ShareLinkPreview | null>; finish: (value: ShareLinkPreview | null) => void; key: string; scope: string; url: string }
 export class SharePreviewClient {
@@ -13,7 +27,7 @@ export class SharePreviewClient {
   private queue: Job[] = []
   private active = 0
   private scope = ''
-  constructor(private readonly read = (url: string, signal: AbortSignal) => callArkme<ShareLinkPreview | null>('share.preview', { url }, signal)) {}
+  constructor(private readonly read = readPreview) {}
 
   setScope(scope: string): void {
     if (scope === this.scope) return

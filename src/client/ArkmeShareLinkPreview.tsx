@@ -70,7 +70,7 @@ export function ArkmeShareLinkPreview({ target, text, onMessageCopyLinkOpen }: {
     aria-label={arkmeEmojiPlainText(label)} title={arkmeEmojiPlainText(label)} onClick={event => {
       event.stopPropagation()
       if (identityShareTarget(target.url) && scope.startsWith(`${target.environment}:`) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-        event.preventDefault(); identityShareUi.open(scope, target.url); return
+        event.preventDefault(); identityShareUi.open(scope, target.url, preview?.state === 'ready' ? preview.title : undefined); return
       }
       if (target.kind === 'message' && scope.startsWith(`${target.environment}:`) && onMessageCopyLinkOpen
         && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
