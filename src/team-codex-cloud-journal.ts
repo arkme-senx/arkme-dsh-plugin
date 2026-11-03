@@ -32,6 +32,7 @@ export function clipUtf8(text: string, limit: number): string {
 }
 const metadata = (text: string | undefined, limit: number) => clipUtf8((text ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '), limit)
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
+export const codexCloudTurnId = (turnId: string): string => digest(turnId)
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 
 /** Durable identity/version/ACK ledger. No credentials, queue snapshots, paths or tool logs. */
@@ -218,7 +219,7 @@ export class TeamCodexCloudJournal {
     const mapping=this.mapping(owner,team,localId),turns=new Map<string,string>(),ids=new Set(wanted)
     if(!mapping)return turns
     for(const row of this.db.prepare('SELECT local_turn FROM codex_cloud_turns WHERE task=?').all(mapping.taskId)){
-      const turn=String(row.local_turn),hash=digest(turn);if(ids.has(hash))turns.set(hash,turn)
+      const turn=String(row.local_turn),hash=codexCloudTurnId(turn);if(ids.has(hash))turns.set(hash,turn)
     }
     return turns
   }
@@ -279,7 +280,7 @@ export class TeamCodexCloudJournal {
           const sharedText = event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe
           const text = clipUtf8(sharedText, 256 * 1024)
           const messageSeq=event.kind==='Progress'?(oldPayload?.message_seq??event.messageSequence??Number(this.db.prepare("SELECT COALESCE(MAX(message_seq),0)+1 n FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='Progress'").get(row.id,turn.seq)!.n)):0
-          const eventPayload = JSON.stringify({ message_seq:messageSeq,...(event.timing?{timing:event.timing}:{}),turn_id: digest(localTurn), turn_seq: turn.seq, kind: event.kind,
+          const eventPayload = JSON.stringify({ message_seq:messageSeq,...(event.timing?{timing:event.timing}:{}),turn_id: codexCloudTurnId(localTurn), turn_seq: turn.seq, kind: event.kind,
             text, at: oldPayload?.at ?? event.at, truncated: event.truncated || text !== sharedText })
           if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version,turn_seq,kind,message_seq,phase,at,payload_bytes) VALUES(?,?,?,?,1,?,?,?,?,?,?)').run(randomUUID(), row.id, slot, eventPayload,turn.seq,event.kind,messageSeq,codexEventPhase(event.kind),event.at,bytes(eventPayload))
           else if (previous.payload !== eventPayload && !previous.blocked) this.db.prepare('UPDATE codex_cloud_events SET payload=?,payload_bytes=?,version=version+1 WHERE id=?').run(eventPayload,bytes(eventPayload),previous.id)

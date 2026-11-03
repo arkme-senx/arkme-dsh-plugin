@@ -253,6 +253,11 @@ describe('Codex conversation reader', () => {
     expect(host.querySelectorAll('.is-user')).toHaveLength(1)
     expect(host.textContent).toContain('等待同步本轮回答')
   })
+  it('retains a distinct current turn even when its text repeats an earlier prompt',async()=>{
+    await render({...task,state:'working',currentInput:{turnId:'new-turn',text:'需求',at:3000}})
+    expect(host.querySelectorAll('.is-user')).toHaveLength(2)
+    expect(host.textContent).toContain('当前请求')
+  })
   it('keeps account-team/source keys distinct and prevents event-version regression',()=>{
     expect(codexReadingKey('team-a',task)).not.toBe(codexReadingKey('team-b',task))
     expect(codexReadingKey('team-a',task)).not.toBe(codexReadingKey('team-a',{...task,cloud:{taskId:task.id,sourceId:'device',sourceName:'电脑',ownerRef:'user',remote:true}}))

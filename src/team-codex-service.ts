@@ -13,6 +13,7 @@ import { TEAM_CODEX_BRIDGE_SCRIPT } from './team-codex-bridge-script.js'
 import { TeamCodexMachineJournal } from './team-codex-machine-journal.js'
 import { TeamCodexDesktopTitleReader } from './team-codex-desktop-titles.js'
 import { TeamCodexCloud, type TeamCodexCloudPort } from './team-codex-cloud.js'
+import { codexCloudTurnId } from './team-codex-cloud-journal.js'
 import { TeamCodexCaptureHealthReader } from './team-codex-capture-health.js'
 import { TeamCodexTurnTimingStore, type CodexTimingSource } from './team-codex-turn-timing.js'
 import { TeamCodexPrivateImages } from './team-codex-private-images.js'
@@ -311,6 +312,9 @@ export class TeamCodexService {
     const machine = this.machine.state(userId,teamRef,ids,includeQueueText)
     const tasks = [...machine.tasks,...rows.map(row=>this.task(row))]
     if (this.cloud) for (const task of tasks) {
+      // A mapped task is read from the canonical journal, even while cloud requests fail.
+      if(task.currentInput && this.cloud.journal.mapping(userId,teamRef,task.id))
+        task.currentInput={...task.currentInput,turnId:codexCloudTurnId(task.currentInput.turnId)}
       const session = task.installationId
         ? (this.db.prepare('SELECT session_id FROM codex_tasks WHERE id=?').get(task.id) as {session_id:string}|undefined)?.session_id
         : rows.find(row=>row.id===task.id)?.session_id

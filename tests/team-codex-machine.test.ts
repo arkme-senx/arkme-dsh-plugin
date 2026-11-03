@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
+import { TeamCodexCloudJournal } from '../src/team-codex-cloud-journal.js'
 import { TeamCodexLiveUpdates } from '../src/team-codex-live-updates.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
@@ -529,6 +530,30 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.record('UserPromptSubmit',{turn_id:'later_turn',prompt:'继续已有任务',cwd:null})
     expect(await f.task()).toMatchObject({title:'Codex',eventCount:2})
   })
+})
+
+it('keeps the current input in the same turn namespace as its reader, including offline and personal views',async()=>{
+ let offline=false
+ const f=fixture({post:async(_owner:number,path:string)=>{
+  if(offline)throw Error('offline')
+  if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+  return {items:[],page:1,has_more:false}
+ },selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort)
+ await f.enroll();expect(f.record().status).toBe(0)
+ const local=await f.task(),original=await f.service.events(teamRef,local.id)
+ expect(local.currentInput?.turnId).toBe(original.items[0]?.turnId)
+ const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+ try{new TeamCodexCloudJournal(journal).reconcile(11,teamRef,'101',[local],()=>original.items)}finally{journal.close()}
+ for(const view of [teamRef,'self']){
+  const task=(await f.service.state(view)).tasks.find(t=>t.id===local.id)!
+  const page=await f.service.events(view,local.id)
+  expect(page.items[0]?.turnId).not.toBe(original.items[0]?.turnId)
+  expect(task.currentInput?.turnId).toBe(page.items[0]?.turnId)
+  expect(task.currentInput?.text).toBe(page.items[0]?.text)
+ }
+ offline=true
+ const task=(await f.service.state(teamRef)).tasks.find(t=>t.id===local.id)!
+ expect(task.currentInput?.turnId).toBe((await f.service.events(teamRef,local.id)).items[0]?.turnId)
 })
 
 it('pausing an installation fences a metadata upload already in flight before any object grant or body upload',async()=>{
