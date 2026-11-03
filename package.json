@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "3.0.46",
+  "version": "3.0.47",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -89,10 +89,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 3.0.46 更新",
-      "summary": "feat: 统一 Arko 回复体验与工具并同步相关安排修复",
-      "publishedAt": "2026-11-03T16:07:57.719Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.46"
+      "title": "Arkme 插件 3.0.47 更新",
+      "summary": "发布 Arko 连续对话及 dev 导出与设置优化",
+      "publishedAt": "2026-11-03T18:08:27.115Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.47"
     }
   },
   "scripts": {
