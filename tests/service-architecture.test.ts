@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'recordingFileStorage',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
   'dataExport',
@@ -136,6 +137,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'recording-file-storage-service.ts',
   'recording-voice-trigger-service.ts',
   'record-export-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',

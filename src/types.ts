@@ -1548,6 +1548,7 @@ arkoImagesV1?:true
     speakerPresence?: true
     recordingWorkflowV2?: true
     recordingStrategiesV1?: true
+    recordingFileStorageV1?: true
     recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
@@ -4686,6 +4687,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'recordings.files.storage'
   | 'recordings.import.file'
   | 'recordings.import.status'
   | 'recordings.import.retry'
