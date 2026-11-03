@@ -1,4 +1,3 @@
-import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
@@ -28,8 +27,6 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { arkmeTheme } from './arkme-theme.js'
-import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
-import type { ArkmeAvatarImagePort } from './avatar-image-store.js'
 
 const MENU_WIDTH = 188
 const MENU_ROW_HEIGHT = 44
@@ -139,38 +136,6 @@ function errorMessage(caught: unknown): string {
 
 const styles: Record<string, CSSProperties> = {
 
-  cardScrim: {
-    position: 'absolute', inset: 0, zIndex: 40, display: 'grid', placeItems: 'center', padding: 20,
-    background: 'rgba(25, 28, 34, .12)', boxSizing: 'border-box',
-  },
-  card: {
-    position: 'relative', width: 300, height: 340, maxWidth: '100%', overflow: 'hidden',
-    borderRadius: 9, background: arkmeTheme.layer2, boxShadow: '0 18px 48px rgba(22, 26, 32, .28)',
-  },
-  cardBackdrop: {
-    position: 'absolute', left: -18, right: -18, top: -22, height: 170,
-    backgroundPosition: 'center', backgroundSize: 'cover', filter: 'blur(15px)', opacity: .28,
-    maskImage: 'linear-gradient(to bottom, #000 46%, transparent 100%)',
-    WebkitMaskImage: 'linear-gradient(to bottom, #000 46%, transparent 100%)',
-    transform: 'scale(1.12)',
-  },
-  cardContent: {
-    position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column',
-    alignItems: 'center', padding: '64px 18px 18px', boxSizing: 'border-box',
-  },
-  cardName: {
-    margin: '10px 0 0', color: arkmeTheme.text, fontSize: 20, lineHeight: '28px', fontWeight: 600,
-    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  },
-  cardSecondaryName: {
-    margin: '4px 0 0', color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px',
-    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  },
-  cardButton: {
-    width: '100%', height: 50, marginTop: 'auto', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
-    background: arkmeTheme.elevated, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
-    transition: 'background-color 120ms ease, border-color 120ms ease, opacity 120ms ease',
-  },
   drawer: {
     position: 'absolute', zIndex: 36, top: 68, right: 0, bottom: 0, width: ARKME_MEMBER_RECORDS_DEFAULT_WIDTH,
     display: 'flex', flexDirection: 'column', background: arkmeTheme.layer2,
@@ -331,103 +296,7 @@ export function ArkmeGroupMemberRemoveDialog(props: {
   </ArkmeConfirmDialog>
 }
 
-export function arkmeMemberProfileNames(
-  member: Pick<ArkmeConversationMemberItem, 'displayName' | 'memberName' | 'secondaryName'>,
-  showTopicNickname: boolean,
-): { displayName: string; topicNickname: string } {
-  const fallbackDisplayName = member.displayName.trim() || '群成员'
-  if (!showTopicNickname) return { displayName: fallbackDisplayName, topicNickname: '' }
-  const memberName = member.memberName?.trim() ?? ''
-  const secondaryName = member.secondaryName?.trim() ?? ''
-  const displayName = memberName !== ''
-    && fallbackDisplayName === memberName
-    && secondaryName !== ''
-    && secondaryName !== memberName
-    ? secondaryName
-    : fallbackDisplayName
-  return {
-    displayName,
-    topicNickname: memberName !== '' && memberName !== displayName ? memberName : '',
-  }
-}
-
-export type ArkmeMemberProfileIdentity = Pick<
-  ArkmeConversationMemberItem,
-  'displayName' | 'memberName' | 'secondaryName' | 'avatarRef'
-> & { avatarFallback?: ArkmeGroupAvatarFallback }
-
-export function ArkmeMemberProfileCard(props: {
-  copyLinkTarget?: import('../identity-share-contract.js').IdentityShareTarget | undefined
-  member: ArkmeMemberProfileIdentity
-  imagePort?: ArkmeAvatarImagePort
-  imageKey?: string | undefined
-  error?: string
-  hideSend?: boolean
-  showTopicNickname?: boolean
-  busy: boolean
-  onClose: () => void
-  onSend: () => void
-  onContactAsTeam?: (() => void) | undefined
-}) {
-  useArkmeLocale()
-  const backdrop = useArkmeAvatarImage(props.member.avatarRef, undefined, { store: props.imagePort, cacheKey: props.imageKey }) ?? ''
-  const [buttonState, setButtonState] = useState<'idle' | 'hover' | 'active'>('idle')
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [props.onClose])
-  const visualButtonState = props.busy ? 'loading' : buttonState
-  const buttonBackground = props.busy
-    ? arkmeTheme.layer1
-    : buttonState === 'active'
-      ? arkmeTheme.active
-      : buttonState === 'hover'
-        ? arkmeTheme.hover
-        : arkmeTheme.elevated
-  const names = arkmeMemberProfileNames(props.member, props.showTopicNickname === true)
-  return <div style={styles.cardScrim} role="presentation" data-arkme-member-profile onMouseDown={event => {
-    if (event.target === event.currentTarget) props.onClose()
-  }}>
-    <section style={styles.card} role="dialog" aria-modal="true" aria-label={tr("{v0} 的用户卡片", { v0: names.displayName })}>
-      {backdrop !== '' && <div aria-hidden style={{ ...styles.cardBackdrop, backgroundImage: `url(${JSON.stringify(backdrop).slice(1, -1)})` }} />}
-      <div style={styles.cardContent}>
-        <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
-          {...(props.imagePort ? { imagePort: props.imagePort } : {})} imageKey={props.imageKey}
-          {...(props.member.avatarFallback === undefined ? {} : { fallback: props.member.avatarFallback })}
-          size={100} label={tr("{v0} 的头像", { v0: names.displayName })} />
-        <h3 style={styles.cardName}>{names.displayName}</h3>
-        {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>{tr("主题内昵称：")}{names.topicNickname}</p>}
-        {props.copyLinkTarget && <IdentityCopyLinkButton target={props.copyLinkTarget} label="复制个人链接" />}
-        {props.error && <p role="alert" style={{ color: arkmeTheme.danger, fontSize: 12, margin: '6px 0' }}>{props.error}</p>}
-        {!props.hideSend && <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 'auto' }}><button data-arkme-feedback="neutral"
-          type="button"
-          style={{
-            ...styles.cardButton,
-            flex: 1, minWidth: 0,
-            background: buttonBackground,
-            borderColor: buttonState === 'idle' || props.busy ? arkmeTheme.border : arkmeTheme.accent,
-            cursor: props.busy ? 'default' : 'pointer',
-            opacity: props.busy ? .55 : 1,
-          }}
-          disabled={props.busy}
-          aria-busy={props.busy}
-          data-arkme-profile-send-state={visualButtonState}
-          onPointerEnter={() => { if (!props.busy) setButtonState('hover') }}
-          onPointerLeave={() => { setButtonState('idle') }}
-          onPointerDown={() => { if (!props.busy) setButtonState('active') }}
-          onPointerUp={() => { if (!props.busy) setButtonState('hover') }}
-          onClick={props.onSend}
-        >
-          {props.busy ? tr("正在打开…") : tr(props.onContactAsTeam ? "发起私聊" : "发送消息")}
-        </button>{props.onContactAsTeam && <button type="button" data-arkme-feedback="neutral"
-          style={{ ...styles.cardButton, flex: 1, minWidth: 0 }} disabled={props.busy}
-          onClick={props.onContactAsTeam}>{tr('以团队联系')}</button>}</div>}
-      </div>
-    </section>
-  </div>
-}
-
+export { ArkmeMemberProfileCard, arkmeMemberProfileNames, type ArkmeMemberProfileIdentity } from './ArkmeMemberProfileCard.js'
 
 export function arkmeMemberRecordTotal(
   member: ArkmeConversationMemberItem,

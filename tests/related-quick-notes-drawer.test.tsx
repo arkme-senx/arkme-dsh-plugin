@@ -12,6 +12,9 @@ import type {
   ArkmeTimelineItem,
 } from '../src/types.js'
 
+// The renderer uses a minimal document stub; keep shared dialogs in the renderer tree.
+vi.mock('react-dom', async original => ({ ...await original<object>(), createPortal: (children: unknown) => children }))
+
 const mountedRenderers = new Set<ReactTestRenderer>()
 function create(...args: Parameters<typeof createRenderer>) {
   const renderer = createRenderer(...args)
@@ -1416,7 +1419,7 @@ describe('normal timeline related quick note drawer', () => {
     })
     const option = renderer.root.findByProps({ role: 'option' })
     expect(option.findByType('img').props.src).toContain('image/svg+xml')
-    expect(option.findAllByType('span').some(span => span.children.includes('AI智能体'))).toBe(true)
+    expect(option.findAllByType('span').some(span => span.children.includes('Arko'))).toBe(true)
     act(() => {
       option.props.onMouseDown({ preventDefault: vi.fn() })
     })

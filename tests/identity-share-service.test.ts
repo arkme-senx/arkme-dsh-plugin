@@ -25,6 +25,20 @@ function fixture() {
 }
 
 describe('portable person and group links', () => {
+  it('resolves a world target without requiring a shareable handle or creating a conversation', async () => {
+    const f = fixture()
+    f.profile.publicProfileSummariesByUserIds.mockResolvedValue(new Map())
+    await expect(f.service.person(scope, { kind: 'member', sourceRef: 'group', memberRef: 'signed-member' })).resolves.toEqual({ userId: 8, isSelf: false })
+    await expect(f.service.person(scope, { kind: 'self' })).resolves.toEqual({ userId: 7, isSelf: true })
+    expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(f.profile.shareIdentityByArkmeId).not.toHaveBeenCalled()
+  })
+  it('rejects a profile result when the account changes while resolving its owner', async () => {
+    const f = fixture()
+    f.chat.memberWorldTarget.mockImplementation(async () => { f.switchAccount(); return { userId: 8 } })
+    await expect(f.service.person(scope, { kind: 'member', sourceRef: 'group', memberRef: 'signed-member' })).rejects.toMatchObject({ code: 'identity-share-account-changed' })
+    expect(f.profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+  })
   it('uses the existing test share host for a test account', async () => {
     const f = fixture(); f.runtime.config.environment = 'test'
     await expect(f.service.link('test:7', { kind: 'person', userId: 8 })).resolves.toEqual({ kind: 'person', url: 'https://jotmo-app.senguo.me/linshare' })

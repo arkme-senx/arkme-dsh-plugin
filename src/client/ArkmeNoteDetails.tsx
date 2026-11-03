@@ -1132,6 +1132,7 @@ export function ArkmeTimelineDetailDrawer({
       onSelect={extension => { setSelectedExtensionRecordUid(extension.recordUid) }}
     />}
     {memberProfile !== undefined && <ArkmeMemberProfileCard
+      copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : sourceRef ? { kind: 'member', sourceRef, memberRef: memberProfile.memberRef } : undefined}
       member={memberProfile}
       showTopicNickname={sourceKind === 'group_chat'}
       busy={false}

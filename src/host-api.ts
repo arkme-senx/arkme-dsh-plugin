@@ -1572,14 +1572,18 @@ export async function dispatchArkmeHostOperation(
       { ...(params.isPublic === undefined ? {} : { isPublic: requiredBooleanParam(params, 'isPublic') }), ...(params.introduction === undefined ? {} : { introduction: stringParam(params, 'introduction') }), ...(params.accountScope === undefined ? {} : { accountScope: stringParam(params, 'accountScope') }), ...(requestSignal ? { signal: requestSignal } : {}) },
     )
     case 'group.private.context': return await service.privateGroupContext({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope') }, requestSignal)
+    case 'identity.person.read':
     case 'identity.share.link': {
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
-      if (kind === 'self') return await service.identityShareLink(scope, { kind }, requestSignal)
-      if (kind === 'person') return await service.identityShareLink(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
-      if (kind === 'contact') return await service.identityShareLink(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
-      if (kind === 'member') return await service.identityShareLink(scope, { kind, sourceRef: stringParam(params, 'sourceRef'), memberRef: stringParam(params, 'memberRef') }, requestSignal)
-      if (kind === 'author') return await service.identityShareLink(scope, { kind, authorRef: stringParam(params, 'authorRef') }, requestSignal)
-      if (kind === 'source') return await service.identityShareLink(scope, { kind, sourceRef: stringParam(params, 'sourceRef') }, requestSignal)
+      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      if (kind === 'self') return await read(scope, { kind }, requestSignal)
+      if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
+      if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
+      if (kind === 'member') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef'), memberRef: stringParam(params, 'memberRef') }, requestSignal)
+      if (kind === 'author') return await read(scope, { kind, authorRef: stringParam(params, 'authorRef') }, requestSignal)
+      if (kind === 'source') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef') }, requestSignal)
+      if (kind === 'member-event') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef'), eventId: stringParam(params, 'eventId') }, requestSignal)
+      if (kind === 'team-person') return await read(scope, { kind, conversationRef: stringParam(params, 'conversationRef'), ...(typeof params.personRef === 'string' ? { personRef: params.personRef } : {}) }, requestSignal)
       throw new ArkmePluginError('identity-share-target-invalid', '名片目标无效', false, 400)
     }
     case 'identity.share.read': return await service.identityShareRead(stringParam(params, 'accountScope'), stringParam(params, 'url'), requestSignal)

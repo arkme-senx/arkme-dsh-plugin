@@ -9497,7 +9497,7 @@ export function ArkmeSurface({
           }}
         />}
         {activeConversation && memberProfile !== undefined && <ArkmeMemberProfileCard
-          copyLinkTarget={source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef } : undefined}
+          copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef } : undefined}
           member={memberProfile}
           showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}

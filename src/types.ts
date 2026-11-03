@@ -4440,6 +4440,7 @@ export type ArkmePluginOperation =
   | 'chat.private.open-from-contact'
   | 'group.create'
   | 'group.private.context'
+  | 'identity.person.read'
   | 'identity.share.link'
   | 'identity.share.read'
   | 'identity.share.open'

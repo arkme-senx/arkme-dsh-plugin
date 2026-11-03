@@ -708,6 +708,7 @@ export class ArkmeService {
         }
       },
     }, { resolve: async (recipient, session, signal) => {
+      if(recipient.kind==='public-person')return recipient.userId
       if(recipient.kind==='chat-member')return (await this.chat.memberWorldTarget(recipient.sourceRef,recipient.memberRef,signal)).userId
       if(recipient.kind==='directory-contact')return await this.contactDirectory.resolveTeamRecipient(recipient.contactRef,signal)
       return await this.contact.resolveRegisteredContactUserId(recipient.contactRef,session,signal)
@@ -903,7 +904,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
     this.privateGroupCreate = new PrivateGroupCreateService(this.runtime, this.source, this.group, this.contactDirectory)
-    this.identityShare = new IdentityShareService(this.runtime, this.profile, this.source, this.contactDirectory, this.group, this.chat, this.world)
+    this.identityShare = new IdentityShareService(this.runtime, this.profile, this.source, this.contactDirectory, this.group, this.chat, this.world,
+      async (target, scope, signal) => await this.teamApp.execute(target.personRef ? 'team.app.person.world-target' : 'team.app.visitor.world-target', {
+        expectedAccountKey: scope, conversationRef: target.conversationRef, ...(target.personRef ? { personRef: target.personRef } : {}),
+      }, signal) as { userId: import('./record-owner-id.js').RecordOwnerId })
     const recordingImportGateway = new AudioRecordingImportGateway(this.runtime)
     this.recording = new RecordingService(this.runtime, {
       recordingImportGateway,
@@ -2162,6 +2166,7 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.person(scope, target, signal) }
   async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
   async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
   async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }

@@ -3,8 +3,7 @@ import type { IdentityShareActionResult, IdentityShareCard } from '../identity-s
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
-import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
+import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { identityShareAccountScope, identityShareUi } from './identity-share-ui.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -26,7 +25,7 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
   const [copied, setCopied] = useState(false)
   const write = useRef<AbortController>(), locked = useRef(false)
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setError(''); setCard(undefined)
+    const controller = new AbortController(); setLoading(true); setError('')
     void callArkme<IdentityShareCard>('identity.share.read', { accountScope, url }, controller.signal)
       .then(value => { if (!controller.signal.aborted) setCard(value) })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : tr('名片暂时无法打开')) })
@@ -34,14 +33,9 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
     return () => controller.abort()
   }, [accountScope, url, revision])
   useEffect(() => () => write.current?.abort(), [])
-  const world = () => {
-    if (card?.kind !== 'person' || accountScope !== identityShareAccountScope()) return
-    if (conversationWindowRequested()) { window.open(url, '_blank', 'noopener,noreferrer'); return }
-    arkmeUi.showUserWorld({ userId: card.userId, displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}) }); identityShareUi.close()
-  }
   const submit = () => {
     if (!card || locked.current || loading) return
-    if (card.kind === 'person' && card.isSelf) { world(); return }
+    if (card.kind === 'person' && card.isSelf) { arkmeUi.focusSendToSelf(); arkmeUi.chatChanged(); identityShareUi.close(); return }
     const controller = new AbortController(); write.current = controller; locked.current = true; setBusy(true); setError('')
     const operation = card.kind === 'group' && !card.hasJoined ? 'identity.share.join' : 'identity.share.open'
     void callArkme<IdentityShareActionResult>(operation, { accountScope, url, ...(card.kind === 'person' ? { expectedUserId: card.userId } : {}) }, controller.signal)
@@ -59,17 +53,17 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
     try { await navigator.clipboard.writeText(url); if (accountScope === identityShareAccountScope()) setCopied(true) }
     catch { setError(tr('复制失败，请重试')) }
   }
+  if (card?.kind === 'person') return <ArkmeMemberProfileCard
+    member={{ displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}), ...(card.avatarFallback ? { avatarFallback: card.avatarFallback } : {}) }}
+    person={card} hideSend={card.isSelf && conversationWindowRequested()} copyLinkTarget={{ kind: 'person', userId: card.userId }} busy={busy || loading} error={error}
+    browserUrl={url} onRefresh={() => setRevision(value => value + 1)} onClose={identityShareUi.close} onSend={submit} />
   const expired = card?.kind === 'group' && !card.hasJoined && card.expireAtMillis <= Date.now()
   const pending = card?.kind === 'group' && !card.hasJoined && card.requestPending
-  const label = card?.kind === 'person' ? card.isSelf ? '查看我的世界' : '发消息' : card?.hasJoined ? '打开群聊' : pending ? '等待审批' : expired ? '邀请已过期' : card?.joinMode === 2 ? '申请加入' : '加入群聊'
+  const label = card?.hasJoined ? '打开群聊' : pending ? '等待审批' : expired ? '邀请已过期' : card?.joinMode === 2 ? '申请加入' : '加入群聊'
   return <ArkmeConfirmDialog titleId="arkme-identity-card-title" dialogStyle={{ overflowWrap: 'anywhere' }} title={card?.displayName || tr('名片')} description={tr(card?.kind === 'group' ? '群聊名片' : '联系人名片')} busy={busy} error={error}
     confirmLabel={tr(label)} busyLabel={tr('正在处理…')} confirmDisabled={!card || loading || Boolean(expired || pending)} onClose={identityShareUi.close} onConfirm={submit}>
     <div style={{ paddingTop: 18, display: 'grid', gap: 12, overflowWrap: 'anywhere' }}>
       {loading && <p role="status" style={{ color: t.secondary }}>{tr('正在读取名片…')}</p>}
-      {card?.kind === 'person' && <>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><ArkmeUserAvatar avatarRef={card.avatarRef} {...(card.avatarFallback ? { fallback: card.avatarFallback } : {})} size={60} /><span style={{ color: t.secondary }}>{tr('即我号：')}{card.accountName}</span></div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" style={smallButton} disabled={busy} onClick={world}>{tr('查看世界')}</button><IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: card.userId }} label="复制个人链接" /></div>
-      </>}
       {card?.kind === 'group' && <>
         <p style={{ margin: 0, color: t.secondary }}>{tr('群主：')}{card.creatorDisplayName}</p>
         <p style={{ margin: 0, color: t.secondary }}>{tr(card.hasJoined ? '你已在此群聊中' : card.joinMode === 2 ? '加入此群需要审批' : '点击加入后即可进入群聊')}</p>

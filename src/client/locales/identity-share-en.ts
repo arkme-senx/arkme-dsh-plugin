@@ -1,4 +1,8 @@
 export const identityShareEnglish: Record<string, string> = Object.fromEntries(`
+更多操作|More actions
+进入我的世界|Enter my world
+看看日常、想法与分享|Discover moments, thoughts and stories
+正在读取资料…|Loading profile…
 联系人名片|Contact card
 群聊名片|Group card
 名片|Contact or group card

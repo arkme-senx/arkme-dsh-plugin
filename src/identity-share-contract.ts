@@ -4,6 +4,13 @@ export type IdentityShareTarget = { kind: 'self' } | { kind: 'person'; userId: n
   | { kind: 'contact'; contactRef: string } | { kind: 'source'; sourceRef: string }
   | { kind: 'member'; sourceRef: string; memberRef: string }
   | { kind: 'author'; authorRef: string }
+  | { kind: 'member-event'; sourceRef: string; eventId: string }
+  | { kind: 'team-person'; conversationRef: string; personRef?: string }
+export interface IdentityPersonProfile {
+  userId: number
+  isSelf: boolean
+  accountName?: string
+}
 export interface IdentityShareLink { kind: 'person' | 'group'; url: string; expireAtMillis?: number }
 export type IdentityShareCard = {
   kind: 'person'; url: string; userId: number; displayName: string; accountName: string; isSelf: boolean

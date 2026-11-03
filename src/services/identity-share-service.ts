@@ -1,5 +1,6 @@
-import type { IdentityShareActionResult, IdentityShareCard, IdentityShareLink, IdentityShareTarget } from '../identity-share-contract.js'
+import type { IdentityPersonProfile, IdentityShareActionResult, IdentityShareCard, IdentityShareLink, IdentityShareTarget } from '../identity-share-contract.js'
 import { identityShareTarget } from '../identity-share-link.js'
+import type { RecordOwnerId } from '../record-owner-id.js'
 import type { ShareLinkTarget } from '../share-link-preview.js'
 import type { ChatService } from './chat-service.js'
 import type { ContactDirectoryService } from './contact-directory-service.js'
@@ -15,7 +16,8 @@ const invalid = () => new ArkmePluginError('identity-share-invalid', '名片链�
 export class IdentityShareService {
   constructor(private readonly runtime: ServiceRuntime, private readonly profiles: ProfileService,
     private readonly source: SourceService, private readonly contacts: ContactDirectoryService,
-    private readonly groups: GroupService, private readonly chat: ChatService, private readonly world: WorldService) {}
+    private readonly groups: GroupService, private readonly chat: ChatService, private readonly world: WorldService,
+    private readonly teamPerson?: (target: Extract<IdentityShareTarget, { kind: 'team-person' }>, scope: string, signal?: AbortSignal) => Promise<{ userId: RecordOwnerId }>) {}
 
   private async session(scope: string, signal?: AbortSignal) {
     signal?.throwIfAborted()
@@ -38,36 +40,56 @@ export class IdentityShareService {
     // This is only a locator. The existing server validates the complete token/code/stamp.
     return { uid, body: { ob_remote_subject: target.id, code: target.code, stamp: target.stamp } }
   }
-  async link(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityShareLink> {
+  private async personId(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<RecordOwnerId> {
     const session = await this.session(scope, signal)
-    let userId = session.userId
-    if (target.kind === 'person') userId = target.userId
-    else if (target.kind === 'contact') {
-      const id = await this.contacts.resolveTeamRecipient(target.contactRef, signal)
-      if (typeof id !== 'number') throw new ArkmePluginError('identity-share-person-unregistered', '当前只支持分享已注册用户', false, 400)
-      userId = id
-    } else if (target.kind === 'author') {
-      userId = (await this.world.worldAuthorFromRef(target.authorRef)).userId
-    } else if (target.kind === 'member') {
-      const person = await this.chat.memberWorldTarget(target.sourceRef, target.memberRef, signal)
-      if (typeof person.userId !== 'number') throw invalid()
-      userId = person.userId
+    let userId: RecordOwnerId = session.userId
+    if (target.kind === 'person') {
+      if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw invalid()
+      userId = target.userId
+    } else if (target.kind === 'contact') userId = await this.contacts.resolveTeamRecipient(target.contactRef, signal)
+    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true)).userId
+    else if (target.kind === 'member') userId = (await this.chat.memberWorldTarget(target.sourceRef, target.memberRef, signal)).userId
+    else if (target.kind === 'member-event') userId = (await this.chat.memberEvents.worldTarget(target.sourceRef, target.eventId, signal)).userId
+    else if (target.kind === 'team-person') {
+      if (!this.teamPerson || (target.personRef !== undefined && !target.personRef.trim())) throw invalid()
+      userId = (await this.teamPerson(target, scope, signal)).userId
     } else if (target.kind === 'source') {
       const ref = await this.source.openSourceRef(target.sourceRef, session.userId)
-      if (ref.kind === 'group_chat') {
-        const preview = await this.groups.groupInvitePreview(target.sourceRef, signal)
-        await this.session(scope, signal)
-        const parsed = this.target(preview.inviteLink)
-        this.group(parsed)
-        return { kind: 'group', url: preview.inviteLink, expireAtMillis: preview.expireAtMillis }
-      }
       if (ref.kind !== 'private_chat') throw invalid()
       const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/detail', { chat_session_uid: ref.ownerRef }, session, signal, { lane: 'interactive-read', bypassCache: true })
       const own = objectValue(detail.current_member), identity = objectValue(detail.session)
       if (identity.chat_session_uid !== ref.ownerRef || identity.session_kind !== 1 || identity.status !== 1 || own.user_id !== session.userId || own.status !== 1 || (Array.isArray(detail.bot_participants) && detail.bot_participants.length > 0)) throw invalid()
       userId = Number(objectValue(detail.private_counterpart).user_id)
+      if (!Number.isSafeInteger(userId) || userId <= 0) throw invalid()
     } else if (target.kind !== 'self') throw invalid()
-    if (!Number.isSafeInteger(userId) || userId <= 0) throw invalid()
+    await this.session(scope, signal)
+    return userId
+  }
+  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityPersonProfile> {
+    const userId = await this.personId(scope, target, signal), session = await this.session(scope, signal)
+    if (typeof userId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
+    // A public handle is optional: decoration must never be required to enter a world.
+    const profile = (await this.profiles.publicProfileSummariesByUserIds([userId], session, signal, 0).catch(error => {
+      if (signal?.aborted) throw error
+      return new Map()
+    })).get(userId)
+    await this.session(scope, signal)
+    const accountName = profile?.accountName || profile?.arkmeId
+    return { userId, isSelf: String(userId) === String(session.userId), ...(accountName ? { accountName } : {}) }
+  }
+  async link(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityShareLink> {
+    const session = await this.session(scope, signal)
+    if (target.kind === 'source') {
+      const ref = await this.source.openSourceRef(target.sourceRef, session.userId)
+      if (ref.kind === 'group_chat') {
+        const preview = await this.groups.groupInvitePreview(target.sourceRef, signal)
+        await this.session(scope, signal)
+        this.group(this.target(preview.inviteLink))
+        return { kind: 'group', url: preview.inviteLink, expireAtMillis: preview.expireAtMillis }
+      }
+    }
+    const userId = await this.personId(scope, target, signal)
+    if (typeof userId !== 'number') throw new ArkmePluginError('identity-share-person-unregistered', '当前只支持分享已注册用户', false, 400)
     const profile = (await this.profiles.publicProfileSummariesByUserIds([userId], session, signal, 0)).get(userId)
     const candidates = [...new Set([profile?.accountName, profile?.arkmeId].filter((id): id is string => Boolean(id)))]
     for (const name of candidates) {

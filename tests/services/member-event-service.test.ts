@@ -29,6 +29,14 @@ function fixture() {
 }
 
 describe('member event host service',()=>{
+  it('resolves the world owner from the authorized event and checks access again', async () => {
+    const f = fixture()
+    await expect(f.service.worldTarget('group-1', 'leave-1')).resolves.toEqual({ userId: 88 })
+    expect(f.opened).toEqual([])
+    expect(f.profileReads()).toBe(0)
+    f.deny()
+    await expect(f.service.worldTarget('group-1', 'leave-1')).rejects.toMatchObject({ code: 'member-events-unavailable' })
+  })
   it('keeps user identities out of browser rows and binds cursors to the account and time window',async()=>{
     const f=fixture()
     const q={fromAtMillis:100,toAtMillis:300}
