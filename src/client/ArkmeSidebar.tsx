@@ -317,6 +317,7 @@ import {
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
+import { ArkmeConversationArrangements } from './ArkmeConversationArrangements.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
 import { focusArkmeComposerFromClick, restoreArkmeComposerFocus } from './composer-focus.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -2061,6 +2062,11 @@ export function ArkmeSurface({
       document.removeEventListener('visibilitychange', resumeRead)
     }
   }, [activeConversation, authenticatedUserId, sourceIsChat])
+  const conversationArrangementRevision = useSyncExternalStore(
+    activeConversation && sourceIsChat ? arkmeUi.subscribe : NOOP_SUBSCRIBE,
+    () => activeConversation && sourceIsChat ? arkmeUi.getRecordRevision() + arkmeUi.getChatRevision() : 0,
+    () => 0,
+  )
   const sourceProjectionRevision = useSyncExternalStore(
     activeConversation && !sourceIsChat ? arkmeUi.subscribe : NOOP_SUBSCRIBE,
     () => activeConversation && !sourceIsChat ? arkmeUi.getRecordRevision() : 0,
@@ -7818,6 +7824,8 @@ export function ArkmeSurface({
     variant={source?.kind === 'private_chat' ? 'direct' : source?.kind === 'group_chat' ? 'group' : 'self'}
     {...(sourceIsChat ? { destination: destinationName } : {})}
     {...(destinationMemberCount === undefined ? {} : { memberCount: destinationMemberCount })}>
+    {sourceIsChat && source && <ArkmeConversationArrangements key={`${authenticatedAccountKey}:${source.sourceKey ?? source.sourceRef}`}
+      source={source} accountScope={authenticatedAccountKey ?? ''} active={active && activeConversation} refreshRevision={conversationArrangementRevision} />}
     <ArkmeComposerInputStats
       active={activeConversation}
       visible={composerStatsVisible}
@@ -8779,7 +8787,7 @@ export function ArkmeSurface({
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? null
           : ui.mode === 'notifications' ? <ArkmeNotificationCenter />
-          : ui.mode === 'arrangements' ? <ArkmeArrangementSurface
+          : ui.mode === 'arrangements' ? <ArkmeArrangementSurface initialArrangementRef={ui.arrangementTargetRef}
             accountScope={auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''}
           />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface

@@ -940,6 +940,12 @@ export class ArrangementService {
     }
   }
 
+  async ownedArrangementReference(arrangementUid: string, viewerUserId: number): Promise<string> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+    return this.arrangementRef(viewerUserId, arrangementUid)
+  }
+
   private async arrangementRef(viewerUserId: number, arrangementUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`arrangement-v1:${String(viewerUserId)}:${arrangementUid}`)

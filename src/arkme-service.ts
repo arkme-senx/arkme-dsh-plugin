@@ -1,3 +1,4 @@
+import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
 import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
 import type {TeamRepresentationSelection} from './team-group-contract.js'
@@ -441,6 +442,7 @@ export class ArkmeService {
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService
+  private readonly conversationArrangement: ConversationArrangementService
   private readonly arrangementSource: ArrangementSourceService
   private readonly arrangement: ArrangementService
   private readonly calendar: CalendarService
@@ -766,6 +768,7 @@ export class ArkmeService {
     async (source, text, humans, bots, session, textFormat) => await this.chat.resolveMentions(
       source, text, text, humans, bots, session, undefined, textFormat,
     ), async session => await this.profile.recordSenderSnapshot(session), this.profile)
+    this.conversationArrangement = new ConversationArrangementService(this.runtime, this.source, this.arrangement)
     this.arrangementSource = new ArrangementSourceService(this.runtime, this.arrangement, this.privacy, this.record, this.callHistory, this.source)
     this.record.selfRoles = this.selfRoles
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
@@ -3403,6 +3406,14 @@ arkoImagesV1:true,
 
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
     return await this.arrangement.reorderArrangement(input, signal)
+  }
+
+  async conversationArrangements(sourceRef: string, cursor = '', signal?: AbortSignal): Promise<import('./types.js').ArkmeConversationArrangementPage> {
+    return await this.conversationArrangement.read(sourceRef, cursor, undefined, signal) as import('./types.js').ArkmeConversationArrangementPage
+  }
+
+  async conversationArrangementDetail(sourceRef: string, relatedRef: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeConversationArrangement> {
+    return await this.conversationArrangement.read(sourceRef, '', relatedRef, signal) as import('./types.js').ArkmeConversationArrangement
   }
 
   async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceTarget> {

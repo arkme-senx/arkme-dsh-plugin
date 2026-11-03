@@ -1174,6 +1174,7 @@ function validateConfig(ctx: Context, config: Config): void {
 }
 
 export type {
+  ArkmeConversationArrangement, ArkmeConversationArrangementPage, ArkmeArrangementSourceConversation,
   ArkmeAiVideoJob,
   ArkmeAiVideoListItem,
   ArkmeAiVideoListResult,

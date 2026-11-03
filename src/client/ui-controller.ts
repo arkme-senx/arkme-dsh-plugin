@@ -46,6 +46,7 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
 }
 
 export interface ArkmeUiState {
+  arrangementTargetRef?: string | undefined
   composerFocusRevision?: number
   authRevision: number
   chatRevision: number
@@ -259,10 +260,10 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'calls' })
   }
 
-  showArrangements(): void {
+  showArrangements(arrangementTargetRef?: string | undefined): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'arrangements' })
+    this.publish({ ...rest, mode: 'arrangements', arrangementTargetRef })
   }
 
   showCalendar(): void {
@@ -676,6 +677,7 @@ export class ArkmeUiController {
       && next.recordingTarget?.revision === this.state.recordingTarget?.revision
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
+      && next.arrangementTargetRef === this.state.arrangementTargetRef
       && next.extensionShareRef === this.state.extensionShareRef
       && next.extensionShareAction === this.state.extensionShareAction
       && next.extensionDetailId === this.state.extensionDetailId

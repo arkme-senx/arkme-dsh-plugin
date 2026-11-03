@@ -1,0 +1,23 @@
+.arkme-related-arrangements-entry { flex:none; border:0; background:transparent; color:var(--dsw-alias-label-secondary,#68707c); font:inherit; font-size:11px; line-height:18px; padding:0 4px; cursor:pointer; white-space:nowrap; }
+.arkme-related-arrangements-entry[aria-expanded="true"] { color:var(--dsw-alias-state-business-primary,#3964fe); }
+.arkme-related-arrangements button,.arkme-related-arrangement-detail button { cursor:pointer; color:inherit; font:inherit; border:1px solid var(--dsw-alias-border-l2,#e5e7eb); background:transparent; border-radius:6px; padding:5px 8px; }
+.arkme-related-arrangements button:disabled { opacity:.5; cursor:default; }
+.arkme-related-arrangements-tabs { display:flex; align-items:center; gap:8px; margin-bottom:14px; font-size:12px; }
+.arkme-related-arrangements-tabs button:last-child { margin-left:auto; }
+.arkme-related-arrangements-tabs button[aria-pressed="true"] { background:var(--dsw-alias-state-business-tertiary,#f1f2f6); }
+.arkme-related-arrangements article { padding:16px 0; border-bottom:1px solid var(--dsw-alias-border-l1,#f0f1f3); }
+.arkme-related-arrangements .arkme-related-arrangement-title { border:0; padding:0; text-align:left; font-weight:600; font-size:14px; line-height:1.6; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+.arkme-related-arrangement-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0; font-size:12px; color:var(--dsw-alias-label-secondary,#68707c); }
+.arkme-related-arrangements small,.arkme-related-arrangement-detail small { font-size:11px; color:var(--dsw-alias-label-tertiary,#9097a1); }
+.arkme-related-arrangements blockquote,.arkme-related-arrangement-detail blockquote { margin:8px 0; padding:8px 10px; border-left:2px solid var(--dsw-alias-border-l2,#e5e7eb); background:var(--dsw-alias-bg-layer-1,#f8f9fa); font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; }
+.arkme-related-arrangements blockquote { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.arkme-related-arrangements .arkme-related-arrangement-link,.arkme-related-arrangement-detail .arkme-related-arrangement-link { border:0; padding:0; color:var(--dsw-alias-state-business-primary,#3964fe); font-size:12px; }
+.arkme-related-arrangements-empty,.arkme-related-arrangements-footnote { color:var(--dsw-alias-label-tertiary,#9097a1); font-size:12px; line-height:1.7; }
+.arkme-related-arrangement-detail h2 { font-size:18px; line-height:1.5; margin:0 0 8px; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.arkme-related-arrangement-detail h2[data-expanded="true"] { display:block; max-height:180px; overflow:auto; }
+.arkme-related-arrangement-detail h3 { font-size:14px; margin-top:24px; }
+.arkme-related-arrangement-detail p { font-size:14px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+.arkme-related-arrangement-detail section { margin:14px 0 22px; }
+.arkme-arrangement-source-conversation { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:10px 0; padding:12px; background:var(--dsw-alias-bg-layer-1,#f8f9fa); border-radius:8px; }
+.arkme-arrangement-source-conversation strong { font-size:13px; flex:1 1 auto; }
+.arkme-arrangement-source-conversation small { flex-basis:100%; font-size:11px; color:var(--dsw-alias-label-tertiary,#9097a1); }

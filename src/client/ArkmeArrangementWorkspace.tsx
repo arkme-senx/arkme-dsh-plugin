@@ -35,10 +35,10 @@ function rowTime(value: number | undefined, now: number) {
 }
 function readSound(scope: string) { try { return localStorage.getItem(`arkme:arrangements:sound:${scope}`) !== 'off' } catch { return true } }
 
-export function ArkmeArrangementWorkspace(props: { accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
+export function ArkmeArrangementWorkspace(props: { initialArrangementRef?: string | undefined; accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
   return <ArrangementWorkspace key={props.accountScope} {...props} />
 }
-function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: { accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
+function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrangement, createdItems }: { initialArrangementRef?: string | undefined; accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
   useArkmeLocale()
   const [recognitionSettings, setRecognitionSettings] = useState(false)
   const [reviewInbox,setReviewInbox]=useState(false)
@@ -47,6 +47,17 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
   const [now, setNow] = useState(Date.now)
   const data = useArrangementWorkspace(accountScope, view, now)
   const [selected, setSelected] = useState<ArrangementWorkspaceItem>()
+  const [targetError, setTargetError] = useState(false)
+  const [targetAttempt, setTargetAttempt] = useState(0)
+  useEffect(() => {
+    if (!initialArrangementRef) return
+    const controller = new AbortController()
+    setTargetError(false)
+    void withArkmeReadDeadline(signal => callArkme<ArkmeArrangementItem>('arrangements.detail', { arrangementRef: initialArrangementRef }, signal), controller.signal)
+      .then(item => { if (!controller.signal.aborted) { if (item.arrangementRef !== initialArrangementRef) throw new Error('安排引用已变化'); setSelected(item) } })
+      .catch(() => { if (!controller.signal.aborted) setTargetError(true) })
+    return () => controller.abort()
+  }, [initialArrangementRef, targetAttempt])
   type Pending = 'completing' | 'restoring' | 'deleting' | 'reminder'
   const [pending, setPending] = useState(new Map<string, Pending>())
   const writes = useRef(new Set<string>())
@@ -180,6 +191,7 @@ function ArrangementWorkspace({ accountScope, onAddArrangement, createdItems }: 
         <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>
+    {targetError && <div role="alert">{tr('指定安排加载失败')} <button type="button" onClick={() => setTargetAttempt(n => n + 1)}>{tr('重试')}</button></div>}
     {selected ? <ArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} onRedirect={next => { setSelected(next); void latestData.current.refresh() }} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
       : <aside className="arkme-arrangement-detail-empty"><p>{tr('选择一个安排查看详情')}</p></aside>}
     {reviewInbox && <ArkmeArrangementReviewInbox key={accountScope} accountScope={accountScope} onClose={()=>setReviewInbox(false)} onApplied={apply}/>}
