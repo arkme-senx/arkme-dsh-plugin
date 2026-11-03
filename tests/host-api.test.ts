@@ -1849,7 +1849,7 @@ it('forwards cache-only image probes without changing ordinary reads or trusting
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar',cacheOnly:true,userId:999})
  expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar',{cacheOnly:true})
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
- expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar', {})
 })
 
 

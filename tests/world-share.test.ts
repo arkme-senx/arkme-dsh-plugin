@@ -8,7 +8,7 @@ const runtimes: ServiceRuntime[] = []
 afterEach(() => { runtimes.splice(0).forEach(runtime => runtime.dispose()) })
 async function fixture(recordUid = 'record-1') {
   let userId = 42
-  const raw: Record<string, unknown> = { record_uid: recordUid, user_id: 7, nick_name: '公开昵称', text_content: '公开正文', is_public: true, check_status: 2, images: [], videos: [], voices: [] }
+  const raw: Record<string, unknown> = { record_uid: recordUid, principal: { kind: 'person', user_id: 7, name: '公开昵称' }, user_id: 7, nick_name: '公开昵称', text_content: '公开正文', is_public: true, check_status: 2, images: [], videos: [], voices: [] }
   const config = { environment: 'test', worldBaseUrl: 'https://world.test', authBaseUrl: 'https://auth.test',
     subjectBaseUrl: 'https://subject.test', recordBaseUrl: 'https://record.test', chatBaseUrl: 'https://chat.test',
     botBaseUrl: 'https://bot.test', imBaseUrl: 'https://im.test', webrtcBaseUrl: 'https://webrtc.test',
@@ -17,8 +17,8 @@ async function fixture(recordUid = 'record-1') {
   const readAuthor = vi.fn(async () => ({ items: [{ user_id: 7, jotmo_id: 'author_7' }] }))
   const fetcher = vi.fn<typeof fetch>(async input => {
     const path = new URL(String(input)).pathname
-    const data = path.endsWith('/world-list') ? { list: [raw], total: 1 } : path.endsWith('/detail') ? raw : await readAuthor()
-    return new Response(JSON.stringify({ code: 200, data }))
+    const data = path.endsWith('/query') ? { items: [raw], has_more: false } : path.endsWith('/read') ? raw : await readAuthor()
+    return new Response(JSON.stringify({ code: path.endsWith('/read') && (raw.is_public === false || [1, 4].includes(Number(raw.check_status))) ? 404 : 200, data }))
   })
   const runtime = new ServiceRuntime(config, { async read() { return { userId, accessToken: 'access', refreshToken: `refresh-${userId}` } }, async write() {}, async delete() {} },
     { async uniqueCode() { return 'world-share-test-secret' } } as StateStore, fetcher)
@@ -33,7 +33,7 @@ describe('World public sharing', () => {
   it('uses the original public record URL and only reads the publication and public author profile', async () => {
     const f = await fixture()
     expect(await f.world.shareWorldRecord(f.target, 42)).toEqual({ url: 'https://app-test.arkme.ai/shijie/author_7/record/record-1', title: '公开昵称的世界', previewText: '公开正文' })
-    expect(f.fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/public/v1/public-record/detail', '/api/v1/auth/get-public-users-by-ids'])
+    expect(f.fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/public/v1/world/read', '/api/v1/auth/get-public-users-by-ids'])
   })
   it('round-trips namespaced legacy IDs while rejecting encoded path separators and double encoding', async () => {
     const f = await fixture('7:imported-record')
@@ -45,7 +45,7 @@ describe('World public sharing', () => {
   })
   it.each([{ is_public: false }, { check_status: 1 }, { check_status: 4 }, { record_uid: 'another-record' }, { parent_record_uid: 'root' }])('rejects an unpublished, unaudited or mismatched publication: %j', async changes => {
     const f = await fixture(); Object.assign(f.raw, changes)
-    await expect(f.world.shareWorldRecord(f.target, 42)).rejects.toMatchObject({ code: 'world-share-unavailable' })
+    await expect(f.world.shareWorldRecord(f.target, 42)).rejects.toMatchObject({ httpStatus: 404 })
     expect(f.readAuthor).not.toHaveBeenCalled()
   })
   it('does not reuse another account reference or a missing author identity', async () => {
@@ -70,7 +70,16 @@ describe('World public sharing', () => {
     await ArkmeService.prototype.forwardWorldRecord.call(service, f.target, 42, options)
     expect(send).toHaveBeenCalledWith('target', '我的附言\n\nhttps://app-test.arkme.ai/shijie/author_7/record/record-1', { recordUid: options.recordUid, expectedUserId: 42 })
     send.mockClear(); f.raw.is_public = false
-    await expect(ArkmeService.prototype.forwardWorldRecord.call(service, f.target, 42, options)).rejects.toMatchObject({ code: 'world-share-unavailable' })
+    await expect(ArkmeService.prototype.forwardWorldRecord.call(service, f.target, 42, options)).rejects.toMatchObject({ httpStatus: 404 })
     expect(send).not.toHaveBeenCalled()
   })
+})
+
+it('shares team ownership without looking up the publishing actor as a person', async () => {
+  const f = await fixture()
+  f.raw.principal = { kind: 'team', team_id: 123, jotmo_id: 'team_123', name: '研发团队' }
+  delete f.raw.user_id
+  expect(await f.world.shareWorldRecord(f.target, 42)).toEqual({ url: 'https://app-test.arkme.ai/shijie/team_123/record/record-1', title: '研发团队的世界', previewText: '公开正文' })
+  expect(f.readAuthor).not.toHaveBeenCalled()
+  expect(f.fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/public/v1/world/read'])
 })
