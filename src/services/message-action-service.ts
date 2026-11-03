@@ -191,6 +191,12 @@ export class MessageActionService {
     return await this.deliver(references, session, options)
   }
 
+  async worldSourceIdentity(conversationRef: string, actionRef: string, signal?: AbortSignal): Promise<MessageActionReference> {
+    const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
+    const reference = references[0]!
+    if (reference.role !== 'user' || reference.senderUserId !== session.userId) throw new ArkmePluginError('world-source-not-owned', '只能公开自己发出的内容', false, 403)
+    return reference
+  }
   async worldPublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) {
     const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
     const reference = references[0]!

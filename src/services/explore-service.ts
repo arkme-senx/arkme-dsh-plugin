@@ -1,10 +1,12 @@
 import { projectPersonReferences } from './person-reference-projection.js'
 import { CapabilityService } from './capability-service.js'
 import { mergeExploreEvidence } from '../explore-evidence.js'
+import { exploreModelChoices } from '../explore-models.js'
+import { mergeModelChoices } from '../model-directory.js'
 import type { ExploreDetailPart, ExploreEnrichment } from '../explore-contract.js'
 import { createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
-import { EXPLORE_MODULES, type ExploreModule, type ExploreItem, type ExplorePage, type ExploreDetail, type ExploreEvidence, type ExploreQuery, type ExploreMutation, type ExploreSource, type ExploreAction, type ExploreSettings } from '../explore-contract.js'
+import { EXPLORE_MODULES, EXPLORE_MODEL_MODULES, EXPLORE_LABELS, type ExploreModule, type ExploreItem, type ExplorePage, type ExploreDetail, type ExploreEvidence, type ExploreQuery, type ExploreMutation, type ExploreSource, type ExploreAction, type ExploreSettings } from '../explore-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { RecordService } from './record-service.js'
 import type { RecordingService } from './recording-service.js'
@@ -458,35 +460,54 @@ export class ExploreService {
     }else throw missing()
     await this.guard(session,epoch,signal);return {saved:true}
   }
-  async settings(moduleValue: unknown, signal?: AbortSignal): Promise<ExploreSettings> {
-    const module=this.module(moduleValue),session=await this.runtime.requireSession(),epoch=this.epoch
-    if(module==='relations'||module==='goals')throw missing()
-    if(module==='profile') {
-      const home=await this.home(module,session,signal)
-      const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),models:[],sources:list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true}))}
-      await this.guard(session,epoch,signal);return result
+  async modelDirectory(expectedAccountScope: string, signal?: AbortSignal) {
+    const result=await Promise.allSettled(EXPLORE_MODEL_MODULES.map(async module=>exploreModelChoices(module,await this.settings(module,signal,{part:'models',expectedAccountScope}))))
+    signal?.throwIfAborted()
+    const models=[],failures=[]
+    for(const [index,item] of result.entries()) {
+      // Directory entries advertise identity only; only the active module supplies activation refs.
+      if(item.status==='fulfilled')models.push(item.value.map(({explore:_,...model})=>model))
+      else failures.push({source:EXPLORE_LABELS[EXPLORE_MODEL_MODULES[index]!],message:item.reason instanceof Error?item.reason.message:'目录读取失败，请重试'})
     }
-    const path=module==='events'?'/api/v1/event-model/list':'/api/v1/insight/model-panel/get'
+    return {models:mergeModelChoices(...models),failures}
+  }
+  async settings(moduleValue: unknown, signal?: AbortSignal, options: {part?: unknown; expectedAccountScope?: unknown} = {}): Promise<ExploreSettings> {
+    const module=this.module(moduleValue),session=await this.runtime.requireSession(),epoch=this.epoch
+    const accountScope=`${this.runtime.config.environment}:${session.userId}`
+    if(module==='relations'||options.part!==undefined&&!['models','sources'].includes(text(options.part))
+      ||options.expectedAccountScope!==undefined&&options.expectedAccountScope!==accountScope)throw missing()
+    const sources=module==='profile'&&options.part!=='models'
+      ?list((await this.home(module,session,signal)).sources).filter(x=>x.source!=='wechat_import').map(x=>({key:text(x.source),label:text(x.display_name),description:text(x.description),enabled:x.enabled===true})):[]
+    if(options.part==='sources') {
+      await this.guard(session,epoch,signal)
+      return {ref:await this.seal(session,{kind:'settings',module}),accountScope,models:[],sources}
+    }
+    const path=module==='profile'?'/api/v1/personal-profile/v3/model/list':module==='events'?'/api/v1/event-model/list':module==='goals'?'/api/v1/insight/goal/model/list':'/api/v1/insight/model-panel/get'
     const raw=await this.runtime.authenticatedIntelligentPost<Doc>(path,module==='anniversaries'?{section_type:4,source_type:0,history_limit:20}:{},session,signal,{lane:'interactive-read',bypassCache:true,cacheMs:0})
-    const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.current_route_key,config.active_route_key)
-    const options=list(config.items??config.allowed_route_options)
-    const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),
-      models:await Promise.all(options.map(x=>this.seal(session,{kind:'model',module,route:text(x.route_key)}).then(ref=>({ref,label:first(x.display_name,x.model_key),selected:x.route_key===current})))),
-      sources:[]}
+    const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.active_route_key,config.current_route_key)
+    const routes=[...new Map(list(config.items??config.allowed_route_options).filter(x=>typeof x.route_key==='string'&&x.route_key.trim()&&x.route_key.length<=256).map(x=>[x.route_key,x])).values()]
+    const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),accountScope,
+      models:await Promise.all(routes.map(async x=>({key:await this.key(session,'model',module,x.route_key),ref:await this.seal(session,{kind:'model',module,route:x.route_key}),routeKey:text(x.route_key),label:first(x.display_name,x.model_key),selected:x.route_key===current,...(text(x.provider)?{provider:text(x.provider)}:{})}))),sources}
     await this.guard(session,epoch,signal);return result
   }
-  async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true}> {
+  async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true;message?:string;settings?:ExploreSettings}> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(input.ref,session,'settings'),module=this.module(ref.module)
     if(input.modelRef && input.sources!==undefined)throw missing()
     if(input.modelRef) {
-      if(module==='profile'||module==='goals')throw missing()
+      if(module==='relations')throw missing()
       const model=await this.open(input.modelRef,session,'model');if(model.module!==module)throw missing()
-      const current=await this.settings(module,signal)
+      const current=await this.settings(module,signal,{part:'models'})
       const available=await Promise.all(current.models.map(x=>this.open(x.ref,session,'model')))
       if(!available.some(x=>x.route===model.route))throw missing()
-      const path=module==='events'?'/api/v1/event-model/activate':'/api/v1/insight/anniversary/model/activate'
+      if(current.models.some((x,index)=>x.selected&&available[index]?.route===model.route))return {saved:true,message:'当前已在使用该模型',settings:current}
+      if(module==='profile'||module==='goals')await this.requireAnalysis(module,session,signal)
+      const path=module==='profile'?'/api/v1/personal-profile/v3/model/activate':module==='events'?'/api/v1/event-model/activate':module==='goals'?'/api/v1/insight/goal/model/activate':'/api/v1/insight/anniversary/model/activate'
       await this.guard(session,epoch,signal)
-      await this.runtime.authenticatedIntelligentPost(path,{route_key:model.route},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+      const response=await this.runtime.authenticatedIntelligentPost<Doc>(path,{route_key:model.route,...(module==='goals'?{trigger_refresh:true}:{})},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+      await this.guard(session,epoch,signal)
+      const verified=await this.settings(module,signal,{part:'models'})
+      if(!verified.models.some(x=>x.key===current.models.find((_,index)=>available[index]?.route===model.route)?.key&&x.selected))throw new ArkmePluginError('explore-model-unconfirmed','模型切换已提交，暂时无法确认生效状态，请刷新后核对',true,409)
+      return {saved:true,message:text(response.message).slice(0,500)||'模型已切换，分析状态将在后台更新',settings:verified}
     } else if(module==='profile'&&Array.isArray(input.sources)) {
       await this.requireAnalysis(module,session,signal)
       const home=await this.home(module,session,signal),allowed=list(home.sources).filter(x=>x.source!=='wechat_import').map(x=>x.source)

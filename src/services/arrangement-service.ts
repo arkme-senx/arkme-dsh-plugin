@@ -1,3 +1,10 @@
+import { projectOccurrenceResponse } from './arrangement-occurrence-contract.js'
+import type {
+  ArrangementOccurrenceAction,
+  ArrangementOccurrenceInput,
+  ArrangementOccurrenceResponse,
+} from '../arrangement-occurrence.js'
+import type { ArrangementRecognitionSettings, ArrangementRecognitionInspection } from "../arrangement-recognition.js"
 import { arrangementEvidence, projectEvidence, type ArrangementEvidenceData } from '../arrangement-provenance.js'
 import { ArrangementSourceRecovery } from './arrangement-source-recovery.js'
 import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
@@ -11,6 +18,8 @@ import type {
   ArkmeArrangementDetail,
   ArkmeDeletedArrangementItem,
   ArkmeDeletedArrangementPage,
+  ArkmeArrangementRestoreInput,
+  ArkmeArrangementRestoreResult,
   ArkmeArrangementCreationSource,
   ArkmeArrangementItem,
   ArkmeArrangementListStatus,
@@ -127,6 +136,254 @@ export class ArrangementService {
 
   private readonly recovery: ArrangementSourceRecovery
   constructor(private readonly runtime: ServiceRuntime) { this.recovery = new ArrangementSourceRecovery(runtime) }
+
+  async occurrenceRequest(
+    action: ArrangementOccurrenceAction,
+    accountScope: string,
+    input: ArrangementOccurrenceInput,
+    signal?: AbortSignal,
+  ): Promise<ArrangementOccurrenceResponse> {
+    const session = await this.runtime.requireSession()
+    const check = async () => {
+      if (
+        accountScope !==
+        `${this.runtime.config.environment}:${(await this.runtime.requireSession()).userId}`
+      )
+        throw new ArkmePluginError(
+          'arrangement-account-changed',
+          '账号已切换，请重新打开安排',
+          false,
+          403,
+        )
+    }
+    if (accountScope !== `${this.runtime.config.environment}:${session.userId}`)
+      throw new ArkmePluginError(
+        'arrangement-account-changed',
+        '账号已切换，请重新打开安排',
+        false,
+        403,
+      )
+    const ref = input.arrangementRef
+      ? this.openArrangementRef(input.arrangementRef, session.userId)
+      : undefined
+    const target = input.targetRef
+      ? this.openArrangementRef(input.targetRef, session.userId)
+      : undefined
+    if ((action === 'events' || action.startsWith('history/')) && !ref)
+      throw new ArkmePluginError('invalid-params', '缺少主安排引用', false, 400)
+    if (action === 'reviews/decide' && !['merge', 'create', 'ignore'].includes(input.action ?? ''))
+      throw new ArkmePluginError('invalid-params', '确认操作无效', false, 400)
+    if (
+      action === 'reviews/decide' &&
+      input.action === 'merge' &&
+      (!target || !Number.isSafeInteger(input.targetVersion) || !input.targetVersion)
+    )
+      throw new ArkmePluginError('invalid-params', '缺少待合并安排的当前版本', false, 400)
+    if (
+      action === 'history/apply' &&
+      (!input.selectedRefs?.length || input.selectedRefs.length > 12)
+    )
+      throw new ArkmePluginError('invalid-params', '请选择1至12条需要归并的安排', false, 400)
+    const selected = (input.selectedRefs ?? []).map(
+      (ref) => this.openArrangementRef(ref, session.userId).arrangementUid,
+    )
+    if (new Set(selected).size !== selected.length)
+      throw new ArkmePluginError('invalid-params', '请勿重复选择安排', false, 400)
+    let data: Record<string, unknown>
+    try {
+      data = objectValue(
+        await this.runtime.authenticatedIntelligentPost(
+          '/api/v1/arrangements/occurrences/' + action,
+          {
+            ...(ref ? { uid: ref.arrangementUid } : {}),
+            ...(input.reviewId ? { id: input.reviewId } : {}),
+            ...(input.action ? { action: input.action } : {}),
+            ...(target
+              ? { target_uid: target.arrangementUid, target_version: input.targetVersion }
+              : {}),
+            ...(selected.length ? { selected_uids: selected } : {}),
+            ...(input.expectedRouteKey ? { expected_route_key: input.expectedRouteKey } : {}),
+          },
+          session,
+          signal,
+          {
+            lane:
+              action === 'events' || action === 'reviews/summary' || action === 'reviews/list'
+                ? 'interactive-read'
+                : 'write',
+            bypassCache: true,
+          },
+        ),
+      )
+    } catch (error) {
+      if (
+        error instanceof ArkmePluginError &&
+        ([404, 405, 501].includes(error.upstreamStatus ?? 0) ||
+          error.code === 'arkme-response-invalid')
+      )
+        throw new ArkmePluginError(
+          'arrangement-occurrence-unavailable',
+          '当前后端尚未提供事项归并与识别记录接口，请在发布后重试。',
+          false,
+          503,
+        )
+      throw error
+    }
+    await check()
+    const expectedOwner =
+      ref?.arrangementUid ?? (input.action === 'merge' ? target?.arrangementUid : undefined)
+    const result = await projectOccurrenceResponse(
+      action,
+      input,
+      data,
+      accountScope,
+      (raw) => this.arrangementItem(raw, session.userId),
+      expectedOwner,
+    )
+    await check()
+    return result
+  }
+
+  async recognitionRequest(
+    action: 'settings/get' | 'settings/set' | 'trace' | 'preview' | 'apply',
+    accountScope: string,
+    input: {
+      source?: string
+      routeKey?: string
+      arrangementRef?: string
+      previewId?: string
+      expectedRouteKey?: string
+      traceId?: string
+    },
+    signal?: AbortSignal,
+  ): Promise<ArrangementRecognitionSettings | ArrangementRecognitionInspection> {
+    const session = await this.runtime.requireSession()
+    const assertScope = (userId: number) => {
+      if (accountScope !== `${this.runtime.config.environment}:${userId}`)
+        throw new ArkmePluginError(
+          'arrangement-account-changed',
+          '账号已切换，请重新打开识别设置',
+          false,
+          403,
+        )
+    }
+    assertScope(session.userId)
+    const reference = input.arrangementRef
+      ? this.openArrangementRef(input.arrangementRef, session.userId)
+      : undefined
+    if (!action.startsWith('settings/') && !reference)
+      throw new ArkmePluginError('invalid-params', '缺少安排引用', false, 400)
+    if (
+      action === 'settings/set' &&
+      !['default', 'note', 'private', 'group', 'audio', 'call', 'manual', 'other'].includes(
+        input.source ?? '',
+      )
+    )
+      throw new ArkmePluginError('invalid-params', '识别来源无效', false, 400)
+    let raw: Record<string, unknown>
+    try {
+      raw = objectValue(
+        await this.runtime.authenticatedIntelligentPost(
+          '/api/v1/arrangements/recognition/' + action,
+          {
+            ...(reference ? { uid: reference.arrangementUid } : {}),
+            ...(input.source ? { source: input.source, route_key: input.routeKey ?? '' } : {}),
+            ...(input.previewId ? { preview_id: input.previewId } : {}),
+            ...(input.expectedRouteKey ? { expected_route_key: input.expectedRouteKey } : {}),
+            ...(input.traceId ? { trace_id: input.traceId } : {}),
+          },
+          session,
+          signal,
+          {
+            lane: action === 'trace' || action === 'settings/get' ? 'interactive-read' : 'write',
+            bypassCache: true,
+          },
+        ),
+      )
+    } catch (error) {
+      if (
+        error instanceof ArkmePluginError &&
+        ([404, 405, 501].includes(error.upstreamStatus ?? 0) ||
+          error.code === 'arkme-response-invalid')
+      )
+        throw new ArkmePluginError(
+          'arrangement-recognition-unavailable',
+          '当前后端尚未提供识别配置与执行记录接口，请在后端发布后重试。',
+          false,
+          503,
+        )
+      throw error
+    }
+    assertScope((await this.runtime.requireSession()).userId)
+    if (action.startsWith('settings/')) {
+      if (
+        raw.contract_version !== 1 ||
+        !Array.isArray(raw.sources) ||
+        !Array.isArray(raw.models) ||
+        typeof raw.revision !== 'string'
+      )
+        throw new ArkmePluginError(
+          'arrangement-recognition-contract',
+          '识别配置响应不完整，无法确认生效模型',
+          false,
+          502,
+        )
+      return { ...raw, accountScope } as unknown as ArrangementRecognitionSettings
+    }
+    if (
+      !['ready', 'not-recorded', 'preview', 'applied', 'conflict', 'unavailable'].includes(
+        String(raw.state),
+      )
+    )
+      throw new ArkmePluginError('arrangement-recognition-contract', '识别记录响应无效', false, 502)
+    const trace = objectValue(raw.trace)
+    if (
+      raw.trace &&
+      (!Array.isArray(trace.rules) ||
+        !Array.isArray(trace.pipeline) ||
+        typeof trace.route_key !== 'string' ||
+        typeof trace.id !== 'string')
+    )
+      throw new ArkmePluginError(
+        'arrangement-recognition-contract',
+        '识别过程记录不完整',
+        false,
+        502,
+      )
+    // Cloud owner UIDs never cross the provider boundary.
+    const outcomes = Array.isArray(trace.outcomes)
+      ? trace.outcomes.map((value) => {
+          const { uid: _uid, ...fields } = objectValue(value)
+          return fields
+        })
+      : undefined
+    const { record_uids: _records, occurrence_decision: rawDecision, ...safeTrace } = trace
+    const decision = rawDecision
+      ? {
+          state: stringValue(objectValue(rawDecision).state),
+          reason: stringValue(objectValue(rawDecision).reason),
+        }
+      : undefined
+    let item
+    if (raw.state === 'applied' && reference)
+      item = await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    assertScope((await this.runtime.requireSession()).userId)
+    return {
+      accountScope,
+      state: raw.state,
+      ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}),
+      ...(raw.trace
+        ? {
+            trace: {
+              ...safeTrace,
+              ...(decision ? { occurrence_decision: decision } : {}),
+              ...(outcomes ? { outcomes } : {}),
+            },
+          }
+        : {}),
+      ...(item ? { item } : {}),
+    } as ArrangementRecognitionInspection
+  }
 
   async arrangementBoardCache(accountScope: string, rawPages?: unknown): Promise<ArkmeArrangementBoardCache> {
     const session = await this.runtime.requireSession()
@@ -332,17 +589,60 @@ export class ArrangementService {
     const session = await this.runtime.requireSession()
     const reference = this.openArrangementRef(arrangementRef.trim(), session.userId)
     const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail',
-      { uid: reference.arrangementUid }, session, signal, { lane: 'interactive-read' })
+      { uid: reference.arrangementUid, restore_context: true }, session, signal, { lane: 'interactive-read', bypassCache: true })
     if (stringValue(data.uid).trim() !== reference.arrangementUid || Number(data.status) !== 4) {
       throw new ArkmePluginError('arrangement-contract-invalid', '已删除安排状态已变化，请刷新列表', true, 502)
     }
-    return { ...await this.arrangementItem(data, session.userId), status: 'deleted' }
+    const capability = objectValue(data.restore)
+    const targetStatus = arrangementStatus(capability.target_status)
+    const projected = await this.arrangementItem(data, session.userId)
+    const fresh = await this.runtime.requireSession()
+    if (fresh.userId !== session.userId || fresh.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+    return { ...projected, status: 'deleted',
+      ...(capability.contract_version === 1 && Number.isSafeInteger(capability.expected_version) && Number(capability.expected_version) >= 0 && targetStatus !== 'unknown'
+        ? { restore: { expectedVersion: Number(capability.expected_version), targetStatus, historicalFallback: capability.historical_fallback === true } } : {}) }
+  }
+
+  async restoreArrangement(input: ArkmeArrangementRestoreInput, resultOnly = false, signal?: AbortSignal): Promise<ArkmeArrangementRestoreResult> {
+    const session = await this.runtime.requireSession()
+    const ref = this.openArrangementRef(input.arrangementRef, session.userId)
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.requestId) || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+      throw new ArkmePluginError('arrangement-restore-invalid', '恢复请求无效，请刷新详情', false, 400)
+    }
+    return this.withArrangementWrite(input.arrangementRef, session.userId, async () => {
+      const readResult = () => this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/restore/result',
+        { uid: ref.arrangementUid, request_id: input.requestId }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      let result: Record<string, unknown>
+      try {
+        result = resultOnly ? await readResult() : await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/restore',
+          { uid: ref.arrangementUid, request_id: input.requestId, expected_version: input.expectedVersion }, session, signal)
+      } catch {
+        if (signal?.aborted) throw new ArkmePluginError('arrangement-restore-unknown', '恢复结果尚未确认', true, 409)
+        try { result = await readResult() } catch { result = { state: 'unknown' } }
+      }
+      const fresh = await this.runtime.requireSession()
+      if (fresh.userId !== session.userId || fresh.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+      if (result.state === 'unknown' || result.state === 'conflict') return { state: result.state }
+      const receipt = objectValue(result.operation), item = objectValue(result.item)
+      if (!['completed', 'superseded'].includes(String(result.state)) || receipt.uid !== ref.arrangementUid || receipt.request_id !== input.requestId
+        || receipt.expected_version !== input.expectedVersion || !Number.isSafeInteger(receipt.applied_version)) {
+        return { state: 'unknown' }
+      }
+      if (result.state === 'superseded') return { state: 'superseded' }
+      if (item.uid !== ref.arrangementUid || item.version !== receipt.applied_version || item.status !== receipt.target_status
+        || ![1,2,3].includes(Number(item.status)) || item.reminder_enabled !== false || item.reminder_state !== 'disabled') return { state: 'unknown' }
+      const projected = await this.arrangementItem(item, session.userId)
+      const finalSession = await this.runtime.requireSession()
+      if (finalSession.userId !== session.userId || finalSession.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+      return { state: 'completed', item: projected }
+    })
   }
 
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     const session = await this.runtime.requireSession()
     const reference = this.openArrangementRef(arrangementRef, session.userId)
-    return await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    const item = await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    return item.arrangementRef === arrangementRef ? item : { ...item, resolvedFromRef: arrangementRef }
   }
 
   async listArrangementReminders(
@@ -574,15 +874,16 @@ export class ArrangementService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<ArkmeArrangementItem> {
-    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
-      '/api/v1/arrangements/detail',
-      { uid: arrangementUid },
-      session,
-      signal,
-      { lane: 'interactive-read' },
-    )
-    if (stringValue(data.uid).trim() !== arrangementUid) {
-      throw new ArkmePluginError('arrangement-contract-invalid', '安排详情响应身份不一致', true, 502)
+    let data:Record<string,unknown>={};const seen=new Set<string>()
+    for(let hop=0;hop<10;hop++){
+      if(seen.has(arrangementUid))throw new ArkmePluginError('arrangement-contract-invalid','安排归并引用循环，请刷新',false,502)
+      seen.add(arrangementUid)
+      data=objectValue(await this.runtime.authenticatedIntelligentPost('/api/v1/arrangements/detail',{uid:arrangementUid},session,signal,{lane:'interactive-read'}))
+      if(data.uid!==arrangementUid){if(data.resolved_from_uid!==arrangementUid||![1,2,3].includes(Number(data.status))||!stringValue(data.uid).trim())throw new ArkmePluginError('arrangement-contract-invalid','安排详情响应身份不一致',true,502);arrangementUid=stringValue(data.uid)}
+      const merged=stringValue(data.merged_into_uid).trim()
+      if(Number(data.status)!==5||!merged)break
+      if(hop===9)throw new ArkmePluginError('arrangement-contract-invalid','安排归并引用过长，请刷新',false,502)
+      arrangementUid=merged
     }
     const recovered = objectValue(data.source_provenance).version !== 1 && [5,6].includes(Number(data.source_type))
       ? await this.recovery.recover(data, session, signal).catch(() => undefined) : undefined
@@ -593,19 +894,19 @@ export class ArrangementService {
     const session = await this.runtime.requireSession()
     const ref = this.openArrangementRef(arrangementRef, session.userId)
     const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/detail', { uid: ref.arrangementUid }, session, signal, { lane: 'interactive-read', bypassCache: true })
-    if (data.uid !== ref.arrangementUid || ![1,2,3].includes(Number(data.status))) throw new ArkmePluginError('arrangement-source-mismatch', '安排已删除或来源已变化，请刷新', false, 409)
+    if (data.uid !== ref.arrangementUid || ![1,2,3,4].includes(Number(data.status))) throw new ArkmePluginError('arrangement-source-mismatch', '安排或来源已变化，请刷新', false, 409)
     const recovered = objectValue(data.source_provenance).version !== 1 ? await this.recovery.cached(data, session) : undefined
     const evidence = arrangementEvidence(data, recovered).find(e => e.id === evidenceId)
     if (!evidence) throw new ArkmePluginError('arrangement-source-missing', '来源信息已变化，请刷新', false, 404)
     if (evidence.persisted) {
       const result = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/source/read', {
-        uid: ref.arrangementUid, evidence_id: evidenceId,
+        uid: ref.arrangementUid, evidence_id: evidenceId, contract_version: 2,
       }, session, signal, { lane: 'interactive-read', bypassCache: true })
       if (result.state === 'unavailable') throw new ArkmePluginError('arrangement-source-unavailable', stringValue(result.reason) || '来源已删除或当前无权查看', false, 404)
       const source = objectValue(result.source)
       // IDs locate evidence; never let a response replace its saved identity or destination.
       const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref',
-        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref',
+        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref', 'utterance_id', 'transcript_version',
         'input_id', 'request_uid', 'voice_file_id', 'agent_session_id', 'agent_message_id', 'occurred_at']
       if (result.state !== 'ready' || fields.some(key => source[key] !== evidence[key])
         || (source.text !== undefined && typeof source.text !== 'string')
@@ -613,6 +914,22 @@ export class ArrangementService {
         throw new ArkmePluginError('arrangement-source-contract-invalid', '来源响应与当前安排不一致，请重试', true, 502)
       }
       evidence.text = evidence.kind === 'agent' ? stringValue(result.content) : stringValue(source.text)
+      if (evidence.kind === 'call' && result.contract_version !== undefined) {
+        const quote = objectValue(result.quote)
+        const states = ['exact', 'unlocated', 'ambiguous', 'version_changed', 'pending'] as const
+        if (result.contract_version !== 2 || result.access_state !== 'readable' || !states.includes(result.quote_state as typeof states[number])
+          || (result.quote_state === 'exact' && (typeof quote.text !== 'string' || !quote.text.trim() || result.content !== quote.text
+            || (typeof evidence.utterance_id === 'string' && quote.utterance_id !== evidence.utterance_id)
+            || !Number.isSafeInteger(quote.start_ms) || Number(quote.start_ms) < 0 || !Number.isSafeInteger(quote.end_ms) || Number(quote.end_ms) < Number(quote.start_ms)))
+          || (result.quote_state !== 'exact' && (result.quote !== undefined || !!result.content || !!source.text))) {
+          throw new ArkmePluginError('arrangement-source-contract-invalid', '通话来源定位响应无效，请重试', true, 502)
+        }
+        evidence.quoteState = result.quote_state as typeof states[number]
+        evidence.text = result.quote_state === 'exact' ? String(quote.text) : ''
+        if (result.quote_state === 'exact') evidence.locatedStartMs = Number(quote.start_ms)
+        else delete evidence.locatedStartMs
+      }
+
     }
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()
@@ -681,6 +998,12 @@ export class ArrangementService {
       ...(dueAtMillis > 0 ? { dueAtMillis } : {}),
       ...(remindAtMillis > 0 ? { remindAtMillis } : {}),
     }
+  }
+
+  async ownedArrangementReference(arrangementUid: string, viewerUserId: number): Promise<string> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+    return this.arrangementRef(viewerUserId, arrangementUid)
   }
 
   private async arrangementRef(viewerUserId: number, arrangementUid: string): Promise<string> {

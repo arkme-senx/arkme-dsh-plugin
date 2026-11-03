@@ -100,3 +100,16 @@ it('does not reserve an empty outline for plain text and keeps forwarded snapsho
   expect(element.querySelector('[data-arkme-long-article-dialog]')?.getAttribute('data-arkme-long-article-dialog')).toBe('snapshot')
   expect([...element.querySelectorAll('button')].some(node=>node.textContent?.includes('编辑'))).toBe(false)
 })
+
+it.each([false, true])('keeps the library editor full-width without a directory or toggle (existing=%s)', async existing => {
+  const close = vi.fn()
+  const mode = { displayName: '发给自己', verifyAccount: async () => {}, subscribeClose: () => () => {}, cancelClose: () => {} }
+  await act(async () => root.render(<ArkmeLongArticleDialog sourceRef="source-A" {...(existing ? {item: initial} : {})} returnToLibrary windowMode={mode} onClose={close} />))
+  expect(element.querySelector('.arkme-article-workspace-directory')).toBeNull()
+  expect(button('展开长文列表')).toBeUndefined()
+  expect(button('收起长文列表')).toBeUndefined()
+  expect(element.querySelector('.arkme-article-workspace')?.getAttribute('data-left')).toBe('false')
+  expect(mocks.call.mock.calls.some(([op]) => op === 'search.scene')).toBe(false)
+  await act(async () => button('← 返回').click())
+  expect(close).toHaveBeenCalledOnce()
+})

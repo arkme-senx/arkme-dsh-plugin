@@ -1,10 +1,14 @@
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
+import { publicSocialToolModules } from './groups/public-social.js'
 import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
 import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 import { teamEntryTools } from './contacts/team-entries.js'
+import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
+import { worldReplyTool } from './world/reply.js'
+import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
@@ -105,6 +109,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reeditRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
+  worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,
   worldMineToolModule,
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,
@@ -124,6 +129,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   privateInteractionSummaryToolModule,
   privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
+  ...publicSocialToolModules,
   readSourceToolModule,
   ...analyticsToolModules,
   copyLinkExtendToolModule,

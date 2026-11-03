@@ -8,6 +8,7 @@ vi.mock('../src/client/api.js', () => ({
 }))
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { recordingDayCache } from '../src/client/recordings/recording-day-cache.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
 import type { ArkmeRecordingWorkbenchItem } from '../src/types.js'
@@ -19,6 +20,7 @@ describe('recording transcript speaker popover', () => {
   let items: ArkmeRecordingWorkbenchItem[]
 
   beforeEach(() => {
+    recordingDayCache.clear()
     items = [{
       itemId: 'item-1', itemRef: 'sealed-item-1', transcriptSource: 'system', sessionKey: 'session-1',
       startAtMillis: 1_000, endAtMillis: 2_000, speakerNumber: 1, speakerKey: 'speaker:1',

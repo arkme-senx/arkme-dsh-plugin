@@ -1,3 +1,4 @@
+import { ArkmeArrangementRecognitionSettings } from "./ArkmeArrangementRecognitionInspector.js"
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeArrangementRecognition } from './ArkmeArrangementRecognition.js'
 import { readArrangementBoardMemory, loadArrangementBoardCache, saveArrangementBoardCache } from './arrangement-board-cache.js'
@@ -28,6 +29,7 @@ export function ArkmeArrangementBoard(props: { accountScope: string; onAddArrang
 }
 
 function ArrangementBoard({ accountScope, onAddArrangement, createdItems }: { accountScope: string; onAddArrangement?(): void; createdItems?: ArkmeArrangementItem[] }) {
+  const [recognitionSettings, setRecognitionSettings] = useState(false)
   useArkmeLocale()
   const [expanded, setExpanded] = useState(new Set<string>())
   const suppressedClick = useRef(false)
@@ -334,7 +336,8 @@ function ArrangementBoard({ accountScope, onAddArrangement, createdItems }: { ac
   }
 
   return <section className="arkme-arrangement-board" aria-label={tr('安排')}>
-    <header className="arkme-arrangement-header"><h2>{tr('安排')}</h2><button type="button" onClick={() => arkmeUi.openDshSettings('arkme-usage')}>{tr('自动识别设置')}</button>{onAddArrangement && <button type="button" className="arkme-arrangement-add" data-arkme-hover="none" onClick={onAddArrangement}><Plus size={16} aria-hidden />{tr('添加安排')}</button>}</header>
+    {recognitionSettings && <ArkmeArrangementRecognitionSettings key={accountScope} accountScope={accountScope} onClose={() => setRecognitionSettings(false)} />}
+    <header className="arkme-arrangement-header"><h2>{tr('安排')}</h2><button type="button" onClick={() => setRecognitionSettings(true)}>{tr('自动识别设置')}</button>{onAddArrangement && <button type="button" className="arkme-arrangement-add" data-arkme-hover="none" onClick={onAddArrangement}><Plus size={16} aria-hidden />{tr('添加安排')}</button>}</header>
     {message && <p role="status" className="arkme-arrangement-message">{message}</p>}
     {!accountScope && <p role="status">{tr('请先登录')}</p>}
     {arrangementColumns.some(status => !columns[status].cached && columns[status].board?.supported === false) && <p className="arkme-arrangement-message" role="status">{tr('当前服务暂不支持手动排序')}</p>}

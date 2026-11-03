@@ -131,3 +131,10 @@ describe('share preview bounded read boundary', () => {
     expect(await setup(async () => new Response('', { status })).service.resolve(url)).toEqual({ kind: 'message', state })
   })
 })
+
+it('reads a team World share from the current public owner and projects no publishing actor', async () => {
+  const f = setup(async () => new Response(JSON.stringify({ code: 200, data: { record_uid: 'team-post', principal: { kind: 'team', team_id: 9, name: '研发团队', jotmo_id: 'team_9' }, text_content: '公开正文' } })))
+  const result = await f.service.resolve('https://app.arkme.ai/shijie/team_9/record/team-post')
+  expect(result).toEqual({ kind: 'public-record', state: 'ready', author: '研发团队', authorKind: 'team', summary: '公开正文' })
+  expect(String((f.fetchImpl.mock.calls[0] as unknown as [string])[0])).toBe('https://world.example.com/api/public/v1/world/read')
+})

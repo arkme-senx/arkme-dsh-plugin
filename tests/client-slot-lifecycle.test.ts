@@ -92,7 +92,8 @@ describe('desktop harness startup lifecycle', () => {
     expect(notifyHarnessReady).not.toHaveBeenCalled()
     expect(registrations).toContain('main')
     expect(registrations).toContain('rightbar')
-    expect(registrations).toContain('settings.section')
+    expect(registrations).toContain('dsh-arkme: independent product settings')
+    expect(registrations).not.toContain('settings.section')
     expect(readinessSurface).toBeTypeOf('function')
     act(() => { create(createElement(readinessSurface!)) })
     expect(notifyHarnessReady).toHaveBeenCalledOnce()
@@ -100,7 +101,7 @@ describe('desktop harness startup lifecycle', () => {
 })
 
 describe('Arkme directory slot lifecycle', () => {
-  it('restarts directory consumers exactly once when the official settings sidebar returns', async () => {
+  it('retains directory consumers across independent settings and conversation round trips', async () => {
     vi.useFakeTimers()
     const SlotRegistry = await loadSlotRegistry()
     const registry = new SlotRegistry(new Context())
@@ -164,7 +165,7 @@ describe('Arkme directory slot lifecycle', () => {
         layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
         locale: createClientLocaleStub(),
         effect: (factory: () => unknown, label: string) => {
-          if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return () => {}
+          if (!label.includes('embedded DeepSeek Harness') && !label.includes('permanent Arkme sidebar')) return () => {}
           const cleanup = factory()
           if (typeof cleanup === 'function') pluginCleanups.push(cleanup)
           return typeof cleanup === 'function' ? cleanup : () => {}
@@ -175,25 +176,16 @@ describe('Arkme directory slot lifecycle', () => {
       expect(registry.entries('arkme.directory.entry')).toHaveLength(1)
 
       arkmeUi.openDshSettings()
-
-      expect(registry.spec('arkme.directory.entry')).toBeUndefined()
-      expect(registry.entries('arkme.directory.entry')).toHaveLength(0)
-      expect(consumerDisposals).toBe(1)
-
       vi.advanceTimersByTime(50)
-      expect(settingsTrigger.click).toHaveBeenCalledOnce()
-      expect(consumerActivations).toBe(1)
-
-      vi.advanceTimersByTime(50)
-      settingsDialogVisible = false
-      vi.advanceTimersByTime(50)
-
+      expect(registry.spec('arkme.directory.entry')).toBeDefined()
       expect(registry.entries('arkme.directory.entry')).toHaveLength(1)
-      expect(consumerActivations).toBe(2)
-      expect(consumerDisposals).toBe(1)
-
+      expect(consumerActivations).toBe(1)
+      expect(consumerDisposals).toBe(0)
+      expect(settingsTrigger.click).not.toHaveBeenCalled()
+      arkmeUi.showConversations()
       vi.advanceTimersByTime(2_000)
-      expect(consumerActivations).toBe(2)
+      expect(consumerActivations).toBe(1)
+      expect(consumerDisposals).toBe(0)
       expect(registry.entries('arkme.directory.entry')).toHaveLength(1)
     } finally {
       pluginCleanups.reverse().forEach(cleanup => { cleanup() })
@@ -206,7 +198,7 @@ describe('Arkme directory slot lifecycle', () => {
 })
 
 describe('embedded DSH settings slot lifecycle', () => {
-  it('restores the native settings entry when the Arkme shadow is disposed', async () => {
+  it('leaves native settings available while the embedded plugin contributes no duplicate shadow', async () => {
     const SlotRegistry = await loadSlotRegistry()
     const registry = new SlotRegistry(new Context())
     const disposeFrame = registry.register({
@@ -237,9 +229,9 @@ describe('embedded DSH settings slot lifecycle', () => {
         effect: vi.fn(),
       } as never)
 
-      expect(registry.entries('sidebar.settings').map(entry => entry.options.priority ?? 0)).toEqual([-100, 0])
+      expect(registry.entries('sidebar.settings').map(entry => entry.options.priority ?? 0)).toEqual([0])
       expect(registry.entriesOfSlot('sidebar.settings')).toEqual([
-        expect.objectContaining({ options: expect.objectContaining({ priority: -100 }) }),
+        expect.objectContaining({ component: NativeSettings }),
       ])
 
       injectionCleanups.splice(0).reverse().forEach(cleanup => { cleanup() })

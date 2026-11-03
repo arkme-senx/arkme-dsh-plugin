@@ -22,7 +22,7 @@ function validMetrics(value: unknown): value is RecordingTotalMetrics {
     && (m.asrInput.missingHistoryCount === undefined || Number.isSafeInteger(m.asrInput.missingHistoryCount) && m.asrInput.missingHistoryCount >= 0)
     && parsed.asrInput.state === m.asrInput.state && parsed.asrInput.durationMillis === m.asrInput.durationMillis && typeof m.asrInput.estimated === 'boolean'
 }
-function validBucket(value: unknown): value is RecordingTotalsBucket {
+export function validBucket(value: unknown): value is RecordingTotalsBucket {
   const b = value as RecordingTotalsBucket | undefined
   return !!b && Number.isSafeInteger(b.sessionCount) && b.sessionCount >= 0 && validMetrics(b.metrics)
 }
@@ -41,7 +41,7 @@ export function readRecordingTotalsCache(raw: string | null): RecordingTotalsCac
   } catch { return emptyRecordingTotalsCache() }
 }
 
-function aggregate(buckets: RecordingTotalsBucket[], incomplete: boolean, now: number): RecordingTotalMetrics {
+export function aggregate(buckets: RecordingTotalsBucket[], incomplete: boolean, now: number): RecordingTotalMetrics {
   function metric(select: (m: RecordingTotalMetrics) => { state: RecordingMetricState; value: number | null }) {
     let value = 0, known = 0, missing = incomplete, pending = false
     for (const { metrics } of buckets) {

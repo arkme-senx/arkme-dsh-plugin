@@ -120,7 +120,7 @@ it('uses real deleted reads and never renders completion controls for deleted it
   expect(root!.root.findAllByProps({role:'checkbox'})).toHaveLength(0)
   await act(async () => { task('one').findByProps({className:'arkme-arrangement-task-body'}).props.onClick(); await tick() })
   expect(mocks.call).toHaveBeenCalledWith('arrangements.deleted.detail',{arrangementRef:'one'},expect.any(AbortSignal))
-  expect(JSON.stringify(root!.toJSON())).toContain('恢复与来源原文访问')
+  expect(JSON.stringify(root!.toJSON())).toContain('当前服务暂不支持恢复')
 })
 it('retains already-loaded rows when the next page fails', async () => {
   mocks.call.mockImplementation(async (_op,params) => {

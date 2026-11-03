@@ -25,8 +25,9 @@ export interface RecordingImportUploadOptions {
   batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
-  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  /** Retained only for retrying queue entries created by older clients. */
   strategy?: import('../recording-strategy-contract.js').RecordingStrategy
+  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
   recordingKind?: 1 | 3
 }
 
@@ -164,6 +165,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.totals.day'
   | 'recordings.day.review'
   | 'recordings.day.overview'
   | 'recordings.day'

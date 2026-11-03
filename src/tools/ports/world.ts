@@ -9,9 +9,17 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeWorldToolPort {
+  worldCommentNotifications(options?: { limit?: number; cursor?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeWorldCommentNotificationPage>
+  createWorldTextInteraction(input: { targetRef: string; textContent: string; clientMutationId: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeWorldInteractionCreateResult>
+  listWorldReplies(recordRef: string, options?: { limit?: number; cursor?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeWorldRepliesPage>
+  teamWorld(input: import('../../team-world-contract.js').TeamWorldRequest, signal?: AbortSignal): Promise<unknown>
+  prepareNoteWorldReactions(accountKey: string, sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('../../world-reaction-contract.js').WorldReactionContextPage>
+  prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<import('../../world-reaction-contract.js').WorldReactionContextPage>
+  worldReactions(input: import('../../world-reaction-contract.js').WorldReactionRequest, signal?: AbortSignal): Promise<unknown>
+  worldReactionArchive(input: import('../../world-reaction-contract.js').WorldReactionArchiveRequest, signal?: AbortSignal): Promise<unknown>
   readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem>
   listWorldRecords(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldRecordList>
-  listWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
+  listWorldFeed(options?: { limit?: number; cursor?: string; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   listMyWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   listUserWorldFeed(userId: number, options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   openPrivateChatFromWorldAuthor(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult>

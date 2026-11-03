@@ -1,4 +1,5 @@
 import { tr, useArkmeLocale } from '../../locale.js'
+import { IdentityCopyLinkButton } from '../../IdentityCopyLinkButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { ChatCircle } from '@phosphor-icons/react/ChatCircle'
 import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeGroupMemberList, ArkmeSourceItem } from '../../../types.js'
@@ -82,6 +83,7 @@ export function ConversationProfileDetail({ item, onSourceActivated, onBotActiva
         <h2 className="arkme-contact-profile-section-title">{item.kind === 'group' ? '群聊资料' : 'Bot 资料'}</h2>
         {item.kind === 'group' ? <GroupNickname key={item.sourceRef} sourceRef={item.sourceRef} />
           : <dl className="arkme-contact-profile-row"><dt>{tr("简介")}</dt><dd>{item.bot.description.trim() || '暂无简介'}</dd></dl>}
+        {item.kind === 'group' && <IdentityCopyLinkButton target={{ kind: 'source', sourceRef: item.sourceRef }} label="复制群聊链接" />}
       </section>
       <footer className="arkme-contact-profile-actions arkme-conversation-profile-actions" aria-label={tr("联系操作")} aria-busy={busy}>
         <button data-arkme-feedback="neutral" type="button" className="arkme-contact-profile-action" disabled={busy || !available} onClick={() => { void openMessage() }}>

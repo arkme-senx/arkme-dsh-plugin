@@ -676,7 +676,7 @@ export class CallHistoryService {
     const videoRecord = callVideoRecord(raw, mediaType, session.userId)
     const allSegments = this.transcriptSegments(raw, startedAtMillis, session.userId)
     const sourceStart = source?.startMillis === undefined ? undefined : source.startMillis >= 100_000_000_000 ? Math.max(0,source.startMillis-startedAtMillis) : source.startMillis
-    const matches = source ? allSegments.map((segment,index)=>({segment,index})).filter(({segment})=>sourceStart !== undefined ? segment.startMillis === sourceStart : !!source.quote.trim() && segment.text.includes(source.quote.trim())) : []
+    const matches = source ? allSegments.map((segment,index)=>({segment,index})).filter(({segment})=>!!source.quote.trim() && segment.text.includes(source.quote.trim()) && (sourceStart === undefined || segment.startMillis === sourceStart)) : []
     // Keep the existing bounded projection, but include a uniquely located source
     // even when it occurs beyond the initial 200 transcript segments.
     const firstSegment = matches.length === 1 ? Math.max(0,matches[0]!.index-5) : 0
@@ -721,6 +721,7 @@ export class CallHistoryService {
       transcriptFailed: booleanValue(raw.transcript_failed ?? raw.transcriptFailed),
       ...(videoRecord === undefined ? {} : { videoRecord }),
       participants,
+      ...(source ? {sourceQuoteState: matches.length === 1 ? 'exact' as const : matches.length > 1 ? 'ambiguous' as const : 'unlocated' as const} : {}),
       transcriptSegments: transcriptSegments.map(segment => {
         const speaker = participants.find(participant => participant.userId !== undefined && participant.userId === segment.speakerUserId)
         return speaker ? { ...segment, speakerDisplayName: speaker.displayName } : segment

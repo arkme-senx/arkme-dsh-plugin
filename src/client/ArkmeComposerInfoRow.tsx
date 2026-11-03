@@ -15,19 +15,24 @@ const styles = {
 } satisfies Record<string, CSSProperties>
 
 /** Reserve the hint row outside the input card so focusing never shifts the message viewport. */
-export function ArkmeComposerInfoRow({ destination, focused, variant = 'direct', memberCount, children }: {
+export function ArkmeComposerInfoRow({ destination, focused, variant = 'direct', memberCount, shortcuts, children }: {
   destination?: string
   focused: boolean
   variant?: 'direct' | 'group' | 'self'
   memberCount?: number
+  shortcuts?: ReactNode
   children?: ReactNode
 }) {
   const height = variant === 'direct' ? 30 : 20
-  return <div data-arkme-composer-info-row="true" style={{ ...styles.row, minHeight: height }}>
+  return <div data-arkme-composer-info-row="true" style={{ ...styles.row, minHeight: Math.max(height, shortcuts === undefined ? 0 : 32) }}>
+    {shortcuts !== undefined && <div data-arkme-composer-shortcuts="true" hidden={focused}
+      style={{ display: focused ? 'none' : 'flex', alignItems: 'center', flexShrink: 0, minWidth: 0, maxWidth: '100%', paddingBottom: 4 }}>
+      {shortcuts}
+    </div>}
     {destination !== undefined && <div
       data-arkme-composer-destination-hint="true"
       aria-hidden={!focused}
-      style={{ ...styles.hint, height, opacity: focused ? 1 : 0 }}
+      style={{ ...styles.hint, height, opacity: focused ? 1 : 0, ...(shortcuts !== undefined && !focused ? { display: 'none' } : {}) }}
     >
       <span style={{ ...styles.icon, fontSize: variant === 'direct' ? 16 : 14 }} aria-hidden>💡</span>
       <span style={styles.text} title={tr('正在给 {v0} 发消息', { v0: destination })}><span>{tr('正在给')} </span>

@@ -7,9 +7,12 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
+  'recordingFileStorage',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
+  'publicGroupJoinRequests', 'resolvePublicGroupJoinRequest', 'publicSocialRead', 'publicSocialWrite',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
@@ -17,12 +20,14 @@ const expectedPublicMethods = [
   'dataExport',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
+  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
-  'deletedArrangements', 'deletedArrangementDetail',
+  'deletedArrangements', 'deletedArrangementDetail', 'restoreArrangement',
+  'arrangementOccurrenceRequest', 'arrangementRecognitionRequest', 'conversationArrangements', 'conversationArrangementDetail',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
-  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
+  'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareNoteWorldReactions', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
   'nativeAnnotations', 'setNativeAnnotationSource',
@@ -52,6 +57,7 @@ const expectedPublicMethods = [
   'recordingSpeakerConsistency', 'recordingSpeakerEvidence', 'speakerDirectorySimilar', 'speakerDirectoryVoiceSamples',
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
   'teamSnapshotCapabilities','freezeTeamMetadata','readTeamMessageSnapshot','editTeamMessage','readTeamEditReceipt','freezeTeamEditMetadata',
+  'teamHistory','readTeamHistoryExportChunk',
   'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
   'preflightTeamMessages','readTeamMarks','changeTeamMark','recallTeamMessage', 'reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
@@ -79,12 +85,12 @@ const expectedPublicMethods = [
   'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
-  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTranscript', 'recordingProjection',
+  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTotalsDay', 'recordingTranscript', 'recordingProjection',
   'recordingStrategies', 'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording', 'copyRecordingLink',
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingEntityFeedback', 'undoRecordingEntityFeedback', 'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences',
-  'recordingDay', 'recordingDayOverview', 'recordingDayReview', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
+  'recordingDay', 'recordingDayOverview', 'recordingDayPart', 'recordingDayReview', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
@@ -142,6 +148,9 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'identity-share-service.ts',
+  'arrangement-occurrence-contract.ts', 'service-error.ts',
+  'recording-file-storage-service.ts',
   'private-group-create-service.ts',
   'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
   'public-social-service.ts',
@@ -150,6 +159,7 @@ const expectedServiceFiles = [
   'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
   'record-export-service.ts',
+  'team-world-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
@@ -190,13 +200,14 @@ const expectedServiceFiles = [
   'recording-presence-writer.ts',
   'recording-tool-workflow.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
-  'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'wechat-service.ts',
+  'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'conversation-arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'calendar-day-review-service.ts',
   'people-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
   'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
+  'team-history-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-entry-preference-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
   'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',

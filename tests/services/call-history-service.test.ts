@@ -66,6 +66,18 @@ describe('CallHistoryService', () => {
     expect(detail.transcriptSegments[0]?.text).toBe('原文295')
     expect(detail.transcriptSegments.length).toBeLessThanOrEqual(200)
   })
+  it('retains ambiguity when the repeated quote is outside the 200-segment projection', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url=String(input)
+      if(url.endsWith('/api/v1/trtc/call-detail')) return envelope({room_id:'long-room',room_transcript_segments:Array.from({length:350},(_,i)=>({text:i===0 || i===300 ? '重复引用' : `其他${i}`,start_ms:i*1000,end_ms:(i+1)*1000}))})
+      if(url.endsWith('/api/v1/auth/get-public-users-by-ids')) return envelope({items:[]})
+      if(url.endsWith('/api/v1/chats/contacts/list') || url.endsWith('/api/v1/chats/list')) return envelope({items:[],has_more:false})
+      throw new Error(`unexpected ${url}`)
+    })
+    const detail=await service(fetchImpl).arrangementCallDetail('long-room',undefined,{quote:'重复引用'})
+    expect(detail.sourceQuoteState).toBe('ambiguous')
+    expect(detail.transcriptSegments.filter(s=>s.text==='重复引用')).toHaveLength(1)
+  })
   it.each([true, false])('prefers recent-contact remarks by user ID even without avatars (aggregate contacts: %s)', async aggregateContacts => {
     const ids = [88, 77, 99]
     const fetchImpl = vi.fn<typeof fetch>(async input => {

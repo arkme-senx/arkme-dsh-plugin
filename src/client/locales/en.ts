@@ -1,5 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+原句待定位，可查看原通话|Quote not located. You can open the original call.
+原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
+通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
+通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
+即我设置|Arkme settings
+即我设置分类|Arkme settings categories
+语言|Language
+外观|Appearance
+浅色|Light
+深色|Dark
+跟随系统|System
 长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
@@ -664,6 +675,8 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+录音处理版本：{v0}|Recording processing version: {v0}
+新录音和新导入使用此版本，历史录音保留原处理版本|New recordings and imports use this version. Historical recordings keep their original version.
 音频文件列表|Audio files
 当天暂无音频文件|No audio files for this day
 暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
