@@ -438,6 +438,30 @@ export class ArkmeService {
     this.startThoughtRealtime()
     return result
   }
+  /** One signed message, never caller-supplied record IDs or account identities. */
+  async sourceMessageThoughts(sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('./record-thought-contract.js').ArkmeRecordThoughts> {
+    signal?.throwIfAborted()
+    if (!sourceRef.trim() || sourceRef.length > 4096 || !messageActionRef.trim() || messageActionRef.length > 262144) {
+      throw new ArkmePluginError('thought-reply-target-invalid', '想法查询目标无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const scope = `${this.config.environment}:${session.userId}`
+    const target = await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef)
+    if (target.viewerUserId !== session.userId) throw new ArkmePluginError('record-thought-account-changed', '账号已切换，请重新读取想法', false, 409)
+    // Reuse current deletion/privacy access before and after the Intelligent read.
+    // The returned result never contains the owner's memory-snapshot metadata.
+    if (target.kind === 'owned') await this.record.personalRecordDetail(target.recordUid, signal)
+    const result = target.kind === 'owned'
+      ? await this.recordThoughts(scope, [target.recordUid], signal)
+      : await this.chatThoughts(scope, sourceRef, [messageActionRef], signal)
+    if (target.kind === 'owned') await this.record.personalRecordDetail(target.recordUid, signal)
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('record-thought-account-changed', '账号已切换，请重新读取想法', false, 409)
+    }
+    return result
+  }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
       arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
@@ -1420,6 +1444,7 @@ arkoImagesV1:true,
         directMessageAdmission: true,
         publicSocialV1: true,
         messageTextAnchorsV1: true,
+        arkoThoughtRepliesV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         teamWorldV1: true,
@@ -2679,10 +2704,11 @@ arkoImagesV1:true,
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }
   async sourceMessageExtensionCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceMessageExtensionCapabilities(sourceRef, signal) }
   async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: {
-    relationUid?: string; parentRecordUid?: string; quote?: import('./message-quote.js').ArkmeMessageQuote; signal?: AbortSignal; attachmentOrder?: string[]
+    relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('./message-quote.js').ArkmeMessageQuote; signal?: AbortSignal; attachmentOrder?: string[]
   } & Pick<ArkmeRichSendInput, 'assets' | 'textFormat' | 'humanMentions' | 'botMentions' | 'representation' | 'sendAtMillis'> = {}) {
     if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
     if (fileRefs.length + (options.assets?.length ?? 0) > 9) throw new ArkmePluginError('record-file-assets-invalid', '附件数量超限', false, 400)
+    if (options.thoughtReplyRef || options.privateThoughtReplyRef) await this.chat.requireThoughtReplyCapability(sourceRef,options.signal)
     if (options.quote !== undefined) await this.chat.validateQuoteReply(sourceRef, messageActionRef, options.quote, options.signal)
     const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options)
     const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''

@@ -3929,3 +3929,47 @@ it.each(['send_to_self', 'default_category', 'topic'])('sends structured @Asen m
   await expect(chat.sendSourceRich('signed-source', { textContent: '@别的机器人 看看', botMentions: [{ botRef: 'other', startIndex: 0, length: 6 }] })).rejects.toThrow('当前会话仅支持 @阿森')
   expect(createPersonalRecord).toHaveBeenCalledOnce()
 })
+
+describe('owner-backed Arko reply contracts', () => {
+  it('fails before a Record write when the target owner has no Arko reply capability', async () => {
+    const write = vi.fn()
+    const runtime = { config, stateStore:{ uniqueCode:async ()=>'snapshot-test-signing-key' }, requireSession:async()=>({userId:42}), authenticatedPost:vi.fn(async()=>({quote_reply:{enabled:true}})) }
+    const source={openSourceRef:async()=>({version:1,userId:42,kind:'send_to_self',ownerRef:'all'})}
+    const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{createExtensionForConversation:write} as never,{} as never,{} as never,{} as never,{} as never)
+    const ref=snapshotActionRef({sourceKind:'record',sourceOwnerRef:'all',chatSessionUid:'',relationUid:''})
+    await expect(chat.extendSourceMessage('source',ref,'回复','11111111-1111-4111-8111-111111111111',[],{thoughtReplyRef:'owner-signed-ref'})).rejects.toMatchObject({code:'thought-reply-unavailable'})
+    expect(write).not.toHaveBeenCalled()
+    await expect(chat.extendSourceMessage('source',ref,'回复','11111111-1111-4111-8111-111111111111',[],{privateThoughtReplyRef:'private-chat-ref'})).rejects.toMatchObject({code:'thought-reply-target-invalid'})
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('pages private replies independently and never restarts completed public/private lanes', async()=>{
+    const target={version:1,kind:'chat',thought_id:'thought',record_uid:'record-snapshot-1',generation:2,visibility:'user',content:'私密 Arko 原文'}
+    const post=vi.fn(async(path:string,body:Record<string,unknown>)=>{
+      if(path==='/api/v1/chats/extensions/tree/page') return {private_thought_reply_protocol:1,total:0,children:[],has_more:false}
+      if(path==='/api/v1/chats/extensions/private-thought-replies/page'){
+        const index=body.after ? 2 : 1
+        if(index===2) expect(body.version).toBe('snapshot-v1')
+        return {total:2,version:'snapshot-v1',next_after:index===1?'position-one':'',items:[{
+          record_uid:`private-${index}`,record_owner_user_id:42,rel_uid:`private-rel-${index}`,private_reply_ref:`private-ref-${index}`,thought_reply:target,
+          record:{status:1,payload:{record_uid:`private-${index}`,text_content:`私密回复 ${index}`,template_kind:1,send_at:100+index,content_access_state:1}},
+        }]}
+      }
+      throw Error(`unexpected ${path}`)
+    })
+    const runtime={config,stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'},requireSession:async()=>({userId:42}),authenticatedChatPost:post}
+    const source={openSourceRef:async()=>({version:1,userId:42,kind:'group_chat',ownerRef:'chat-1'})}
+    const profile={sealProfileImageRef:async()=> 'own-avatar'}
+    const media={hydrateRecordMediaPage:async()=>({displayItemsByRecordUid:new Map(),unavailableRecordUids:new Set()}),recordMediaUnavailable:()=>false,richContentBlocks:()=>[]}
+    const chat=new ChatService(runtime as never,source as never,profile as never,media as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+    const first=await chat.sourceMessageExtensionContext('source',snapshotActionRef(),{paginated:true})
+    expect(first.extensionCount).toBe(2)
+    expect(first.extensions[0]).toMatchObject({recordUid:'private-1',privateThoughtReply:true,privateThoughtReplyRef:'private-ref-1',thoughtReply:{content:'私密 Arko 原文'}})
+    expect(first.nextCursor).toBeTruthy()
+    const second=await chat.sourceMessageExtensionContext('source',snapshotActionRef(),{paginated:true,pageCursor:first.nextCursor!})
+    expect(second.extensions[0]?.recordUid).toBe('private-2')
+    expect(second.nextCursor).toBeUndefined()
+    expect(post.mock.calls.filter(([path])=>path==='/api/v1/chats/extensions/tree/page')).toHaveLength(1)
+    expect(post.mock.calls.filter(([path])=>path==='/api/v1/chats/extensions/private-thought-replies/page')).toHaveLength(2)
+  })
+})

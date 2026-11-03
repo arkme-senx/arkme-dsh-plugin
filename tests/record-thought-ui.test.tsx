@@ -60,6 +60,62 @@ it('allows a failed detail read to retry without changing the original message',
   expect(host.textContent).not.toContain('暂时无法读取')
 })
 
+it('presents a thought as an Arko reply without a second heading or invented message time', async () => {
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item}/>
+  </RecordThoughtsProvider>)); await load()
+  const reply = host.querySelector('[data-arkme-thought-reply="one"]')!
+  expect(reply.querySelector('[data-arkme-avatar]')).not.toBeNull()
+  expect(reply.querySelector('[data-arkme-thought-author]')?.textContent).toBe('Arko')
+  expect(reply.querySelector('strong')?.textContent).toBe('建议内容')
+  expect(reply.textContent).not.toContain('Arko有想法')
+  expect(reply.querySelector('time')).toBeNull()
+  expect(host.querySelector('[data-arkme-thought-reply-count]')?.textContent).toBe('共1条延展')
+})
+
+it('activates Arko replies by card click or keyboard without consuming links or selected text', async () => {
+  const reply = vi.fn()
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
+    { id: 'one', recordUid: 'note', content: '建议 [链接](https://example.com)', biz: 1 },
+  ] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item} embedded onReply={reply} selectedThoughtId="one"/>
+  </RecordThoughtsProvider>)); await load()
+  const card = host.querySelector<HTMLElement>('[data-arkme-thought-reply]')!
+  expect(card.getAttribute('role')).toBe('button')
+  expect(card.getAttribute('aria-pressed')).toBe('true')
+  const link = card.querySelector('a')!
+  link.addEventListener('click', event => event.preventDefault())
+  await act(async () => link.click())
+  expect(reply).not.toHaveBeenCalled()
+  const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ toString: () => '所选片段' } as Selection)
+  await act(async () => card.click())
+  expect(reply).not.toHaveBeenCalled()
+  selection.mockRestore()
+  await act(async () => card.click())
+  await act(async () => card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  await act(async () => link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(reply).toHaveBeenCalledTimes(2)
+  expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'one', recordUid: 'note' }))
+})
+
+it.each(['generating', 'failed'] as const)('retains the Arko author and %s state in embedded replies', async status => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
+    { id: 'state', recordUid: 'note', content: '', biz: 2, status, visibility: 'user' },
+    { id: 'old', recordUid: 'note', content: '旧回复', biz: 1, status: 'invalidated' },
+  ] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item} embedded onReply={() => { throw new Error('unfinished replies are not selectable') }}/>
+  </RecordThoughtsProvider>)); await load()
+  expect(host.querySelectorAll('[data-arkme-thought-reply]')).toHaveLength(1)
+  expect(host.querySelector('[data-arkme-thought-author]')?.textContent).toBe('Arko')
+  expect(host.textContent).toContain(status === 'generating' ? 'Arko 正在思考' : 'Arko 暂时没能完成回应')
+  expect(host.textContent).toContain('仅你可见')
+  expect(host.textContent).not.toContain('旧回复')
+  expect(host.querySelector('[data-arkme-thought-reply-count]')).toBeNull()
+  expect(host.querySelector('[data-arkme-thought-reply]')?.getAttribute('role')).toBeNull()
+})
+
 it('shows private chat suggestions beneath received messages and cycles candidates locally without sending', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'suggestion', recordUid: 'note', content: '建议一', biz: 1, scene: 5, visibility: 'user', status: 'ready', generation: 1,
     display: { headline: '确认时间', context: '正在约定见面', warnings: [], suggestions: [{ style: '自然', items: ['建议一', '建议二'] }] } }] })
