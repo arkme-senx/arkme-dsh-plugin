@@ -8,7 +8,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mock.navigate, showArrangements: mock.manage } }))
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
 const source = { sourceRef: 'source-a', sourceKey: 'chat-a', kind: 'group_chat', displayName: '硬件项目组' } as ArkmeSourceItem
-const item = { id: 'event-a', relatedRef: 'shared-ref', title: '周五15:00到研发会议室和李工确认样机', description: '带测试结果', status: 'following',
+const item = { id: 'event-a', relatedRef: 'personal-ref', arrangementRef: 'owned-ref', title: '周五15:00到研发会议室和李工确认样机', description: '带测试结果', status: 'following',
   sources: [{ itemUid: 'record-a', recordOwnerUserId: 11, sender: '李工', sendAtMillis: 1000, text: '周五下午三点，到研发会议室确认样机。' }] }
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
@@ -20,16 +20,18 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers() })
 async function render(account = 'prod:12') { await act(async () => root.render(<ArkmeConversationArrangements source={source} accountScope={account} active refreshRevision={0} />)); await act(async () => { await vi.advanceTimersByTimeAsync(260) }) }
 async function click(text: string) { const button = [...host.querySelectorAll('button')].find(b => b.textContent?.includes(text)); expect(button).toBeTruthy(); await act(async () => button!.click()) }
-it('opens a shared list above the composer and locates the exact source message', async () => {
+it('labels the personal scope and opens the existing arrangement detail', async () => {
   await render(); expect(host.textContent).toContain('相关安排 · 1'); await click('相关安排')
-  expect(host.textContent).toContain('硬件项目组'); expect(host.textContent).toContain(item.title)
-  await click('定位原消息'); expect(mock.navigate).toHaveBeenCalledWith(source, 'record-a', 1000, 11, undefined, true)
+  expect(host.textContent).toContain('仅显示我在此对话中的安排')
+  expect(host.textContent).toContain('带测试结果')
+  await click('周五15:00'); expect(mock.manage).toHaveBeenCalledWith('owned-ref')
+  expect(mock.call.mock.calls.some(([operation]) => operation === 'arrangements.conversation.detail')).toBe(false)
   expect(host.querySelector('[role="dialog"]')).toBeNull()
 })
-it('rechecks shared detail and offers no write control to another member', async () => {
-  await render(); await click('相关安排'); await click('周五15:00')
-  expect(mock.call).toHaveBeenCalledWith('arrangements.conversation.detail', { sourceRef: 'source-a', relatedRef: 'shared-ref' }, expect.any(AbortSignal))
-  expect(host.textContent).toContain('来源对话'); expect(host.textContent).not.toContain('管理我的安排')
+it('also opens the original detail from the source link', async () => {
+  await render(); await click('相关安排'); await click('查看详情与来源')
+  expect(mock.manage).toHaveBeenCalledWith('owned-ref')
+  expect(mock.navigate).not.toHaveBeenCalled()
 })
 it('shows errors as errors and never as an empty count', async () => {
   mock.call.mockRejectedValue(new Error('无权读取当前对话'))
@@ -47,12 +49,11 @@ it('deduplicates another page and never calls a partial page an empty conversati
   await click('加载更多'); expect(host.querySelectorAll('article')).toHaveLength(1)
 })
 
-it('clears an open source quote when a fresh list revokes that arrangement', async () => {
-  await render(); await click('相关安排'); await click('周五15:00')
-  expect(host.textContent).toContain('周五下午三点，到研发会议室确认样机。')
+it('removes stale personal results after refresh', async () => {
+  await render(); await click('相关安排'); expect(host.textContent).toContain(item.title)
   mock.call.mockResolvedValue({ items: [], hasMore: false, nextCursor: '' })
   await act(async () => { window.dispatchEvent(new Event('focus')) })
   await act(async () => { await vi.advanceTimersByTimeAsync(260) })
-  expect(host.textContent).not.toContain('周五下午三点，到研发会议室确认样机。')
-  expect(host.textContent).toContain('当前对话暂无未完成安排')
+  expect(host.textContent).not.toContain(item.title)
+  expect(host.textContent).toContain('我在当前对话中暂无未完成安排')
 })
