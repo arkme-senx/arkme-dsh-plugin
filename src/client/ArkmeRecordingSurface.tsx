@@ -772,7 +772,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const dayCoverage = parts?.coverage ?? day?.coverage
   const coverage = [...(dayCoverage?.intervals ?? []), ...localCoverage.filter(local => local.status === 'recording' || !recordingCoverageContains(dayCoverage?.intervals ?? [], local.startAtMillis, local.endAtMillis))]
   const awaitingCoverageSync = coverage.some(range => range.status === 'submitted')
-  const awaitingAsrInputMetrics = (day?.transcript.dailyMetrics?.asrInputPendingCount ?? 0) > 0
+  const availableMetrics = parts?.metrics ?? day?.metrics ?? day?.transcript.dailyMetrics
+  const awaitingAsrInputMetrics = (availableMetrics?.asrInputPendingCount ?? 0) > 0
+  const dayLoaded = day !== undefined
   const [generatingKinds, setGeneratingKinds] = useState<Record<ArkmeRecordingProjectionKind, boolean>>({ summary: false, timeline: false })
   const projectionReads = useRef({ summary: 0, timeline: 0 })
   const [generationErrors, setGenerationErrors] = useState<Partial<Record<ArkmeRecordingProjectionKind, string>>>({})
@@ -838,7 +840,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const selectedForwardItems = forwardAttempt.items
   const [forwardOpen, setForwardOpen] = useState(false)
   const overview = useRecordingDayOverview(day?.dateStamp === selectedDate.getTime() && !dayError ? day.transcript : undefined, dayScope, active && workbenchEnabled && !tour.sample, `${recordingRefreshRevision}:${fileRefreshRevision}:${dayRetryRevision}`, { cache: dayCache, account: cacheAccount })
-  const availableMetrics = parts?.metrics ?? day?.metrics ?? day?.transcript.dailyMetrics
   const displayedMetrics = availableMetrics && overview.value?.metrics ? { ...availableMetrics, textCount: overview.value.metrics.textCount, speakerTextCounts: overview.value.metrics.speakerTextCounts } : availableMetrics ?? overview.value?.metrics
   const dayScopeRef = useRef(dayScope)
   dayScopeRef.current = dayScope
@@ -935,9 +936,16 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const target = ui.recordingTarget
     if (target === undefined || !isRecordingLocalDateOnOrAfterMinimum(target.dateStamp)) return
     const targetDate = startOfLocalDay(target.window ? new Date(`${target.window.date}T12:00:00`) : new Date(target.dateStamp))
+    const targetScope = `${entityAccount}:${targetDate.getTime()}:${JSON.stringify(target.window ?? null)}`
+    const restored = dayCache.get(targetScope, cacheAccount)?.view
+    currentDayScope.current = targetScope
     setSelectedDate(current => current.getTime() === targetDate.getTime() ? current : targetDate)
     setVisibleMonth(current => current.getTime() === monthStart(targetDate).getTime() ? current : monthStart(targetDate))
-    setActiveTab(target.summary ? 'summary' : target.timeline ? 'timeline' : 'transcript')
+    // Apply the explicit destination to its own scope, leaving the source's
+    // cached tab intact and preventing the destination cache from overriding it.
+    setViewSelection(current => ({ summaryVersionId: '', timelineVersionId: '',
+      ...(current.scope === targetScope ? current : restored), scope: targetScope,
+      tab: target.summary ? 'summary' : target.timeline ? 'timeline' : 'transcript' }))
     setSelectionMode(false)
     setEditingSpeaker(undefined)
   }, [ui.recordingTarget])
@@ -1050,7 +1058,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const coverageProcessing = day?.coverage?.intervals.some(range => range.status === 'processing') === true
   const dayNeedsRefresh = recordingDayNeedsRefresh(day)
   useEffect(() => {
-    if (!active || (!awaitingCoverageSync && !awaitingAsrInputMetrics && !dayNeedsRefresh && !day?.coverage?.intervals.some(range => range.status === 'processing'))) return
+    if (!active || !dayLoaded || (!awaitingCoverageSync && !awaitingAsrInputMetrics && !dayNeedsRefresh && !day?.coverage?.intervals.some(range => range.status === 'processing'))) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let attempts = 0
@@ -1101,7 +1109,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         if (readRevision !== dayReadRevision.current || mutationRevision !== speakerMutationRevision.current) {
           timer = setTimeout(() => { void poll() }, 1500); return
         }
-        if (latest && (failure || awaitingCoverageSync || (latest.transcript.dailyMetrics?.asrInputPendingCount ?? 0) > 0 || recordingDayNeedsRefresh(latest) || latest.coverage?.intervals.some(range => range.status === 'processing'))) {
+        const latestMetrics = (readPartsRef.current?.scope === dayScope ? readPartsRef.current.value.metrics : undefined)
+          ?? latest?.metrics ?? latest?.transcript.dailyMetrics
+        if (latest && (failure || awaitingCoverageSync || (latestMetrics?.asrInputPendingCount ?? 0) > 0 || recordingDayNeedsRefresh(latest) || latest.coverage?.intervals.some(range => range.status === 'processing'))) {
           timer = setTimeout(() => { void poll() }, attempts < 90 ? failure ? 5000 : 3000 : 15000)
         }
       } catch (error) {
@@ -1111,7 +1121,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
     timer = setTimeout(() => { void poll() }, 1_500)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [active, awaitingCoverageSync, awaitingAsrInputMetrics, coverageProcessing, dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment, pages.refresh, recordingRefreshRevision, fileRefreshRevision, notificationWindow, dayRetryRevision])
+  }, [active, dayLoaded, awaitingCoverageSync, awaitingAsrInputMetrics, coverageProcessing, dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment, pages.refresh, recordingRefreshRevision, fileRefreshRevision, notificationWindow, dayRetryRevision])
 
   const appliedSummaryTarget = useRef<typeof ui.recordingTarget>()
   const [missingSummaryTarget, setMissingSummaryTarget] = useState<typeof ui.recordingTarget>()

@@ -171,3 +171,54 @@ it('restores each date tab, selected summary version and reading position across
   expect(pane.scrollTop).toBe(456)
   await click('转写'); expect(pane.scrollTop).toBe(1234)
 })
+
+it.each(['summary', 'timeline'] as const)('opens an explicit %s target on a cached date without changing the source date tab', async kind => {
+  await act(async () => { renderer = create(ui()) })
+  await clickDate('11月2日'); await clickDate('11月3日')
+  await act(async () => {
+    if (kind === 'summary') arkmeUi.showRecordingSummaryTarget(b, '1')
+    else arkmeUi.showRecordingTimelineTarget(b)
+  })
+  const currentTab = () => renderer.root.findByProps({ 'aria-label': '录音内容' }).findAllByType('button')
+    .find(node => node.props['aria-current'] === 'page')?.children.filter(child => typeof child === 'string')
+  expect(currentTab()).toContain(kind === 'summary' ? '总结' : '时间轴')
+  expect(api.call.mock.calls.some(([op, p]) => op === 'recordings.day' && p.dateStamp === b && p.part === kind)).toBe(true)
+  if (kind === 'summary') expect(renderer.root.findAll(node => node.props.ariaLabel === '切换总结版本')[0]!.props.value).toBe('1')
+  await click('转写'); expect(currentTab()).toContain('转写')
+  await clickDate('11月3日'); expect(currentTab()).toContain('转写')
+})
+
+it.each([false, true])('refreshes displayed pending metrics through completion when the first transcript is delayed: %s', async delayed => {
+  const original = api.call.getMockImplementation()!
+  const first = Promise.withResolvers<unknown>()
+  const readyMetrics = { archiveBytes: 2048, archiveState: 'ready', confirmedCount: 1, pendingCount: 0, unknownCount: 0, textCount: 10,
+    asrInputDurationMillis: 120000, asrInputState: 'ready', asrInputConfirmedCount: 1, asrInputEstimatedCount: 0, asrInputPendingCount: 0, asrInputUnknownCount: 0 }
+  let metricReads = 0
+  api.call.mockImplementation((op, p, ...rest) => {
+    if (op === 'recordings.day' && p.part === 'metrics') {
+      metricReads += 1
+      return Promise.resolve({ dateStamp: a, metrics: metricReads < 3 ? { ...readyMetrics,
+        asrInputDurationMillis: 0, asrInputState: 'partial', asrInputConfirmedCount: 0, asrInputPendingCount: 1 } : readyMetrics })
+    }
+    if (op === 'recordings.day' && p.part === 'transcript') {
+      const value = day(a); value.transcript.dailyMetrics = readyMetrics
+      const result = { dateStamp: a, totalDurationMillis: value.totalDurationMillis, transcript: value.transcript }
+      return delayed && metricReads < 2 ? first.promise.then(() => result) : Promise.resolve(result)
+    }
+    return original(op, p, ...rest)
+  })
+  await act(async () => { renderer = create(ui()) })
+  expect(JSON.stringify(renderer.toJSON())).toContain('处理中，统计待更新')
+  if (delayed) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    await act(async () => { first.resolve(undefined) })
+  }
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+  expect(metricReads).toBe(2)
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(metricReads).toBe(3)
+  expect(JSON.stringify(renderer.toJSON())).toContain('2分0秒')
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('处理中，统计待更新')
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+  expect(metricReads).toBe(3)
+})
