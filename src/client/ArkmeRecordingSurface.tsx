@@ -3,6 +3,8 @@ import { RecordingVoiceTriggerEntry } from './recordings/RecordingVoiceTriggers.
 import { RecordingProcessingVersion } from './recordings/RecordingProcessingVersion.js'
 import { recordingDayNeedsRefresh, recordingCaptureNotice, readCompleteRecordingTranscript } from '../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './recordings/useRecordingTranscriptPages.js'
+import { useRecordingTranscriptExport } from './recordings/useRecordingTranscriptExport.js'
+import { RecordingTranscriptExportButton } from './recordings/RecordingTranscriptExportButton.js'
 import { RecordingDayCache, recordingDayCache, type RecordingCachedTab, type RecordingDayView } from './recordings/recording-day-cache.js'
 import { RecordingPlaybackToggle } from './recordings/RecordingPlaybackToggle.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
@@ -132,6 +134,8 @@ const styles: Record<string, CSSProperties> = {
   content: { minWidth: 0, minHeight: 0, flex: 1, display: 'grid', gridTemplateRows: 'auto auto minmax(0,1fr)', gap: 8, paddingBottom: 12, boxSizing: 'border-box' },
   dateHeading: { minWidth: 0, color: colors.text, fontSize: 14, fontWeight: 500, lineHeight: '20px', overflowWrap: 'anywhere' },
   dayTimeline: { minWidth: 0, minHeight: 0 },
+  overviewNotices: { minHeight: 22, minWidth: 0 },
+  overviewStatus: { display: 'flex', alignItems: 'center', gap: 6, minHeight: 22, color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   emptyDay: { minWidth: 0, minHeight: 0, paddingTop: 88, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', color: colors.text, fontSize: 13.286, lineHeight: '19.929px', letterSpacing: '.1557px' },
   emptyDayIllustration: { width: 186, height: 133, flex: 'none', display: 'block' },
   analysisEmptyPanel: { width: '100%', minHeight: '100%', padding: '40px 16px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, borderRadius: 12, background: colors.layer1 },
@@ -848,6 +852,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     if (day?.transcript.viewRef !== transcript.viewRef) readingAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current)
     setDay(current => current?.dateStamp === transcript.dateStamp ? { ...current, transcript } : current)
   })
+  const transcriptExport = useRecordingTranscriptExport(`${pageScope}:${active && ui.mode === 'recordings'}`, pages.through)
   useEffect(() => {
     const target = transcriptContinuationRef.current
     if (!active || activeTab !== 'transcript' || !day?.transcript.nextCursor || pages.loading || pages.error !== '' || !target || typeof IntersectionObserver === 'undefined') return
@@ -1570,23 +1575,21 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     </>
   }
 
-  const downloadCurrent = async () => {
-    if (typeof document === 'undefined') return
-    let exportItems = transcriptItems
-    if (activeTab === 'transcript') {
-      setExportNotice('正在读取完整转写…')
-      try { exportItems = (await pages.through())?.items ?? [] }
-      catch (reason) {
-        if (!(reason instanceof Error && reason.name === 'AbortError')) setExportNotice('完整转写读取失败，请重试')
-        return
-      }
-    }
-    const content = activeTab === 'transcript' ? exportItems.map(item => `${item.speakerLabel} [${timeLabel(item.startAtMillis)}]\n${item.text}`).join('\n\n')
-      : activeTab === 'summary' ? selectedSummary?.content ?? '' : selectedTimeline?.content ?? ''
+  const downloadText = (content: string) => {
     if (content === '') { setExportNotice('当前无内容可导出'); return }
     setExportNotice('')
     const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${activeTab}_${dateKey(selectedDate)}.txt`; anchor.click(); URL.revokeObjectURL(url)
+  }
+  const downloadCurrent = async () => {
+    if (typeof document === 'undefined') return
+    if (activeTab === 'transcript') {
+      if (dayLoading || !day) { setExportNotice('转写内容加载中，请稍后重试'); return }
+      setExportNotice('')
+      await transcriptExport.run(page => downloadText(page.items.map(item => `${item.speakerLabel} [${timeLabel(item.startAtMillis)}]\n${item.text}`).join('\n\n')))
+      return
+    }
+    downloadText(activeTab === 'summary' ? selectedSummary?.content ?? '' : selectedTimeline?.content ?? '')
   }
 
   const analysisKind = activeTab === 'summary' || activeTab === 'timeline' ? activeTab : undefined
@@ -1681,10 +1684,12 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       {cleanEmptyDay ? <div role="status" aria-label={tr('当天暂无录音')} style={{ display: 'grid', placeContent: 'center', justifyItems: 'center', gap: 10, minHeight: 160, color: colors.tertiary, fontSize: 13 }}>
         <span>{tr('当天暂无录音')}</span>
       </div> : <>
-      {!selectionMode && <div style={styles.dayTimeline}>{workbenchEnabled && <RecordingTranscriptTimeline key={selectedDate.getTime()} transcriptRoot={transcriptRootRef} readingItems={transcriptItems} followTranscript={active && activeTab === 'transcript' && !tour.sample && !dayLoading} onNavigateAtMillis={navigateTranscript} arrangementEntry={!tour.sample && <RecordingDayArrangements dateStamp={selectedDate.getTime()} accountScope={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''} active={active && ui.mode === 'recordings' && !dayLoading} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />} items={overview.value?.items ?? (day?.transcript.nextCursor === '' ? transcriptItems : [])} coverage={coverage} dailyMetrics={displayedMetrics} metricsLoading={!parts?.metrics && !day?.metrics && dayLoading} textCountLoading={dayLoading || (!!day?.transcript.nextCursor && !overview.value)} coverageState={dayCoverage?.state ?? 'partial'} dayStartMillis={selectedDate.getTime()} loading={dayLoading || (overview.loading && !overview.value)} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { void openOverviewSpeaker(item, anchor, false) }} onReviewSpeaker={(item, anchor) => { void openOverviewSpeaker(item, anchor, true) }} onImportAudio={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} hasActivePlayback={!!playback.activeItemRef} playbackLoading={playback.isLoading} onSelectAtMillis={value => { tour.finish(false); navigateTranscript(value); void navigateTranscript(value, true) }} onTogglePlayback={() => { tour.finish(false); if (playback.activeItemRef || playback.isLoading) void playback.toggle(); else if (transcriptItems[0] !== undefined) void selectTranscriptTime(selectedTimelineMillis ?? transcriptItems[0].startAtMillis, true) }} />}{workbenchEnabled && playback.isLoading && <div role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr("录音加载中…")}</div>}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}</div>}
-      {!tour.sample && overview.loading && !dayLoading && <div role="status" style={styles.status}>{tr('正在读取全天时间轴与说话人…')}</div>}
+      {!selectionMode && <div style={styles.dayTimeline} data-recording-day-overview>{workbenchEnabled && <RecordingTranscriptTimeline key={selectedDate.getTime()} transcriptRoot={transcriptRootRef} readingItems={transcriptItems} followTranscript={active && activeTab === 'transcript' && !tour.sample && !dayLoading} onNavigateAtMillis={navigateTranscript} arrangementEntry={!tour.sample && <RecordingDayArrangements dateStamp={selectedDate.getTime()} accountScope={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''} active={active && ui.mode === 'recordings' && !dayLoading} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />} items={overview.value?.items ?? (day?.transcript.nextCursor === '' ? transcriptItems : [])} coverage={coverage} dailyMetrics={displayedMetrics} metricsLoading={!parts?.metrics && !day?.metrics && dayLoading} textCountLoading={dayLoading || (!!day?.transcript.nextCursor && !overview.value)} coverageState={dayCoverage?.state ?? 'partial'} dayStartMillis={selectedDate.getTime()} loading={dayLoading || (overview.loading && !overview.value)} emptyState={emptyDay} onEditSpeaker={(item, anchor) => { void openOverviewSpeaker(item, anchor, false) }} onReviewSpeaker={(item, anchor) => { void openOverviewSpeaker(item, anchor, true) }} onImportAudio={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} {...(selectedTimelineMillis === undefined ? {} : { playheadMillis: selectedTimelineMillis })} isPlaying={playback.isPlaying} hasActivePlayback={!!playback.activeItemRef} playbackLoading={playback.isLoading} onSelectAtMillis={value => { tour.finish(false); navigateTranscript(value); void navigateTranscript(value, true) }} onTogglePlayback={() => { tour.finish(false); if (playback.activeItemRef || playback.isLoading) void playback.toggle(); else if (transcriptItems[0] !== undefined) void selectTranscriptTime(selectedTimelineMillis ?? transcriptItems[0].startAtMillis, true) }} />}{workbenchEnabled && playback.isLoading && <div role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr("录音加载中…")}</div>}{workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}
+      <div style={styles.overviewNotices} data-recording-overview-notices>
+      {!tour.sample && overview.loading && !dayLoading && <div role="status" style={styles.overviewStatus}><CircleNotch size={12} className="arkme-icon-spin" aria-hidden />{tr('正在读取全天时间轴与说话人…')}</div>}
       {!tour.sample && overview.error && <div role="alert" style={styles.error}>{tr('全天概览读取失败：{v0}', { v0: overview.error })} <button type="button" onClick={() => setDayRetryRevision(value => value + 1)}>{tr('重新读取全天概览')}</button></div>}
-      {overviewSpeakerLoading && <div role="status" style={styles.status}>{tr('正在读取说话人片段…')}</div>}
+      {overviewSpeakerLoading && <div role="status" style={styles.overviewStatus}>{tr('正在读取说话人片段…')}</div>}
+      </div></div>}
       {tour.sample ? <RecordingTourSample tab={sampleTab} onTab={setSampleTab} /> : <div style={{ position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}><div style={{ ...styles.analysis, flex: 1, minWidth: 0, ...(activeTab === 'transcript' ? { gridTemplateRows: `32px minmax(0,1fr)${selectionMode ? ' minmax(72px, auto)' : ''}` } : {}) }}><nav style={styles.tabs} aria-label={tr("录音内容")}><span style={{ ...styles.tabList, flex: 1, minWidth: 0, overflowX: 'auto' }}>{([['transcript', '转写'], ['summary', '总结'], ['timeline', '时间轴'], ['files', '音频文件']] as const).filter(([id]) => id !== 'files' || workbenchEnabled).map(([id, label]) => <span key={id} style={{ ...styles.tabSlot, width: id === 'files' ? 'auto' : 100, minWidth: 80 }}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id); setSelectionMode(false); setEditingSpeaker(undefined); setExportNotice('') }}>{id === 'files' ? <FileAudio size={14} aria-hidden /> : <RecordingDesktopIcon name={id} size={14} />}{label}{id === 'files' && audioFileCount?.dateStamp === selectedDate.getTime() && (audioFileCount.count > 0 || audioFileCount.complete) && <span aria-label={tr(audioFileCount.complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(audioFileCount.count) })} title={tr(audioFileCount.complete ? '共 {v0} 个文件' : '已找到 {v0} 个文件', { v0: String(audioFileCount.count) })} style={{ marginLeft: 2, fontSize: 11, fontWeight: 400, color: colors.tertiary, fontVariantNumeric: 'tabular-nums' }}>{audioFileCount.count}{!audioFileCount.complete && '+'}</span>}{id === 'files' && audioFileCount?.loading && <CircleNotch size={12} className="arkme-icon-spin" aria-label={tr('正在查找音频文件…')} />}{activeTab === id && <span style={styles.tabIndicator} />}</button></span>)}</span>{workbenchEnabled && <RecordingProcessingVersion />}</nav><div style={styles.analysisBody}>{activeTab === 'transcript' && <div role="group" aria-label={tr('转写操作')} style={styles.transcriptToolbar}>
         <RecordingTranscriptSearch key={selectedDate.getTime()} query={transcriptSearch} pending={!!transcriptSearch.trim() && !!day?.transcript.nextCursor && !pages.error} incomplete={!!transcriptSearch.trim() && !!day?.transcript.nextCursor && !!pages.error} position={transcriptMatches.length === 0 ? 0 : activeMatchIndex + 1} count={transcriptMatches.length} onChange={value => { setTranscriptSearch(value); setTranscriptMatchIndex(0) }} onFind={() => { setTranscriptMatchIndex(0); transcriptRootRef.current?.querySelector('[data-recording-match="0"]')?.scrollIntoView({ block: 'center' }) }} onPrevious={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + transcriptMatches.length - 1) % transcriptMatches.length) }} onNext={() => { if (transcriptMatches.length > 0) setTranscriptMatchIndex((activeMatchIndex + 1) % transcriptMatches.length) }} />
         <span style={styles.actionCluster}>
@@ -1703,9 +1708,8 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
               style={{ ...styles.actionButton, ...(speechScope === entities.scope ? { background: colors.subtle, color: colors.text } : {}) }}
               onClick={() => { entities.setOpen(false); setSpeechScope(speechScope === entities.scope ? '' : entities.scope) }}><ChartBar size={18} aria-hidden /></button>
           </Tooltip>}
-          <Tooltip label={tr('导出')} side="bottom" delayMs={200}>
-            <button data-arkme-feedback="neutral" type="button" aria-label={tr('导出')} style={styles.actionButton} onClick={downloadCurrent}><RecordingDesktopIcon name="export" size={20} /></button>
-          </Tooltip>
+          <RecordingTranscriptExportButton pending={transcriptExport.pending} error={transcriptExport.error}
+            loadedCount={transcriptItems.length} style={styles.actionButton} onExport={downloadCurrent} />
         </span>
       </div>}{activeTab === 'transcript' && speakerFeedback?.visible && <div role="status" aria-live="polite" data-recording-speaker-feedback style={{ position: 'absolute', right: 18, bottom: 12, zIndex: 3, maxWidth: 'calc(100% - 36px)', padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.base, color: colors.text, boxShadow: '0 2px 8px rgba(0,0,0,.08)', fontSize: 12, pointerEvents: 'none' }}>{speakerFeedback.message}</div>}{dayRefreshError && day && <div role="status" title={dayRefreshError} style={{ position: 'absolute', bottom: 12, right: 18, zIndex: 3, padding: '6px 10px', borderRadius: 8, border: `1px solid ${colors.border}`, background: colors.base, color: colors.secondary, fontSize: 12 }}>
         {tr('更新暂未完成，当前内容已保留')}
