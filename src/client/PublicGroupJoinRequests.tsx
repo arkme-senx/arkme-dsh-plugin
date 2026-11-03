@@ -16,7 +16,7 @@ export function PublicGroupJoinRequests({ accountScope, sourceRef, disabled, onB
   }, [accountScope, sourceRef])
   useEffect(() => { setItems([]); setCursor(undefined); setNotice(''); load(); return () => { read.current?.abort(); write.current?.abort() } }, [load])
   const resolve = (request: PublicJoinRequest, approved: boolean) => {
-    if (write.current || disabled) return
+    if (write.current || disabled || loading) return
     const controller = new AbortController(); write.current = controller; setBusy(true); onBusyChange(true); setError(''); setNotice('')
     void callArkme('social.groups.requests.resolve', { accountScope, sourceRef, requestRef: request.requestRef, approved }, controller.signal).then(() => {
       if (controller.signal.aborted) return
@@ -28,7 +28,7 @@ export function PublicGroupJoinRequests({ accountScope, sourceRef, disabled, onB
     {error && <p role="alert" style={s.error}>{error}</p>}{notice && <p role="status" style={s.secondary}>{notice}</p>}
     {loading && <p role="status" style={s.secondary}>{tr('正在读取入群申请…')}</p>}
     {!loading && !error && items.length === 0 && <p style={s.secondary}>{tr('暂无待处理的入群申请')}</p>}
-    {items.map(request => <article key={request.requestRef} style={s.row}><span style={s.identity}>{request.displayName || tr('即我用户')}</span><button type="button" style={s.button} disabled={disabled || busy} onClick={() => resolve(request, true)}>{tr('同意')}</button><button type="button" style={s.button} disabled={disabled || busy} onClick={() => resolve(request, false)}>{tr('拒绝')}</button></article>)}
+    {items.map(request => <article key={request.requestRef} style={s.row}><span style={s.identity}>{request.displayName || tr('即我用户')}</span><button type="button" style={s.button} disabled={disabled || busy || loading} onClick={() => resolve(request, true)}>{tr('同意')}</button><button type="button" style={s.button} disabled={disabled || busy || loading} onClick={() => resolve(request, false)}>{tr('拒绝')}</button></article>)}
     {cursor && <button type="button" style={s.button} disabled={disabled || loading || busy} onClick={() => load(cursor)}>{tr('加载更多申请')}</button>}
   </section>
 }

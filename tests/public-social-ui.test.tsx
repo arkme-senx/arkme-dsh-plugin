@@ -8,6 +8,7 @@ import { PublicPersonListingDialog, PublicGroupSettingsDialog } from '../src/cli
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeGroupCreateDialog } from '../src/client/ArkmeQuickAdd.js'
 import { ArkmeWorldSurface } from '../src/client/ArkmeWorldSurface.js'
+import { PublicGroupJoinRequests } from '../src/client/PublicGroupJoinRequests.js'
 
 const group: PublicGroup = { chatSessionUid: 'group-a', title: '产品交流', introduction: '一起聊产品', ownerUserId: 1002, hasJoined: false, joinMode: 1 }
 const person: PublicPerson = { userId: 1001, isListed: true, displayName: '公开昵称', avatarUrl: '', introduction: '原介绍' }
@@ -149,4 +150,20 @@ it('allows direct admission when a former pending request remains in a stale UI 
  expect(button('加入群聊').props.disabled).toBe(false)
  await act(async()=>button('加入群聊').props.onClick())
  expect(mocks.call.mock.calls.some(c=>c[0]==='social.groups.join')).toBe(true)
+})
+
+it('finishes a pending refresh before allowing approval so a stale list cannot restore the processed row', async () => {
+  const page = { items: [{ requestRef: 'opaque-request', displayName: '公开昵称', status: 1, requestAt: 1 }], hasMore: false }
+  let finishRefresh!: (value: typeof page) => void
+  mocks.call.mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve })).mockResolvedValue({ status: 2 })
+  await act(async () => { renderer = create(<PublicGroupJoinRequests accountScope="test:1001" sourceRef="group-source" disabled={false} onBusyChange={() => {}} />) })
+  await act(async () => button('刷新申请').props.onClick())
+  expect(button('同意').props.disabled).toBe(true)
+  await act(async () => button('同意').props.onClick())
+  expect(mocks.call.mock.calls.some(c => c[0] === 'social.groups.requests.resolve')).toBe(false)
+  await act(async () => finishRefresh(page))
+  expect(button('同意').props.disabled).toBe(false)
+  await act(async () => button('同意').props.onClick())
+  expect(renderer!.root.findAllByType('article')).toHaveLength(0)
+  expect(mocks.call).toHaveBeenCalledWith('social.groups.requests.resolve', expect.objectContaining({ requestRef: 'opaque-request', approved: true }), expect.any(AbortSignal))
 })
