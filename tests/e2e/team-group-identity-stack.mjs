@@ -95,8 +95,8 @@ try{
  await page.screenshot({path:join(capture,'existing-team-markers.png')})
  // Browser uses the colleague's existing picker/editor fallback and pending-article send.
  await page.getByRole('button',{name:'添加内容',exact:true}).click()
- await page.getByRole('menuitem',{name:'添加长文',exact:true}).click()
- await page.getByRole('button',{name:'＋新建长文',exact:true}).click()
+ await page.getByRole('menuitem',{name:'即我文档',exact:true}).click()
+ await page.getByRole('button',{name:'＋新建文档',exact:true}).click()
  const articleTitle=`团队长文闭环 ${randomUUID()}`
  await page.getByRole('textbox',{name:'长文标题',exact:true}).fill(articleTitle)
  await page.locator('.tiptap[contenteditable="true"]').fill('沿用原有长文交互，发送时保留所选团队身份。')

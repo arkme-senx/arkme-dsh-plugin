@@ -3,7 +3,6 @@ import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import type { ArkmeSourceItem, ArkmeTeam } from '../types.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext, type TeamGroupPending, type TeamGroupIdentity } from '../team-group-contract.js'
-import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
 import { callArkme } from './api.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -91,7 +90,7 @@ export function TeamGroupJoinPanel({ accountKey, source }: { accountKey: string;
 
 /** Selection changes only the next publication. Rechecks never clear its draft. */
 type IdentityPickerProps = {
-  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; selfName?: string; disabled?: boolean
+  accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; disabled?: boolean
   value?: TeamGroupIdentity | undefined; onSelect?(value: TeamGroupIdentity | undefined): void
 }
 export function TeamGroupIdentityPicker(props: IdentityPickerProps) {

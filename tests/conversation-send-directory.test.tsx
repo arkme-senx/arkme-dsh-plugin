@@ -2116,7 +2116,7 @@ describe('conversation send directory projection', () => {
     })
   })
 
-  it.each([true, false])('keeps the original article creation entry and team draft context with native available=%s', async native => {
+  it.each([true, false])('keeps the current document picker flow and frozen Team draft with native available=%s', async native => {
     activeSource = group
     arkmeUi.selectSource(group)
     const composition = { draftScope: 'stable-team-7', representation: { teamRef: 'frozen-team-7', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 } }
@@ -2130,19 +2130,15 @@ describe('conversation send directory projection', () => {
     act(() => renderer!.root.findByType(TeamGroupIdentityPicker).props.onSelect({ team: { key: composition.draftScope, jotmoId: 'team_7', name: '接待' }, selection: composition.representation }))
     act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
     const add = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.find((action: { id: string }) => action.id === 'article')
-    expect(add.label).toBe('添加长文')
+    expect(add.label).toBe('即我文档')
     act(() => add.onSelect())
     const picker = renderer!.root.findByType(ArkmeArticlePicker)
     expect(picker.props.composition).toEqual(composition)
-    let opened: boolean | undefined
-    await act(async () => { opened = await picker.props.onCreate() })
-    expect(opened).toBe(native)
-    // The original picker owns browser fallback; the parent must not introduce a second editor.
+    const draftKey = `${arkmeSourceComposerDraftKey(42, group)!}:team:${composition.draftScope}`
+    expect(picker.props.draftScope).toBe(`composer:${composerArticleKey('test:42', draftKey)}`)
+    expect(picker.props.onCreate).toBeUndefined()
     expect(renderer!.root.findAllByType(ArkmeLongArticleDialog)).toHaveLength(0)
-    if (native) {
-      expect(open).toHaveBeenCalledOnce()
-      expect(await longArticleWindowBridge()!.context()).toEqual(expect.objectContaining({ sourceRef: group.sourceRef, displayName: `${group.displayName} · 我 · 接待团队`, composition }))
-    } else expect(open).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
   })
 
   it.each([target, group].flatMap(selectedSource => ['inactive', 'switch'].map(exit => ({ selectedSource, exit, kind: selectedSource.kind }))))('preserves pending articles and text/files in $kind through picker exit via $exit', async ({ selectedSource, exit }) => {

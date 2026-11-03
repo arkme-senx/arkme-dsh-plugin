@@ -9342,7 +9342,6 @@ export function ArkmeSurface({
                   key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
                   accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
                   value={selectedTeamIdentity} onSelect={selectTeamIdentity}
-                  selfName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
               <ArkmeComposerSendButton
