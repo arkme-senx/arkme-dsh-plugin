@@ -43,7 +43,9 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
   const rangeState = useRecordExportRange(scope, liveRangeSupported && !retained, range, dates, includeAttachments, order)
   const preview = retained ? retained.preview : rangeState.preview
   const available = rangeSupported || legacyAvailable
-  const statistics = retained?.statistics ?? (rangeSupported ? preview : scopedPreflight)
+  const statistics = retained?.statistics ?? (rangeSupported ? preview?.previewUid ? preview : undefined : scopedPreflight)
+  const decision = preview ?? scopedPreflight
+  const savedAtMillis = preview?.savedAtMillis || scopedPreflight?.rangeExportV2?.savedAtMillis
   const empty = statistics !== undefined && statistics.recordCount + (preview?.removedCount ?? 0) === 0
   const canRun = available && !!statistics?.canExport && !empty && !loading && !rangeState.loading && (!rangeSupported || !!preview?.previewUid && !preview.baselineRequired)
   const locked = busy || confirm || !!result || saving
@@ -117,7 +119,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
       {dateError && <p id={`${id}-dates-error`} className="arkme-export-error" role="alert">{tr(dateError)}</p>}
     </div>}
     {range === 'incremental' && <div className="arkme-export-incremental" aria-label={tr('增量导出说明')}>
-      <strong>{rangeSupported ? preview?.savedAtMillis ? <>{tr('上次成功保存：')}{new Date(preview.savedAtMillis).toLocaleString(arkmeIntlLocale())}</> : preview?.baselineRequired ? tr('先保存一份完整备份') : tr('正在读取增量进度…') : tr('增量进度尚未接通')}</strong>
+      <strong>{rangeSupported ? savedAtMillis ? <>{tr('上次成功保存：')}{new Date(savedAtMillis).toLocaleString(arkmeIntlLocale())}</> : preview?.baselineRequired ? tr('先保存一份完整备份') : tr('正在读取增量进度…') : tr('增量进度尚未接通')}</strong>
       <p>{tr(rangeSupported ? '自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。' : '接通后自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。')}</p>
       <p>{tr('首次需要建立完整备份；取消或保存失败不会推进进度。增量包需与此前备份一起保留。')}</p>
     </div>}
@@ -129,7 +131,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
     {rangeState.loading && <p className="arkme-export-notice" role="status">{tr('正在统计本次导出范围…')}</p>}
     {rangeState.error && <p className="arkme-export-error" role="alert">{rangeState.error}</p>}
     {preview?.baselineRequired && <p className="arkme-export-notice" role="status">{tr('请先完成一次全部导出并确认保存，再使用增量。')} <button type="button" className="arkme-settings-link" onClick={() => setRange('all')}>{tr('选择全部')}</button></p>}
-    {range === 'incremental' && preview && !preview.baselineRequired && <p className="arkme-export-notice">{tr('新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条', { v0: preview.newCount, v1: preview.updatedCount, v2: preview.removedCount })}</p>}
+    {range === 'incremental' && preview?.previewUid && !preview.baselineRequired && <p className="arkme-export-notice">{tr('新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条', { v0: preview.newCount, v1: preview.updatedCount, v2: preview.removedCount })}</p>}
     <div className="arkme-export-options">
       <div className="arkme-export-option"><label htmlFor={`${id}-attachments`}>{tr('附件')}</label><label className="arkme-export-attachments"><input id={`${id}-attachments`} type="checkbox" checked={includeAttachments} disabled={locked} onChange={event => { setIncludeAttachments(event.target.checked); setError('') }} />{tr('包含图片、语音等附件')}</label></div>
       <div className="arkme-export-option"><span>{tr('备份格式')}</span><span className="arkme-export-format"><FileZip size={18} aria-hidden /> ZIP <span>· Markdown / {tr('附件')}</span></span></div>
@@ -144,7 +146,7 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
     </div>
     <p className="arkme-export-notice">{tr('不含隐私锁定内容。')}</p>
     {!available && <p id={`${id}-backend-notice`} className="arkme-export-notice" role="status">{tr(RANGE_BACKEND_NOTICE)} {tr('当前仍可选择全部内容并包含附件进行导出。')}</p>}
-    {available && statistics && !statistics.canExport && !preview?.baselineRequired && <p className="arkme-export-notice" role="status">{statistics.message || tr('当前暂不满足导出条件，请稍后重试。')}</p>}
+    {available && !retained && decision && !decision.canExport && !preview?.baselineRequired && <p className="arkme-export-notice" role="status">{decision.message || tr('当前暂不满足导出条件，请稍后重试。')}</p>}
     {available && empty && !preview?.baselineRequired && <p className="arkme-export-notice" role="status">{tr(range === 'incremental' ? '暂无新增或更新内容。' : '暂无可导出的记录。')}</p>}
     {error && <p role="alert" className="arkme-export-error">{error}</p>}
     {busy ? <div className="arkme-export-progress" role="status" aria-live="polite">
