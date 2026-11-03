@@ -1,3 +1,4 @@
+import { RECORDING_STRATEGIES } from '../../recording-strategy-contract.js'
 import type { RecordingStrategy, RecordingStrategyOptions, RecordingStrategyRecordings, RecordingStrategySources } from '../../recording-strategy-contract.js'
 import { callArkme } from '../api.js'
 import { ArkmeClientError } from '../../sdk/index.js'
@@ -18,7 +19,7 @@ export function comparisonError(error: unknown) { return error instanceof Error 
 
 /** Metadata only. Follow both existing cursors, including empty owner-filtered
  * pages; transcript bodies remain bounded by each visible column's pagination. */
-export async function readDayComparisonSources(dateStamp: number, signal: AbortSignal): Promise<DayComparisonSource[]> {
+export async function readDayComparisonSources(dateStamp: number, signal: AbortSignal, includeAvailability = false): Promise<DayComparisonSource[]> {
   const { start, end } = comparisonDayRange(dateStamp)
   const sources: DayComparisonSource[] = []
   let cursor: string | undefined
@@ -31,7 +32,7 @@ export async function readDayComparisonSources(dateStamp: number, signal: AbortS
       const cursors = new Set<string>()
       do {
         signal.throwIfAborted()
-        const part = await callArkme<RecordingStrategySources>('recordings.strategies', { action: 'sources', sessionRef: recording.sessionRef, ...(sourceCursor ? { cursor: sourceCursor } : {}) }, signal)
+        const part = await callArkme<RecordingStrategySources>('recordings.strategies', { action: 'sources', sessionRef: recording.sessionRef, ...(includeAvailability ? { includeAvailability: true, startAtMillis: start, endAtMillis: end } : {}), ...(sourceCursor ? { cursor: sourceCursor } : {}) }, signal)
         for (const source of part.items) {
           if (source.startAtMillis >= end || source.endAtMillis !== undefined && source.endAtMillis <= start) continue
           // Unknown coverage is not proof of exclusion or permission to process
@@ -76,6 +77,7 @@ export async function readDayComparisonOptions(sources: DayComparisonSource[], s
 
 export function canStartDayComparison(source: DayComparisonSource, strategy: RecordingStrategy, now = Date.now()) {
   const options = source.options
+  strategy = dayComparisonStrategy(source, strategy)
   return !source.error && !source.dayMembershipUnknown && !!options && options.officialComplete && !options.officialFailed
     && options.officialStrategy !== strategy && !options.results.some(result => result.strategy === strategy)
     && options.canStart && options.expiresAtMillis > now
@@ -88,4 +90,25 @@ export function comparisonSourceState(source: DayComparisonSource, selection: Re
   return { strategy, official, exists: official || !!result,
     processing: official ? !options?.officialComplete : !!result && !result.complete,
     failed: official ? options?.officialFailed === true : result?.failed === true }
+}
+
+/** An old official baseline must compare against v2026-10, not itself. */
+export function dayComparisonStrategy(source: DayComparisonSource, requested: RecordingStrategy): RecordingStrategy {
+  return source.options?.officialStrategy === requested
+    ? RECORDING_STRATEGIES.find(row => row.id !== requested)!.id : requested
+}
+
+/** Single-file menus cover the complete file, including cross-midnight parts. */
+export async function readSessionComparisonAvailability(sessionRef: string, signal: AbortSignal): Promise<DayComparisonSource[]> {
+  const rows: DayComparisonSource[] = [], cursors = new Set<string>()
+  let cursor: string | undefined
+  do {
+    signal.throwIfAborted()
+    const page = await callArkme<RecordingStrategySources>('recordings.strategies', { action: 'sources', sessionRef, includeAvailability: true, ...(cursor ? { cursor } : {}) }, signal)
+    rows.push(...page.items)
+    cursor = page.nextCursor
+    if (cursor && cursors.has(cursor)) throw new Error('音频列表分页未推进，请重试')
+    if (cursor) cursors.add(cursor)
+  } while (cursor)
+  return rows
 }

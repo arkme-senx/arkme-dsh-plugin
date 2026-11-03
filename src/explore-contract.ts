@@ -2,6 +2,8 @@ import type { ArkmeRecordingSearchIdentity, ArkmeRecordingWorkbenchItem, ArkmeSo
 
 export const EXPLORE_MODULES = ['profile', 'relations', 'events', 'goals', 'anniversaries'] as const
 export type ExploreModule = typeof EXPLORE_MODULES[number]
+export const EXPLORE_MODEL_MODULES = ['profile', 'events', 'goals', 'anniversaries'] as const
+export type ExploreModelModule = typeof EXPLORE_MODEL_MODULES[number]
 export const EXPLORE_LABELS: Record<ExploreModule | 'world', string> = {
   profile: '个人档案', relations: '关系', events: '事件', goals: '目标', anniversaries: '纪念日', world: '世界',
 }
@@ -83,6 +85,7 @@ export type ExploreSource =
   | { kind: 'recording'; dateStamp: number; focusItemId: string; items: ArkmeRecordingWorkbenchItem[]; playbackTargets?: Array<{itemId:string;item:ArkmeRecordingWorkbenchItem}>; segment?: ArkmeRecordingSearchIdentity }
 export interface ExploreSettings {
   ref: string
-  models: Array<{ ref: string; label: string; selected: boolean }>
+  accountScope?: string
+  models: Array<{ key?: string; ref: string; label: string; selected: boolean; provider?: string; routeKey?: string }>
   sources: Array<{ key: string; label: string; description: string; enabled: boolean }>
 }

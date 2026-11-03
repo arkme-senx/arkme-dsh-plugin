@@ -7,6 +7,11 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'recordingFileStorage',
+  'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
+  'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
+  'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
+  'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
@@ -138,6 +143,10 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'recording-file-storage-service.ts',
+  'private-group-create-service.ts',
+  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
+  'public-social-service.ts',
   'model-directory-service.ts',
   'composer-document.ts',
   'conversation-location-service.ts',

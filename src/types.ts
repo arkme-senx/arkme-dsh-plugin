@@ -1563,6 +1563,7 @@ arkoImagesV1?:true
     speakerPresence?: true
     recordingWorkflowV2?: true
     recordingStrategiesV1?: true
+    recordingFileStorageV1?: true
     recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
@@ -4439,6 +4440,21 @@ export type ArkmePluginOperation =
   | 'contacts.team-join'
   | 'chat.private.open-from-contact'
   | 'group.create'
+  | 'group.private.context'
+  | 'group.private.people'
+  | 'group.private.matches'
+  | 'group.private.create'
+  | 'social.groups.query'
+  | 'social.groups.read'
+  | 'social.groups.join'
+  | 'social.groups.open'
+  | 'social.groups.settings'
+  | 'social.groups.settings.set'
+  | 'social.groups.showcase.set'
+  | 'social.people.query'
+  | 'social.people.read'
+  | 'social.people.listing.set'
+  | 'social.people.chat'
   | 'bots.list'
   | 'bots.create'
   | 'bots.manage.profile'
@@ -4744,6 +4760,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'recordings.files.storage'
   | 'recordings.import.file'
   | 'recordings.import.status'
   | 'recordings.import.retry'

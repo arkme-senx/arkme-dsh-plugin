@@ -138,6 +138,13 @@ describe('staged multi-file workflow', () => {
     return { ...f, inputs, snapshot, recording, planner,
       run: () => importStagedRecordingBatch(f.files, recording, f.directory, inputs, planner) }
   }
+  it('keeps parameterless batches free of preference reads and implicit strategy parameters', async () => {
+    const f = await batchFixture()
+    await f.run()
+    expect(f.recording.recordingStrategies).not.toHaveBeenCalled()
+    expect(f.accept).toHaveBeenCalledTimes(2)
+    for (const call of f.accept.mock.calls) expect(call[1]).not.toHaveProperty('strategy')
+  })
   it('keeps the chosen strategy in durable batch identity', async () => {
     const f = await batchFixture()
     await f.run()
@@ -291,10 +298,11 @@ describe('recording import tool integration', () => {
       expect(finishSession).toHaveBeenCalledOnce()
       expect(await readFile((await service.fileReadLocal(file.fileRef)).path)).toEqual(f.bytes)
       expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(2)
-      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/processing-preference'))).toHaveLength(2)
+      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/processing-preference'))).toHaveLength(0)
       const jobs = await store.listRecordingImportJobs(42)
       expect(jobs[0]!.batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
       expect(ensureSession.mock.calls[0]![0].batch).toEqual(jobs[0]!.batch)
+      expect(ensureSession.mock.calls[0]![0]).not.toHaveProperty('strategy')
       userId = 77
       await expect(tool.execute({ action: 'status', import_ref: first.import_ref }, exec)).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
     } finally {

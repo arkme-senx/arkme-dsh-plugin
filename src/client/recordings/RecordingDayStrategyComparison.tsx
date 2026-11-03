@@ -4,7 +4,7 @@ import { TextAlignLeft } from '@phosphor-icons/react/dist/icons/TextAlignLeft'
 import { RECORDING_STRATEGIES, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { callArkme } from '../api.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
-import { canStartDayComparison, comparisonError, comparisonSourceState, readDayComparisonOptions, type DayComparisonSource } from './recording-comparison-day.js'
+import { canStartDayComparison, dayComparisonStrategy, comparisonError, comparisonSourceState, readDayComparisonOptions, type DayComparisonSource } from './recording-comparison-day.js'
 import { useRecordingDayComparisons } from './useRecordingDayComparisons.js'
 import { useRecordingDayStrategyPages } from './useRecordingDayStrategyPages.js'
 import { useRecordingStrategyPlayback } from './useRecordingStrategyPlayback.js'
@@ -13,7 +13,6 @@ import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingDayComparisonProgress } from './RecordingDayComparisonProgress.js'
 import comparisonCss from './recording-day-comparison.css?inline'
 
-const name = (strategy?: RecordingStrategy) => RECORDING_STRATEGIES.find(item => item.id === strategy)?.name ?? '策略暂未确认'
 const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
 
 /** A calendar comparison is a read view over all source-owned results, never a
@@ -42,7 +41,7 @@ export function RecordingDayStrategyComparison({ dateStamp, strategy, mediaPath,
           const [fresh] = await readDayComparisonOptions([source], controller.signal)
           if (!fresh || fresh.error) throw new Error(fresh?.error || '策略信息读取失败')
           if (!canStartDayComparison(fresh, strategy)) { skipped++; continue }
-          await callArkme('recordings.strategies.start', { sourceRef: source.sourceRef, strategy }, controller.signal)
+          await callArkme('recordings.strategies.start', { sourceRef: source.sourceRef, strategy: dayComparisonStrategy(fresh, strategy) }, controller.signal)
           accepted++
         } catch (reason) { controller.signal.throwIfAborted(); failed.push(`${source.fileName || clock(source.startAtMillis)}：${comparisonError(reason)}`) }
       }
@@ -55,28 +54,27 @@ export function RecordingDayStrategyComparison({ dateStamp, strategy, mediaPath,
     } catch (reason) { if (!controller.signal.aborted) setNotice(comparisonError(reason)) }
     finally { if (submission.current === controller) { submission.current = undefined; if (!controller.signal.aborted) setSubmitting(false) } }
   }
-  const officialNames = [...new Set(sources.flatMap(source => source.options ? [name(source.options.officialStrategy)] : []))]
   const metadataErrors = sources.filter(source => source.error)
   return <RecordingComparisonView scope={`当天全部录音 · ${new Date(dateStamp).toLocaleDateString('zh-CN')}`} onClose={onClose}
     description={<span>正式结果不变；不同音频、不同策略的说话人编号各自独立。</span>}
     notices={<><style>{comparisonCss}</style><div className="recording-day-overview">
       {loading && <p role="status">正在读取当天全部录音…</p>}
       {error && <p role="alert">{error} <RecordingTranscriptButton onClick={reload}>重试</RecordingTranscriptButton></p>}
-      {!loading && !error && <p>{sources.length} 份录音{officialNames.length ? ` · 正式结果：${officialNames.join('、')}` : ''}</p>}
+      {!loading && !error && <p>{sources.length} 份录音</p>}
+      {candidates.length > 0 && <RecordingTranscriptButton style={{ background: theme.primaryAction, color: theme.onPrimaryAction }} disabled={submitting} onClick={() => { void start() }}>{submitting ? '正在提交…' : `处理当天未生成部分（${candidates.length}）`}</RecordingTranscriptButton>}
       {metadataErrors.length > 0 && <p role="alert">{metadataErrors.length} 个音频的策略信息读取失败，其他内容仍可查看。 <RecordingTranscriptButton disabled={submitting} onClick={() => { void refresh().catch(reason => setNotice(comparisonError(reason))) }}>重试</RecordingTranscriptButton></p>}
       {notice && <p role="status" className="recording-day-notice">{notice}<RecordingTranscriptButton aria-label="收起提交提示" onClick={() => setNotice('')}>收起</RecordingTranscriptButton></p>}
     </div></>}>
-    {(['official', strategy] as const).map(selection => <DayTranscript key={selection} dateStamp={dateStamp} sources={sources}
-      selection={selection} title={selection === 'official' ? '系统转写' : name(strategy)} kind={selection === 'official' ? '正式结果' : '对比结果'}
-      mediaPath={mediaPath} stopPlayback={stopPlayback} loadingSources={loading || !!error}
-      action={selection !== 'official' && candidates.length > 0 ? <RecordingTranscriptButton style={{ marginInlineStart: 'auto', background: theme.primaryAction, color: theme.onPrimaryAction }} disabled={submitting} onClick={() => { void start() }}>{submitting ? '正在提交…' : `处理当天未生成部分（${candidates.length}）`}</RecordingTranscriptButton> : undefined} />)}
+    {[...RECORDING_STRATEGIES].reverse().map(version => <DayTranscript key={version.id} dateStamp={dateStamp} sources={sources}
+      selection={version.id} title={version.name} mediaPath={mediaPath} stopPlayback={stopPlayback} loadingSources={loading || !!error}
+      canGenerate={candidates.some(source => dayComparisonStrategy(source, strategy) === version.id)} />)}
   </RecordingComparisonView>
 }
 
-function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, stopPlayback, loadingSources, action }: {
-  sources: DayComparisonSource[]; selection: RecordingStrategy | 'official'; title: string; kind: '正式结果' | '对比结果'; dateStamp: number
+function DayTranscript({ sources, selection, title, dateStamp, mediaPath, stopPlayback, loadingSources, canGenerate }: {
+  sources: DayComparisonSource[]; selection: RecordingStrategy; title: string; dateStamp: number
   mediaPath: string; stopPlayback: MutableRefObject<(() => void) | undefined>
-  loadingSources: boolean; action: React.ReactNode
+  loadingSources: boolean; canGenerate: boolean
 }) {
   const { pages, pagination } = useRecordingDayStrategyPages(sources, selection, dateStamp)
   const player = useRecordingStrategyPlayback(mediaPath, stopPlayback)
@@ -87,9 +85,9 @@ function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, 
   const processing = states.some(state => state.processing)
   const failed = sources.some(source => source.error || pages.get(source.sourceRef)?.failed) || states.some(state => state.failed)
   const missing = states.some(state => !state.exists)
-  const emptyTitle = !sources.length ? '当天暂无可对比的自有录音' : processing ? selection === 'official' ? '录音正在处理' : '对比结果正在生成' : failed ? '部分录音未能完成' : missing ? '尚未生成对比结果' : '已完成，当天没有可展示的转写内容'
-  const emptyDescription = processing ? '已完成的内容会自动显示，无需再次提交。' : failed ? '可展开处理详情查看原因，已完成的内容会保留。' : missing ? action ? '使用上方按钮生成尚未处理的录音；已有结果不会重复处理。' : '可展开处理详情查看原件可用情况和未生成原因。' : '可以返回查看其他日期的录音。'
-  return <RecordingComparisonColumn title={title} kind={kind} actions={<>{action}{player.activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.stop}><Pause size={18} /></RecordingTranscriptButton>}</>}>
+  const emptyTitle = !sources.length ? '当天暂无可对比的自有录音' : processing ? '录音正在处理' : failed ? '部分录音未能完成' : missing ? '尚未生成对比结果' : '已完成，当天没有可展示的转写内容'
+  const emptyDescription = processing ? '已完成的内容会自动显示，无需再次提交。' : failed ? '可展开处理详情查看原因，已完成的内容会保留。' : missing ? canGenerate ? '使用上方按钮生成尚未处理的录音；已有结果不会重复处理。' : '可展开处理详情查看原件可用情况和未生成原因。' : '可以返回查看其他日期的录音。'
+  return <RecordingComparisonColumn title={title} actions={<>{player.activeItemRef && <RecordingTranscriptButton aria-label="暂停播放" onClick={player.stop}><Pause size={18} /></RecordingTranscriptButton>}</>}>
     <RecordingDayComparisonProgress sources={sources} selection={selection} pages={pages} />
     <RecordingComparisonPane pagination={pagination}>
       {player.error && <p role="alert" style={{ color: theme.danger }}>{player.error}</p>}
@@ -97,11 +95,10 @@ function DayTranscript({ sources, selection, title, kind, dateStamp, mediaPath, 
         <TextAlignLeft size={30} aria-hidden style={{ opacity: .5 }} /><strong>{emptyTitle}</strong><p>{emptyDescription}</p>
       </div>}
       {visible.map(source => {
-        const state = comparisonSourceState(source, selection), page = pages.get(source.sourceRef)
+        const page = pages.get(source.sourceRef)
         return <div key={source.sourceRef} data-comparison-source className="recording-day-source">
           <div title={source.fileName} className="recording-day-source-heading">
             <span>{clock(source.startAtMillis)}{source.endAtMillis !== undefined && ` – ${clock(source.endAtMillis)}`}</span>
-            <span>{name(state.strategy)} · {state.official ? '正式结果' : '对比结果'}</span>
           </div>
           {page?.items.map((item, index) => <RecordingComparisonRow key={`${item.itemRef}:${index}`} speaker={`说话人 ${item.speaker + 1}`} colorIndex={item.speaker}
             startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} active={player.activeItemRef === item.itemRef}

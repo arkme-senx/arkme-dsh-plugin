@@ -56,6 +56,7 @@ export function useArrangementRecognitionSettings(accountScope: string) {
     settings?.models.map((model) => ({
       id: 'arrangement:' + model.route_key,
       name: model.display_name,
+      origin: 'official',
       identifier: model.model_key,
       channel: model.provider,
       arrangement: model.route_key,

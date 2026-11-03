@@ -1,3 +1,4 @@
+import {createScreenshotEditorRoutes} from './screenshot-editor-route.js'
 import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
@@ -830,6 +831,10 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
+  const screenshotEditor=readFileSync(new URL('../lib/screenshot-editor.js',import.meta.url))
+  for(const route of createScreenshotEditorRoutes(screenshotEditor)) {
+    ctx.effect(()=>ctx.webServer.register(route),`arkme: standalone screenshot ${route.path}`)
+  }
   const sessionClient = {
     source: readFileSync(new URL('../lib/harness-session-client.js', import.meta.url)),
     ...(config.dshRemoteFeatureEnabled ? { apiPath: config.routePath } : {}),

@@ -6,7 +6,7 @@ vi.mock('../src/client/api.js',()=>({callArkme:mock.call}))
 vi.mock('react-dom',()=>({createPortal:(node:unknown)=>node}))
 import { RecordingStrategyComparison } from '../src/client/recordings/RecordingStrategyComparison.js'
 let renderer:ReactTestRenderer
-const options={strategies:[{id:'system-sd-asr/v1',name:'测试版v1'},{id:'baseline-sd-asr/20261026',name:'默认版'}],officialStrategy:'system-sd-asr/v1',officialComplete:true,officialFailed:false,expiresAtMillis:Date.now()+100000,canStart:true,results:[] as any[]}
+const options={strategies:[{id:'system-sd-asr/v1',name:'v2026-10'},{id:'baseline-sd-asr/20261026',name:'v2025-12'}],officialStrategy:'system-sd-asr/v1',officialComplete:true,officialFailed:false,expiresAtMillis:Date.now()+100000,canStart:true,results:[] as any[]}
 const nodeMock=(element:any)=>element.type==='dialog'?{showModal:vi.fn(),close:vi.fn()}:null
 const mount=async()=>act(async()=>{renderer=create(<RecordingStrategyComparison sessionRef="session" fileName="meeting.wav" mediaPath="/media" onClose={()=>{}}/>,{createNodeMock:nodeMock})})
 const buttons=()=>renderer.root.findAllByType('button')
@@ -76,7 +76,7 @@ it('settles an empty source list without a permanent loading state',async()=>{
 it('puts the actual official result first regardless of catalog order without submitting work',async()=>{
  mock.call.mockImplementation(async(_op:string,input:any)=>input.action==='sources'?{items:[{sourceRef:'source',fileName:'meeting.wav',startAtMillis:1}]}:input.action==='options'?{...options,strategies:[...options.strategies].reverse()}:{items:[],complete:true,failed:false})
  await mount()
- expect(renderer.root.findAllByType('section').map(section=>section.props['aria-label'])).toEqual(['测试版v1 · 正式结果','默认版 · 对比结果'])
+ expect(renderer.root.findAllByType('section').map(section=>section.props['aria-label'])).toEqual(['v2026-10 · 正式结果','v2025-12 · 对比结果'])
  expect(renderer.root.findByProps({role:'dialog'}).props['aria-label']).toBe('转写对比')
  expect(mock.call.mock.calls.some(([op])=>op.endsWith('.start'))).toBe(false)
 })

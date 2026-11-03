@@ -185,8 +185,19 @@ describe('preparing production wiring', () => {
     expect(normalSend.indexOf('if (sameTargetComposer()) messagePreparing.stop()')).toBeGreaterThan(emptyGuard)
     expect(sidebar).toContain('<ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />')
     const atomicEdits = sidebar.slice(sidebar.indexOf('const insertMemberMentionAt'), sidebar.indexOf('const updateComposerRichTrigger'))
-    // Member, emoji, Bot-avatar, @all, Bot candidate, and hashtag edits.
-    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(6)
+    // Check each edit owner. An added business action must not invalidate an
+    // unrelated global call count (thought suggestions are also genuine edits).
+    for (const [start, end] of [
+      ['insertMemberMentionAt', 'insertEmoji'],
+      ['insertEmoji', 'insertMemberMention'],
+      ['insertBotMention', 'fillThoughtSuggestion'],
+      ['fillThoughtSuggestion', 'insertMentionCandidate'],
+      ['insertMentionCandidate', 'insertHashTagCandidate'],
+      ['insertHashTagCandidate', 'updateComposerRichTrigger'],
+    ]) {
+      const edit = sidebar.slice(sidebar.indexOf(`const ${start} =`), sidebar.indexOf(`const ${end} =`))
+      expect(edit, start).toMatch(/focusEditedComposer\((cursor|caretIndex)\)/)
+    }
     const botAvatarEdit = atomicEdits.slice(atomicEdits.indexOf('const insertBotMention'), atomicEdits.indexOf('const insertMentionCandidate'))
     expect(botAvatarEdit).toContain('focusEditedComposer(cursor)')
     const deletionStart = sidebar.indexOf('const caret = arkmeComposerDraftStore.deleteMentionAtSelection')

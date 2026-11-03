@@ -193,6 +193,31 @@ export class ContactDirectoryService {
     }
   }
 
+  /** Registered people from the same account-bound contact/recent-chat owner. */
+  async groupCreationPeople(cursor?: string, signal?: AbortSignal) {
+    const page = await this.list('contacts', { limit: 50, ...(cursor ? { cursor } : { refresh: true }), ...(signal ? { signal } : {}) })
+    if (page.cursorStale) throw new ArkmePluginError('directory-cursor-invalid', '联系人列表已更新，请重新打开建群', false, 409)
+    const session = await this.runtime.requireSession()
+    const items = page.items.flatMap(item => {
+      if (item.kind !== 'contact') return []
+      const entry = this.contactRefs.get(item.contactRef)
+      if (!entry || entry.viewerUserId !== session.userId || typeof entry.targetUserId !== 'number' || entry.targetUserId <= 0 || entry.targetUserId === session.userId) return []
+      return [{ personRef: item.contactRef, userId: entry.targetUserId, displayName: item.displayName,
+        searchText: [item.displayName, item.nickname, item.remark, item.accountName].filter(Boolean).join(' '),
+        ...(item.avatarRef ? { avatarRef: item.avatarRef } : {}), ...(item.avatarFallback ? { avatarFallback: item.avatarFallback } : {}) }]
+    })
+    return { items, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), incomplete: page.coverage === 'partial' }
+  }
+
+  async resolveGroupCreationPerson(personRef: string, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const { session, entry } = await this.resolveContactRef(personRef)
+    if (typeof entry.targetUserId !== 'number' || !Number.isSafeInteger(entry.targetUserId) || entry.targetUserId <= 0 || entry.targetUserId === session.userId) {
+      throw new ArkmePluginError('group-person-unregistered', '请选择已注册的联系人', false, 400)
+    }
+    return { userId: entry.targetUserId, displayName: entry.displayName }
+  }
+
   async updateContactRemark(contactRef: string, remarkValue: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> {
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
     const { session, entry } = await this.resolveContactRef(contactRef)

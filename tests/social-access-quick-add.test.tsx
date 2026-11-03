@@ -29,12 +29,12 @@ it.each(['创建群聊', '发起通话'])('keeps an already opened %s dialog and
   const action = renderer!.root.findAllByProps({ role: 'menuitem' }).find(item => item.findAll(node => node.children.includes(label)).length > 0)!
   await act(async () => { action.props.onClick() })
   const dialog = renderer!.root.findByProps({ role: 'dialog' })
-  const draft = renderer!.root.findByType('input')
+  const draft = renderer!.root.findAllByType('input').find(input => input.props.type !== 'checkbox')!
   if (label === '创建群聊') await act(async () => { draft.props.onChange({ target: { value: '保留群聊草稿' } }) })
   api.bound = false
   await act(async () => { await socialAccessStore.refresh() })
   expect(renderer!.root.findByProps({ role: 'dialog' })).toBe(dialog)
-  expect(renderer!.root.findByType('input')).toBe(draft)
+  expect(renderer!.root.findAllByType('input').find(input => input.props.type !== 'checkbox')).toBe(draft)
   if (label === '创建群聊') expect(draft.props.value).toBe('保留群聊草稿')
   await act(async () => { dialog.findByProps({ 'aria-label': '关闭' }).props.onClick() })
   await openMenu()

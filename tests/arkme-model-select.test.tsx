@@ -32,7 +32,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); li
 it('keeps credits in the managed model header and applies only an advertised model and reasoning effort', async () => {
   await render(); expect(host.textContent).not.toMatch(/123.45|充值|积分/)
   await click('DeepSeek Flash⌄')
-  expect(document.querySelector('.arkme-unified-model-group-title')?.textContent).toContain('Arkme 托管· 123.45 积分')
+  expect(document.querySelector('.arkme-unified-model-group-title')?.textContent).toContain('即我官方· 123.45 积分')
   expect(button('充值')).toBeDefined()
   const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(b => b.textContent?.includes('DeepSeek Pro'))!
   await act(async () => option.click())
