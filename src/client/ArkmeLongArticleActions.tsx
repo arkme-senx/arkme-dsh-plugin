@@ -69,12 +69,12 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     assertAccount()
     return current
   }
-  const openMenu = async () => {
+  const openMenu = () => {
     if (menu) { setMenu(undefined); return }
-    setBusy(true); setError('')
-    try { await prepare(); if (mounted.current) setMenu('main') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '请先完成发布') }
-    finally { if (mounted.current) setBusy(false) }
+    setError('')
+    // Opening the menu is read-only. Flush edits only when executing a content action.
+    try { assertAccount(); setMenu('main') }
+    catch (caught) { setError(caught instanceof Error ? caught.message : '请重新打开长文') }
   }
   const withCurrent = async (forward: boolean) => {
     setMenu(undefined); setBusy(true); setError('')
