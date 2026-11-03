@@ -8,7 +8,7 @@ export interface ReactionSelection { key: string; expression: ReactionExpression
 export interface ReactionState { revision: number; selections: ReactionSelection[] }
 export interface ReactionActor { memberRef?: string; teamPersonKey?: string; presentationPending?: boolean; userId: number; displayName: string; groupNickname?: string; avatarRef?: string }
 export interface ReactionGroup { actors?: ReactionActor[]; key: string; expression: ReactionExpression; count: number }
-export interface ReactionSnapshot { target_id: string; mine: ReactionState; groups: ReactionGroup[]; has_more: boolean; actors_visible: boolean; private: boolean }
+export interface ReactionSnapshot { actor_count?: number; target_id: string; mine: ReactionState; groups: ReactionGroup[]; has_more: boolean; actors_visible: boolean; private: boolean }
 export interface ReactionLibrary { revision: number; items: ReactionExpression[] }
 export interface ReactionSetResult { outcome: 'updated' | 'unchanged' | 'idempotent' | 'revision_conflict'; state: ReactionState }
 export interface ReactionLibraryResult { outcome: 'updated' | 'idempotent' | 'revision_conflict'; library: ReactionLibrary }

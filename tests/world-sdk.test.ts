@@ -57,7 +57,7 @@ describe('World consumer SDK', () => {
       },
     })
 
-    await expect(sdk.worldFeed({ limit: 20, offset: 40 })).resolves.toEqual({
+    await expect(sdk.worldFeed({ limit: 20, cursor: 'page-two' })).resolves.toEqual({
       items: [], total: 0, hasMore: false,
     })
     await expect(sdk.myWorldFeed({ limit: 10, offset: 20 })).resolves.toEqual({
@@ -104,7 +104,7 @@ describe('World consumer SDK', () => {
     const image = await sdk.readWorldImage('arkme-world-image-v1.payload.signature')
     expect(sdk.imageDataUrl(image)).toBe('data:image/png;base64,iVBORw0KGgo=')
     expect(calls).toEqual([
-      { operation: 'world.feed', params: { limit: 20, offset: 40 } },
+      { operation: 'world.feed', params: { limit: 20, cursor: 'page-two' } },
       { operation: 'world.mine', params: { limit: 10, offset: 20 } },
       { operation: 'world.user', params: { userId: 7, limit: 20, offset: 0 } },
       { operation: 'chat.world.private.open', params: { authorRef: 'author-ref' } },

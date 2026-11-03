@@ -11,8 +11,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 
 /** Same editor, shell, tool geometry, emoji picker and send button as self chat. */
-export function ArkmePublishComposer({ value, onChange, disabled, canPublish, onPublish, onAdd, attachments, identity, destination, accountKey, textFormat = 'plain' }: {
-  value: string; onChange(value: string): void; disabled: boolean; canPublish: boolean
+export function ArkmePublishComposer({ value, onChange, disabled, actionDisabled = disabled, canPublish, onPublish, onAdd, attachments, identity, destination, accountKey, textFormat = 'plain' }: {
+  value: string; onChange(value: string): void; disabled: boolean; actionDisabled?: boolean; canPublish: boolean
   onPublish(): void; onAdd(files?: readonly File[]): void; attachments?: ReactNode; identity: ReactNode
   destination: string; accountKey: string; textFormat?: 'plain' | 'markdown'
 }) {
@@ -41,7 +41,7 @@ export function ArkmePublishComposer({ value, onChange, disabled, canPublish, on
         onTextChange={text => { onChange(text); setStartedAt(current => current ?? Date.now()) }}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
         onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); onAdd(files); const text = event.clipboardData.getData('text/plain'); if (text) insert(text) } }}
-        onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); if (canPublish && !disabled) onPublish() } }} />
+        onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); if (canPublish && !actionDisabled) onPublish() } }} />
       <div style={arkmeConversationComposerLayout.tools}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <ArkmeComposerToolButton aria-label={tr('添加图片')} disabled={disabled} onClick={() => onAdd()}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton>
@@ -49,7 +49,7 @@ export function ArkmePublishComposer({ value, onChange, disabled, canPublish, on
             getCaretGeometry={() => editor.current?.getCaretGeometry()} getEditorGeometry={() => editor.current?.getEditorGeometry()} onSelect={emoji => insert(emoji.unicode)} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>{identity}
-          <ArkmeComposerSendButton ariaLabel={tr('发布')} disabled={disabled || !canPublish} onClick={onPublish} shortcutHint={tr('Ctrl/Cmd+Enter 发布，Enter 换行')} />
+          <ArkmeComposerSendButton ariaLabel={tr('发布')} disabled={actionDisabled || !canPublish} onClick={onPublish} shortcutHint={tr('Ctrl/Cmd+Enter 发布，Enter 换行')} />
         </div>
       </div>
     </ArkmeComposerCard>

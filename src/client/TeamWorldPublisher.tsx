@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import type { ArkmeTeam } from '../types.js'
-import { TEAM_WORLD_PENDING_TEXT } from '../team-world-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeSelfRoleMenu, type SelfRoleMenuAction } from './ArkmeSelfRoleMenu.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
@@ -77,7 +76,6 @@ export function TeamWorldPublisherPicker({ state, actorName, actorAvatarRef, dis
     {!!state.selected && !compact && <div style={{ padding: 12, background: arkmeTheme.subtle, borderRadius: 10, marginTop: 10 }}>
       {state.displayTeam && <TeamWorldAuthor team={state.displayTeam} actorName={actorName ?? tr('我')} actorAvatarRef={actorAvatarRef} />}
       <p style={{ fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary, marginBottom: 0 }}>{tr('内容归团队所有，记录实际发布成员。')}</p>
-      <p role="status" style={{ fontSize: 12, lineHeight: 1.7, color: arkmeTheme.secondary, marginBottom: 0 }}>{tr(TEAM_WORLD_PENDING_TEXT)}</p>
       {!state.loading && !state.team && <p role="alert">{state.error || tr('当前团队身份不可用，请重新选择；草稿已保留。')}</p>}
     </div>}
   </section>

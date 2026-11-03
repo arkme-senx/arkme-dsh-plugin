@@ -44,6 +44,14 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+function mixedJSON(envelope: { code: number; data: { list: Array<Record<string, unknown>>; total: number } }): Response {
+  return json({ code: envelope.code, data: { items: envelope.data.list.map(({ user_id, nick_name, nickname, avatar, ...item }) => ({ ...item, principal: { kind: 'person', user_id, name: nick_name ?? nickname, avatar } })), has_more: false, before_at: 0, after_uid: '' } })
+}
+
+function controlledImage(record = 'public-record-1', index = 0, version = 'a'.repeat(64)): string {
+  return `https://world.test/api/public/v1/public-record/media?record_uid=${record}&version=${version}&kind=image&index=${index}`
+}
+
 describe('world Provider projection', () => {
   it('lists only the authenticated account World posts through the mobile my-list contract', async () => {
     const sessions = new MemorySessionStore()
@@ -146,8 +154,8 @@ describe('world Provider projection', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (String(input) === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
           images: [], videos: [], voices: [], extend_count: 2,
         }], total: 1 } })
@@ -209,8 +217,8 @@ describe('world Provider projection', () => {
     const upstreamStarted = new Promise<void>(resolve => { started = resolve })
     let upstreamSignal: AbortSignal | null | undefined
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (String(input) === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
           images: [], videos: [], voices: [], extend_count: 1,
         }], total: 1 } })
@@ -252,8 +260,8 @@ describe('world Provider projection', () => {
     }
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
           images: [], videos: [], voices: [], extend_count: 0,
         }], total: 1 } })
@@ -318,11 +326,11 @@ describe('world Provider projection', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const avatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/peer.png?x-oss-signature=avatar-signature'
-    const image = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo.png?x-oss-signature=image-signature'
+    const image = controlledImage()
     const service = new ArkmeService(config, sessions, stateStore as never, async (input, init) => {
-      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
-      expect(JSON.parse(String(init?.body))).toEqual({ limit: 20, offset: 0 })
-      return json({ code: 200, data: { list: [{
+      expect(String(input)).toBe('https://world.test/api/public/v1/world/query')
+      expect(JSON.parse(String(init?.body))).toEqual({ team_id: 0, parent_record_uid: '', limit: 20, before_at: 0, after_uid: '' })
+      return mixedJSON({ code: 200, data: { list: [{
         record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', avatar,
         headline: '傍晚散步', text_content: '今天的风很舒服', tags: ['生活'], template_kind: 8,
         created_at: 1_700_000_000_000, published_at: 1_700_000_100_000,
@@ -333,7 +341,6 @@ describe('world Provider projection', () => {
     const page = await service.listWorldFeed({ limit: 20, offset: 0 })
 
     expect(page).toMatchObject({
-      total: 1,
       hasMore: false,
       items: [{
         recordRef: expect.stringMatching(/^arkme-world-record-v1\./),
@@ -347,6 +354,7 @@ describe('world Provider projection', () => {
         extendCount: 2,
       }],
     })
+    expect(page).not.toHaveProperty('total')
     expect(JSON.stringify(page)).not.toContain('x-oss-signature')
     expect(JSON.stringify(page)).not.toContain('public-record-1')
   })
@@ -355,9 +363,9 @@ describe('world Provider projection', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, stateStore as never, async (input, init) => {
-      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
-      expect(JSON.parse(String(init?.body))).toEqual({ limit: 20, offset: 0 })
-      return json({ code: 200, data: { list: [{
+      expect(String(input)).toBe('https://world.test/api/public/v1/world/query')
+      expect(JSON.parse(String(init?.body))).toEqual({ team_id: 0, parent_record_uid: '', limit: 20, before_at: 0, after_uid: '' })
+      return mixedJSON({ code: 200, data: { list: [{
         record_uid: 'extension-record-1',
         user_id: 20002,
         nick_name: '发布者',
@@ -406,9 +414,9 @@ describe('world Provider projection', () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        expect(body).toEqual({ limit: 20, offset: 0 })
-        return json({ code: 200, data: { list: [
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        expect(body).toEqual({ team_id: 0, parent_record_uid: '', limit: 20, before_at: 0, after_uid: '' })
+        return mixedJSON({ code: 200, data: { list: [
           {
             record_uid: 'extension-record-missing-share-1',
             user_id: 20002,
@@ -486,8 +494,8 @@ describe('world Provider projection', () => {
     const service = new ArkmeService(config, sessions, state as never, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-remark', user_id: 20002, nick_name: '公开昵称A', text_content: '世界正文',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -558,12 +566,12 @@ describe('world Provider projection', () => {
   it('downloads a published-size world image and rejects the ref after an account switch', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const publicImage = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo.png'
+    const publicImage = controlledImage()
     const png = new Uint8Array(3 * 1024 * 1024)
     png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (String(input) === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '图片',
           images: [publicImage], videos: [], voices: [],
         }], total: 1 } })
@@ -592,10 +600,10 @@ describe('world Provider projection', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const publicImages = Array.from({ length: 10 }, (_, index) =>
-      `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo-${String(index + 1)}.png?signature=secret-${String(index + 1)}`)
+      controlledImage('public-record-many-images', index))
     const service = new ArkmeService(config, sessions, stateStore as never, async (input) => {
-      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
-      return json({ code: 200, data: { list: [{
+      expect(String(input)).toBe('https://world.test/api/public/v1/world/query')
+      return mixedJSON({ code: 200, data: { list: [{
         record_uid: 'public-record-many-images', user_id: 20002, nick_name: '小林', text_content: '十张图片',
         images: publicImages, videos: [], voices: [],
       }], total: 1 } })
@@ -617,8 +625,8 @@ describe('world Provider projection', () => {
     const audioUrl = 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/voiceprint/playback.mp3?x-oss-signature=audio-signature'
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天的风很舒服',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -702,8 +710,8 @@ describe('world Provider projection', () => {
     let availabilityCalls = 0
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [
           {
             record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '第一条',
             images: [], videos: [], voices: [],
@@ -737,8 +745,8 @@ describe('world Provider projection', () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天的风很舒服',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -810,8 +818,8 @@ describe('world Provider projection', () => {
     let interwovenCalls = 0
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '正文',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -852,8 +860,8 @@ describe('world Provider projection', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '正文',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -887,8 +895,8 @@ describe('world Provider projection', () => {
       const url = String(input)
       const body = init?.body === undefined ? {} : JSON.parse(String(init.body)) as Record<string, unknown>
       requests.push({ url, body })
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天好难',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -940,7 +948,7 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(result)).not.toContain('20002')
     expect(JSON.stringify(result)).not.toContain('public-record-1')
     expect(requests.map(request => request.url)).toEqual([
-      'https://world.test/api/public/v1/public-record/world-list',
+      'https://world.test/api/public/v1/world/query',
       'https://audio.test/api/v1/audio/voiceprint/invites/create',
       'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://chat.test/api/v1/chats/create-private',
@@ -953,8 +961,8 @@ describe('world Provider projection', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天好难',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -980,8 +988,8 @@ describe('world Provider projection', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async input => {
       const url = String(input)
-      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (url === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天的风很舒服',
           images: [], videos: [], voices: [],
         }], total: 1 } })
@@ -1010,11 +1018,11 @@ describe('world Provider projection', () => {
   it('uses image bytes when OSS declares the wrong MIME type', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const publicImage = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo.jpg'
+    const publicImage = controlledImage()
     const gif = Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3])
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [{
+      if (String(input) === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [{
           record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '图片',
           images: [publicImage], videos: [], voices: [],
         }], total: 1 } })
@@ -1037,10 +1045,10 @@ describe('world Provider projection', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const resolvedAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/resolved.png?x-oss-signature=resolved'
     const publicAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/public.png'
-    const publicImage = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/public.png'
+    const publicImage = controlledImage()
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
-        return json({ code: 200, data: { list: [
+      if (String(input) === 'https://world.test/api/public/v1/world/query') {
+        return mixedJSON({ code: 200, data: { list: [
           { record_uid: 'record-file', user_id: 20002, nick_name: '文件头像', avatar: 'file_asset://avatar-1', text_content: '一', images: [], videos: [], voices: [] },
           { record_uid: 'record-phone', user_id: 20003, nick_name: '手机默认头像', avatar: 'phone_avatar://v1/3/61', text_content: '二', images: [], videos: [], voices: [] },
           { record_uid: 'record-public', user_id: 20004, nick_name: '公开头像', avatar: publicAvatar, text_content: '三', images: [publicImage], videos: [], voices: [] },
@@ -1122,7 +1130,7 @@ describe('world Provider projection', () => {
     })
     await dispatchArkmeHostOperation(service as never, 'world.image.read', { imageRef: 'opaque-ref', url: 'https://evil.test' })
 
-    expect(service.listWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
+    expect(service.listWorldFeed).toHaveBeenCalledWith({ limit: 20 })
     expect(service.listMyWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(service.listUserWorldFeed).toHaveBeenCalledWith(900, { limit: 20, offset: 0 })
     expect(service.worldAuthorLabels).toHaveBeenCalledWith([

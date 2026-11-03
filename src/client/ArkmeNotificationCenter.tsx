@@ -131,10 +131,10 @@ export function reactionItem(item: ReactionNotification): ArkmeNotificationItem 
 function worldItem(item: WorldNotificationInteraction): ArkmeNotificationItem {
   return {
     id: `world:${item.interactionRef}`, kind: 'world',
-    title: tr(item.replyToComment ? '{name} 回复了你的评论' : '{name} 回复了你的世界', { name: item.authorName || tr('有人') }),
+    title: tr(item.unavailable ? '世界回复已不可访问' : item.replyToComment ? '{name} 回复了你的评论' : '{name} 回复了你的世界', { name: item.authorName || tr('有人') }),
     preview: item.textContent || tr('查看世界互动'),
     atMillis: item.publishedAtMillis || item.createdAtMillis,
-    unread: false, worldInteractionRef: item.interactionRef,
+    unread: false, ...(item.unavailable ? {} : { worldInteractionRef: item.interactionRef }),
   }
 }
 

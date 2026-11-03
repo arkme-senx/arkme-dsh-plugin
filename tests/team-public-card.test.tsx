@@ -39,6 +39,7 @@ it('keeps public contact disabled but allows current members to enter inbox',asy
 })
 
 it.each([
+  { ...card, contact: { state: 'backend_pending' } },
   { ...card, jotmoId: 'other-team' },
   { ...card, contact: { state: 'available' } },
 ])('rejects mismatched or incomplete public cards and offers retry: %j', async result => {
