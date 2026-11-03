@@ -1575,6 +1575,10 @@ export async function dispatchArkmeHostOperation(
     case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
     case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
     case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
+    case 'social.read': return await service.publicSocialRead(params as unknown as import('./public-social-contract.js').PublicSocialReadInput, requestSignal)
+    case 'social.write': return await service.publicSocialWrite(params as unknown as import('./public-social-contract.js').PublicSocialWriteInput, requestSignal)
+    case 'social.groups.requests': return await service.publicGroupJoinRequests(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'social.groups.requests.resolve': return await service.resolvePublicGroupJoinRequest(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'requestRef'), requiredBooleanParam(params, 'approved'), requestSignal)
     case 'social.groups.query': {
       const userId = optionalPositiveIntegerParam(params, 'userId')
       const relation = params.relation

@@ -811,7 +811,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         )
       },
     }, () => { void this.realtime.refreshAttentionSummary() })
-    this.publicSocial = new PublicSocialService(this.runtime, this.source, this.group)
+    this.publicSocial = new PublicSocialService(this.runtime, this.source)
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
@@ -1359,6 +1359,7 @@ arkoImagesV1:true,
         selfRoles: true,
         imageCacheRead: true,
         directMessageAdmission: true,
+        publicSocialV1: true,
         messageTextAnchorsV1: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
@@ -2165,6 +2166,11 @@ arkoImagesV1:true,
   async publicGroupSettings(sourceRef: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.groupSettings(sourceRef, scope, signal) }
   async setPublicGroup(sourceRef: string, scope: string, isPublic: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setGroup(sourceRef, scope, isPublic, introduction, signal) }
   async setPublicGroupShowcase(sourceRef: string, scope: string, isShown: boolean, signal?: AbortSignal) { return await this.publicSocial.setShowcase(sourceRef, scope, isShown, signal) }
+
+  async publicGroupJoinRequests(sourceRef: string, scope: string, cursor?: string, signal?: AbortSignal) { return await this.publicSocial.requests(sourceRef, scope, cursor, signal) }
+  async resolvePublicGroupJoinRequest(sourceRef: string, scope: string, requestRef: string, approved: boolean, signal?: AbortSignal) { return await this.publicSocial.resolveRequest(sourceRef, scope, requestRef, approved, signal) }
+  async publicSocialRead(input: import('./public-social-contract.js').PublicSocialReadInput, signal?: AbortSignal) { return await this.publicSocial.read(input, signal) }
+  async publicSocialWrite(input: import('./public-social-contract.js').PublicSocialWriteInput, signal?: AbortSignal) { return await this.publicSocial.write(input, signal) }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {
     return await this.group.groupSettings(sourceRef, signal)

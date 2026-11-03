@@ -126,3 +126,27 @@ describe('desktop public social interactions', () => {
     expect(mocks.call).toHaveBeenCalledWith('group.create', expect.objectContaining({ title: '硬件交流', introduction: '聊聊硬件', isPublic: false, accountScope: 'test:1001', clientMutationId: expect.any(String) }))
   })
 })
+
+
+it('uses a fresh admission identity after a completed membership is removed', async()=>{
+ let member=false, removed=false
+ mocks.call.mockImplementation(async(op:string)=>{
+  if(op==='social.groups.query')return {items:[{...group,joinMode:2,hasJoined:member,joinRequest:removed?undefined:{requestUid:'old-approved-request',status:2}}],hasMore:false}
+  member=true;return {status:'joined',group:{...group,hasJoined:true},source}
+ })
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ await act(async()=>button('进入群聊').props.onClick())
+ member=false;removed=true
+ await act(async()=>button('刷新').props.onClick())
+ await act(async()=>button('申请加入').props.onClick())
+ const calls=mocks.call.mock.calls.filter(c=>c[0]==='social.groups.join')
+ expect(calls[0]![1].requestUid).toBe('old-approved-request')
+ expect(calls[1]![1].requestUid).not.toBe('old-approved-request')
+})
+it('allows direct admission when a former pending request remains in a stale UI snapshot', async()=>{
+ mocks.call.mockImplementation(async(op:string)=>op==='social.groups.query'?{items:[{...group,joinRequest:{requestUid:'pending',status:1}}],hasMore:false}:{status:'joined',group:{...group,hasJoined:true},source})
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ expect(button('加入群聊').props.disabled).toBe(false)
+ await act(async()=>button('加入群聊').props.onClick())
+ expect(mocks.call.mock.calls.some(c=>c[0]==='social.groups.join')).toBe(true)
+})

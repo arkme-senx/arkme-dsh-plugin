@@ -46,7 +46,7 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
     return () => controller.abort()
   }, [accountScope, mode])
   const join = (group: PublicGroup) => {
-    if (write.current || group.joinRequest?.status === 1 && !group.hasJoined) return
+    if (write.current || group.joinMode === 2 && group.joinRequest?.status === 1 && !group.hasJoined) return
     let requestUid = group.joinRequest?.status !== 3 ? group.joinRequest?.requestUid : undefined
     requestUid ??= requestIds.current.get(group.chatSessionUid)
     if (!requestUid || group.joinRequest?.status === 3 && requestUid === group.joinRequest.requestUid) requestUid = crypto.randomUUID()
@@ -57,6 +57,7 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
       if (controller.signal.aborted) return
       if (group.hasJoined) { await onSourceActivated?.(response as ArkmeSourceItem); return }
       const result = response as PublicGroupJoinResult
+      requestIds.current.delete(group.chatSessionUid)
       setGroups(items => items.map(item => item.chatSessionUid === group.chatSessionUid ? result.group : item))
       if (result.source) await onSourceActivated?.(result.source)
       else setNotice(tr('入群申请已提交，可以刷新查看审批状态。'))
@@ -69,7 +70,7 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
       if (!controller.signal.aborted) await onSourceActivated?.(source)
     }).catch(e => { if (!controller.signal.aborted) setError(errorText(e)) }).finally(() => { if (write.current === controller) { write.current = undefined; if (!controller.signal.aborted) setBusy(undefined) } })
   }
-  const groupAction = (group: PublicGroup) => <button type="button" data-arkme-feedback="primary" style={{ ...s.button, ...s.primary, ...(busy !== undefined || group.joinRequest?.status === 1 && !group.hasJoined ? s.disabled : {}) }} disabled={busy !== undefined || group.joinRequest?.status === 1 && !group.hasJoined} onClick={() => join(group)}>{busy === group.chatSessionUid ? tr('处理中…') : tr(publicGroupJoinLabel(group))}</button>
+  const groupAction = (group: PublicGroup) => <button type="button" data-arkme-feedback="primary" style={{ ...s.button, ...s.primary, ...(busy !== undefined || group.joinMode === 2 && group.joinRequest?.status === 1 && !group.hasJoined ? s.disabled : {}) }} disabled={busy !== undefined || group.joinMode === 2 && group.joinRequest?.status === 1 && !group.hasJoined} onClick={() => join(group)}>{busy === group.chatSessionUid ? tr('处理中…') : tr(publicGroupJoinLabel(group))}</button>
   const personAction = (person: PublicPerson) => <button type="button" data-arkme-feedback="primary" style={{ ...s.button, ...s.primary, ...(busy !== undefined || person.userId === currentUserId ? s.disabled : {}) }} disabled={busy !== undefined || person.userId === currentUserId} onClick={() => chat(person)}>{busy === person.userId ? tr('正在打开…') : tr(person.userId === currentUserId ? '这是你' : '发消息')}</button>
   const selectedGroup = groups.find(g => g.chatSessionUid === selected), selectedPerson = people.find(p => p.userId === selected)
   const empty = mode === 'groups' ? groups.length === 0 : people.length === 0

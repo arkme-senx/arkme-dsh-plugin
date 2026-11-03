@@ -82,6 +82,20 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires a subsequent trusted human confirmation for public social writes', async () => {
+    const ctx=await setup(), publicSocialWrite=vi.fn(async()=>({operation:'resolve',status:2,requestRef:'opaque'}))
+    const mounted=await mountArkmeTools(ctx,'business',{...ports,publicSocialWrite} as unknown as ArkmeToolPorts)
+    const events=sessionEvents(), agent={id:SessionId('social-confirmation'),session:{events}} as unknown as Agent
+    const args={operation:'resolve',account_scope:'test:1',reference:'group-source',request_ref:'opaque',enabled:true}
+    const run=(id:string)=>ctx.tools.execute({callId:CallId(id),name:'arkme_social_write',arguments:args,agent,signal:new AbortController().signal})
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'plugin'},content:[{type:'text',text:'确认'}]}})
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'确认同意入群申请'}]}})
+    expect((await run('confirmed')).isError).toBe(false);expect(publicSocialWrite).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
+
   it('requires a later human grant before changing personal Team entries', async () => {
     const ctx = await setup(), changeTeamEntryPreferences = vi.fn(async () => ({ schemaVersion: 1, items: [], hasMore: false }))
     await mountArkmeTools(ctx, 'business', { ...ports, changeTeamEntryPreferences } as unknown as ArkmeToolPorts)
@@ -390,6 +404,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
       'arkme_common_groups',
+      'arkme_social_read', 'arkme_social_write',
       'arkme_source_read',
       'arkme_analytics_read', 'arkme_conversation_words_generate',
       'arkme_copy_link_extend',
