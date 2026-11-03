@@ -7,7 +7,7 @@ import type { PublicSocialReadInput, PublicSocialWriteInput, PublicSocialReadRes
 export type * from '../public-social-contract.js'
 import { recordingStorageSessionRefs, type RecordingFileStoragePage } from '../recording-file-storage.js'
 export type { RecordingFileStorage, RecordingFileStoragePage } from '../recording-file-storage.js'
-import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
+import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight, ArkmeExportSelection, ArkmeRangeExportPreview } from '../data-management.js'
 export type * from '../data-management.js'
 export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
@@ -491,7 +491,7 @@ const DEFAULT_ROUTE = '/arkme-self/api'
 export type { ArkmeMembership, ArkmeMembershipCatalog, ArkmeMembershipProduct } from '../types.js'
 export type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountTokenUsage, ArkmeAccountVoiceUsage, ArkmeRecordingKind, ArkmeRecordingUsageBreakdown, ArkmeStorageBreakdown, ArkmeStorageCategory } from '../account-usage.js'
 export type { ArkmeUsageTokens, ArkmeTokenUsageSummary, ArkmeTokenUsageOperation, ArkmeTokenUsageCall, ArkmeTokenUsagePage, ArkmeTokenUsageQuery } from '../account-usage-details.js'
-export type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
+export type { ArkmeDeletedRecord, ArkmeDeletedRecordPage, ArkmeExportPreflight, ArkmeExportSelection, ArkmeRangeExportPreview } from '../data-management.js'
 
 function expectedUserIdHeaders(expectedUserId: number | undefined): Record<string, string> {
   if (expectedUserId === undefined) return {}
@@ -651,6 +651,18 @@ export class ArkmeSdk {
     if ((await this.capabilities(scoped)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
     const result = await this.exportWithProgress<ArkmeRecordExport>('data.export', { ...options }, scoped, onProgress)
     if (result.accountScope !== options.expectedAccountScope || typeof result.quotaFinalized !== 'boolean') throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应无效', retryable: false })
+    return result
+  }
+  async previewRecordExport(expectedAccountScope: string, selection: ArkmeExportSelection, orderKind: 1 | 2, signal?: AbortSignal): Promise<ArkmeRangeExportPreview> {
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    const result = await this.call<ArkmeRangeExportPreview>('data.export.range.preview', { expectedAccountScope, selection, orderKind }, scoped)
+    if (result.accountScope !== expectedAccountScope || result.supported !== true) throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出范围响应无效', retryable: false })
+    return result
+  }
+  async confirmRecordExportSaved(expectedAccountScope: string, confirmationRef: string, signal?: AbortSignal): Promise<{ accountScope: string; chainVersion: number; savedAtMillis: number }> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    const result = await this.call<{ accountScope: string; chainVersion: number; savedAtMillis: number }>('data.export.saved', { expectedAccountScope, confirmationRef, confirmed: true }, signal)
+    if (result.accountScope !== expectedAccountScope) throw new ArkmeClientError({ code: 'local-response-invalid', message: '保存确认响应无效', retryable: false })
     return result
   }
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {

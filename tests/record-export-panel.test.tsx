@@ -3,8 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeRecordExportPanel } from '../src/client/ArkmeRecordExportPanel.js'
-const mock = vi.hoisted(() => ({ run: vi.fn(), dispose: vi.fn() }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ exportRecords: mock.run, dispose: mock.dispose, localFileUrl: () => '/local.zip' }) }))
+const mock = vi.hoisted(() => ({ run: vi.fn(), dispose: vi.fn(), preview: vi.fn(), saved: vi.fn() }))
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ exportRecords: mock.run, dispose: mock.dispose, previewRecordExport: mock.preview, confirmRecordExportSaved: mock.saved, localFileUrl: () => '/local.zip' }) }))
 let host: HTMLDivElement, root: Root
 const preflight = { accountScope: 'test:11', canExport: true, recordCount: 2, imageCount: 1, voiceCount: 1, message: '', latestAtMillis: 0 }
 const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label)!
@@ -101,4 +101,42 @@ it('does not execute with another account preflight or when there are no records
   await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, recordCount: 0 }} />))
   expect(button('导出备份').disabled).toBe(true)
   expect(host.textContent).toContain('暂无可导出的记录。')
+})
+it('defaults to incremental with a saved baseline, and never acknowledges merely clicking download', async () => {
+  vi.useFakeTimers()
+  try {
+    mock.preview.mockResolvedValue({ accountScope: 'test:11', supported: true, canExport: true, baselineRequired: false, recordCount: 1, imageCount: 0, voiceCount: 0, newCount: 1, updatedCount: 0, removedCount: 0, chainVersion: 1, savedAtMillis: 1000, previewUid: 'plan', selectionFingerprint: 'a'.repeat(64) })
+    mock.run.mockResolvedValue({ accountScope: 'test:11', count: 1, fileRef: 'file', fileName: 'range.zip', quotaFinalized: true, savedConfirmationRef: 'sealed', rangeMode: 'incremental' })
+    mock.saved.mockResolvedValue({ accountScope: 'test:11', chainVersion: 2, savedAtMillis: 2000 })
+    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 1, savedAtMillis: 1000 } }} />))
+    expect(host.querySelector('select')!.value).toBe('incremental')
+    expect(button('导出备份').disabled).toBe(true)
+    await act(async () => vi.advanceTimersByTimeAsync(501))
+    await act(async () => button('导出备份').click())
+    await act(async () => button('确认导出').click())
+    expect(mock.run.mock.calls.at(-1)![0]).toMatchObject({ previewUid: 'plan', selection: { mode: 'incremental' } })
+    expect(button('我已保存').disabled).toBe(true)
+    await act(async () => { const link = host.querySelector('a')!; link.addEventListener('click', event => event.preventDefault()); link.click() })
+    expect(mock.saved).not.toHaveBeenCalled()
+    await act(async () => button('我已保存').click())
+    expect(mock.saved).not.toHaveBeenCalled()
+    await act(async () => button('确认已保存').click())
+    expect(mock.saved).toHaveBeenCalledWith('test:11', 'sealed', expect.any(AbortSignal))
+    expect(host.textContent).toContain('已确认保存，下次将自动选择增量。')
+  } finally { vi.useRealTimers() }
+})
+it('discards a late range response after switching the selected range', async () => {
+  vi.useFakeTimers()
+  try {
+    let finish!: (value: unknown) => void
+    mock.preview.mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockResolvedValue({ accountScope: 'test:11', supported: true, canExport: false, baselineRequired: true, recordCount: 0, imageCount: 0, voiceCount: 0, removedCount: 0 })
+    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 0, savedAtMillis: 0 } }} />))
+    await act(async () => vi.advanceTimersByTimeAsync(501))
+    await chooseRange('incremental')
+    await act(async () => finish({ accountScope: 'test:11', canExport: true, recordCount: 999, previewUid: 'old' }))
+    expect(button('导出备份').disabled).toBe(true)
+    expect(host.textContent).not.toContain('999')
+    await act(async () => vi.advanceTimersByTimeAsync(501))
+    expect(host.textContent).toContain('请先完成一次全部导出并确认保存，再使用增量。')
+  } finally { vi.useRealTimers() }
 })

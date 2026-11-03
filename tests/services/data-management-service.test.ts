@@ -12,7 +12,7 @@ function fixture() {
     return { can_export: false, record_count: 10, total_voice_count: 2, total_image_count: 1, quota_message: '今天已导出' }
   })
   const config = { environment: 'prod' }
-  const service = new DataManagementService({ config, requireSession: async () => ({ userId }), authenticatedPost: post } as never)
+  const service = new DataManagementService({ config, stateStore: { uniqueCode: async () => 'local-device-secret' }, requireSession: async () => ({ userId }), authenticatedPost: post } as never)
   return { service, post, config, setUser: (id: number) => { userId = id } }
 }
 describe('data management contracts', () => {
@@ -29,8 +29,17 @@ describe('data management contracts', () => {
     const { service, post } = fixture()
     await expect(service.deleted('prod:11')).resolves.toMatchObject({ accountScope: 'prod:11' })
     await expect(service.exportPreflight('prod:11')).resolves.toMatchObject({ canExport: false, recordCount: 10, message: '今天已导出' })
-    expect(post.mock.calls.map(call => call[0])).toEqual(['/api/v1/records/deleted/list', '/api/v1/records/export/session/preflight', '/api/v1/records/export/session/latest'])
+    expect(post.mock.calls.map(call => call[0])).toEqual(['/api/v1/records/deleted/list', '/api/v1/records/export/range/capabilities', '/api/v1/records/export/session/preflight', '/api/v1/records/export/session/latest'])
     expect(post).toHaveBeenCalledWith('/api/v1/records/export/session/preflight', { order_kind: 1, hide_record_privacy_lock: true }, { userId: 11 }, undefined, { lane: 'interactive-read' })
+  })
+  it('loads only device chain metadata on a v2 backend instead of scanning every record first', async () => {
+    const f = fixture()
+    f.post.mockImplementation(async path => path.endsWith('/capabilities')
+      ? { protocol_version: 2, date_range: true, incremental: true, explicit_saved_confirmation: true }
+      : { version: 4, saved_at: 1700000000000 })
+    await expect(f.service.exportPreflight('prod:11')).resolves.toMatchObject({ rangeExportV2: { chainVersion: 4, savedAtMillis: 1700000000000 } })
+    expect(f.post.mock.calls.map(call => call[0])).toEqual(['/api/v1/records/export/range/capabilities', '/api/v1/records/export/range/state'])
+    expect(JSON.stringify(f.post.mock.calls)).not.toContain('local-device-secret')
   })
   it('restores only the explicitly confirmed uid/version', async () => {
     const { service, post } = fixture()

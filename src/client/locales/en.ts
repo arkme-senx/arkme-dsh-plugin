@@ -1,6 +1,25 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 导出日期范围|Export date range
+保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
+上次成功保存：|Last successfully saved:
+先保存一份完整备份|Save a complete backup first
+正在读取增量进度…|Loading incremental progress…
+正在统计本次导出范围…|Counting content in this export…
+请先完成一次全部导出并确认保存，再使用增量。|Export all content and confirm the file is saved before using incremental export.
+选择全部|Select all content
+新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条|{v0} new · {v1} updated · {v2} removed
+暂无新增或更新内容。|No new or updated content.
+已确认保存，日期导出不会改变增量进度。|Save confirmed. Date exports do not change incremental progress.
+已确认保存，下次将自动选择增量。|Save confirmed. Incremental export will be selected next time.
+文件完整保存后，请确认保存；取消下载请勿确认。|Confirm once the complete file is saved. Do not confirm a canceled download.
+我已保存|I have saved it
+确认导出所选内容？|Export the selected content?
+将按当前范围生成备份，并使用导出额度。|Create a backup for the selected range using your export allowance.
+确认文件已完整保存？|Is the complete file saved?
+只有文件已完整保存到你的电脑后才确认。仅生成备份或取消下载，不应更新增量进度。|Confirm only after the complete file is saved on your computer. Generating an archive or canceling its download must not advance incremental progress.
+确认已保存|Confirm saved
+正在更新进度…|Updating progress…
 按日期|By date
 增量|Incremental
 开始日期|Start date

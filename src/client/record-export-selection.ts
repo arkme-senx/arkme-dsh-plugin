@@ -1,4 +1,4 @@
-/** Export choices are local UI state until the Record owner publishes a range contract.
+/** Export choices are sent only through the separately advertised v2 range contract.
  * Never forward these choices to the v1 all-records endpoint or infer a checkpoint
  * from latest_at (that is ZIP generation time, not a saved backup). */
 export type RecordExportRangeKind = 'all' | 'dates' | 'incremental'

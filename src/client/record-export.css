@@ -70,6 +70,8 @@
 .arkme-export-file > div { flex: 1; min-width: 0; }
 .arkme-export-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .arkme-export-file small { display: block; color: var(--export-muted); font-size: 11px; margin-top: 4px; }
+.arkme-export-save-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.arkme-export-save-confirm p { flex: 1; min-width: 180px; color: var(--export-muted); font-size: 12px; line-height: 1.7; margin: 0; }
 @keyframes arkme-export-refresh { to { transform: rotate(360deg); } }
 .arkme-export-refresh .is-spinning { animation: arkme-export-refresh 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .arkme-export-refresh .is-spinning { animation: none; } }
