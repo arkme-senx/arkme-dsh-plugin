@@ -64,14 +64,33 @@ it('does not offer a save for an unfinished capture', async () => {
   expect(document.body.textContent).toContain('等待后续录音')
 })
 
-it('requires a second explicit action before saving uncertain displayed text',async()=>{
- const original=api.callArkme.getMockImplementation()!
- api.callArkme.mockImplementation(async(operation,params)=>params.action==='page'?{items:[{...hit('unknown'),boundary:'uncertain'}]}:original(operation,params))
- await mount();await click(buttons('保存到发给自己')[0]!)
- expect(api.callArkme.mock.calls.some(([op])=>op==='recordings.voice-triggers.decide')).toBe(false)
- expect(document.body.textContent).toContain('只保存当前显示的文字')
- await click(buttons('保存当前内容')[0]!)
- expect(api.callArkme.mock.calls.find(([op])=>op==='recordings.voice-triggers.decide')?.[1]).toMatchObject({confirmedRange:true})
+it('confirms an uncertain displayed range with the existing card button and no extra dialog', async () => {
+  const original = api.callArkme.getMockImplementation()!
+  api.callArkme.mockImplementation(async (operation, params) => params.action === 'page' ? { items: [{ ...hit('unknown'), boundary: 'uncertain' }] } : original(operation, params))
+  await mount()
+  expect(document.body.textContent).toContain('仅保存当前显示的文字')
+  expect(api.callArkme.mock.calls.some(([op]) => op === 'recordings.voice-triggers.decide')).toBe(false)
+  await click(buttons('确认保存当前内容')[0]!)
+  expect(api.callArkme.mock.calls.filter(([op]) => op === 'recordings.voice-triggers.decide')).toHaveLength(1)
+  expect(api.callArkme.mock.calls.find(([op]) => op === 'recordings.voice-triggers.decide')?.[1]).toMatchObject({ decision: 'save', confirmedRange: true })
+  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  expect(document.body.textContent).toContain('已保存到发给自己')
+})
+it('keeps uncertain confirmation retry on its original card after a failed request', async () => {
+  const original = api.callArkme.getMockImplementation()!
+  let writes = 0
+  api.callArkme.mockImplementation(async (operation, params) => {
+    if (operation === 'recordings.voice-triggers.decide' && writes++ === 0) throw new Error('网络失败')
+    return params.action === 'page' ? { items: [{ ...hit('unknown'), boundary: 'uncertain' }] } : original(operation, params)
+  })
+  await mount()
+  await click(buttons('确认保存当前内容')[0]!)
+  expect(document.body.textContent).toContain('网络失败')
+  expect(buttons('确认保存当前内容')[0]!.disabled).toBe(false)
+  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  await click(buttons('确认保存当前内容')[0]!)
+  expect(writes).toBe(2)
+  expect(api.callArkme.mock.calls.filter(([op]) => op === 'recordings.voice-triggers.decide').every(([, params]) => params.confirmedRange === true)).toBe(true)
 })
 it('keeps pagination available when current permissions remove all items in a snapshot page',async()=>{
  const original=api.callArkme.getMockImplementation()!
