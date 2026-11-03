@@ -1,16 +1,20 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { RECORDING_STRATEGIES, type RecordingStrategy } from '../../recording-strategy-contract.js'
+import { RECORDING_STRATEGIES, type RecordingStrategy, type RecordingComparisonAvailability } from '../../recording-strategy-contract.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
+import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingDesktopIcon } from './RecordingDesktopIcon.js'
 import { RecordingDayStrategyComparison } from './RecordingDayStrategyComparison.js'
 
 const control: CSSProperties = { padding: '7px 10px', border: `1px solid ${theme.border}`, borderRadius: 6, color: theme.text, background: theme.base, minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }
 /** Opening this picker and choosing a result are read-only. Processing is explicit inside the result view. The calendar entry always views the entire selected day; processing remains source-owned;
  * Doubao remains the existing day-level enhancement, which can use playback audio. */
-export function RecordingComparisonMenu({ dateStamp, disabled, busy, buttonStyle, mediaPath, onDoubao, onOpenResult }: {
-  dateStamp: number; disabled: boolean; busy: boolean; buttonStyle?: CSSProperties | undefined; mediaPath: string; onDoubao(): void; onOpenResult(): void
+export function RecordingComparisonMenu({ dateStamp, disabled, busy, buttonStyle, mediaPath, onDoubao, onOpenResult, active = true, refreshRevision = 0 }: {
+  active?: boolean; refreshRevision?: string | number; dateStamp: number; disabled: boolean; busy: boolean; buttonStyle?: CSSProperties | undefined; mediaPath: string; onDoubao(): void; onOpenResult(): void
 }) {
+  const discovery = useRecordingComparisonAvailability(dateStamp, active, refreshRevision)
+  const available = Object.values(discovery.availability).some(value => value === 'available')
+  const absent = Object.values(discovery.availability).every(value => value === 'unavailable')
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<CSSProperties>({})
   const [comparison, setComparison] = useState<RecordingStrategy>()
@@ -22,7 +26,7 @@ export function RecordingComparisonMenu({ dateStamp, disabled, busy, buttonStyle
   const close = () => { cancelLeave(); setOpen(false) }
   const enter = () => {
     cancelLeave()
-    if (disabled) return
+    if (disabled || !available) return
     const box = trigger.current?.getBoundingClientRect()
     if (box) setPosition({ left: Math.max(8, Math.min(box.right - 340, window.innerWidth - 348)), top: Math.min(box.bottom + 6, Math.max(8, window.innerHeight - 470)) })
     setOpen(true)
@@ -39,32 +43,35 @@ export function RecordingComparisonMenu({ dateStamp, disabled, busy, buttonStyle
   }, [open])
   useEffect(() => { if (disabled) close() }, [disabled])
   useEffect(() => () => clearTimeout(leave.current), [])
+  useEffect(() => { if (!available) close() }, [available])
+  if (absent && !comparison) return null
   return <>
-    <button ref={trigger} type="button" data-arkme-feedback="neutral" aria-label={busy ? '正在准备转写对比' : '转写对比'}
-      aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} style={buttonStyle} disabled={disabled}
-      onMouseEnter={enter} onMouseLeave={scheduleClose} onClick={e => { keyboardOpen.current = e.detail === 0; enter() }} onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); keyboardOpen.current = true; enter() } }}>
+    <button ref={trigger} type="button" data-arkme-feedback="neutral" aria-label={busy ? '正在准备转写对比' : discovery.loading ? '正在检查转写对比' : !available && discovery.error ? '重试读取转写对比状态' : '转写对比'}
+      title={discovery.error ? '部分对比状态暂时无法确认，请重试' : undefined}
+      aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} style={buttonStyle} disabled={disabled || discovery.loading}
+      onMouseEnter={enter} onMouseLeave={scheduleClose} onClick={e => { if (!available) { discovery.retry(); return } keyboardOpen.current = e.detail === 0; enter() }} onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); keyboardOpen.current = true; enter() } }}>
       <RecordingDesktopIcon name="compare" />
     </button>
     {open && createPortal(<div ref={panel} id={id} role="dialog" aria-label="选择转写对比" onMouseEnter={cancelLeave} onMouseLeave={scheduleClose}
       onBlur={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && e.relatedTarget !== trigger.current) close() }}
       style={{ position: 'fixed', ...position, zIndex: 1100, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'min(460px, calc(100dvh - 16px))', overflowY: 'auto', boxSizing: 'border-box', padding: 14, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: '0 8px 32px #0002' }}>
-      <RecordingComparisonChoices dateStamp={dateStamp} onResult={strategy => { onOpenResult(); setComparison(strategy); close() }} onDoubao={() => { close(); onDoubao() }} />
+      <RecordingComparisonChoices availability={discovery.availability} dateStamp={dateStamp} onResult={strategy => { onOpenResult(); setComparison(strategy); close() }} onDoubao={() => { close(); onDoubao() }} />
     </div>, document.body)}
     {comparison && <RecordingDayStrategyComparison key={`${dateStamp}:${comparison}`} dateStamp={dateStamp} strategy={comparison} mediaPath={mediaPath} onClose={() => setComparison(undefined)} />}
   </>
 }
 
-export function RecordingComparisonChoices({ dateStamp, onResult, onDoubao }: { dateStamp: number; onResult(strategy: RecordingStrategy): void; onDoubao(): void }) {
+export function RecordingComparisonChoices({ dateStamp, onResult, onDoubao, availability }: { availability: Pick<RecordingComparisonAvailability, 'strategy' | 'doubao'>; dateStamp: number; onResult(strategy: RecordingStrategy): void; onDoubao(): void }) {
   return <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
     <strong>转写对比</strong>
     <span style={{ fontSize: 12, color: theme.secondary }}>当天全部录音 · {new Date(dateStamp).toLocaleDateString('zh-CN')}</span>
-    {RECORDING_STRATEGIES.map(strategy => <button key={strategy.id} type="button" onClick={() => onResult(strategy.id)} style={{ ...control, display: 'flex', gap: 12, justifyContent: 'space-between', textAlign: 'left', cursor: 'pointer' }}>
+    {RECORDING_STRATEGIES.filter(strategy => strategy.id !== 'system-sd-asr/v1' && availability.strategy === 'available').map(strategy => <button key={strategy.id} type="button" onClick={() => onResult(strategy.id)} style={{ ...control, display: 'flex', gap: 12, justifyContent: 'space-between', textAlign: 'left', cursor: 'pointer' }}>
       <span>{strategy.name}</span><span style={{ fontSize: 12, color: theme.secondary }}>查看当天对比</span>
     </button>)}
-    <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+    {availability.doubao === 'available' && <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
       <button type="button" style={{ ...control, width: '100%', display: 'flex', gap: 12, justifyContent: 'space-between', textAlign: 'left', cursor: 'pointer' }} onClick={onDoubao}>
         <span>豆包</span><span style={{ fontSize: 12, color: theme.secondary }}>查看当天对比</span>
       </button>
-    </div>
+    </div>}
   </div>
 }

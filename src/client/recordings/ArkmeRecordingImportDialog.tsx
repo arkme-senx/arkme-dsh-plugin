@@ -1,4 +1,3 @@
-import { readRecordingProcessingPreference } from './recording-processing-preference.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
@@ -1310,7 +1309,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           {
             ...(row.batch === undefined ? {} : { batch: row.batch }),
             clientTaskId: row.id,
-            strategy: recordingStrategy(row.strategy),
+            ...(row.strategy === undefined ? {} : { strategy: row.strategy }),
             signal: controller.signal,
             onProgress: progress => {
               if (controller.signal.aborted || !inspectionActiveRef.current) return
@@ -1362,28 +1361,31 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     const controller = new AbortController()
     submissionControllersRef.current.add(controller)
     for (const id of ids) submissionOwnersRef.current.set(id, controller)
-    // Read once at this explicit submission, not when files were selected or later dequeued.
-    const preference = requested.some(row => !row.submission)
-      ? readRecordingProcessingPreference(currentUserId, controller.signal) : Promise.resolve(undefined)
-    // Attach rejection handling immediately while a preceding batch may still be uploading.
-    const snapshot = preference.then(async value => {
+    // New work uses the server-owned recipe. Only restored submissions retain
+    // legacy strategy parameters, so retries keep their original request identity.
+    const snapshot = (async () => {
       if (controller.signal.aborted) return
       for (const row of requested) if (!row.submission) {
-        row.strategy = value!.strategy
+        delete row.strategy
         row.submission = group
       }
       const frozen = new Map(requested.map(row => [row.id, row]))
-      publishRows(current => current.map(row => frozen.has(row.id) ? { ...row, strategy: recordingStrategy(frozen.get(row.id)!.strategy), submission: frozen.get(row.id)!.submission! } : row))
+      publishRows(current => current.map(row => {
+        const accepted = frozen.get(row.id)
+        if (!accepted) return row
+        const { strategy: _legacy, ...rest } = row
+        return { ...rest, ...(accepted.strategy === undefined ? {} : { strategy: accepted.strategy }), submission: accepted.submission! }
+      }))
       persistRows(rowsRef.current, true)
       await journalTail.current
       // The v1 desktop bridge accepts only the original upload headers. Keep
       // the frozen strategy in the Host journal, keyed by the existing task ID.
-      const nativeRows = requested.filter(row => row.source?.kind === 'desktop')
+      const nativeRows = requested.filter(row => row.source?.kind === 'desktop' && row.strategy !== undefined)
       if (nativeRows.length) await callArkme('recordings.import.strategies.register', {
         expectedUserId: currentUserId,
         tasks: nativeRows.map(row => ({ taskId: row.id, strategy: recordingStrategy(row.strategy) })),
       }, controller.signal)
-    }).then(() => ({}), error => ({ error }))
+    })().then(() => ({}), error => ({ error }))
     const duplicateCheck = duplicateCheckQueueRef.current
     setError('')
     setWorkflowNotice(tr('已加入导入队列，可以继续添加文件；关闭此窗口后后台会继续处理。'))

@@ -412,3 +412,13 @@ it('starts cache freshness when a slow scan finishes, not when it began', async 
     expect(countChanged).toHaveBeenLastCalledWith({ dateStamp: day, count: 1, complete: true, loading: false })
   } finally { now.mockRestore() }
 })
+
+it.each(['available','unavailable'] as const)('gates the single-file comparison by actual %s facts', async state => {
+  const fallback=mock.call.getMockImplementation()!
+  mock.call.mockImplementation(async (operation,input,...rest) => operation === 'recordings.strategies' ? { items: [{ sourceRef:'file-source',fileName:'会议.m4a',startAtMillis:day,availability:{strategy:state,doubao:'unavailable'} }] } : fallback(operation,input,...rest))
+  await render();await openMenu()
+  expect(!!button('策略对比')).toBe(state==='available')
+  const request=mock.call.mock.calls.find(([op])=>op==='recordings.strategies')!
+  expect(request[1]).toMatchObject({ action:'sources',sessionRef:'ref1',includeAvailability:true })
+  expect(request[1]).not.toHaveProperty('startAtMillis')
+})

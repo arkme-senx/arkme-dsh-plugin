@@ -73,6 +73,23 @@ describe('RecordingService', () => {
     } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
   })
 
+  it('leaves new imports parameterless and never reads the retired account preference', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme server selected recording '))
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: async () => {} },
+    }))
+    try {
+      const preference = vi.spyOn(service, 'recordingStrategies').mockRejectedValue(new Error('retired preference must not be queried'))
+      await service.acceptRecordingImport('/private/fixture.upload', { clientTaskId: recordingImportBatchID(), fileName: 'server-current.wav', mimeType: 'audio/wav', fileSize: 16044,
+        sha256: 'a'.repeat(64), startAtMillis: 1725000000000, belongUserId: 42, recordingKind: 3 }, 42)
+      const jobs = await new ArkmeStateStore(root).listRecordingImportJobs(42)
+      expect(jobs).toHaveLength(1)
+      expect(jobs[0]).not.toHaveProperty('strategy')
+      expect(preference).not.toHaveBeenCalled()
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
+  })
+
   it('exposes only aggregate capture coverage alongside received transcript work', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme capture coverage '))
     try {

@@ -1358,14 +1358,14 @@ export class RecordingService {
       ? (await this.runtime.stateStore.recordingImportStrategies(`${this.runtime.config.environment}:${expectedUserId}`, [{ taskId: metadata.clientTaskId }], signal))[metadata.clientTaskId]
       : undefined
     const selectedStrategy = metadata.strategy !== undefined ? recordingStrategy(metadata.strategy)
-      : receipt ? recordingStrategy(receipt.strategy)
+      : receipt ? receipt.strategy
       : registeredStrategy !== undefined ? registeredStrategy
-      : recordingStrategy((await this.recordingStrategies({ action: 'preference', expectedUserId }, signal) as { strategy: string }).strategy)
+      : undefined
     if (registeredStrategy !== undefined && selectedStrategy !== registeredStrategy) {
       throw new ArkmePluginError('recording-import-task-conflict', '此导入任务的处理策略已固定，请保留原策略重试', false, 409)
     }
     const identity = {
-      strategy: selectedStrategy,
+      ...(selectedStrategy === undefined ? {} : { strategy: selectedStrategy }),
       userId: session.userId,
       fileName: metadata.fileName,
       fileSize: metadata.fileSize,
@@ -1420,7 +1420,7 @@ export class RecordingService {
       startAtMillis,
       belongUserId,
       recordingKind,
-      strategy: selectedStrategy,
+      ...(selectedStrategy === undefined ? {} : { strategy: selectedStrategy }),
       sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,
