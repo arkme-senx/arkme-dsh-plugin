@@ -66,7 +66,11 @@ it('does not offer a save for an unfinished capture', async () => {
 
 it('confirms an uncertain displayed range with the existing card button and no extra dialog', async () => {
   const original = api.callArkme.getMockImplementation()!
-  api.callArkme.mockImplementation(async (operation, params) => params.action === 'page' ? { items: [{ ...hit('unknown'), boundary: 'uncertain' }] } : original(operation, params))
+  api.callArkme.mockImplementation(async (operation, params) => {
+    if (params.action === 'page') return { items: [{ ...hit('unknown'), boundary: 'uncertain' }] }
+    if (operation === 'recordings.voice-triggers.decide') return { ...hit('unknown', 'saved'), boundary: 'uncertain', revision: 2 }
+    return original(operation, params)
+  })
   await mount()
   expect(document.body.textContent).toContain('仅保存当前显示的文字')
   expect(api.callArkme.mock.calls.some(([op]) => op === 'recordings.voice-triggers.decide')).toBe(false)
@@ -75,6 +79,7 @@ it('confirms an uncertain displayed range with the existing card button and no e
   expect(api.callArkme.mock.calls.find(([op]) => op === 'recordings.voice-triggers.decide')?.[1]).toMatchObject({ decision: 'save', confirmedRange: true })
   expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
   expect(document.body.textContent).toContain('已保存到发给自己')
+  expect(document.querySelector('article')!.textContent).not.toContain('请试听核对后保存')
 })
 it('keeps uncertain confirmation retry on its original card after a failed request', async () => {
   const original = api.callArkme.getMockImplementation()!
