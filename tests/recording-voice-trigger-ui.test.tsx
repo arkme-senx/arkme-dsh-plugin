@@ -64,6 +64,34 @@ it('does not offer a save for an unfinished capture', async () => {
   expect(document.body.textContent).toContain('等待后续录音')
 })
 
+it.each(['old note', ''])('explains changed source evidence on the existing card and still permits ignoring it: %s', async text => {
+  const original = api.callArkme.getMockImplementation()!
+  api.callArkme.mockImplementation(async (op, params) => params.action === 'page'
+    ? { items: [{ ...hit('unknown'), text, boundary: 'uncertain', pendingReason: 'source_changed' }] }
+    : original(op, params))
+  await mount()
+  expect(document.body.textContent).toContain('原文或原音已更新，这条旧识别记录无法保存。请查看当前录音，或忽略此记录。')
+  expect(document.body.textContent).not.toContain('请试听核对后保存')
+  expect(buttons('确认保存当前内容')[0]!.disabled).toBe(true)
+  await click(buttons('忽略')[0]!)
+  expect(document.querySelector('article')!.textContent).toContain('已忽略')
+})
+
+it('explains an unrepresentable command without suggesting that more audio will unblock it', async () => {
+  const original = api.callArkme.getMockImplementation()!
+  api.callArkme.mockImplementation(async (op, params) => params.action === 'page'
+    ? { items: [{ ...hit('unknown'), text: '', boundary: 'uncertain', pendingReason: 'context_limit' }] }
+    : original(op, params))
+  await mount()
+  expect(document.body.textContent).toContain('上下文超出处理范围，仅保留可核验的原音范围，无法生成完整记事。')
+  expect(document.body.textContent).not.toContain('等待后续录音')
+  expect(document.body.textContent).not.toContain('请试听核对后保存')
+  expect(buttons('确认保存当前内容')[0]!.disabled).toBe(true)
+  expect(buttons('播放原音')[0]!.disabled).toBe(false)
+  await click(buttons('忽略')[0]!)
+  expect(document.querySelector('article')!.textContent).toContain('已忽略')
+})
+
 it('confirms an uncertain displayed range with the existing card button and no extra dialog', async () => {
   const original = api.callArkme.getMockImplementation()!
   api.callArkme.mockImplementation(async (operation, params) => {
