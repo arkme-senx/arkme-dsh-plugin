@@ -36,6 +36,7 @@
 - Record：真实 Mongo 并发原子接受、占用 UID、加密快照、后续编辑保留、旧摘要兼容、创建参数与权限展示，`-race` 与根架构检查。
 - Chat：真实 Mongo 公开审核、私密隔离、并发幂等、稳定分页、取消、续帖引用、成员/源权限，`-race` 与根架构检查。
 - 恢复序列化时从可信会话与受众恢复群审核策略，避免公开回复恢复后跳过审核；私密回复仍不走公共审核与投递。
+- Record 与 Chat 的完整 `gin/api`、根架构测试通过；新增路由的合同注释格式已修正并复测。
 - 三仓 `backend_guard` 均通过，无 warning。模型字段重新生成；`git diff --check` 通过。
 - 前端 8 个文件 252 项测试通过；TypeScript、客户端/Host 构建、local-session profile 与执行入口验证通过。
 
@@ -54,14 +55,14 @@
 
 本地新代码不等于已安装客户端或线上版本。当前 `3102` 真实账号预览的业务服务为 `prod`；本轮只读点击，不向生产发送测试回复。新后端未部署前，未取得有效 target/capability 的 Arko 回复继续安全保留草稿，不假装发送成功。
 
-发布须先更新所有 Record reader/writer/worker（摘要和锚点 6），再更新 Intelligent、Chat，最后开放前端。不要在新数据出现后回退为不识别锚点 6 的旧 Record 写入器。回滚先关闭新写入口，保留新 reader/worker 和加密密钥直至已接受命令结清。新增 Chat 集合的生产分片路由、跨设备/移动端展示、真实模型续答、部署及生产性能尚未验收。
+发布须先更新所有 Record reader/writer/worker（摘要和锚点 6），再更新 Intelligent、Chat，最后开放前端。不要在新数据出现后回退为不识别锚点 6 的旧 Record 写入器。回滚先关闭新写入口，保留新 reader/worker 和加密密钥直至已接受命令结清。本轮未启动三服务做完整跨服务 HTTP 发送联调。新增 Chat 集合的生产分片路由、跨设备/移动端展示、真实模型续答、部署及生产性能尚未验收。
 
 环境没有 Docker，因此使用同版本的原生 Mongo 副本集执行相关数据库用例；未把 Docker 脚本或生产分片检查写为通过。OpenSpec CLI 未安装，合同 artifacts 做了人工结构审查，未声称 CLI 校验通过。
 
 ## 最终固定版本与页面验收
 
 - `jotmo-intelligent`：`5b223b9812deb605af0a447b1ea6bf54c5263727`
-- `jotmo-record`：`8175dd3158029089840cb10bfada2d6a2b12af48`
+- `jotmo-record`：`831b70897f094781818febbc8e53ed367cf925ab`
 - `jotmo-chat`：`aac889692947d98f5767735090abc8d6e4cc5b4d`
 - `arkme-dsh-plugin-dev-1031`：`9c5d21ee3758ceae059852303e9f690e412869c3`
 - `jotmo-meta-arko-replies-1103`：`f690a144d0dc678480e2d310f80e7f90037671e6`
