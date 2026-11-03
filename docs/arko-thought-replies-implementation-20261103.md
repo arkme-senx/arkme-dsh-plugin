@@ -57,3 +57,17 @@
 发布须先更新所有 Record reader/writer/worker（摘要和锚点 6），再更新 Intelligent、Chat，最后开放前端。不要在新数据出现后回退为不识别锚点 6 的旧 Record 写入器。回滚先关闭新写入口，保留新 reader/worker 和加密密钥直至已接受命令结清。新增 Chat 集合的生产分片路由、跨设备/移动端展示、真实模型续答、部署及生产性能尚未验收。
 
 环境没有 Docker，因此使用同版本的原生 Mongo 副本集执行相关数据库用例；未把 Docker 脚本或生产分片检查写为通过。OpenSpec CLI 未安装，合同 artifacts 做了人工结构审查，未声称 CLI 校验通过。
+
+## 最终固定版本与页面验收
+
+- `jotmo-intelligent`：`5b223b9812deb605af0a447b1ea6bf54c5263727`
+- `jotmo-record`：`8175dd3158029089840cb10bfada2d6a2b12af48`
+- `jotmo-chat`：`aac889692947d98f5767735090abc8d6e4cc5b4d`
+- `arkme-dsh-plugin-dev-1031`：`9c5d21ee3758ceae059852303e9f690e412869c3`
+- `jotmo-meta-arko-replies-1103`：`f690a144d0dc678480e2d310f80e7f90037671e6`
+
+本地预览 `client.js` SHA-256：`c9b4ba3aaaa97b4b8c3eaa61e3daf68b1abe01f88d563aade40b2dc72a9a6842`，与 disposable preview profile 中的实际加载文件一致。真实账号 `prod:11` 已点击 2026-11-02 17:38 的“录音板块细节”详情，确认 Arko 位于相关快记之后；点击 Arko 卡片选中正确目标且输入立即聚焦，取消后点普通延展同样聚焦。原消息重复评论角标不存在。验收结束时输入框为空，未发送生产测试消息。
+
+截图：`.codex-artifacts/arko-replies-20261103/real-account-detail-9c5d21ee.png`。当前线上后端尚无新 target/capability，截图中的 Arko 发送继续安全禁用；这不是新后端已经部署的证明。本轮前端提交后的报告更新仅改文档，业务代码版本仍为 `9c5d21ee`。
+
+私密 Arko 的 Record 创建不再调用真人对端的发送准入；来源当前访问和账号门禁仍检查。普通真人私聊仍要求原发送准入，已有对应回归。
