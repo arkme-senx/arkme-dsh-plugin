@@ -40,7 +40,7 @@ describe('add own article picker', () => {
   })
   it('loads more when the current page contains only others and retains results for same-cursor retry', async () => {
     mock.call.mockResolvedValueOnce(page([row('other', { recordOwnerUserId: 9 })], 'next')).mockRejectedValueOnce(new Error('网络错误')).mockResolvedValueOnce(page([row('mine')]))
-    await mount(); expect(text()).toContain('本页暂无自己的长文')
+    await mount(); expect(text()).toContain('本页暂无自己的文档')
     await act(async () => { button('加载更多').props.onClick() })
     expect(text()).toContain('网络错误')
     await act(async () => { button('重试').props.onClick() })
@@ -60,7 +60,7 @@ describe('add own article picker', () => {
   })
   it('new opens the editor; cancellation and late selection never send', async () => {
     mock.call.mockResolvedValueOnce(page([]))
-    await mount(); act(() => button('＋新建长文').props.onClick())
+    await mount(); act(() => button('＋新建文档').props.onClick())
     expect(view.root.findByProps({ 'data-editor': true })).toBeDefined()
     expect(mock.call).toHaveBeenCalledTimes(1)
     expect(selected).not.toHaveBeenCalled()

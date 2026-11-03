@@ -6,6 +6,7 @@ import { arkmeUi } from './ui-controller.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { resetLocationMapSessions } from './location-map-session.js'
 import { dayLocationCache } from './day-location-cache.js'
+import { conversationLocationCache } from './conversation-location-cache.js'
 
 const FRESH_MS = 60_000
 const RETAIN_MS = 300_000
@@ -108,6 +109,7 @@ function syncAccount() {
   const account = auth && ['authenticated', 'binding-required'].includes(auth.status) ? `${auth.environment}:${auth.userId}` : undefined
   locationSearchCache.activate(account)
   dayLocationCache.activate(account)
+  conversationLocationCache.activate(account)
   resetLocationMapSessions(account)
 }
 let started = false
@@ -118,7 +120,8 @@ export function startLocationSearchCache(): void {
   let hardRevision = locationSearchCache.getHardRevision()
   locationSearchCache.subscribe(() => {
     const next = locationSearchCache.getHardRevision()
-    dayLocationCache.invalidate(next !== hardRevision); hardRevision = next
+    dayLocationCache.invalidate(next !== hardRevision)
+    conversationLocationCache.invalidate(next !== hardRevision); hardRevision = next
   })
   arkmeAuthStore.subscribe(syncAccount)
   syncAccount()

@@ -14,7 +14,7 @@ export function firstVisibleRecordingRow(rows: readonly Pick<HTMLElement, 'getBo
   return low < rows.length ? low : -1
 }
 
-export function useRecordingReadingPosition(root: RefObject<HTMLDivElement>, items: readonly ArkmeRecordingWorkbenchItem[], active: boolean, dateStamp: number) {
+export function useRecordingReadingPosition(root: RefObject<HTMLDivElement>, items: readonly Pick<ArkmeRecordingWorkbenchItem, 'itemId' | 'startAtMillis' | 'endAtMillis'>[], active: boolean, dateStamp: number) {
   const [position, setPosition] = useState<{ dateStamp: number; range: RecordingReadingRange }>()
   useEffect(() => {
     const pane = root.current

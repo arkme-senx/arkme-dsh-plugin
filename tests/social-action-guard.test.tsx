@@ -39,17 +39,28 @@ const mount = async (content: React.ReactNode) => {
 const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label)!
 
 describe('browse without binding; prompt only on social writes', () => {
-  it.each(['world.feed', 'world.user', 'world.record.read', 'world.image.read', 'world.interactions.list', 'world.interactions.mark-viewed', 'sources.list', 'contacts.search', 'calls.history.list', 'team.app.official', 'team.app.timeline', 'source.send-text', 'recordings.day'] as const)('does not gate %s or fetch a profile for a read/personal operation', async operation => {
+  it.each(['world.feed', 'world.user', 'world.record.read', 'world.image.read', 'world.interactions.list', 'world.interactions.mark-viewed', 'sources.list', 'contacts.search', 'calls.history.list', 'team.app.official', 'team.app.timeline', 'source.send-text', 'recordings.day', 'group.private.context', 'group.private.people', 'group.private.matches', 'social.groups.query', 'social.groups.open', 'social.people.query', 'social.people.read', 'social.people.chat'] as const)('does not gate %s or fetch a profile for a read/personal operation', async operation => {
     socialAccessStore.confirm('test:42', false)
     await expect(callArkme(operation)).resolves.toEqual({ ok: true })
     expect(provider.call).toHaveBeenCalledExactlyOnceWith(operation, operation.startsWith('team.app.') ? { expectedAccountKey: 'test:42' } : undefined, undefined)
     expect(socialBindingPrompt.getSnapshot()).toBeUndefined()
   })
-  it.each(['world.publish-text', 'world.publish-file-assets', 'world.interactions.create-text', 'contacts.add', 'group.create', 'calls.outgoing.prepare', 'team.app.send.enqueue', 'team.app.join', 'team.app.create'] as const)('blocks unbound %s before the provider write', async operation => {
+  it.each(['world.publish-text', 'world.publish-file-assets', 'world.interactions.create-text', 'contacts.add', 'group.create', 'group.private.create', 'social.groups.join', 'calls.outgoing.prepare', 'team.app.send.enqueue', 'team.app.join', 'team.app.create'] as const)('blocks unbound %s before the provider write', async operation => {
     socialAccessStore.confirm('test:42', false)
     await expect(callArkme(operation, { textContent: '保留草稿' })).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
     expect(provider.call).not.toHaveBeenCalled()
     expect(socialBindingPrompt.getSnapshot()?.accountKey).toBe('test:42')
+  })
+  it.each([
+    ['social.people.listing.set', 'isListed'],
+    ['social.groups.settings.set', 'isPublic'],
+    ['social.groups.showcase.set', 'isShown'],
+  ] as const)('gates publishing via %s while keeping withdrawal available', async (operation, field) => {
+    socialAccessStore.confirm('test:42', false)
+    await callArkme(operation, { [field]: false })
+    expect(provider.call).toHaveBeenCalledOnce()
+    await expect(callArkme(operation, { [field]: true })).rejects.toMatchObject({ body: { code: 'social-phone-binding-required' } })
+    expect(provider.call).toHaveBeenCalledOnce()
   })
   it('keeps world reaction reads and removals available, gates adding a reaction', async () => {
     socialAccessStore.confirm('test:42', false)

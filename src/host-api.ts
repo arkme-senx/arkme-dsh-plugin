@@ -16,7 +16,7 @@ import type { TeamAppOperation } from './team-app-contract.js'
 import type { RecordAppOperation } from './record-app-contract.js'
 import type { DshAccountSessions } from './dsh-remote/account-sessions.js'
 import { DSH_DIRECTORY_DELTA_MAX_BYTES, parseDshDirectoryDelta, type DshDirectoryDelta } from './dsh-remote/account-session-directory.js'
-import { parseArkmeRecordReeditMentions } from './record-reedit-contract.js'
+import { parseArkmeRecordReeditMentions, parseArkmeRecordReeditCapture } from './record-reedit-contract.js'
 import { recordOwnerId } from './record-owner-id.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readDirectoryPage } from './directory-reader.js'
@@ -83,7 +83,7 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
 }
 
 function requestBytesLimit(operation: string): number {
-  if (operation === 'recordings.transcript.page') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+  if (operation === 'recordings.transcript.page' || operation === 'recordings.day.overview' || operation === 'recordings.day.review') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
@@ -1390,6 +1390,7 @@ export async function dispatchArkmeHostOperation(
     case 'remote.getStatus': return requireRemoteHost(remoteHost, remoteUnavailableReason).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
+    case 'models.directory': return await service.modelDirectory(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
@@ -1571,7 +1572,31 @@ export async function dispatchArkmeHostOperation(
     case 'group.create': return await service.createGroup(
       stringParam(params, 'title'),
       stringParam(params, 'clientMutationId'),
+      { ...(params.isPublic === undefined ? {} : { isPublic: requiredBooleanParam(params, 'isPublic') }), ...(params.introduction === undefined ? {} : { introduction: stringParam(params, 'introduction') }), ...(params.accountScope === undefined ? {} : { accountScope: stringParam(params, 'accountScope') }), ...(requestSignal ? { signal: requestSignal } : {}) },
     )
+    case 'group.private.context': return await service.privateGroupContext({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope') }, requestSignal)
+    case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
+    case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
+    case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
+    case 'social.groups.query': {
+      const userId = optionalPositiveIntegerParam(params, 'userId')
+      const relation = params.relation
+      if (relation !== undefined && relation !== 'created' && relation !== 'joined') throw new ArkmePluginError('public-social-query-invalid', '群聊查询范围无效', false, 400)
+      return await service.queryPublicGroups({ accountScope: stringParam(params, 'accountScope'), query: stringParam(params, 'query'), cursor: stringParam(params, 'cursor'), ...(userId ? { userId } : {}), ...(relation ? { relation } : {}) }, requestSignal)
+    }
+    case 'social.groups.read': return await service.readPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.join': return await service.joinPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'requestUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.open': return await service.openPublicGroup(stringParam(params, 'chatSessionUid'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.settings': return await service.publicGroupSettings(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.groups.settings.set': return await service.setPublicGroup(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isPublic'), stringParam(params, 'introduction'), requestSignal)
+    case 'social.groups.showcase.set': return await service.setPublicGroupShowcase(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isShown'), requestSignal)
+    case 'social.people.query': {
+      const cursor = optionalPositiveIntegerParam(params, 'cursor')
+      return await service.queryPublicPeople({ accountScope: stringParam(params, 'accountScope'), query: stringParam(params, 'query'), ...(cursor ? { cursor } : {}) }, requestSignal)
+    }
+    case 'social.people.read': return await service.readPublicPerson(optionalPositiveIntegerParam(params, 'userId'), stringParam(params, 'accountScope'), requestSignal)
+    case 'social.people.listing.set': return await service.setPublicPerson(stringParam(params, 'accountScope'), requiredBooleanParam(params, 'isListed'), stringParam(params, 'introduction'), requestSignal)
+    case 'social.people.chat': return await service.openPublicPerson(numberParam(params, 'userId', 0), stringParam(params, 'accountScope'), requestSignal)
     case 'bots.create': {
       const avatar = botAvatarParam(params)
       return await service.createBotSummary({
@@ -1617,6 +1642,8 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
     )
+    case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
+    case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.transcript.page': {
       const source = params.source ?? 'system'
       if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
@@ -1910,6 +1937,8 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
     })
     case 'search.locations': return await service.searchLocations(params as unknown as import('./location-search.js').LocationQuery, requestSignal)
+    case 'search.conversation-locations': return await service.searchConversationLocations({ sourceRef: stringParam(params, 'sourceRef'),
+      ...(params?.cursor !== undefined ? { cursor: stringParam(params, 'cursor') } : {}) }, requestSignal)
     case 'articles.list': return await service.searchScene({ scene: 'long_article', articleScope: (typeof params.scope === 'string' ? params.scope : 'recent') as import('./types.js').ArkmeLongArticleBrowseScope, limit: typeof params.limit === 'number' ? params.limit : 30, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'search.scene': {
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
@@ -2346,6 +2375,8 @@ export async function dispatchArkmeHostOperation(
         requestSignal,
       )
     }
+    case 'record.thoughts.query': return await service.recordThoughts(stringParam(params, 'expectedAccountScope'), params.recordUids, requestSignal)
+    case 'chat.thoughts.query': return await service.chatThoughts(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), params.messageActionRefs, requestSignal)
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(
@@ -2427,6 +2458,9 @@ export async function dispatchArkmeHostOperation(
     )
     case 'source.record-edit-history': return await service.recordEditHistoryPage(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorEditAt', 0), requestSignal,
+    )
+    case 'source.record-revision-snapshot': return await service.recordRevisionSnapshot(
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), stringParam(params, 'revisionUid'), requestSignal,
     )
     case 'source.related-quick-note.detail': return await service.relatedQuickNoteDetail(
       requiredRelatedQuickNoteParam(params, 'sourceRef'),
@@ -2516,7 +2550,9 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        ...(params.paginated === true ? { paginated: true } : {}),
+        ...(stringParam(params, 'pageCursor') ? { pageCursor: stringParam(params, 'pageCursor') } : {}) },
     )
     case 'source.message-extension.extend': {
       const quote = readMessageQuote(params.quote)
@@ -2529,6 +2565,7 @@ export async function dispatchArkmeHostOperation(
       [...new Set(stringListParam(params, 'fileRefs').map(value => value.trim()).filter(value => value !== ''))],
       {
         ...richSendParam(params),
+        ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
         ...(quote === undefined ? {} : { quote }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
@@ -2836,6 +2873,17 @@ export async function dispatchArkmeHostOperation(
     case 'files.local.open-folder': return await service.fileOpenLocalFolder(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.open': return await service.fileOpenLocal(stringParam(params, 'fileRef'), requestSignal)
     case 'files.local.remove': await service.fileRemove(stringParam(params, 'fileRef')); return { removed: true }
+    case 'composer.document.prepare': return await service.prepareComposerDocument({
+      expectedUserId: numberParam(params, 'expectedUserId', 0), kind: stringParam(params, 'kind') as 'new' | 'existing',
+      itemUid: stringParam(params, 'itemUid'), version: numberParam(params, 'version', 0), title: stringParam(params, 'title'),
+      textContent: stringParam(params, 'textContent'), ...(params.textFormat === 'markdown' ? { textFormat: 'markdown' } : { textFormat: 'plain' }),
+      ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
+    }, requestSignal)
+    case 'composer.resources.list': return await service.composerResources({
+      kind: stringParam(params, 'kind') as 'file' | 'gallery', query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30),
+      expectedUserId: numberParam(params, 'expectedUserId', 0), ...(stringParam(params, 'cursor') ? { cursor: stringParam(params, 'cursor') } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
+    })
     case 'files.search': return await service.fileSearch({ query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30), cursor: stringParam(params, 'cursor') })
     case 'files.send.tasks': return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
     case 'files.send.retry': return await service.fileSendRetry(stringParam(params, 'taskRef'))
@@ -2851,6 +2899,7 @@ export async function dispatchArkmeHostOperation(
       return await service.fileSend({
         sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
         fileRefs,
+        ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
         ...(expectedUserId === undefined ? {} : { expectedUserId }),
         ...(backgroundSound === undefined ? {} : { backgroundSound }),
         ...(location === undefined ? {} : { location }),
@@ -2983,6 +3032,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.record-reedit.submit':
     case 'source.record-reedit.update': {
       const input = {
+        ...(params.capture === undefined ? {} : { capture: parseArkmeRecordReeditCapture(params.capture) }),
         sourceRef: stringParam(params, 'sourceRef'),
         itemUid: stringParam(params, 'itemUid'),
         ...(params.newText === undefined ? {} : { newText: stringParam(params, 'newText') }),

@@ -461,6 +461,7 @@ export function ArkmePersistentSidebar({
         expandedSections={scopedContacts.expandedSections}
         contactProfiles={scopedContacts.contactProfiles}
         toolbarActions={<ArkmeQuickAddButton
+          accountScope={contactsAccountKey}
           notificationActivationRevision={ui.notificationActivationRevision ?? 0}
           onContactAdd={() => { setContactAddSession({ accountKey: contactsAccountKey }) }}
           onSourceCreated={source => {

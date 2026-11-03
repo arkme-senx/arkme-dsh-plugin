@@ -1,0 +1,33 @@
+import type { CSSProperties } from 'react'
+import { arkmeTheme as t } from './arkme-theme.js'
+
+export const publicSocialStyles = {
+  root: { width: '100%', maxWidth: 1080, margin: '0 auto', padding: '24px clamp(16px, 3vw, 32px)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, color: t.text },
+  header: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' },
+  title: { margin: 0, fontSize: 22, fontWeight: 650, lineHeight: '30px' },
+  secondary: { color: t.secondary, fontSize: 13, lineHeight: '21px', margin: '6px 0' },
+  tabs: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 18px' },
+  tab: { padding: '8px 13px', border: 0, borderRadius: 9, color: t.secondary, background: 'transparent', font: 'inherit', fontSize: 14, cursor: 'pointer' },
+  selectedTab: { color: t.text, background: t.layer2, fontWeight: 600 },
+  button: { minHeight: 34, padding: '6px 13px', border: `1px solid ${t.border}`, borderRadius: 8, background: t.elevated, color: t.text, font: 'inherit', fontSize: 13, cursor: 'pointer', flexShrink: 0 },
+  primary: { background: t.primaryAction, color: t.onPrimaryAction, borderColor: 'transparent' },
+  disabled: { opacity: .5, cursor: 'not-allowed' },
+  search: { display: 'flex', gap: 8, marginBottom: 18 },
+  input: { width: '100%', minWidth: 0, boxSizing: 'border-box', border: `1px solid ${t.border}`, borderRadius: 8, background: t.input, color: t.text, padding: '9px 11px', font: 'inherit', fontSize: 14 },
+  layout: { display: 'flex', flex: 1, minHeight: 0, gap: 20, alignItems: 'stretch' },
+  list: { flex: '1 1 420px', minWidth: 0, overflowY: 'auto', padding: '0 2px 12px' },
+  row: { padding: 16, marginBottom: 10, border: `1px solid ${t.borderSoft}`, borderRadius: 12, background: t.layer1, display: 'flex', alignItems: 'flex-start', gap: 12 },
+  rowSelected: { borderColor: t.accent, background: t.accentSoft },
+  identity: { flex: 1, minWidth: 0 },
+  name: { margin: 0, fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere', lineHeight: '22px' },
+  description: { color: t.secondary, fontSize: 13, lineHeight: '21px', margin: '5px 0 12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
+  actions: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
+  avatar: { width: 40, height: 40, flex: '0 0 40px', borderRadius: '50%', background: t.layer2, display: 'grid', placeItems: 'center', color: t.secondary, overflow: 'hidden', fontSize: 16 },
+  detail: { flex: '0 1 320px', minWidth: 220, padding: 20, borderRadius: 12, border: `1px solid ${t.borderSoft}`, background: t.layer1, overflowY: 'auto', alignSelf: 'flex-start', maxHeight: '100%', boxSizing: 'border-box' },
+  notice: { padding: '14px 16px', borderRadius: 9, background: t.layer2, color: t.secondary, fontSize: 13, lineHeight: '21px', marginBottom: 12 },
+  error: { color: t.danger, background: t.dangerSoft },
+  label: { display: 'grid', gap: 8, color: t.secondary, fontSize: 13, margin: '14px 0' },
+  check: { display: 'flex', alignItems: 'center', gap: 9, fontSize: 14, lineHeight: '22px', color: t.text, margin: '15px 0' },
+  textarea: { width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 125, maxHeight: 260, padding: '10px 12px', borderRadius: 9, border: `1px solid ${t.border}`, background: t.input, color: t.text, font: 'inherit', fontSize: 14, lineHeight: '22px' },
+  shelf: { padding: 16, border: `1px solid ${t.borderSoft}`, borderRadius: 12, background: t.layer1, marginBottom: 18 },
+} satisfies Record<string, CSSProperties>

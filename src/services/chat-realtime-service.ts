@@ -322,6 +322,10 @@ export class ChatRealtimeService {
       void this.handleMemberEvent(notice)
       return
     }
+    if (notice.thoughtChanged) {
+      void this.handleThoughtChanged(notice).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'reconcile') {
       void this.selfRoleInvalidation?.().catch(() => undefined)
       const generation = notice.state.connectionGeneration
@@ -496,6 +500,20 @@ export class ChatRealtimeService {
     } catch {
       console.warn('dsh-arkme: Chat preparing identity projection failed')
     }
+  }
+
+  private async handleThoughtChanged(notice: ArkmeChatRealtimeNotice): Promise<void> {
+    const hint = notice.thoughtChanged
+    if (!hint || notice.connectionSignal?.aborted || this.disposed) return
+    const session = await this.runtime.sessionStore.read()
+    if (!session || session.userId !== notice.connectionUserId) return
+    const [sourceKey, timelineItemKey] = await Promise.all([
+      this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
+      this.source.chatTimelineItemKey(session.userId, hint.chatSessionUid, hint.relationUid),
+    ])
+    if (notice.connectionSignal?.aborted || this.disposed || (await this.runtime.sessionStore.read())?.userId !== session.userId) return
+    this.emitChatClientEvent({ type: 'thought-invalidated', revision: this.nextChatClientRevision(),
+      accountScope: `${this.runtime.config.environment}:${session.userId}`, sourceKey, timelineItemKey, clear: hint.status === 4 })
   }
 
   private async handleTimelineChanged(

@@ -65,6 +65,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     const requestController = new AbortController()
     requestAbortRef.current = requestController
     setError(''); releaseMedia(false)
+    setActiveItemRef(item.itemRef)
     setPositionAtMillis(seekAtMillis)
     setIsLoading(true)
     try {

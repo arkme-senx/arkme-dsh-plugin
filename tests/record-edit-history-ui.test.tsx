@@ -16,11 +16,10 @@ async function render(reader: ArkmeRecordEditHistoryReader) {
 const button = (view: ReactTestRenderer, text: string) => view.root.findAllByType('button').find(node => node.children.includes(text))!
 
 describe('edit history view', () => {
-  it('keeps full snapshots folded until requested and unmount aborts its scope', async () => {
+  it('renders a read-only fallback without a full-version action and aborts on unmount', async () => {
     const reader = { page: vi.fn<ArkmeRecordEditHistoryReader['page']>(async () => page('old snapshot')) }
     const view = await render(reader)
-    expect(view.root.findAllByType(ArkmeMessageContent)).toHaveLength(0)
-    act(() => button(view, '查看此版全文').props.onClick())
+    expect(view.root.findAllByType(ArkmeMessageContent)).toHaveLength(1)
     expect(view.root.findByType(ArkmeMessageContent).props.item.textContent).toBe('old snapshot')
     expect(JSON.stringify(view.toJSON())).toContain('最新')
     const signal = reader.page.mock.calls[0]?.[3] as AbortSignal | undefined
@@ -33,7 +32,6 @@ describe('edit history view', () => {
     await act(async () => { view = create(<ArkmeRecordEditHistory sourceRef="s" messageActionRef="a" reader={reader} author={{ isMe, senderName: '作者', senderKind: 'bot' }} />) })
     expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe(isMe ? 'row-reverse' : 'row')
     expect(view.root.findByType(ArkmeUserAvatar).props).toMatchObject({ size: 32, senderKind: 'bot', label: '作者' })
-    act(() => button(view, '查看此版全文').props.onClick())
     const content = view.root.findByType(ArkmeMessageContent).props
     expect(content.presentation).toBe('detail')
     expect(content.item.itemUid).toBe('revision-only')
@@ -48,7 +46,6 @@ describe('edit history view', () => {
     const result = page('body')
     result.items[0]!.content = { title: '历史标题', textContent: '', contentBlocks: [] }
     const view = await render({ page: vi.fn().mockResolvedValue(result) })
-    act(() => button(view, '查看此版全文').props.onClick())
     expect(view.root.findAllByType('h3')).toHaveLength(1)
     expect(JSON.stringify(view.toJSON())).toContain('历史标题')
     expect(view.root.findAllByType(ArkmeMessageContent)).toHaveLength(0)
@@ -138,7 +135,8 @@ describe('edit history view', () => {
     const latest = view.root.findByProps({ 'data-arkme-history-revision': 'latest' })
     expect(latest.findByType('del').children).toContain('三')
     expect(latest.findByType('ins').children).toContain('四')
-    expect(JSON.stringify(view.toJSON())).toContain('对比基准：AI 润色')
+    expect(JSON.stringify(view.toJSON())).toContain('AI 润色')
+    expect(latest.findByProps({ 'data-arkme-history-summary': true }).props.style.display).toBe('flex')
     expect(latest.findAllByType(ArkmeMessageContent)).toHaveLength(0)
     const original = view.root.findByProps({ 'data-arkme-history-revision': 'original' })
     expect(original.findAllByType('ins')).toHaveLength(0)
@@ -153,7 +151,6 @@ describe('edit history view', () => {
     const reader = { page: vi.fn().mockResolvedValueOnce({ ...first, hasMore: true, nextCursorEditAt: 100 }).mockResolvedValueOnce(older) }
     const view = await render(reader)
     expect(view.root.findAllByType('del')).toHaveLength(0)
-    act(() => button(view, '查看此版全文').props.onClick())
     await act(async () => button(view, '加载更多').props.onClick())
     expect(view.root.findByType('del').children).toContain('三')
     expect(view.root.findAllByType(ArkmeMessageContent)).toHaveLength(1)
@@ -177,7 +174,7 @@ describe('edit history view', () => {
     expect(view.root.findAllByProps({ title: '未改动内容已折叠' })).toHaveLength(2)
     act(() => button(view, '展开上下文').props.onClick())
     expect(view.root.findAllByProps({ title: '未改动内容已折叠' })).toHaveLength(0)
-    expect(view.root.findAllByType(ArkmeMessageContent)).toHaveLength(0)
+    expect(view.root.findByProps({ 'data-arkme-history-revision': 'new' }).findAllByType(ArkmeMessageContent)).toHaveLength(0)
     expect(view.root.findAllByType(ArkmeRecordRevisionDiff)).toHaveLength(2)
     act(() => view.unmount())
   })

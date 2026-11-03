@@ -5,12 +5,11 @@ import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { MagnifyingGlassMinus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassMinus'
 import { MagnifyingGlassPlus } from '@phosphor-icons/react/dist/icons/MagnifyingGlassPlus'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { RecordingReadingRange } from './useRecordingReadingPosition.js'
-import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
-import { Play } from '@phosphor-icons/react/dist/icons/Play'
-import type { ArkmeRecordingCoverageInterval, ArkmeRecordingWorkbenchItem, ArkmeRecordingDailyMetrics } from '../../types.js'
+import type { ArkmeRecordingCoverageInterval, ArkmeRecordingDailyMetrics } from '../../types.js'
+import type { RecordingTimelineItem } from './recording-day-overview.js'
 import { recordingTextCount } from '../../recording-daily-metrics.js'
+import { RecordingPlaybackToggle } from './RecordingPlaybackToggle.js'
 import { RecordingDailyMetrics } from './RecordingDailyMetrics.js'
 import { arkmeTheme } from '../arkme-theme.js'
 import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
@@ -47,7 +46,7 @@ function clampWindowStart(value: number, visibleMillis: number, dayStart: number
   return Math.min(Math.max(dayStart, dayEnd - visibleMillis), Math.max(dayStart, value))
 }
 
-export function recordingTimelineDayBounds(items: readonly Pick<ArkmeRecordingWorkbenchItem, 'startAtMillis'>[]): { start: number; end: number } {
+export function recordingTimelineDayBounds(items: readonly Pick<RecordingTimelineItem, 'startAtMillis'>[]): { start: number; end: number } {
   const first = items[0]?.startAtMillis ?? Date.now()
   const day = new Date(first)
   day.setHours(0, 0, 0, 0)
@@ -128,7 +127,7 @@ export function recordingTimelineWheelZoom(accumulatedDelta: number, delta: numb
 }
 
 export function recordingTimelineInitialView(
-  items: readonly Pick<ArkmeRecordingWorkbenchItem, 'startAtMillis'>[],
+  items: readonly Pick<RecordingTimelineItem, 'startAtMillis'>[],
   dayStart: number,
   dayEnd: number,
 ): { zoomIndex: number; windowStart: number } {
@@ -142,19 +141,19 @@ export function recordingTimelineInitialView(
 }
 
 export interface ArkmeVisibleTimelineItem {
-  item: ArkmeRecordingWorkbenchItem
+  item: RecordingTimelineItem
   startAtMillis: number
   endAtMillis: number
   aggregatedCount: number
   isMixedSpeakerAggregate: boolean
 }
 
-export function recordingTimelineSpeakerIdentity(item: ArkmeRecordingWorkbenchItem): string {
+export function recordingTimelineSpeakerIdentity(item: RecordingTimelineItem): string {
   return item.isBackground ? 'background' : item.speakerKey
 }
 
 export function recordingVisibleTimelineItems(
-  items: readonly ArkmeRecordingWorkbenchItem[],
+  items: readonly RecordingTimelineItem[],
   windowStart: number,
   windowEnd: number,
   maxNodes = 480,
@@ -232,27 +231,25 @@ export function recordingTimelineTickTimes(windowStart: number, windowEnd: numbe
 
 const styles: Record<string, CSSProperties> = {
   shell: { display: 'grid', gap: 8, padding: '4px 8px', boxSizing: 'border-box', background: desktop.base },
-  overviewRow: { position: 'relative', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'start', gap: 16 },
-  overviewColumn: { minWidth: 0, height: 36, position: 'relative' },
-  overview: { position: 'relative', overflow: 'hidden', height: 18, marginTop: 2, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
+  overviewRow: { position: 'relative', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', alignItems: 'start', gap: 0 },
+  overviewColumn: { minWidth: 0, height: 60, position: 'relative' },
+  overview: { position: 'relative', overflow: 'hidden', height: 18, marginTop: 26, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
   overviewSegment: { position: 'absolute', top: 5, height: 6, minWidth: 2, borderRadius: 3 },
   overviewWindow: { position: 'absolute', zIndex: 3, top: 0, bottom: 0, minWidth: 2, boxSizing: 'border-box', border: `1px solid ${desktop.secondary}`, borderRadius: 10, background: 'transparent', pointerEvents: 'none' },
-  overviewLabels: { position: 'absolute', top: 24, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  overviewLabels: { position: 'absolute', top: 48, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
   overviewLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
-  detailPopover: { position: 'absolute', zIndex: 20, top: 36, width: 'min(560px, 100%)', boxSizing: 'border-box', padding: '12px 14px', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
+  detailPopover: { position: 'absolute', zIndex: 20, top: 60, width: 'min(560px, 100%)', boxSizing: 'border-box', padding: '8px 12px', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
   zoomControls: { height: 20, display: 'flex', alignItems: 'center', gap: 10, color: desktop.text },
   zoomButton: { width: 16, height: 16, padding: 0, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
   zoomHint: { marginLeft: -2, color: desktop.tertiary, fontSize: 10, lineHeight: '20px', whiteSpace: 'nowrap' },
   followButton: { height: 20, padding: '0 6px', border: 0, borderRadius: 4, background: desktop.hover, color: desktop.secondary, cursor: 'pointer', fontSize: 10 },
-  track: { minWidth: 0, minHeight: 0, position: 'relative', paddingTop: 28, touchAction: 'none', userSelect: 'none' },
+  track: { minWidth: 0, minHeight: 0, position: 'relative', paddingTop: 24, touchAction: 'none', userSelect: 'none' },
   detailRail: { position: 'relative', overflow: 'hidden', height: 18, boxSizing: 'border-box', border: `1px solid ${desktop.trackBorder}`, borderRadius: 10, background: desktop.track, cursor: 'grab' },
   segment: { position: 'absolute', top: 1, bottom: 1, minWidth: 2, padding: 0, border: 0, borderRadius: 0, cursor: 'pointer', opacity: .96 },
-  tickLabels: { position: 'relative', height: 16, display: 'block', color: desktop.tertiary, fontSize: 10, lineHeight: '16px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  tickLabels: { position: 'relative', height: 14, display: 'block', color: desktop.tertiary, fontSize: 10, lineHeight: '14px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
   tickLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
   playhead: { position: 'absolute', zIndex: 4, top: 0, bottom: 0, width: 2, transform: 'translateX(-1px)', background: desktop.timelineBlue, pointerEvents: 'none' },
   playheadCap: { position: 'absolute', top: -1, left: -4, width: 10, height: 5, borderRadius: '0 0 10px 10px', background: desktop.timelineBlue },
-  playTooltip: { position: 'absolute', zIndex: 6, top: 0, width: 112, height: 24, boxSizing: 'border-box', padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, borderRadius: 6, background: desktop.hover, color: desktop.text, boxShadow: arkmeTheme.shadow, fontSize: 14, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
-  playControl: { width: 16, height: 16, flex: 'none', padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: desktop.text, color: desktop.base, cursor: 'pointer' },
   legend: { minWidth: 0, position: 'relative', margin: 0, color: desktop.secondary, fontSize: 12 },
   legendBackdrop: { position: 'fixed', zIndex: 11, inset: 0, padding: 0, border: 0, background: 'transparent', cursor: 'default' },
   legendSummary: { height: 28, boxSizing: 'border-box', padding: `4px ${SPEAKER_LEGEND_PADDING}px`, display: 'flex', alignItems: 'center', cursor: 'pointer', listStyle: 'none', border: `1px solid ${desktop.border}`, borderRadius: 6, background: desktop.base },
@@ -279,8 +276,8 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
-  items: ArkmeRecordingWorkbenchItem[]
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, hasActivePlayback = false, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+  items: RecordingTimelineItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
   dailyMetrics?: (ArkmeRecordingDailyMetrics & { speakerTextCounts?: Readonly<Record<string, number>> }) | undefined
@@ -290,11 +287,12 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   readingRange?: RecordingReadingRange | undefined
   onNavigateAtMillis?(value: number): void
   isPlaying: boolean
+  hasActivePlayback?: boolean
   playbackLoading?: boolean
   loading?: boolean
   emptyState?: boolean
-  onEditSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
-  onReviewSpeaker?(item: ArkmeRecordingWorkbenchItem, anchor: { left: number; right: number; top: number; bottom: number }): void
+  onEditSpeaker?(item: RecordingTimelineItem, anchor: { left: number; right: number; top: number; bottom: number }): void
+  onReviewSpeaker?(item: RecordingTimelineItem, anchor: { left: number; right: number; top: number; bottom: number }): void
   onImportAudio?(): void
   onSelectAtMillis(value: number): void
   onTogglePlayback(): void
@@ -350,7 +348,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [detailOpen])
-  const dragRef = useRef<{ x: number; start: number; moved: boolean; item?: ArkmeRecordingWorkbenchItem }>()
+  const dragRef = useRef<{ x: number; start: number; moved: boolean; item?: RecordingTimelineItem }>()
   const overviewDragRef = useRef(false)
   const overviewTargetRef = useRef<number>()
   const wheelDeltaRef = useRef(0)
@@ -396,7 +394,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     [bounds.end, bounds.start, speechItems],
   )
   const allDaySpeakers = useMemo(() => {
-    const speakers = new Map<string, { key: string; label: string; colorIndex: number; avatarRef?: string; durationMillis: number; items: ArkmeRecordingWorkbenchItem[]; mergedSegments: Array<{ startAtMillis: number; endAtMillis: number }> }>()
+    const speakers = new Map<string, { key: string; label: string; colorIndex: number; avatarRef?: string; durationMillis: number; items: RecordingTimelineItem[]; mergedSegments: Array<{ startAtMillis: number; endAtMillis: number }> }>()
     for (const item of items) {
       if (item.isBackground) continue
       const key = recordingTimelineSpeakerIdentity(item)
@@ -429,7 +427,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
   const consistency = useRecordingConsistency(loading ? [] : allDaySpeakers.map(speaker => speaker.items[0]!.itemRef))
   const consistencyByRef = new Map(consistency.groups.map(group => [group.anchorRef, group]))
-  const reviewSpeaker = (event: React.MouseEvent<HTMLButtonElement>, item: ArkmeRecordingWorkbenchItem) => {
+  const reviewSpeaker = (event: React.MouseEvent<HTMLButtonElement>, item: RecordingTimelineItem) => {
     event.preventDefault(); event.stopPropagation()
     const bounds = event.currentTarget.getBoundingClientRect()
     if (legendRef.current) legendRef.current.open = false
@@ -485,7 +483,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     else { setFocusWindowStart(nextStart); setFocusZoomIndex(nextIndex) }
   }
 
-  const seekFromPointer = (clientX: number, element: HTMLDivElement, item?: ArkmeRecordingWorkbenchItem) => {
+  const seekFromPointer = (clientX: number, element: HTMLDivElement, item?: RecordingTimelineItem) => {
     const rect = element.getBoundingClientRect()
     const seekAtMillis = recordingTimelineSeekMillis((clientX - rect.left) / Math.max(1, rect.width), windowStart, windowEnd)
     // A short segment's minimum visual width can extend beyond its actual time interval.
@@ -533,10 +531,23 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   }
 
   const playheadVisible = playheadMillis !== undefined && playheadMillis >= windowStart && playheadMillis <= windowEnd
-  const canPlayAtSelection = playheadMillis !== undefined && items.some(item => (
+  const canPlayAtSelection = hasActivePlayback || playheadMillis !== undefined && items.some(item => (
     playheadMillis >= item.startAtMillis && playheadMillis < item.endAtMillis
   ))
   const playheadPercent = playheadVisible ? (playheadMillis - windowStart) / Math.max(1, windowEnd - windowStart) * 100 : 0
+  const renderPlayheadControl = (percent: number, detail = false) => {
+    const label = playbackLoading ? '取消录音加载' : isPlaying ? '暂停录音' : '播放录音'
+    const disabled = !canPlayAtSelection && !isPlaying && !playbackLoading
+    const timeStyle: CSSProperties = { position: 'absolute', top: 4, ...(percent > 85 ? { right: 30 } : { left: 30 }),
+      color: desktop.secondary, fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }
+    return <span data-recording-cursor-control={detail ? 'detail' : 'overview'} style={{ position: 'absolute', zIndex: 7, top: 0,
+      left: `clamp(12px, ${percent}%, calc(100% - 12px))`, width: 24, height: 24, transform: 'translateX(-50%)' }}>
+      <RecordingPlaybackToggle playing={isPlaying} loading={playbackLoading} disabled={disabled}
+        label={detail ? `${label}（详细时间轴）` : label} onToggle={onTogglePlayback}
+        style={{ background: detail ? desktop.timelineBlue : arkmeTheme.danger }} />
+      {detail ? <span style={timeStyle}>{timeLabel(playheadMillis!)}</span> : <time style={timeStyle}>{timeLabel(playheadMillis!)}</time>}
+    </span>
+  }
   const overviewWindowLeft = (windowStart - bounds.start) / DAY_MILLIS * 100
   const overviewWindowWidth = Math.min(100, visibleMillis / DAY_MILLIS * 100)
   const detailTicks = recordingTimelineTickTimes(windowStart, windowEnd)
@@ -570,7 +581,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   })
 
   return <div style={styles.shell} aria-label={tr("真实录音时间轴")}>
-    <div ref={navigationRef} style={{ ...styles.overviewRow, ...(playheadMillis === undefined ? { gridTemplateColumns: 'minmax(0,1fr)', gap: 0 } : {}) }} data-timeline-layer="overview"
+    <div ref={navigationRef} style={styles.overviewRow} data-timeline-layer="overview"
       onPointerEnter={cancelClose} onPointerLeave={scheduleClose}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleClose() }}
       onKeyDown={event => {
@@ -643,6 +654,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
             style={{ ...styles.playhead, background: arkmeTheme.danger, left: `${(playheadMillis - bounds.start) / DAY_MILLIS * 100}%` }} />}
           {zoomIndex > 0 && <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />}
         </div>
+        {playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end
+          && renderPlayheadControl((playheadMillis - bounds.start) / DAY_MILLIS * 100)}
         <span style={styles.overviewLabels} aria-hidden>
           {['00:00', '06:00', '12:00', '18:00', '24:00'].map((label, index) => <span key={label} style={{
             ...styles.overviewLabel,
@@ -651,18 +664,10 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
           }}>{label}</span>)}
         </span>
       </div>
-      {playheadMillis !== undefined && <span style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 20, fontSize: 11, color: desktop.secondary, whiteSpace: 'nowrap' }}>
-          <time>{timeLabel(playheadMillis)}</time>
-          <button data-arkme-feedback="neutral" type="button" disabled={!canPlayAtSelection && !isPlaying && !playbackLoading}
-            style={{ ...styles.playControl, ...(!canPlayAtSelection && !isPlaying && !playbackLoading ? { opacity: .5, cursor: 'default' } : {}) }}
-            onClick={onTogglePlayback} aria-label={playbackLoading ? '取消录音加载' : isPlaying ? '暂停录音' : '播放录音'}>
-            {isPlaying || playbackLoading ? <Pause size={10} weight="fill" aria-hidden /> : <Play size={10} weight="fill" aria-hidden />}
-          </button>
-      </span>}
       <div ref={detailRef} id={detailId} role="region" aria-label={tr('录音片段详情')}
         hidden={!detailOpen || !hasRecording} style={{ ...styles.detailPopover, left: `clamp(0px, calc(${overviewWindowLeft + overviewWindowWidth / 2}% - 280px), max(0px, calc(100% - 560px)))` }}
         onPointerEnter={cancelClose} onFocusCapture={cancelClose}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 2 }}>
           <span style={{ color: desktop.secondary, fontSize: 11 }}>{timeLabel(windowStart, false)}–{timeLabel(windowEnd, false)}</span>
           <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <span style={styles.zoomControls}>
@@ -671,13 +676,10 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.zoomButton, ...(!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1 ? { opacity: .3, cursor: 'default' } : {}) }} aria-label={tr("放大")} title={hasRecording ? tr("放大") : undefined} disabled={!hasRecording || zoomIndex === RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS.length - 1} onClick={() => { zoomTo(zoomIndex + 1) }}><MagnifyingGlassPlus size={16} aria-hidden /></button>
         <span style={{ ...styles.zoomHint, ...(!hasRecording ? { opacity: .3 } : {}) }}>{tr("滚轮缩放")}</span>
       </span>
-          <button type="button" aria-label={tr('关闭片段详情')} style={styles.zoomButton} onClick={() => {
-            closeDetail(); suppressFocus.current = true; overviewRef.current?.focus({ preventScroll: true }); suppressFocus.current = false
-          }}><X size={14} /></button>
           </span>
         </div>
         <div style={styles.track} data-timeline-layer="detail">
-          {playheadVisible && <span style={{ ...styles.playTooltip, justifyContent: 'center', left: `clamp(0px, calc(${playheadPercent}% - 56px), calc(100% - 112px))` }}>{timeLabel(playheadMillis)}</span>}
+          {playheadVisible && renderPlayheadControl(playheadPercent, true)}
           <div
             style={{ ...styles.detailRail, ...(!hasRecording ? { cursor: 'default' } : {}) }}
             tabIndex={hasRecording ? 0 : -1}
@@ -730,7 +732,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
                   : `${item.item.speakerLabel}，选择该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
                 title={item.isMixedSpeakerAggregate
                   ? `多个说话人 · 聚合 ${String(item.aggregatedCount)} 个片段`
-                  : `${item.item.speakerLabel} · ${item.item.text.slice(0, 80)}`}
+                  : `${item.item.speakerLabel} · ${(item.item.textPreview ?? item.item.text ?? '').slice(0, 80)}`}
                 onClick={event => {
                   event.stopPropagation()
                   // Pointer selection/panning belongs to the rail; keyboard activation has no coordinate.
@@ -810,7 +812,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
                 <span style={styles.legendMetric}>{tr("总时长:")} {speakerStatsDurationLabel(speaker.durationMillis)}</span>
                 <span style={{ ...styles.legendMetric, margin: '0 8px' }}>•</span>
-                <span style={styles.legendMetric}>{tr('转写 {count} 字',{count:dailyMetrics === undefined ? '—' : (dailyMetrics.speakerTextCounts?.[speaker.key] ?? speaker.items.reduce((sum,item)=>sum+recordingTextCount(item.text),0)).toLocaleString(arkmeIntlLocale())})}</span>
+                <span style={styles.legendMetric}>{tr('转写 {count} 字',{count:dailyMetrics === undefined ? '—' : (dailyMetrics.speakerTextCounts?.[speaker.key] ?? speaker.items.reduce((sum,item)=>sum+(item.textCount ?? recordingTextCount(item.text ?? '')),0)).toLocaleString(arkmeIntlLocale())})}</span>
               </span>
             </span>
           })}

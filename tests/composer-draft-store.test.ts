@@ -387,3 +387,17 @@ describe('serialized composer projection', () => {
     expect(serializeArkmeComposerDraft(snapshot).text).toBe(wire)
   })
 })
+
+it('restores selected cloud resources alongside local attachments without persisting browser preview URLs', () => {
+  let saved: string | null = null
+  const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value } }
+  const store = new ArkmeComposerDraftStore(storage)
+  const key = arkmeSourceComposerDraftKey(42, { kind: 'send_to_self', sourceRef: 'self' })!
+  const cloud = { fileAssetUid: 'owned-asset', fileName: '云端文件.pdf', mimeType: 'application/pdf', size: 100, fileKind: 4 as const }
+  store.setText(key, '保留文字')
+  store.appendAttachments(key, [{ asset: cloud, resourceMediaRef: 'scoped-media', previewUrl: 'blob:temporary' },
+    { localFile: { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: '本地文件.pdf', mimeType: 'application/pdf', size: 1, fileKind: 4 } }])
+  expect(saved).not.toContain('blob:temporary')
+  const restored = new ArkmeComposerDraftStore(storage)
+  expect(restored.get(key)).toMatchObject({ text: '保留文字', attachments: [{ asset: cloud, resourceMediaRef: 'scoped-media' }, { localFile: { fileName: '本地文件.pdf' } }] })
+})

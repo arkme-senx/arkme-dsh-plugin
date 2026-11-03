@@ -1777,6 +1777,8 @@ describe('ChatService', () => {
   })
 
   it('loads quick-note extensions from the durable chat tree identity without creating a copy link', async () => {
+    const quote = { version: 1, projection: 'arkme-text-v1', sourceDigest: 'a'.repeat(64), start: 0, end: 3,
+      text: '原快记', prefix: '', suffix: '' }
     const worldPost = vi.fn(async () => { throw new Error('chat detail must not use the public-record extension list') })
     const chatPost = vi.fn(async (path: string, body: Record<string, unknown>) => {
       if (path !== '/api/v1/chats/extensions/tree/page') throw new Error(`unexpected chat path: ${path}`)
@@ -1795,6 +1797,7 @@ describe('ChatService', () => {
             chat_session_uid: 'chat-1', parent_record_owner_user_id: 42, parent_record_uid: 'record-snapshot-1',
             child_record_owner_user_id: 17, child_record_uid: 'extension-record-1',
             root_record_owner_user_id: 42, root_record_uid: 'record-snapshot-1', source_mode: 1,
+            quote_reply: quote, quote_reply_state: 'available',
             created_at: 1_787_735_200_000, updated_at: 1_787_735_200_000,
           },
           item: {
@@ -1856,6 +1859,7 @@ describe('ChatService', () => {
         parentRecordUid: 'record-snapshot-1', recordOwnerUserId: 17, level: 2,
         contentBlocks, senderMemberRef: expect.any(String), senderIsMe: false,
         senderAvatarUrl: 'current-extension-avatar',
+        quote, quoteState: 'available', relationUid: 'rel-extension-1', sequence: 10,
       })],
     })
     expect(profile.sealProfileImageRef).toHaveBeenCalledWith(42, 7)
@@ -3906,4 +3910,22 @@ it('preserves adjacent int64 member refs through paging, presentation and live t
  expect((await chat.sourceMembersPresentation('source',[ref])).items[0]!.displayName).toBe('客户1')
  expect(await chat.memberWorldTarget('source',ref)).toEqual({userId:ids[1]})
  expect(ref).not.toBe(first.items[0]!.memberRef)
+})
+
+it.each(['send_to_self', 'default_category', 'topic'])('sends structured @Asen metadata through the existing %s record contract', async kind => {
+  const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+  const createPersonalRecord = vi.fn(async (_path: string, body: Record<string, unknown>) => ({ record_uid: body.record_uid, status: 1, record_status: 1 }))
+  const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'signing-key' } }
+  const source = { openSourceRef: async () => ({ kind, ownerRef: 'owned-source' }) }
+  const record = { createPersonalRecord, syncCreatedRecordTags: vi.fn() }
+  const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, record as never, {} as never, {} as never, {} as never,
+    { invalidateRecordProjection: vi.fn() } as never)
+  await chat.sendSourceRich('signed-source', { textContent: '  @阿森 看看 ', botMentions: [{ botRef: 'asen', startIndex: 2, length: 3 }] }, { recordUid: 'note' })
+  expect(createPersonalRecord).toHaveBeenCalledOnce()
+  expect(createPersonalRecord.mock.calls[0]?.[0]).toBe(kind === 'topic' ? '/api/v1/topics/records/create' : '/api/v1/records/create')
+  expect(createPersonalRecord.mock.calls[0]?.[1]).toMatchObject({ text_content: '@阿森 看看', content_payload: { mention_metadata: { bot_mentions: [
+    { bot_uid: 'asen', display_name_snapshot: '阿森', start_index: 0, length: 3 },
+  ] } } })
+  await expect(chat.sendSourceRich('signed-source', { textContent: '@别的机器人 看看', botMentions: [{ botRef: 'other', startIndex: 0, length: 6 }] })).rejects.toThrow('当前会话仅支持 @阿森')
+  expect(createPersonalRecord).toHaveBeenCalledOnce()
 })

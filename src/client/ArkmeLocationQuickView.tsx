@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import type { ArkmeSearchRecordItem } from '../types.js'
+import type { ArkmeSearchRecordItem, ArkmeSourceItem } from '../types.js'
 import { locationSources, worldLocationViewport, type LocationMarkers, type LocationQuery, type LocationRecords, type LocationSource, type LocationViewport } from '../location-search.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeLocationDateFilter } from './ArkmeLocationDateFilter.js'
@@ -9,13 +9,15 @@ import type { LocationDateFilter } from './day-location-cache.js'
 import { locationSearchCache as cache, startLocationSearchCache, type LocationSelection } from './location-search-cache.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 import css from './location-quick-view.css?inline'
+import { ArkmeConversationLocationView, SelfLocationScopePicker } from './ArkmeConversationLocationView.js'
 
 const emptyRecords: LocationRecords = { items: [], hasMore: false, nextOffset: 0, truncated: false }
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason)
 
-export function ArkmeLocationQuickView({ onOpenRecord, initialDate, initialLocation }: { onOpenRecord(item: ArkmeSearchRecordItem): void; initialDate?: LocationDateFilter; initialLocation?: { latitude: number; longitude: number } }) {
+export function ArkmeLocationQuickView({ onOpenRecord, initialDate, initialLocation, initialSource }: { onOpenRecord(item: ArkmeSearchRecordItem): void; initialDate?: LocationDateFilter; initialLocation?: { latitude: number; longitude: number }; initialSource?: ArkmeSourceItem }) {
   const browser = useRef<HTMLDivElement>(null), focusDate = useRef(false)
   const [date, setDate] = useState(initialDate?.bucketDate ?? '')
+  const [source, setSource] = useState(initialSource)
   const timezone = initialDate?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const lastDate = useRef(initialDate?.bucketDate ?? '')
   const changeDate = (value: string) => { focusDate.current = true; if (value) lastDate.current = value; setDate(value) }
@@ -27,10 +29,15 @@ export function ArkmeLocationQuickView({ onOpenRecord, initialDate, initialLocat
   const hardRevision = useSyncExternalStore(cache.subscribe, cache.getHardRevision, cache.getHardRevision)
   if (!auth.auth || !['authenticated', 'binding-required'].includes(auth.auth.status)) return null
   const account = `${auth.auth.environment}:${auth.auth.userId}`
-  const toolbar = <ArkmeLocationDateFilter date={date} lastDate={lastDate.current} onChange={changeDate}/>
+  const toolbar = <ArkmeLocationDateFilter date={date} lastDate={lastDate.current} onChange={changeDate} scoped={!!source}/>
   return <div ref={browser} className="arkme-location-browser">
     <style>{css}</style>
-    {date ? <ArkmeDayLocationView key={`${account}:${hardRevision}:${date}:${timezone}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''}
+    {source && (source.kind === 'private_chat' || source.kind === 'group_chat'
+      ? <div className="arkme-location-scope">{tr('位置')} · {source.displayName}</div>
+      : <SelfLocationScopePicker source={source} userId={auth.auth.userId!} environment={auth.auth.environment} onChange={setSource}/>)}
+    {source ? <ArkmeConversationLocationView key={`${account}:${hardRevision}:${source.sourceRef}`}
+      source={source} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''} date={date} timezone={timezone} toolbar={toolbar} onOpenRecord={onOpenRecord}/>
+      : date ? <ArkmeDayLocationView key={`${account}:${hardRevision}:${date}:${timezone}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''}
       date={{ bucketDate: date, timezone }} toolbar={toolbar} onOpenRecord={onOpenRecord} {...(initialLocation && date === initialDate?.bucketDate ? { initialLocation } : {})} />
       : <LocationView key={`${account}:${hardRevision}`} account={account} browserAk={auth.config?.baiduMapBrowserAk ?? ''} toolbar={toolbar} onOpenRecord={onOpenRecord} />}
   </div>

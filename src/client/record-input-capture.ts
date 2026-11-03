@@ -1,5 +1,6 @@
 import { dictationActive, subscribeDictationActivity } from './dictation-activity.js'
-import type { ArkmeRecordCaptureContext, ArkmeSourceItem } from '../types.js'
+import type { ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeSourceItem } from '../types.js'
+import { captureArkmeRecordInputLocation } from './record-capture-location.js'
 
 const BACKGROUND_SOUND_ENABLED_PREFIX = 'arkme.record-capture.background-sound.enabled.'
 const MICROPHONE_EXPLICIT_GRANT_KEY = 'arkme.record-capture.microphone.explicit-grant'
@@ -68,6 +69,7 @@ export interface ArkmeRecordInputCaptureResult {
   completedAtMillis: number
   recordDurationMillis: number
   captureContext: ArkmeRecordCaptureContext
+  location?: ArkmeRecordLocationCapture
   backgroundSound: {
     enabled: boolean
     state: ArkmeBackgroundSoundCaptureState
@@ -95,9 +97,10 @@ export interface ArkmeRecordInputCaptureOwnerOptions {
   now?: () => number
   createCaptureId?: () => string
   captureContext?: () => Promise<ArkmeRecordCaptureContext>
+  captureLocation?: (signal: AbortSignal) => Promise<ArkmeRecordLocationCapture | undefined>
+  locationEnabled?: () => boolean
   backgroundSoundEnabled?: () => boolean
   microphoneReady?: () => boolean
-  requestMicrophonePermission?: () => Promise<'granted'>
   subscribeBackgroundSoundPreference?: (listener: () => void) => () => void
   onBackgroundSoundFailure?: (failure: ArkmeBackgroundSoundFailure) => void
   startDelayMillis?: number
@@ -126,7 +129,13 @@ interface DraftCaptureState {
   limitReached: boolean
   readonly segments: ArkmeBackgroundSoundCaptureSegment[]
   readonly currentAmplitudes: number[]
-  microphonePermissionAttempted: boolean
+  metadataEpoch: number
+  contextPending: boolean
+  contextRequestedAtMillis: number | undefined
+  captureContext: ArkmeRecordCaptureContext | undefined
+  locationRequestedAtMillis: number | undefined
+  locationController: AbortController | undefined
+  location: ArkmeRecordLocationCapture | undefined
 }
 
 export interface ArkmeNavigatorCaptureSource {
@@ -378,7 +387,7 @@ export async function arkmeMicrophonePermissionState(
   }
 }
 
-/** Input-gesture permission owner. Settings only persist whether capture is enabled. */
+/** Explicit settings authorization; ordinary typing never requests permission. */
 export async function requestArkmeBackgroundSoundPermission(
   source: ArkmeNavigatorCaptureSource | undefined = browserNavigator(),
   grantScope: ArkmeMicrophoneGrantScope = browserMicrophoneGrantScope(),
@@ -917,18 +926,18 @@ function failureState(failure: ArkmeBackgroundSoundFailure | undefined): ArkmeBa
  * Single client owner for every text-record input surface.
  *
  * UI surfaces only publish keyed focus/content facts. This owner serializes one
- * browser microphone, isolates retained segments by draft, and captures submit
- * metadata once so callers cannot drift in duration/device semantics.
+ * browser microphone and isolates audio/environment facts by draft. Submission
+ * freezes available input-time facts without starting or awaiting sensor reads.
  */
 export class ArkmeRecordInputCaptureOwner {
   private readonly recorder: ArkmeBackgroundSoundRecorder
   private readonly now: () => number
   private readonly createCaptureId: () => string
   private readonly captureContext: () => Promise<ArkmeRecordCaptureContext>
-  private contextSample: { startedAtMillis: number; promise: Promise<ArkmeRecordCaptureContext> } | undefined
+  private readonly captureLocation: (signal: AbortSignal) => Promise<ArkmeRecordLocationCapture | undefined>
+  private readonly locationEnabled: () => boolean
   private readonly enabledReader: () => boolean
   private readonly microphoneReadyReader: () => boolean
-  private readonly requestMicrophonePermission: () => Promise<'granted'>
   private readonly onFailure: ((failure: ArkmeBackgroundSoundFailure) => void) | undefined
   private readonly startDelayMillis: number
   private readonly operationTimeoutMillis: number
@@ -959,12 +968,12 @@ export class ArkmeRecordInputCaptureOwner {
     this.now = options.now ?? Date.now
     this.createCaptureId = options.createCaptureId ?? (() => defaultCaptureId(this.now))
     this.captureContext = options.captureContext ?? captureArkmeRecordInputContext
+    this.captureLocation = options.captureLocation ?? captureArkmeRecordInputLocation
+    this.locationEnabled = options.locationEnabled ?? (() => true)
     this.enabledReader = options.backgroundSoundEnabled
       ?? (() => arkmeBackgroundSoundCaptureEnabled(options.accountId))
     this.microphoneReadyReader = options.microphoneReady
       ?? (options.recorder === undefined ? arkmeMicrophoneCaptureReady : () => true)
-    this.requestMicrophonePermission = options.requestMicrophonePermission
-      ?? requestArkmeBackgroundSoundPermission
     this.onFailure = options.onBackgroundSoundFailure
     this.startDelayMillis = Math.max(0, options.startDelayMillis ?? DEFAULT_START_DELAY_MILLIS)
     this.operationTimeoutMillis = Math.max(1, options.operationTimeoutMillis ?? DEFAULT_OPERATION_TIMEOUT_MILLIS)
@@ -1023,6 +1032,7 @@ export class ArkmeRecordInputCaptureOwner {
       if (this.activeDraftKey !== undefined && this.activeDraftKey !== draftKey) {
         const previous = this.sessions.get(this.activeDraftKey)
         if (previous !== undefined) {
+          this.pauseMetadata(previous)
           previous.isActive = false
           previous.generation += 1
           this.reconcile(previous)
@@ -1035,6 +1045,7 @@ export class ArkmeRecordInputCaptureOwner {
     if (draftKey === undefined || draftKey === '') return
 
     const state = this.session(draftKey)
+    if (state.isActive && !input.isActive) this.pauseMetadata(state)
     const previousRecordable = state.wasRecordable
     const clearedUserContent = state.hasUserContent && !input.hasUserContent
     state.isActive = input.isActive
@@ -1045,6 +1056,11 @@ export class ArkmeRecordInputCaptureOwner {
       state.startedAtMillis = undefined
     }
     if (clearedUserContent) {
+      this.pauseMetadata(state)
+      state.captureContext = undefined
+      state.location = undefined
+      state.contextRequestedAtMillis = undefined
+      state.locationRequestedAtMillis = undefined
       // Clearing the draft starts a new logical input generation even while
       // focus remains. Do not let earlier segments leak into text typed later
       // under the same stable draftKey.
@@ -1055,7 +1071,6 @@ export class ArkmeRecordInputCaptureOwner {
       state.failure = undefined
       state.failureLatched = false
       state.limitReached = false
-      state.microphonePermissionAttempted = false
       void this.stopOrCancel(state, false)
     }
     const nextRecordable = this.shouldRecord(state)
@@ -1064,37 +1079,13 @@ export class ArkmeRecordInputCaptureOwner {
       state.failureLatched = false
     }
     state.wasRecordable = nextRecordable
+    if (state.isActive && state.hasUserContent) this.sampleMetadata(state)
     this.reconcile(state)
   }
 
-  /**
-   * Called directly from a real composer input event so the browser may show
-   * its microphone prompt. One logical draft generation owns at most one
-   * request; focus, effects and re-renders never request permission.
-   */
+  /** Real input prewarms metadata; permission prompts belong to explicit settings actions. */
   beginUserInput(draftKeyValue: string | undefined): void {
-    if (!this.disposed && draftKeyValue?.trim()) void this.sampleContext()
-    if (this.disposed || !this.readEnabled() || this.readMicrophoneReady()) return
-    this.activate()
-    const draftKey = draftKeyValue?.trim()
-    if (draftKey === undefined || draftKey === '') return
-    const state = this.session(draftKey)
-    if (state.microphonePermissionAttempted) return
-    state.microphonePermissionAttempted = true
-    const generation = state.generation
-    let request: Promise<'granted'>
-    try {
-      request = this.requestMicrophonePermission()
-    } catch (error) {
-      this.rejectInputPermission(state, generation, error)
-      return
-    }
-    void request.then(() => {
-      if (!this.currentGeneration(state, generation)) return
-      state.failure = undefined
-      state.failureLatched = false
-      this.reconcileCaptureGate()
-    }).catch(error => { this.rejectInputPermission(state, generation, error) })
+    if (!this.disposed && draftKeyValue?.trim()) this.sampleMetadata(this.session(draftKeyValue.trim()))
   }
 
   getStartedAtMillis(draftKey: string | undefined): number | undefined {
@@ -1118,22 +1109,48 @@ export class ArkmeRecordInputCaptureOwner {
     }
   }
 
-  private sampleContext(): Promise<ArkmeRecordCaptureContext> {
+  private pauseMetadata(state: DraftCaptureState): void {
+    state.metadataEpoch++
+    state.contextPending = false
+    state.locationController?.abort()
+    state.locationController = undefined
+  }
+
+  private sampleMetadata(state: DraftCaptureState): void {
     const now = this.now()
-    // One account-scoped sample, refreshed by actual input, never a background poll.
-    // At most five seconds of device/network staleness is accepted at submission.
-    if (this.contextSample !== undefined && now - this.contextSample.startedAtMillis >= 0
-      && now - this.contextSample.startedAtMillis < 5_000) return this.contextSample.promise
-    const promise = Promise.resolve().then(() => this.captureContext())
-      .catch((): ArkmeRecordCaptureContext => ({ clientName: '未知电脑（浏览器）' }))
-    this.contextSample = { startedAtMillis: now, promise }
-    return promise
+    const epoch = state.metadataEpoch
+    const current = () => !this.disposed && state.metadataEpoch === epoch && this.sessions.get(state.draftKey) === state
+    if (!state.contextPending && (state.contextRequestedAtMillis === undefined || now - state.contextRequestedAtMillis >= 5_000 || now < state.contextRequestedAtMillis)) {
+      state.contextPending = true
+      state.contextRequestedAtMillis = now
+      void Promise.resolve().then(() => current() ? this.captureContext() : undefined)
+        .catch((): ArkmeRecordCaptureContext => ({ clientName: '未知电脑（浏览器）' }))
+        .then(context => { if (current() && context) state.captureContext = { ...context } })
+        .finally(() => { if (current()) state.contextPending = false })
+    }
+    // One cached point, refreshed only by activity. No timers or trajectory collection.
+    if (this.locationEnabled() && !state.locationController && (state.locationRequestedAtMillis === undefined || now - state.locationRequestedAtMillis >= 30_000 || now < state.locationRequestedAtMillis)) {
+      const controller = new AbortController()
+      state.locationController = controller
+      state.locationRequestedAtMillis = now
+      void Promise.resolve().then(() => current() && !controller.signal.aborted ? this.captureLocation(controller.signal) : undefined).then(location => {
+        if (current() && !controller.signal.aborted && location
+          && Number.isFinite(location.latitude) && Math.abs(location.latitude) <= 90
+          && Number.isFinite(location.longitude) && Math.abs(location.longitude) <= 180
+          && Number.isSafeInteger(location.capturedAtMillis) && location.capturedAtMillis > 0
+          && location.capturedAtMillis <= this.now()) state.location = { ...location }
+      }).catch(() => undefined).finally(() => {
+        if (current() && state.locationController === controller) state.locationController = undefined
+      })
+    }
   }
 
   async finishForSubmit(draftKey: string): Promise<ArkmeRecordInputCaptureResult> {
     const state = this.session(draftKey)
     const completedAtMillis = this.now()
-    const contextPromise = this.sampleContext()
+    const captureContext = { ...state.captureContext }
+    const location = state.location ? { ...state.location } : undefined
+    this.pauseMetadata(state)
     // A quick send can arrive before the zero-delay timer fires or while
     // getUserMedia/MediaRecorder is still starting. Finalize that same owner
     // generation first; otherwise a valid granted draft silently loses its
@@ -1170,7 +1187,8 @@ export class ArkmeRecordInputCaptureOwner {
       recordDurationMillis: state.startedAtMillis === undefined
         ? 0
         : Math.max(0, completedAtMillis - state.startedAtMillis),
-      captureContext: await contextPromise,
+      captureContext,
+      ...(location ? { location } : {}),
       backgroundSound: {
         enabled,
         state: segments.length > 0 ? 'captured' : enabled ? failureState(state.failure) : 'disabled',
@@ -1193,6 +1211,7 @@ export class ArkmeRecordInputCaptureOwner {
       || current.segments.length > 0)) return
     const active = current?.isActive === true
     if (current !== undefined) {
+      this.pauseMetadata(current)
       current.isActive = false
       current.generation += 1
       this.cancelStartTimer(current)
@@ -1204,6 +1223,8 @@ export class ArkmeRecordInputCaptureOwner {
     state.isActive = active
     state.hasUserContent = true
     state.startedAtMillis = result.startedAtMillis
+    state.captureContext = { ...result.captureContext }
+    state.location = result.location ? { ...result.location } : undefined
     const restoreBackgroundSound = this.captureGateOpen()
     state.segments.splice(0, state.segments.length, ...(restoreBackgroundSound ? result.backgroundSound.segments : []).map(segment => ({
       ...segment,
@@ -1229,6 +1250,7 @@ export class ArkmeRecordInputCaptureOwner {
   async discard(draftKey: string): Promise<void> {
     const state = this.sessions.get(draftKey)
     if (state === undefined) return
+    this.pauseMetadata(state)
     state.isActive = false
     state.generation += 1
     if (this.activeDraftKey === draftKey) this.activeDraftKey = undefined
@@ -1242,13 +1264,13 @@ export class ArkmeRecordInputCaptureOwner {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
-    this.contextSample = undefined
     this.activationRevision += 1
     this.activated = false
     this.unsubscribeDictation()
     this.unsubscribePreference()
     this.unsubscribeRecorderFailure()
     for (const state of this.sessions.values()) {
+      this.pauseMetadata(state)
       state.generation += 1
       this.cancelStartTimer(state)
       this.cancelCaptureLimitTimer(state)
@@ -1295,7 +1317,13 @@ export class ArkmeRecordInputCaptureOwner {
       limitReached: false,
       segments: [],
       currentAmplitudes: [],
-      microphonePermissionAttempted: false,
+      metadataEpoch: 0,
+      contextPending: false,
+      contextRequestedAtMillis: undefined,
+      captureContext: undefined,
+      locationRequestedAtMillis: undefined,
+      locationController: undefined,
+      location: undefined,
     }
     this.sessions.set(draftKey, created)
     return created
@@ -1305,6 +1333,7 @@ export class ArkmeRecordInputCaptureOwner {
     if (this.sessions.size < this.maxRetainedDrafts) return
     for (const state of this.sessions.values()) {
       if (state.isActive || state.draftKey === this.activeDraftKey) continue
+      this.pauseMetadata(state)
       state.generation += 1
       this.cancelStartTimer(state)
       this.cancelCaptureLimitTimer(state)
@@ -1398,15 +1427,6 @@ export class ArkmeRecordInputCaptureOwner {
 
   private currentGeneration(state: DraftCaptureState, generation: number): boolean {
     return !this.disposed && state.generation === generation && this.sessions.get(state.draftKey) === state
-  }
-
-  private rejectInputPermission(state: DraftCaptureState, generation: number, error: unknown): void {
-    if (!this.currentGeneration(state, generation)) return
-    const failure = this.classifyStartFailure(error)
-    state.failure = failure
-    state.failureLatched = true
-    this.publishWaveform(state)
-    this.notifyFailure(failure)
   }
 
   private startRecording(state: DraftCaptureState): Promise<void> {

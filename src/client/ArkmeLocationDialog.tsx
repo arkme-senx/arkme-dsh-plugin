@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import type { ArkmeRecordLocationObservation, ArkmeSearchRecordItem, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeRecordLocationObservation, ArkmeSearchRecordItem, ArkmeTimelineItem, ArkmeSourceItem } from '../types.js'
 import type { LocationDateFilter } from './day-location-cache.js'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArkmeLocationQuickView } from './ArkmeLocationQuickView.js'
@@ -17,25 +17,27 @@ import css from './day-location-map.css?inline'
 
 /** Shared full-map dialog for Explore and the personal calendar. */
 type LocationDialogProps = {
+  initialSource?: ArkmeSourceItem
   initialDate?: LocationDateFilter; initialLocation?: ArkmeRecordLocationObservation; onClose(): void; returnFocusRef?: RefObject<HTMLElement>
   standalone?: boolean
   onOpenConversation?(item: ArkmeSearchRecordItem): Promise<void>
 }
 export function ArkmeLocationDialog(props: LocationDialogProps) {
-  const [fallback, setFallback] = useState(props.standalone === true || (longArticleWindowBridge()?.version ?? 0) < 3)
+  const [fallback, setFallback] = useState(props.standalone === true || (longArticleWindowBridge()?.version ?? 0) < 3
+    || !!props.initialSource && longArticleWindowBridge()?.scopedLocations !== true)
   const [error, setError] = useState('')
   const close = useRef(props.onClose); close.current = props.onClose
   useEffect(() => {
-    if (props.standalone) return
+    if (props.standalone || props.initialSource && longArticleWindowBridge()?.scopedLocations !== true) return
     let active = true
-    void openBrowseWindow('location', { ...(props.initialDate ? { initialDate: props.initialDate } : {}), ...(props.initialLocation ? { initialLocation: props.initialLocation } : {}) })
+    void openBrowseWindow('location', { ...(props.initialSource ? { initialSource: props.initialSource } : {}), ...(props.initialDate ? { initialDate: props.initialDate } : {}), ...(props.initialLocation ? { initialLocation: props.initialLocation } : {}) })
       .then(opened => { if (active) { if (opened) close.current(); else setFallback(true) } })
       .catch(reason => { if (active) { setError(reason instanceof Error ? reason.message : '无法打开位置窗口'); setFallback(true) } })
     return () => { active = false }
   }, [])
   return <>{error && <p role="alert">{error}</p>}{fallback && <LocationDialogContent {...props} />}</>
 }
-function LocationDialogContent({ initialDate, initialLocation, onClose, returnFocusRef, standalone, onOpenConversation }: LocationDialogProps) {
+function LocationDialogContent({ initialSource, initialDate, initialLocation, onClose, returnFocusRef, standalone, onOpenConversation }: LocationDialogProps) {
 
   useArkmeLocale()
   const root = useRef<HTMLElement>(null)
@@ -73,7 +75,7 @@ function LocationDialogContent({ initialDate, initialLocation, onClose, returnFo
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (detail) closeDetail(); else onClose() }
         if (event.key === 'Tab') {
-          const nodes = [...(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),a[href],[tabindex="0"]') ?? [])].filter(node => node.getClientRects().length > 0 && !node.closest('[inert]'))
+          const nodes = [...(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),a[href],[tabindex="0"]') ?? [])].filter(node => node.getClientRects().length > 0 && !node.closest('[inert]'))
           const first = nodes[0], last = nodes.at(-1)
           if (event.shiftKey && (document.activeElement === first || document.activeElement === root.current)) { event.preventDefault(); last?.focus() }
           else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
@@ -82,6 +84,7 @@ function LocationDialogContent({ initialDate, initialLocation, onClose, returnFo
       {!standalone && <button className="arkme-location-dialog-close" type="button" aria-label={tr(initialDate ? '关闭当天位置' : '关闭位置')} title={tr('关闭位置')} style={detail ? { display: 'none' } : undefined} onClick={onClose}><X size={20}/></button>}
       <div className="arkme-location-dialog-body" {...(detail ? { inert: '' } : {})} aria-hidden={detail ? true : undefined}>
       <ArkmeLocationQuickView {...(initialDate ? { initialDate } : {})}
+        {...(initialSource ? { initialSource } : {})}
         {...(initialLocation ? { initialLocation } : {})} onOpenRecord={item => { void openRecord(item).catch(reason => setDetail({ source: item, error: reason instanceof Error ? reason.message : '打开失败，请重试' })) }} />
       </div>
       {detail && <div className="arkme-day-map-detail" style={{ background: arkmeTheme.base }}>

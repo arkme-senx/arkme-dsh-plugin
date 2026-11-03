@@ -1,6 +1,7 @@
 import type { RecordOwnerId } from '../record-owner-id.js'
 import type { ArkmeRecordEditHistoryPage, ArkmeRecordRevision } from '../record-edit-history.js'
 import { ArkmePluginError, type ServiceRuntime, objectValue } from './service.js'
+import { recordSenderSnapshot } from '../record-sender-snapshot.js'
 
 /** Produced only after existing account/source-bound message reference verification. */
 export type RecordEditHistoryTarget = { viewerUserId: number; recordUid: string } & (
@@ -21,7 +22,7 @@ export class RecordEditHistoryService {
   constructor(private readonly runtime: Pick<ServiceRuntime, 'requireSession' | 'authenticatedPost' | 'authenticatedChatPost'>,
     private readonly projector: RecordRevisionContentProjector) {}
 
-  async page(target: RecordEditHistoryTarget, cursorEditAt = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
+  private async readPage(target: RecordEditHistoryTarget, cursorEditAt = 0, signal?: AbortSignal) {
     if (!Number.isSafeInteger(cursorEditAt) || cursorEditAt < 0 || target.recordUid.trim() === '') invalid()
     const session = await this.runtime.requireSession()
     if (session.userId !== target.viewerUserId) invalid()
@@ -47,14 +48,39 @@ export class RecordEditHistoryService {
       seen.add(revision.revision_uid)
       return [revision]
     })
+    return { snapshots, hasMore: data.has_more, nextCursor: next as number | undefined, userId: session.userId }
+  }
+
+  async revision(target: RecordEditHistoryTarget, revisionUid: string, signal?: AbortSignal): Promise<{ snapshot: Record<string, unknown>; previous?: Record<string, unknown> }> {
+    if (!revisionUid.trim() || revisionUid.length > 256) invalid()
+    let cursor = 0
+    let snapshot: Record<string, unknown> | undefined
+    for (let index = 0; index < 100; index++) {
+      const page = await this.readPage(target, cursor, signal)
+      for (const item of page.snapshots.sort((a, b) => Number(b.edit_at) - Number(a.edit_at))) {
+        if (snapshot) return { snapshot, previous: item }
+        if (item.revision_uid === revisionUid) snapshot = item
+      }
+      if (!page.hasMore) { if (snapshot) return { snapshot }; break }
+      cursor = page.nextCursor!
+    }
+    throw new ArkmePluginError('record-revision-not-found', '该版本的记忆快照暂不可用，请刷新编辑记录', false, 404)
+  }
+
+  async page(target: RecordEditHistoryTarget, cursorEditAt = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
+    const { snapshots, hasMore, nextCursor, userId } = await this.readPage(target, cursorEditAt, signal)
     const contents = snapshots.length === 0 ? [] : await this.projector.projectPage(snapshots, target, signal)
-    if (signal?.aborted || (await this.runtime.requireSession()).userId !== session.userId || contents.length !== snapshots.length) invalid()
-    const items = snapshots.map((revision, index): ArkmeRecordRevision => ({
+    if (signal?.aborted || (await this.runtime.requireSession()).userId !== userId || contents.length !== snapshots.length) invalid()
+    const items = snapshots.map((revision, index): ArkmeRecordRevision => {
+      const author = recordSenderSnapshot(revision)
+      return {
       revisionUid: revision.revision_uid as string,
       kind: revisionKinds[revision.revision_type as number] ?? 'other',
       editAtMillis: revision.edit_at as number, content: contents[index]!,
-    }))
+      ...(author.avatarRef === undefined ? {} : { avatarRef: author.avatarRef }),
+      ...(author.senderNameSnapshot ? { senderName: author.senderName } : {}),
+    } })
     items.sort((a, b) => b.editAtMillis - a.editAtMillis)
-    return { items, hasMore: data.has_more, ...(data.has_more ? { nextCursorEditAt: next as number } : {}) }
+    return { items, hasMore, ...(hasMore ? { nextCursorEditAt: nextCursor! } : {}) }
   }
 }

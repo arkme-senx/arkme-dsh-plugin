@@ -586,6 +586,7 @@ export function apply(ctx: Context, config: Config): void {
           : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),
       },
     )
+    apiCtx.effect(() => service.attachModelDirectoryReader(() => apiProxy.models()))
     service.accountScope.attachGuestConversationProbe(async () => {
       try {
         let cursor: string | undefined

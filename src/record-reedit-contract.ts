@@ -1,4 +1,4 @@
-import type { ArkmeContentBlock, ArkmeSourceKind, ArkmeUploadedAsset } from './types.js'
+import type { ArkmeContentBlock, ArkmeSourceKind, ArkmeUploadedAsset, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture } from './types.js'
 import type { ArkmeTextFormat } from './markdown.js'
 import type { ArkmeLocalFile } from './file-transfer-contract.js'
 
@@ -7,6 +7,49 @@ export type ArkmeRecordReeditAttachmentSelection =
   | { fileRef: string; fileAssetUid?: never }
 
 export class ArkmeRecordReeditDraftConflict extends Error {}
+
+export interface ArkmeRecordReeditCapture {
+  completedAtMillis: number
+  startedAtMillis?: number
+  durationMillis?: number
+  captureContext: ArkmeRecordCaptureContext
+  location?: ArkmeRecordLocationCapture
+  backgroundSound?: { fileRefs: string[]; amplitudes: number[] }
+}
+
+export function parseArkmeRecordReeditCapture(raw: unknown): ArkmeRecordReeditCapture {
+  const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const value = object(raw)
+  const validTime = (time: unknown): time is number => typeof time === 'number' && Number.isSafeInteger(time) && time > 0 && time < 8640000000000000
+  if (!validTime(value.completedAtMillis) || value.startedAtMillis !== undefined && (!validTime(value.startedAtMillis) || value.startedAtMillis > value.completedAtMillis)
+    || value.durationMillis !== undefined && (typeof value.durationMillis !== 'number' || !Number.isSafeInteger(value.durationMillis) || value.durationMillis < 0 || value.durationMillis > 31 * 86400000)) throw new TypeError('编辑快照时间无效')
+  const source = object(value.captureContext)
+  const captureContext: ArkmeRecordCaptureContext = {}
+  for (const key of ['clientName', 'networkName'] as const) if (typeof source[key] === 'string') captureContext[key] = source[key].trim().slice(0, 120)
+  if (typeof source.electric === 'number' && Number.isFinite(source.electric) && source.electric >= 0 && source.electric <= 100) captureContext.electric = Math.trunc(source.electric)
+  if ([0, 1, 2, 3].includes(source.charge as number)) captureContext.charge = source.charge as number
+  let backgroundSound: ArkmeRecordReeditCapture['backgroundSound']
+  if (value.backgroundSound !== undefined) {
+    const sound = object(value.backgroundSound)
+    if (!Array.isArray(sound.fileRefs) || !sound.fileRefs.length || sound.fileRefs.length > 20
+      || sound.fileRefs.some(ref => typeof ref !== 'string' || !/^arkme-file-v1\.[0-9a-f-]{36}$/.test(ref))
+      || new Set(sound.fileRefs).size !== sound.fileRefs.length || !Array.isArray(sound.amplitudes) || sound.amplitudes.length > 4096
+      || sound.amplitudes.some(n => typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1)) throw new TypeError('编辑背景音快照无效')
+    backgroundSound = { fileRefs: [...sound.fileRefs] as string[], amplitudes: [...sound.amplitudes] as number[] }
+  }
+  let location: ArkmeRecordLocationCapture | undefined
+  if (value.location !== undefined) {
+    const point = object(value.location)
+    if (typeof point.latitude !== 'number' || !Number.isFinite(point.latitude) || Math.abs(point.latitude) > 90
+      || typeof point.longitude !== 'number' || !Number.isFinite(point.longitude) || Math.abs(point.longitude) > 180 || !validTime(point.capturedAtMillis)) throw new TypeError('编辑位置快照无效')
+    location = { latitude: point.latitude, longitude: point.longitude, capturedAtMillis: point.capturedAtMillis }
+    for (const key of ['accuracyMeters', 'altitudeMeters', 'speedMetersPerSecond'] as const) if (typeof point[key] === 'number' && Number.isFinite(point[key])) location[key] = point[key]
+  }
+  return { completedAtMillis: value.completedAtMillis, captureContext,
+    ...(value.startedAtMillis === undefined ? {} : { startedAtMillis: value.startedAtMillis as number }),
+    ...(value.durationMillis === undefined ? {} : { durationMillis: value.durationMillis as number }),
+    ...(backgroundSound === undefined ? {} : { backgroundSound }), ...(location === undefined ? {} : { location }) }
+}
 
 export type ArkmeRecordReeditAttachmentView = (
   | { asset: ArkmeUploadedAsset; localFile?: never }
@@ -75,6 +118,7 @@ export interface ArkmeRecordReeditPrepareInput {
   attachments?: ArkmeRecordReeditAttachmentSelection[]
   expectedVersion?: number
   expectedDraftRevision?: number
+  capture?: ArkmeRecordReeditCapture
 }
 
 /** Host-only confirmation context. It is never returned as Tool-visible output. */
