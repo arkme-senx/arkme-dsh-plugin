@@ -1,4 +1,9 @@
 export const identityShareEnglish: Record<string, string> = Object.fromEntries(`
+以团队联系|Contact as team
+更新中…|Updating…
+更新失败|Update failed
+重试更新名片|Retry profile update
+名片链接无效，请重新打开|Invalid card link. Reopen the card.
 更多操作|More actions
 进入我的世界|Enter my world
 看看日常、想法与分享|Discover moments, thoughts and stories

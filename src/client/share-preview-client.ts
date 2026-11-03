@@ -3,6 +3,7 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { identityShareTarget } from '../identity-share-link.js'
 import { identityPersonCards } from './identity-person-card-client.js'
+import { arkmeAvatarImages } from './avatar-image-runtime.js'
 
 export function sharePreviewAccountKey(): string {
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -10,13 +11,15 @@ export function sharePreviewAccountKey(): string {
 }
 async function readPreview(url: string, signal: AbortSignal): Promise<ShareLinkPreview | null> {
   if (identityShareTarget(url)?.kind !== 'world') return await callArkme<ShareLinkPreview | null>('share.preview', { url }, signal)
-  const lease = identityPersonCards.acquire(sharePreviewAccountKey(), url)
+  const scope = sharePreviewAccountKey(), lease = identityPersonCards.acquire(scope, url)
   const abort = () => lease.release()
   signal.addEventListener('abort', abort, { once: true })
   if (signal.aborted) abort()
   try {
     const card = await lease.promise
-    return signal.aborted ? null : { kind: 'world', state: 'ready', title: card.displayName, summary: card.accountName }
+    if (signal.aborted || scope !== sharePreviewAccountKey()) return null
+    if (card.avatarRef) void arkmeAvatarImages.load(card.avatarRef).catch(() => {})
+    return { kind: 'world', state: 'ready', title: card.displayName, summary: card.accountName }
   } catch { return signal.aborted ? null : { kind: 'world', state: 'error' } }
   finally { signal.removeEventListener('abort', abort); lease.release() }
 }

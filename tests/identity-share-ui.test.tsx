@@ -9,6 +9,7 @@ import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { subscribeTeamOutbound } from '../src/client/team-outbound.js'
 import { IdentityShareHost } from '../src/client/IdentityShareHost.js'
+import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
 import { identityPersonCards } from '../src/client/identity-person-card-client.js'
 import { IdentityCopyLinkButton } from '../src/client/IdentityCopyLinkButton.js'
 import { identityShareUi } from '../src/client/identity-share-ui.js'
@@ -37,7 +38,7 @@ beforeEach(() => {
 })
 afterEach(async () => {
   await act(async () => { root.unmount(); identityShareUi.close(); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' }); arkmeUi.authChanged(false, true) })
-  node.remove(); clipboard.mockClear(); api.call.mockReset(); api.upsert.mockReset(); vi.restoreAllMocks()
+  vi.useRealTimers(); node.remove(); clipboard.mockClear(); api.call.mockReset(); api.upsert.mockReset(); vi.restoreAllMocks()
 })
 
 describe('identity links stay portable and acquire explicit in-app actions', () => {
@@ -185,6 +186,8 @@ it('translates the common profile actions and footer in English', async () => {
   try {
     await mount(<IdentityShareHost />); await act(async () => identityShareUi.open(scope, url))
     expect(button('Visit their world')).toBeDefined()
+    expect(button('Message')).toBeDefined()
+    expect(button('Contact as team')).toBeDefined()
     expect(button('Copy profile link')).toBeDefined()
     await click(button('More actions'))
     expect(button('Refresh card')).toBeDefined()
@@ -267,4 +270,94 @@ it('prepares the actual visible message preview and the popup with one native id
   await click(link)
   expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
   expect(api.call).toHaveBeenCalledOnce()
+})
+
+
+it('copies the received profile URL immediately without resolving it again', async () => {
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,url))
+  api.call.mockClear();await click(button('复制个人链接'))
+  expect(clipboard).toHaveBeenCalledExactlyOnceWith(url)
+  expect(api.call).not.toHaveBeenCalled()
+})
+it('preserves the received host and path when copying and rejects cross-environment links', async () => {
+  const alias='https://app.jiwo.cc/shijie/linshare'
+  await mount(<IdentityCopyLinkButton url={alias} />);await click(button('复制链接'))
+  expect(clipboard).toHaveBeenCalledExactlyOnceWith(alias);clipboard.mockClear()
+  await mount(<IdentityCopyLinkButton url="https://jotmo-app.senguo.me/linshare" />);await click(button('复制链接'))
+  expect(clipboard).not.toHaveBeenCalled();expect(api.call).not.toHaveBeenCalled()
+  expect(document.querySelector('[role=alert]')?.textContent).toContain('名片链接无效')
+})
+it('warms the avatar during visible-link preparation without delaying the ready preview', async () => {
+  vi.mocked(sharePreviewClient.acquire).mockRestore()
+  let finish!: (value:string)=>void
+  const image=vi.spyOn(arkmeAvatarImages,'load').mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+  api.call.mockResolvedValue({...person,avatarRef:'verified-profile-image'})
+  await mount(<ArkmeMessageContent item={{itemUid:'avatar-preload',senderName:'介绍人',isMe:false,sendAtMillis:1,status:1,title:'',textContent:url}} />)
+  expect(node.querySelector('a')?.textContent).toContain('小林')
+  expect(image).toHaveBeenCalledWith('verified-profile-image')
+  expect(identityShareUi.getSnapshot()).toBeUndefined()
+  await act(async()=>finish('data:image/png;base64,fixture'))
+})
+it('shows refresh progress, blocks repeated refresh and keeps the loaded card interactive', async () => {
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,url))
+  api.call.mockClear();let finish!: (value:unknown)=>void
+  api.call.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+  await click(button('更多操作'));await click(button('刷新名片'))
+  expect(document.querySelector('[role=status]')?.textContent).toBe('更新中…')
+  expect(button('发消息').disabled).toBe(false);expect(button('关闭').disabled).toBe(false)
+  await click(button('更多操作'));const refresh=button('更新中…');expect(refresh.disabled).toBe(true)
+  await click(refresh);expect(api.call).toHaveBeenCalledOnce()
+  await act(async()=>finish(person))
+  expect(button('刷新名片').disabled).toBe(false)
+  expect(document.querySelector('[role=status]')?.textContent).toBe('')
+})
+it('keeps the cached profile on a transient refresh error and retries in place', async () => {
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,url))
+  api.call.mockRejectedValueOnce(new Error('temporary network failure'))
+  await click(button('更多操作'));await click(button('刷新名片'))
+  expect(document.querySelector('[role=status]')?.textContent).toContain('更新失败')
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
+  expect(button('发消息').disabled).toBe(false)
+  api.call.mockResolvedValueOnce(person);await click(button('重试更新名片'))
+  expect(document.querySelector('[role=status]')?.textContent).toBe('')
+})
+it('updates a group invitation to expired while it remains open without a network request', async () => {
+  vi.useFakeTimers();api.call.mockResolvedValue({...group,joinMode:1,expireAtMillis:Date.now()+1000})
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,groupUrl))
+  expect(button('加入群聊').disabled).toBe(false)
+  await act(async()=>{await vi.advanceTimersByTimeAsync(1002)})
+  expect(button('邀请已过期').disabled).toBe(true);expect(api.call).toHaveBeenCalledOnce()
+})
+it('refreshes a pending approval and offers Open without automatically opening or joining', async () => {
+  vi.useFakeTimers();api.call.mockResolvedValueOnce({...group,requestPending:true}).mockResolvedValue({...group,hasJoined:true})
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,groupUrl))
+  expect(button('等待审批').disabled).toBe(true)
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
+  expect(button('打开群聊').disabled).toBe(false)
+  await act(async()=>{await vi.advanceTimersByTimeAsync(30_000)})
+  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read','identity.share.read'])
+})
+it('pauses approval reads when hidden, checks on return and stops after close', async () => {
+  vi.useFakeTimers();const hidden=vi.spyOn(document,'hidden','get').mockReturnValue(false)
+  api.call.mockResolvedValue({...group,requestPending:true})
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,groupUrl))
+  await act(async()=>{hidden.mockReturnValue(true);document.dispatchEvent(new Event('visibilitychange'));await vi.advanceTimersByTimeAsync(30_000)})
+  expect(api.call).toHaveBeenCalledOnce()
+  await act(async()=>{hidden.mockReturnValue(false);document.dispatchEvent(new Event('visibilitychange'))})
+  expect(api.call).toHaveBeenCalledTimes(2)
+  await act(async()=>identityShareUi.close())
+  await act(async()=>{await vi.advanceTimersByTimeAsync(30_000)})
+  expect(api.call).toHaveBeenCalledTimes(2)
+})
+
+it('copies the received URL even when its profile read is still pending', async () => {
+  let finish!: (value:unknown)=>void
+  api.call.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+  await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,url))
+  await click(button('复制个人链接'))
+  expect(clipboard).toHaveBeenCalledExactlyOnceWith(url)
+  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read'])
+  expect(button('发消息').disabled).toBe(true)
+  await click(button('关闭'));await act(async()=>finish(person))
 })

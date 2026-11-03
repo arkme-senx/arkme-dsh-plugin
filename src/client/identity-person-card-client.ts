@@ -41,14 +41,14 @@ export class IdentityPersonCardClient {
     if (job) { job.controller.abort(); this.jobs.delete(key) }
     if (this.cache.delete(key)) this.emit()
   }
-  acquire(scope: string, url: string, force = false): { promise: Promise<PersonCard>; release(): void } {
+  acquire(scope: string, url: string, force = false): { promise: Promise<PersonCard>; pending: boolean; release(): void } {
     const key = this.key(scope, url)
-    if (!scope || scope !== this.scope || !key) return { promise: Promise.reject(new Error('账号或名片链接已变化，请重新打开')), release() {} }
+    if (!scope || scope !== this.scope || !key) return { pending: false, promise: Promise.reject(new Error('账号或名片链接已变化，请重新打开')), release() {} }
     const cached = this.cache.get(key)
-    if (!force && cached && this.now() - cached.readAt < FRESH_MS) return { promise: Promise.resolve(cached.card), release() {} }
+    if (!force && cached && this.now() - cached.readAt < FRESH_MS) return { pending: false, promise: Promise.resolve(cached.card), release() {} }
     let job = this.jobs.get(key)
     if (!job) {
-      if (this.jobs.size >= MAX_JOBS) return { promise: Promise.reject(new Error('名片正在读取，请稍后重试')), release() {} }
+      if (this.jobs.size >= MAX_JOBS) return { pending: false, promise: Promise.reject(new Error('名片正在读取，请稍后重试')), release() {} }
       const controller = new AbortController()
       job = { controller, users: 0, promise: undefined! }
       const current = job
@@ -70,7 +70,7 @@ export class IdentityPersonCardClient {
     job.users++
     const current = job
     let released = false
-    return { promise: current.promise, release: () => {
+    return { pending: true, promise: current.promise, release: () => {
       if (released) return
       released = true
       if (--current.users > 0 || this.jobs.get(key) !== current) return

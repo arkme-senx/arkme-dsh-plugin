@@ -38,6 +38,9 @@ export type ArkmeMemberProfileIdentity = Pick<
 
 export function ArkmeMemberProfileCard(props: {
   copyLinkTarget?: IdentityShareTarget | undefined
+  copyUrl?: string | undefined
+  refreshing?: boolean
+  refreshError?: string
   person?: IdentityPersonProfile | undefined
   member: ArkmeMemberProfileIdentity
   imagePort?: ArkmeAvatarImagePort
@@ -61,16 +64,21 @@ export function ArkmeMemberProfileCard(props: {
   const [resolved, setResolved] = useState<{ key: string; person: IdentityPersonProfile }>()
   const [revision, setRevision] = useState(0), [error, setError] = useState(''), [worldBusy, setWorldBusy] = useState(false)
   const worldRequest = useRef<AbortController>()
+  const profileReadBusy = useRef(false)
+  const [profileRefreshing, setProfileRefreshing] = useState(false), [profileRefreshError, setProfileRefreshError] = useState('')
   const key = `${scope}:${targetKey}:${revision}`
   const person = props.person ?? (resolved?.key === key ? resolved.person : undefined)
   const target = props.copyLinkTarget
   const readPerson = (signal: AbortSignal) => callArkme<IdentityPersonProfile>('identity.person.read', { accountScope: scope, ...target }, signal)
   useEffect(() => {
+    profileReadBusy.current = false; setProfileRefreshing(false); setProfileRefreshError('')
     if (!scope || scope !== issuedScope.current || !target || props.person) return
+    profileReadBusy.current = true; setProfileRefreshing(true)
     const controller = new AbortController()
     void readPerson(controller.signal).then(value => {
       if (!controller.signal.aborted && scope === identityShareAccountScope()) setResolved({ key, person: value })
-    }).catch(() => { /* Optional decoration can be retried by entering the world or refreshing. */ })
+    }).catch(() => { if (!controller.signal.aborted && revision > 0) setProfileRefreshError(tr('更新失败')) })
+      .finally(() => { if (!controller.signal.aborted) { profileReadBusy.current = false; setProfileRefreshing(false) } })
     return () => controller.abort()
   }, [key, Boolean(props.person)])
   useEffect(() => {
@@ -108,9 +116,10 @@ export function ArkmeMemberProfileCard(props: {
   if (scope !== issuedScope.current) return null
   return <ArkmePersonProfileDialog displayName={names.displayName} topicNickname={names.topicNickname}
     accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef} avatarFallback={props.member.avatarFallback}
-    imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target}
+    imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
+    refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
     busy={props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
     onContactAsTeam={team} onWorld={() => { void world() }} browserUrl={props.browserUrl}
-    onRefresh={props.onRefresh ?? (target ? () => { setError(''); setRevision(value => value + 1) } : undefined)} />
+    onRefresh={props.onRefresh ?? (target ? () => { if (profileReadBusy.current) return; profileReadBusy.current = true; setProfileRefreshing(true); setError(''); setRevision(value => value + 1) } : undefined)} />
 }

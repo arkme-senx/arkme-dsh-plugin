@@ -19,6 +19,7 @@ export function ArkmePersonProfileDialog(props: {
   avatarRef?: string | undefined; avatarFallback?: ArkmeGroupAvatarFallback | undefined
   imagePort?: ArkmeAvatarImagePort | undefined; imageKey?: string | undefined
   isSelf?: boolean | undefined; hideSend?: boolean | undefined
+  copyUrl?: string | undefined; refreshing?: boolean; refreshError?: string
   accountScope: string; copyLinkTarget?: IdentityShareTarget | undefined
   busy: boolean; worldBusy?: boolean; worldDisabled?: boolean; loading?: boolean; pending?: boolean
   error?: string | undefined
@@ -26,7 +27,7 @@ export function ArkmePersonProfileDialog(props: {
   onContactAsTeam?: (() => void) | undefined
   onRefresh?: (() => void) | undefined; browserUrl?: string | undefined
 }) {
-  useArkmeLocale()
+  const locale = useArkmeLocale()
   const titleId = useId(), [more, setMore] = useState(false)
   const [sendState, setSendState] = useState('idle')
   return <ArkmeConfirmDialog layout="picker" titleId={titleId}
@@ -59,19 +60,22 @@ export function ArkmePersonProfileDialog(props: {
           data-arkme-profile-send-state={props.busy ? 'loading' : sendState} disabled={props.busy || props.worldBusy || props.pending}
           aria-busy={props.busy || undefined} onPointerEnter={() => setSendState('hover')} onPointerLeave={() => setSendState('idle')}
           onPointerDown={() => setSendState('active')} onPointerUp={() => setSendState('hover')} onClick={props.onSend}>
-          <ChatCircleIcon size={18} aria-hidden />{tr(props.busy ? '正在打开…' : props.isSelf ? '发给自己' : '发消息')}
+          <ChatCircleIcon size={18} aria-hidden />{tr(props.busy ? '正在打开…' : props.isSelf ? '发给自己' : locale === 'en' ? '发送消息' : '发消息')}
         </button>
         {(props.onContactAsTeam || props.pending) && !props.isSelf && <button type="button" className="arkme-person-button" data-arkme-feedback="neutral"
           disabled={props.busy || props.worldBusy || props.pending} onClick={props.onContactAsTeam}><UsersIcon size={18} aria-hidden />{tr('以团队联系')}</button>}
       </div>}
-      {(props.copyLinkTarget || props.onRefresh || props.browserUrl || props.pending) && <footer className="arkme-person-footer">
-        <div className="arkme-person-copy">{props.pending && <span className="arkme-person-skeleton" aria-hidden style={{ width: 100, height: 13 }} />}{props.copyLinkTarget && <IdentityCopyLinkButton accountScope={props.accountScope} target={props.copyLinkTarget}
+      {(props.copyLinkTarget || props.copyUrl || props.onRefresh || props.browserUrl || props.pending) && <footer className="arkme-person-footer">
+        <div className="arkme-person-copy">{props.pending && !props.copyUrl && <span className="arkme-person-skeleton" aria-hidden style={{ width: 100, height: 13 }} />}{(props.copyLinkTarget || props.copyUrl) && <IdentityCopyLinkButton accountScope={props.accountScope} {...(props.copyUrl ? { url: props.copyUrl } : { target: props.copyLinkTarget! })}
           className="arkme-person-text-button" style={{}} label="复制个人链接" iconSize={15} />}</div>
+        <span className="arkme-person-refresh" role="status">
+          {props.refreshing && !props.pending ? tr('更新中…') : props.refreshError && <><span title={props.refreshError}>{props.refreshError}</span><button type="button" className="arkme-person-text-button" aria-label={tr('重试更新名片')} disabled={props.busy || props.worldBusy} onClick={props.onRefresh}>{tr('重试')}</button></>}
+        </span>
         {(props.onRefresh || props.browserUrl) && <div className="arkme-person-more">
           <button type="button" className="arkme-person-icon" aria-label={tr('更多操作')} aria-expanded={more}
             disabled={props.busy || props.worldBusy} onClick={() => setMore(value => !value)}><DotsThreeIcon size={23} weight="bold" aria-hidden /></button>
           {more && <div className="arkme-person-more-panel">
-            {props.onRefresh && <button type="button" onClick={() => { setMore(false); props.onRefresh?.() }}>{tr('刷新名片')}</button>}
+            {props.onRefresh && <button type="button" disabled={props.refreshing} onClick={() => { setMore(false); props.onRefresh?.() }}>{tr(props.refreshing ? '更新中…' : '刷新名片')}</button>}
             {props.browserUrl && <a href={props.browserUrl} target="_blank" rel="noopener noreferrer">{tr('在浏览器中打开')}</a>}
           </div>}
         </div>}

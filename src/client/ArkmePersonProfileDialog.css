@@ -35,3 +35,7 @@
 .arkme-person-error { margin:0 0 14px; padding:9px 10px; border-radius:8px; color:var(--dsw-alias-state-error-primary,#c2413b); background:var(--dsw-alias-interactive-bg-hover-danger,rgba(194,65,59,.1)); font-size:12px; overflow-wrap:anywhere; }
 
 .arkme-person-skeleton { display:inline-block; border-radius:5px; background:var(--dsw-alias-bg-layer-2,#edf0f3); }
+
+.arkme-person-refresh { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex:1; min-width:0; color:var(--dsw-alias-label-secondary,#68707c); font-size:11px; }
+.arkme-person-refresh > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.arkme-person-more-panel button:disabled { cursor:default; opacity:.5; }
