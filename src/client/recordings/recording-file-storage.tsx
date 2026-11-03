@@ -7,8 +7,9 @@ import type { RecordingFile } from './recording-day-files.js'
 
 // Match the existing file list's 1024-based MB conversion. Keep small positive
 // files visible instead of rounding them to a misleading zero.
+const megabyteFormatters = Object.fromEntries(['zh-CN', 'en-US'].map(locale => [locale, new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 6 })]))
 export function recordingMegabytesLabel(bytes: number): string {
-  return `${new Intl.NumberFormat(arkmeIntlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(bytes / 1024 / 1024)} MB`
+  return `${megabyteFormatters[arkmeIntlLocale()]!.format(bytes / 1024 / 1024)} MB`
 }
 
 export function useRecordingFileStorage(files: readonly RecordingFile[], active: boolean, refreshRevision: string) {
@@ -47,5 +48,5 @@ export function useRecordingFileStorage(files: readonly RecordingFile[], active:
 
 export function RecordingFileStorageLabel({ value }: { value: RecordingFileStorage | undefined }) {
   if (!value) return null
-  return <span tabIndex={0} title={tr('正式音频成功写入时记录的实际存储大小，包含播放包及增强补充音频；不包含原件、处理临时文件和算法对比产物。')}>{tr('云端 {size}', { size: recordingMegabytesLabel(value.bytes) })}</span>
+  return <span tabIndex={0} title={tr('服务端已保存的音频大小，包含正式播放音频及增强补充音频；不包含原件、处理临时文件和算法对比产物。')}>{tr('云端 {size}', { size: recordingMegabytesLabel(value.bytes) })}</span>
 }
