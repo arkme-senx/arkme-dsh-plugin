@@ -94,7 +94,7 @@ export function RecordThoughtEntry({ item, onOpen }: { item: RecordItem; onOpen(
     const manual = thoughts.every(item => item.biz === 2)
     return <button type="button" data-arkme-record-thought-entry aria-label={tr(manual ? '查看 Arko 的回应' : '查看 Arko 的想法')}
       style={{ display: 'flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start', border: 0, background: 'transparent', padding: '5px 0', color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
-      onClick={event => { event.stopPropagation(); state.focus(); onOpen() }}>
+      onClick={event => { event.stopPropagation(); onOpen() }}>
       <Sparkle size={14} aria-hidden/>{tr(manual ? 'Arko · 回应' : 'Arko · 快记想法')}<CaretRight size={12} aria-hidden/>
     </button>
   }
@@ -108,6 +108,15 @@ export function RecordThoughtEntry({ item, onOpen }: { item: RecordItem; onOpen(
         {thought.scene === 5 && <SuggestionPreview thought={thought} onFill={state.onFill}/>}
       </>}
     </div>)}
+  </div>
+}
+/** Keep the self-note entry inside its own bubble; empty notes retain inline timestamps. */
+export function RecordThoughtMessageFooter({ item, onOpen, children }: { item: RecordItem; onOpen(): void; children: ReactNode }) {
+  const state = useThought(item)
+  if (state.chat || !visibleThoughts(state.items).length) return <>{children}</>
+  return <div data-arkme-thought-message-footer style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px', marginTop: 4, minWidth: 0 }}>
+    <RecordThoughtEntry item={item} onOpen={onOpen}/>
+    <div data-arkme-thought-message-meta style={{ minWidth: 0, marginLeft: 'auto' }}>{children}</div>
   </div>
 }
 function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {

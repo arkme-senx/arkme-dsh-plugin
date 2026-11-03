@@ -37,7 +37,7 @@ import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp } from './MessageQuoteThreads.js'
-import { RecordThoughtContent, RecordThoughtEntry, RecordThoughtsProvider } from './RecordThoughts.js'
+import { RecordThoughtContent, RecordThoughtEntry, RecordThoughtMessageFooter, RecordThoughtsProvider } from './RecordThoughts.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
@@ -8191,6 +8191,14 @@ export function ArkmeSurface({
                         {(() => {
                           const reactionTarget = { resolveActor: resolveReactionActor, sourceKey: source.sourceKey, itemUid: item.itemUid, id: `${conversationKey}:${arkmeTimelineOccurrenceKey(item)}`, sourceRef: source.sourceRef, messageActionRef: item.messageActionRef ?? '', source: source.displayName, sourceKind: source.kind, text: item.textContent ?? '' }
                           const canReact = !!item.messageActionRef
+                          const openMessageDetail = () => timelineActions.current.openNoteDetail(item)
+                          const openMessageBubble = selfWorkspace ? openMessageDetail : () => timelineActions.current.openChatMessage(item)
+                          const messageTimestamp = source && item.offlineContextMessageRef && offlineMessageLinks.has(item.offlineContextMessageRef)
+                            ? <div className="arkme-offline-message-footer"><OfflineContextMessageLink onOpen={() => {
+                              const entry = offlineMessageLinks.get(item.offlineContextMessageRef!)!
+                              arkmeUi.showConversationTarget(source, entry.id, entry.startAtMillis, undefined, undefined, false, false, entry.id)
+                            }} /><MessageQuoteThreadTimestamp item={item} /></div>
+                            : <MessageQuoteThreadTimestamp item={item} />
                           const messageBubble = <div
                             className="arkme-timed-bubble"
                             role="button"
@@ -8207,12 +8215,12 @@ export function ArkmeSurface({
                               if (event.target.closest('button,a,audio,video,input,select,textarea,[contenteditable],[role=link],[role=slider]')) return
                               if (window.getSelection()?.toString()) return
                               event.currentTarget.focus({ preventScroll: true })
-                              timelineActions.current.openChatMessage(item)
+                              openMessageBubble()
                             }}
                             onKeyDown={event => {
                               if (event.target !== event.currentTarget) return
                               if (event.key !== 'Enter' && event.key !== ' ') return
-                              event.preventDefault(); timelineActions.current.openChatMessage(item)
+                              event.preventDefault(); openMessageBubble()
                             }}
                             onContextMenu={event => { timelineActions.current.openMessageMenu(item, event, event.currentTarget) }}
                             data-arkme-message-direction={role === undefined ? item.isMe ? 'self' : 'other' : 'self-role'}
@@ -8266,12 +8274,9 @@ export function ArkmeSurface({
                               {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
                               {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
                             </div>)}
-                            {source && item.offlineContextMessageRef && offlineMessageLinks.has(item.offlineContextMessageRef)
-                              ? <div className="arkme-offline-message-footer"><OfflineContextMessageLink onOpen={() => {
-                                const entry = offlineMessageLinks.get(item.offlineContextMessageRef!)!
-                                arkmeUi.showConversationTarget(source, entry.id, entry.startAtMillis, undefined, undefined, false, false, entry.id)
-                              }} /><MessageQuoteThreadTimestamp item={item} /></div>
-                              : <MessageQuoteThreadTimestamp item={item} />}
+                            {selfWorkspace && activeSelectMode === undefined
+                              ? <RecordThoughtMessageFooter item={item} onOpen={openMessageDetail}>{messageTimestamp}</RecordThoughtMessageFooter>
+                              : messageTimestamp}
                           </div>
                           const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('附件发送状态')} key={task.taskRef} state={task.state} own={presentationIsMe}>
                               {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
@@ -8322,7 +8327,7 @@ export function ArkmeSurface({
                             {fileSendStatus}
                             {textSendStatus}
                             {topicBadge}
-                            {(selfWorkspace || sourceIsChat) && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={() => timelineActions.current.openNoteDetail(item)} />}
+                            {sourceIsChat && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={openMessageDetail} />}
                           </>
                           return <div
                             data-arkme-extension-message-cluster="true"
@@ -8355,7 +8360,7 @@ export function ArkmeSurface({
                                 {fileSendStatus}
                                 {textSendStatus}
                                 {topicBadge}
-                                {(selfWorkspace || sourceIsChat) && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={() => timelineActions.current.openNoteDetail(item)} />}
+                                {sourceIsChat && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={openMessageDetail} />}
                               </div>
                             </div>
                           </div>
