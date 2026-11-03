@@ -47,6 +47,11 @@ describe('packed recording voice workflow through official DSH',()=>{
     let data={items:[],users:[],has_more:false}
     if(req.url==='/api/public/v1/auth/the-best-api-for-testing')data={access_token:token,refresh_token:'isolated-voice-refresh'}
     if(req.url==='/api/v1/auth/get-user-info')data={user_id:10001,nick_name:'录音语音触发验收',phone:'13800000000',phone_binding_policy:{mode:'none'}}
+    if(req.url==='/api/v1/managed-ai/points/query')data={unit:'ai_points',points_per_cny:100,available_points:'100',reserved_points:'0',granted_points:'100',purchased_points:'0',observed_at:Date.now(),grants:[]}
+    if(req.url==='/api/v1/premium/get/member')data={file_size:1073741824}
+    if(req.url==='/api/v1/premium/get/used-size')data={used_file_size:0}
+    if(req.url==='/api/v1/premium/get/vop-limited-opt')data={used_sec:0,able_sec:3600}
+    if(req.url==='/api/v1/premium/get/recording-transcription-usage')data={month:new Date().toISOString().slice(0,7),total_seconds:3600,used_seconds:0,remaining_seconds:3600,statistics_started_at:0,breakdown:[1,2,3].map(recording_kind=>({recording_kind,speech_duration_ms:0,requested_seconds:0,deducted_seconds:0,waived_seconds:0}))}
     res.setHeader('content-type','application/json');res.end(JSON.stringify({code:200,data}))
    }catch(error){res.statusCode=500;res.end(JSON.stringify({message:String(error)}))}
   })
@@ -61,10 +66,11 @@ describe('packed recording voice workflow through official DSH',()=>{
    const service=scaffold.ctx.get('arkmeData');expect(await service.testLogin(10001)).toMatchObject({userId:10001,status:'authenticated'})
    sdk=createArkmeSdk({fetchImpl:(url,init)=>fetch(new URL(url,scaffold.authenticatedUrl),{...init,headers:{...init?.headers,origin:new URL(scaffold.authenticatedUrl).origin}})})
    const scope='test:10001'
-   const settings=await sdk.voiceTriggerSettings(scope);expect(settings.available).toBe(true);expect(settings.rules[0].enabled).toBe(false)
+   const settings=await sdk.voiceTriggerSettings(scope);expect(settings.available).toBe(true);expect(settings.rules[0].enabled).toBe(true);expect(settings.revision).toBe(0)
    const allowance=(await sdk.automaticCapabilities(scope)).settings.find(x=>x.key==='recording_voice_trigger')
    expect(allowance.enabled).toBe(false)
-   await sdk.updateAutomaticCapability(scope,{key:allowance.key,enabled:true,expectedVersion:allowance.version,billingConsent:true})
+   const closedMaterial=await ownerPost(audioOrigin,'/e2e/material',{});expect(closedMaterial.status,await closedMaterial.clone().text()).toBe(200)
+   expect((await closedMaterial.json()).data.candidate_ids).toEqual([])
    browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'})
    page=await browser.newPage({viewport:{width:1280,height:900},locale:'zh-CN'})
    await page.goto(scaffold.authenticatedUrl,{waitUntil:'load'})
@@ -74,13 +80,25 @@ describe('packed recording voice workflow through official DSH',()=>{
    const agent=scaffold.ctx.agents.get(sessionId)
    const read=await scaffold.ctx.tools.execute({callId:randomUUID(),name:'arkme_recording_voice_triggers',arguments:{action:'settings'},agent,signal:new AbortController().signal})
    expect(read.isError).toBe(false);expect(JSON.stringify(read)).toContain('帮我记一下')
+   await page.getByRole('button',{name:/^(个人资料|Profile)$/}).click()
+   await page.getByRole('button',{name:/^(查看用量与额度详情|View usage and limits)$/}).click()
+   const automatic=page.getByRole('region',{name:'自动使用额度',exact:true})
+   const voice=automatic.getByRole('switch',{name:'录音口令记事',exact:true})
+   await voice.click()
+   const consent=page.getByRole('dialog').filter({has:page.getByRole('button',{name:'同意并开启',exact:true})})
+   await consent.getByRole('button',{name:'取消',exact:true}).click()
+   expect((await sdk.automaticCapabilities(scope)).settings.find(x=>x.key===allowance.key).enabled).toBe(false)
+   expect(calls.filter(x=>x.path.endsWith('/capabilities/update'))).toHaveLength(0)
+   await voice.click();await consent.getByRole('button',{name:'同意并开启',exact:true}).click()
+   await expect.poll(async()=>{const value=(await sdk.automaticCapabilities(scope)).settings.find(x=>x.key===allowance.key);return [value.enabled,value.version]}).toEqual([true,1])
+   expect(calls.filter(x=>x.path.endsWith('/capabilities/update'))).toHaveLength(1)
+   await page.getByRole('dialog',{name:'即我设置',exact:true}).getByRole('button',{name:'关闭',exact:true}).click()
    await page.getByRole('button',{name:'录音',exact:true}).click()
    await page.getByRole('button',{name:'更多录音操作'}).click();await page.getByRole('menuitem',{name:'语音触发'}).click()
    await page.getByRole('dialog',{name:'语音触发',exact:true}).waitFor()
-   await page.getByRole('button',{name:'编辑',exact:true}).click()
-   const editor=page.getByRole('form',{name:'编辑语音触发规则'})
-   await editor.getByRole('checkbox',{name:'启用这条规则'}).check();await editor.getByRole('button',{name:'保存',exact:true}).click()
-   await expect.poll(async()=>(await sdk.voiceTriggerSettings(scope)).rules[0].enabled).toBe(true)
+   // A fresh account grants permission once in automatic usage settings.
+   // Opening the original rules UI must not require or persist a second activation.
+   await expect.poll(async()=>{const value=await sdk.voiceTriggerSettings(scope);return [value.revision,value.rules[0].enabled]}).toEqual([0,true])
    const seeded=await ownerPost(audioOrigin,'/e2e/material',{});expect(seeded.status,await seeded.clone().text()).toBe(200)
    const facts=(await seeded.json()).data;expect(facts.candidate_ids).toHaveLength(1)
    await page.getByRole('button',{name:'刷新',exact:true}).click()
@@ -117,12 +135,22 @@ describe('packed recording voice workflow through official DSH',()=>{
    await page.getByRole('button',{name:'标记说话人',exact:true}).click();await page.getByText('选择需要标记的原音片段',{exact:true}).waitFor()
    const after=(await (await ownerPost(recordOrigin,'/e2e/record',{candidate_id:facts.candidate_ids[0]})).json()).data
    expect(after.record_uid).toBe(owner.record_uid)
+   const automaticMaterial=await ownerPost(audioOrigin,'/e2e/material',{self:true})
+   expect(automaticMaterial.status,await automaticMaterial.clone().text()).toBe(200)
+   const automaticFacts=(await automaticMaterial.json()).data;expect(automaticFacts.candidate_ids).toHaveLength(1)
+   const autoCandidate=(await sdk.voiceTriggerPage(scope)).items.find(item=>item.recordUID&&item.recordUID!==owner.record_uid)
+   expect(autoCandidate).toMatchObject({speaker:'self',status:'saved',text:'明天下午三点给王姐回电话'})
+   const automaticOwner=(await(await ownerPost(recordOrigin,'/e2e/record',{candidate_id:automaticFacts.candidate_ids[0]})).json()).data
+   expect(automaticOwner).toMatchObject({record_uid:autoCandidate.recordUID,text:owner.text,creation_source:5,status:1})
+   expect(automaticOwner.record_uid).not.toBe(owner.record_uid)
+   await expect.poll(async()=>{await ownerPost(recordOrigin,'/e2e/drain',{});return (await(await ownerPost(recordOrigin,'/api/v1/home/feed/display/check',{record_uid:automaticOwner.record_uid})).json()).data?.display},{timeout:30000}).toBe(true)
+   expect((await sdk.voiceTriggerSettings(scope)).revision).toBe(0)
    const deletion=await ownerPost(audioOrigin,'/e2e/delete-material',{recording_id:facts.recording_id});expect(deletion.status,await deletion.clone().text()).toBe(200)
    await expect(sdk.voiceTriggerDetail(scope,recovered.candidateRef)).rejects.toThrow()
-   expect((await sdk.voiceTriggerPage(scope)).items).toHaveLength(0)
+   expect((await sdk.voiceTriggerPage(scope)).items.map(item=>item.recordUID)).toEqual([automaticOwner.record_uid])
    const independent=(await(await ownerPost(recordOrigin,'/e2e/record',{candidate_id:facts.candidate_ids[0]})).json()).data
    expect(independent.record_uid).toBe(owner.record_uid);expect(independent.text).toBe(owner.text)
-   await writeFile(join(evidence,'pc-result.json'),JSON.stringify({passed:true,capabilityVersion:2,tool:'arkme_recording_voice_triggers',nativeRecordUID:owner.record_uid,sourceByteSha256:JSON.parse(await readFile(join(evidence,'asr-material.json'),'utf8')).sha256,coverage:['UI rules','central opt-in','formal ASR commit','Audio work','Intelligent quote anchors','canonical playback','native private Record','actual dropped-HTTP response replay identity','source occurrence date','native home visibility','source deletion playback denial and independent note','other-account denial','separate speaker editor']},null,2))
+   await writeFile(join(evidence,'pc-result.json'),JSON.stringify({passed:true,capabilityVersion:2,tool:'arkme_recording_voice_triggers',nativeRecordUID:owner.record_uid,sourceByteSha256:JSON.parse(await readFile(join(evidence,'asr-material.json'),'utf8')).sha256,coverage:['implicit default without preference write','closed upload creates no candidate','real UI consent cancel does not write','real UI central opt-in once','formal ASR commit','Audio work','Intelligent quote anchors','canonical playback','unknown speaker explicit save','known self automatic native private Record','actual dropped-HTTP response replay identity','source occurrence date','native home visibility','source deletion playback denial and independent note','other-account denial','separate speaker editor']},null,2))
   }catch(error){failure=error;console.error('Voice E2E failure',error);if(page)console.error('Voice fixture UI',await page.locator('body').innerText().catch(()=>''));if(page)await page.screenshot({path:join(evidence,'failure.png')}).catch(()=>{});await writeFile(join(evidence,'requests.json'),JSON.stringify(calls,null,2));throw error}
   finally{sdk?.dispose();await browser?.close();if(scaffold)await scaffold.ctx.get('arkmeData').logout();try{await scaffold?.close()}catch(error){if(!failure)throw error};proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));await rm(root,{recursive:true,force:true})}
  },300000)
