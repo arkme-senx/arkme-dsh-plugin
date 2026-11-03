@@ -1,9 +1,12 @@
-import { arkmeUi } from '../src/client/ui-controller.js'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeArrangementItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+// Modal behavior is exercised with React DOM in arrangement-recognition-inspector.test.tsx.
+vi.mock('../src/client/ArkmeArrangementRecognitionInspector.js', () => ({
+  ArkmeArrangementRecognitionSettings: ({ accountScope }: { accountScope: string }) => <section role="dialog" data-recognition-settings-scope={accountScope} />,
+}))
 const cacheMocks = vi.hoisted(() => ({ read: vi.fn(() => ({})), load: vi.fn(async () => ({})), save: vi.fn() }))
 vi.mock('../src/client/arrangement-board-cache.js', () => ({ readArrangementBoardMemory: cacheMocks.read, loadArrangementBoardCache: cacheMocks.load, saveArrangementBoardCache: cacheMocks.save }))
 import { ArkmeArrangementBoard } from '../src/client/ArkmeArrangementBoard.js'
@@ -573,17 +576,13 @@ it('does not let a late first load overwrite a newer creation refresh or its cac
  expect(pages.some((p:any)=>p.items.some((row:any)=>row.arrangementRef==='old'))).toBe(false)
 })
 
-it('opens automatic analysis settings without a capability write', async () => {
-  const opened = vi.fn()
-  const unbind = arkmeUi.bindSettingsOpener(opened)
+it('opens arrangement recognition settings for the current account without a capability write', async () => {
   mocks.call.mockResolvedValue({ items: [], total: 0 })
-  try {
     await act(async () => { view = create(<ArkmeArrangementBoard accountScope="prod:guide" />) })
     const before = mocks.call.mock.calls.length
     const link = view!.root.findAllByType('button').find(button => button.children.includes('自动识别设置'))
     expect(link).toBeDefined()
     await act(async () => { link!.props.onClick() })
-    expect(opened).toHaveBeenCalledWith('arkme-usage')
+    expect(view!.root.findByProps({ 'data-recognition-settings-scope': 'prod:guide' }).props.role).toBe('dialog')
     expect(mocks.call.mock.calls.length).toBe(before)
-  } finally { unbind() }
 })

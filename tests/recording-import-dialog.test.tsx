@@ -107,7 +107,7 @@ describe('recording import dialog behavior', () => {
     })
   }
 
-  it('uses one current account setting per submitted batch, never a file selector', async () => {
+  it('submits new batches without strategy parameters or account preference reads', async () => {
     let strategy = 'baseline-sd-asr/20261026'
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy }
@@ -122,25 +122,25 @@ describe('recording import dialog behavior', () => {
     let release!: () => void
     mocks.uploadArkmeRecording.mockImplementationOnce(async () => await new Promise(resolve => { release = () => resolve({ kind: 'local', phase: 'accepted' }) }))
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
-    expect([...journal.records.values()].every(row => row.submission && row.strategy === strategy)).toBe(true)
+    expect([...journal.records.values()].every(row => row.submission && row.strategy === undefined)).toBe(true)
     strategy = 'system-sd-asr/v1'
     await act(async () => { release(); await tick() })
-    expect(mocks.uploadArkmeRecording.mock.calls.map(call => call[4].strategy)).toEqual(['baseline-sd-asr/20261026', 'baseline-sd-asr/20261026'])
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies')).toHaveLength(1)
+    expect(mocks.uploadArkmeRecording.mock.calls.map(call => call[4].strategy)).toEqual([undefined, undefined])
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies' || call[0] === 'recordings.import.strategies.register')).toHaveLength(0)
     await choose([new File(['c'], 'three.m4a')])
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
-    expect(mocks.uploadArkmeRecording.mock.calls.at(-1)![4].strategy).toBe('system-sd-asr/v1')
+    expect(mocks.uploadArkmeRecording.mock.calls.at(-1)![4]).not.toHaveProperty('strategy')
   })
 
-  it('keeps candidates unsubmitted when the account setting cannot be read', async () => {
+  it('imports without depending on the retired account preference', async () => {
     const journal = memoryJournal(); await remount(journal)
     await choose([new File(['a'], 'unsubmitted.m4a')])
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (...args) => { if (args[0] === 'recordings.strategies') throw new Error('设置读取失败'); return original(...args) })
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
-    expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
-    expect([...journal.records.values()][0]!.submission).toBeUndefined()
-    expect(renderedText(renderer.root)).toContain('设置读取失败')
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
+    expect(mocks.uploadArkmeRecording.mock.calls[0]![4]).not.toHaveProperty('strategy')
+    expect(renderedText(renderer.root)).not.toContain('设置读取失败')
   })
 
   it('uses the native chooser when available and keeps a cancellation quiet', async () => {
@@ -160,12 +160,13 @@ describe('recording import dialog behavior', () => {
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
   })
 
-  it('registers native strategies before upload and keeps the original v1 desktop header contract through retry', async () => {
+  it('preserves legacy native strategy registration and v1 headers through retry', async () => {
     const journal = memoryJournal()
     const ids = [recordingImportBatchID(), recordingImportBatchID()]
     for (const [index, id] of ids.entries()) journal.records.set(id, {
       id, accountKey: 'prod:42', fileName: `native-${index}.wav`, fileSize: 1, lastModified: 1, mimeType: 'audio/wav',
       source: { kind: 'desktop', token: String(index) }, selected: true, startAt: '2024-08-30T00:00', ownership: 'self', error: '',
+      submission: 'legacy-submission', strategy: 'system-sd-asr/v1',
     })
     const original = mocks.callArkme.getMockImplementation()!
     let registered = false, fail = true
@@ -186,8 +187,7 @@ describe('recording import dialog behavior', () => {
     vi.stubGlobal('window', Object.assign(new EventTarget(), { arkmeDesktop: { recordingImports: {
       version: 1, upload, stat: async (token: string) => ({ name: `native-${token}.wav`, size: 1, lastModified: 1 }),
     } } }))
-    await remount(journal)
-    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    await remount(journal) // Legacy submissions resume automatically.
     expect(upload).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toContain('策略登记保存失败')
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
@@ -268,8 +268,8 @@ describe('recording import dialog behavior', () => {
     expect(record.submission).toBeTruthy(); expect(record.batch).toBeTruthy()
     await remount(journal)
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
-    expect(mocks.uploadArkmeRecording.mock.calls[1]![4]).toMatchObject({ batch: record.batch, clientTaskId: record.id, strategy: record.strategy })
-    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies')).toHaveLength(1)
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4]).toMatchObject({ batch: record.batch, clientTaskId: record.id })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.strategies' || call[0] === 'recordings.import.strategies.register')).toHaveLength(0)
     expect(journal.records.size).toBe(0)
   })
   it('reconciles a lost Host reply before touching an unavailable source', async () => {

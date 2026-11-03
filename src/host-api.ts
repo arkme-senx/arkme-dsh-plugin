@@ -1,3 +1,4 @@
+import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
 import {readTeamRepresentationSelection} from './services/group-representation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
@@ -1010,7 +1011,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'recordings.import.strategies.register' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
         throw new ArkmePluginError('origin-required', '录音导入策略登记必须从本机页面发起', false, 403)
       }
-      if (['recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['arrangements.occurrences.reviews.decide','arrangements.occurrences.history.preview','arrangements.occurrences.history.apply','arrangements.recognition.settings.set', 'arrangements.recognition.preview', 'arrangements.recognition.apply', 'recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1134,7 +1135,7 @@ export async function dispatchArkmeHostOperation(
   migrationManager?: AppMigrationManager,
 ): Promise<unknown> {
   if (operation.startsWith('device.lock.') && Object.keys(params).length !== 0) throw new ArkmePluginError('invalid-params', '锁定操作不接受验证结果或额外参数', false, 400)
-  if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal)
+  if (operation === 'explore.settings') return service.exploreSettings(params.module, requestSignal, {part:params.part,expectedAccountScope:params.expectedAccountScope})
   if (operation === 'explore.settings.save') return service.saveExploreSettings(params, requestSignal)
   if (operation === 'statistics.keywords') return service.personalKeywordsRead(params, requestSignal)
   if (operation === 'statistics.keyword-records') return service.personalKeywordRecords(params, requestSignal)
@@ -1758,6 +1759,7 @@ export async function dispatchArkmeHostOperation(
       ownership: recordingImportOwnershipParam(params),
     }, requestSignal)
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
+    case 'recordings.files.storage': return service.recordingFileStorage({ sessionRefs: params.sessionRefs as string[] }, requestSignal)
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
@@ -2134,6 +2136,39 @@ export async function dispatchArkmeHostOperation(
         bytes: image.bytes,
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
+    }
+    case 'arrangements.occurrences.events':
+    case 'arrangements.occurrences.reviews.summary':
+    case 'arrangements.occurrences.reviews.list':
+    case 'arrangements.occurrences.reviews.decide':
+    case 'arrangements.occurrences.history.preview':
+    case 'arrangements.occurrences.history.apply': {
+      const action = ARRANGEMENT_OCCURRENCE_ACTIONS[operation]
+      const decision = params.action
+      if (decision !== undefined && decision !== 'merge' && decision !== 'create' && decision !== 'ignore') {
+        throw new ArkmePluginError('invalid-params', '确认操作无效', false, 400)
+      }
+      return service.arrangementOccurrenceRequest(action, stringParam(params, 'expectedAccountScope'), {
+        ...(typeof params.arrangementRef === 'string' ? { arrangementRef: params.arrangementRef } : {}),
+        ...(typeof params.reviewId === 'string' ? { reviewId: params.reviewId } : {}),
+        ...(decision === undefined ? {} : { action: decision }),
+        ...(typeof params.targetRef === 'string' ? { targetRef: params.targetRef } : {}),
+        ...(typeof params.targetVersion === 'number' ? { targetVersion: params.targetVersion } : {}),
+        ...(Array.isArray(params.selectedRefs) ? { selectedRefs: stringListParam(params, 'selectedRefs') } : {}),
+        ...(typeof params.expectedRouteKey === 'string' ? { expectedRouteKey: params.expectedRouteKey } : {}),
+      }, requestSignal)
+    }
+    case 'arrangements.recognition.settings.get':
+    case 'arrangements.recognition.settings.set':
+    case 'arrangements.recognition.trace':
+    case 'arrangements.recognition.preview':
+    case 'arrangements.recognition.apply': {
+      if (operation === 'arrangements.recognition.settings.set' && (typeof params.source !== 'string' || typeof params.routeKey !== 'string')) throw new ArkmePluginError('invalid-params', '模型设置参数无效', false, 400)
+      const action = operation.replace('arrangements.recognition.', '').replace('settings.', 'settings/') as 'settings/get' | 'settings/set' | 'trace' | 'preview' | 'apply'
+      return service.arrangementRecognitionRequest(action, stringParam(params, 'expectedAccountScope'), {
+        ...(typeof params.source === 'string' ? { source: params.source } : {}), ...(typeof params.routeKey === 'string' ? { routeKey: params.routeKey } : {}),
+        ...(typeof params.arrangementRef === 'string' ? { arrangementRef: params.arrangementRef } : {}), ...(typeof params.previewId === 'string' ? { previewId: params.previewId } : {}), ...(typeof params.expectedRouteKey === 'string' ? { expectedRouteKey: params.expectedRouteKey } : {}), ...(typeof params.traceId === 'string' ? {traceId:params.traceId} : {}),
+      }, requestSignal)
     }
     case 'arrangements.board-cache': {
       let pages

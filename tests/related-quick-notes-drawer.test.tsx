@@ -1419,7 +1419,7 @@ describe('normal timeline related quick note drawer', () => {
     })
     const option = renderer.root.findByProps({ role: 'option' })
     expect(option.findByType('img').props.src).toContain('image/svg+xml')
-    expect(option.findAllByType('span').some(span => span.children.includes('Arko'))).toBe(true)
+    expect(option.findAllByType('span').some(span => span.children.includes('阿森'))).toBe(true)
     act(() => {
       option.props.onMouseDown({ preventDefault: vi.fn() })
     })

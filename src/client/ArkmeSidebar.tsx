@@ -8420,8 +8420,9 @@ export function ArkmeSurface({
     active={active && ui.mode === 'calls'}
   />
 
-  if (!active) return <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={undefined}
-    chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+  // Keep providers and keyed surfaces at one React position across suspension.
+  // Hidden work remains inactive; account changes still reset retained pages.
+  const surfaceContent = !active ? <>
     {forwardDialog}
     <div
       key="conversation-surface"
@@ -8444,13 +8445,7 @@ export function ArkmeSurface({
     {selfTopicMenuOwner}
     {recordingImportOwner}
     {directRecordingNotice}
-  </MessageQuoteThreadsProvider>
-
-  return (
-    <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
-      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
-    <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={activeConversation ? source?.sourceRef : undefined}
-      chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+  </> : <>
     <ArkmeBotIdentityStyles />
     {messageUnderlines.layer}
     {ui.mode !== 'arko' && ui.mode !== 'team' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
@@ -9763,7 +9758,15 @@ export function ArkmeSurface({
     </div>
     {recordingImportOwner}
     {directRecordingNotice}
-    </MessageQuoteThreadsProvider>
+  </>
+
+  return (
+    <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={active && activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
+      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
+      <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={active && activeConversation ? source?.sourceRef : undefined}
+        chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+        {surfaceContent}
+      </MessageQuoteThreadsProvider>
     </RecordThoughtsProvider>
   )
 }

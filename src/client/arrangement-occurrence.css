@@ -1,0 +1,165 @@
+.arkme-occurrence-timeline {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.arkme-occurrence-timeline h3 {
+  font-size: 15px;
+  margin: 0 0 18px;
+}
+.arkme-occurrence-timeline article {
+  position: relative;
+  margin: 0 0 20px 5px;
+  padding: 0 0 20px 20px;
+  border-left: 2px solid #5278ee30;
+  border-bottom: 1px solid #8882;
+}
+.arkme-occurrence-timeline article:before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 7px;
+  width: 8px;
+  height: 8px;
+  background: #5278ee;
+  border-radius: 50%;
+}
+.arkme-occurrence-timeline header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.arkme-occurrence-timeline header span {
+  font-size: 11px;
+  color: #47765b;
+  background: #68a57715;
+  padding: 1px 7px;
+  border-radius: 5px;
+}
+.arkme-occurrence-timeline p {
+  margin: 8px 0;
+}
+.arkme-occurrence-muted {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--dsw-alias-label-tertiary, #7b8089);
+}
+.arkme-occurrence-timeline button,
+.arkme-occurrence-modal button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid #8883;
+  border-radius: 7px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.arkme-occurrence-timeline button:disabled,
+.arkme-occurrence-modal button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.arkme-occurrence-legacy {
+  padding-top: 8px;
+}
+.arkme-occurrence-modal {
+  height: min(760px, 90vh) !important;
+}
+.arkme-occurrence-modal main {
+  padding: 24px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.arkme-occurrence-modal > header {
+  padding: 22px !important;
+}
+.arkme-occurrence-modal h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.arkme-occurrence-card {
+  border: 1px solid #8883;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 0 0 16px;
+}
+.arkme-occurrence-card p {
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.arkme-occurrence-peer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  background: #88808;
+  border-radius: 8px;
+  margin: 10px 0;
+  cursor: pointer;
+}
+.arkme-occurrence-peer input {
+  margin-top: 5px;
+}
+.arkme-occurrence-peer > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.arkme-occurrence-peer strong {
+  display: block;
+  font-weight: 500;
+}
+.arkme-occurrence-peer small {
+  display: block;
+  margin-top: 4px;
+  color: #7b8089;
+  line-height: 1.6;
+}
+.arkme-occurrence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.arkme-occurrence-actions button:first-child {
+  color: #4870dc;
+  border-color: #5278ee55;
+}
+.arkme-occurrence-history-trigger {
+  margin-top: 10px;
+}
+.arkme-occurrence-modal .arkme-occurrence-master {
+  background: #5278ee0d;
+  border-left: 3px solid #5278ee;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+.arkme-occurrence-modal .arkme-occurrence-master p {
+  margin: 5px 0;
+}
+.arkme-occurrence-modal footer {
+  position: sticky;
+  bottom: -24px;
+  padding: 16px 0;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  border-top: 1px solid #8882;
+}
+.arkme-occurrence-modal > header p {
+  line-height: 1.6;
+  margin-top: 6px !important;
+}
+@media (max-width: 650px) {
+  .arkme-occurrence-modal {
+    height: 95vh !important;
+  }
+  .arkme-occurrence-modal main {
+    padding: 16px;
+  }
+  .arkme-occurrence-timeline header {
+    flex-wrap: wrap;
+  }
+  .arkme-occurrence-modal footer {
+    bottom: -16px;
+  }
+}

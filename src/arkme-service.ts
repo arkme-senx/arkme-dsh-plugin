@@ -436,7 +436,8 @@ export class ArkmeService {
   }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
-      arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal) }).read(expectedScope, signal)
+      arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
+      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal)
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService
@@ -617,7 +618,7 @@ export class ArkmeService {
   }
   async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
 
-  async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
+  async exploreSettings(module: unknown, signal?: AbortSignal, options?: {part?: unknown; expectedAccountScope?: unknown}) { return this.explore.settings(module, signal, options) }
   async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
   async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
   async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
@@ -1353,6 +1354,7 @@ arkoImagesV1:true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
         recordingStrategiesV1: true,
+        recordingFileStorageV1: true,
         recordingStrategyRecordingsV1: true,
         recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
@@ -1591,6 +1593,7 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
+  recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
   /** @internal Built-in loopback UI; detection and exactly-once note writes are Audio-owner capabilities. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
     return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingSpeakerCorrectionItems(query, signal)).request(action, input, signal)
@@ -3359,6 +3362,10 @@ arkoImagesV1:true,
   }
 
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
+  async arrangementOccurrenceRequest(...args: Parameters<ArrangementService['occurrenceRequest']>) {return this.arrangement.occurrenceRequest(...args)}
+
+  async arrangementRecognitionRequest(...args: Parameters<ArrangementService['recognitionRequest']>) { return this.arrangement.recognitionRequest(...args) }
+
   async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
 
   async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {

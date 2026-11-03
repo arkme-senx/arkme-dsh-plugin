@@ -31,4 +31,18 @@ describe('shared model and points owner', () => {
       expect(store.getSnapshot().catalog).toBeDefined(); expect(store.getSnapshot().account).toBeUndefined(); expect(store.getSnapshot().accountError).toBeTruthy()
     }
   })
+  it('keeps stale cached choices visible while refreshing them after the short TTL', async () => {
+    let now = 1000, finish!: (value: unknown) => void
+    const read = vi.fn(async (operation: string, scope: string) => operation === 'models.directory'
+      ? now === 1000 ? catalog(scope) : await new Promise(resolve => { finish = resolve }) : account(scope))
+    const store = new UnifiedModelStore(read, () => now); store.activate('production:42')
+    await store.refresh('production:42')
+    now += 29_000; await store.refresh('production:42'); expect(read).toHaveBeenCalledTimes(2)
+    now += 2_000; const pending = store.refresh('production:42')
+    expect(store.getSnapshot().loading).toBe(true)
+    expect(store.getSnapshot().catalog?.observedAt).toBe(1)
+    finish({ ...catalog('production:42'), observedAt: 2 }); await pending
+    expect(store.getSnapshot().catalog?.observedAt).toBe(2)
+    expect(read).toHaveBeenCalledTimes(4)
+  })
 })

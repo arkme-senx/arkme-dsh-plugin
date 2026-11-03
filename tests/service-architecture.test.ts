@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
-  'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
+  'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
+  'recordingFileStorage',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
@@ -22,6 +23,7 @@ const expectedPublicMethods = [
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deletedArrangements', 'deletedArrangementDetail',
+  'arrangementOccurrenceRequest', 'arrangementRecognitionRequest',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
   'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
@@ -144,6 +146,8 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'identity-share-service.ts',
+  'arrangement-occurrence-contract.ts', 'service-error.ts',
+  'recording-file-storage-service.ts',
   'private-group-create-service.ts',
   'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
   'public-social-service.ts',
