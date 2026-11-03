@@ -95,7 +95,22 @@ try {
   sdk.dispose();await assert.rejects(()=>sdk.recordingFileStorage({sessionRefs:[history.value.items[0].sessionRef]}))
   assert.ok(calls.filter(call=>call.path.endsWith('/files/storage')).every(call=>call.body.session_ids.length<=20))
   assert.equal(calls.filter(call=>/strategy-comparison\/start|del-session|uploads\/|recording-storage/.test(call.path)).length,0)
-  await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',artifact:resolve(artifact),profile,realSession:true,publicSdk:true,browser:true,realAudioMongo:true,storageBytes:result.items.map(item=>item.bytes)},null,2))
+  // Use the installed UI's real call-history owner, without starting a call.
+  await page.getByRole('button', {name:'通话', exact:true}).click()
+  const search = page.getByRole('textbox', {name:'搜索通话记录', exact:true})
+  await search.waitFor()
+  const closeTour = page.getByRole('button', {name:'关闭通话引导', exact:true})
+  if (await closeTour.isVisible()) await closeTour.click()
+  await search.fill('storage-acceptance-retained')
+  const retainedInput = await search.elementHandle()
+  for (const destination of ['联系人', '录音']) {
+    await page.getByRole('button', {name:destination, exact:true}).click()
+    assert.ok(await retainedInput.evaluate(node => node.isConnected), 'call search input was unmounted')
+    await page.getByRole('button', {name:'通话', exact:true}).click()
+    assert.equal(await search.inputValue(), 'storage-acceptance-retained')
+  }
+  await page.screenshot({path:join(capture,'retained-call-page.png')})
+  await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',artifact:resolve(artifact),profile,realSession:true,publicSdk:true,browser:true,realAudioMongo:true,callPageRetained:true,storageBytes:result.items.map(item=>item.bytes)},null,2))
   await page.evaluate(()=>fetch('/arkme-self/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation:'auth.logout',params:{}})}))
   console.log('STORAGE_INSTALLED_ACCEPTANCE_OK',capture)
 } finally {
