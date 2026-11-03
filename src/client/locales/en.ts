@@ -1,5 +1,29 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+导出日期范围|Export date range
+按日期|By date
+增量|Incremental
+开始日期|Start date
+结束日期|End date
+快捷日期|Date shortcuts
+本月|This month
+最近7天|Last 7 days
+上月|Last month
+请选择开始日期和结束日期。|Choose a start date and an end date.
+日期无效，请重新选择。|Invalid date. Please choose again.
+结束日期不能早于开始日期。|The end date cannot be before the start date.
+按记录显示日期筛选，包含结束日期全天。|Filter by the date shown on each record, including the entire end date.
+增量导出说明|About incremental export
+增量进度尚未接通|Incremental progress is not connected yet
+接通后自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。|Once connected, selects new and updated content since the last successfully saved backup, including backdated records.
+首次需要建立完整备份；取消或保存失败不会推进进度。增量包需与此前备份一起保留。|A full backup is required first. Canceling or failing to save will not advance progress. Keep incremental archives with previous backups.
+接通后将显示本次范围的记录和附件数量。|Record and attachment counts for this selection will appear once connected.
+包含图片、语音等附件|Include images, audio, and other attachments
+不含隐私锁定内容。|Privacy-locked content is excluded.
+当前仍可选择全部内容并包含附件进行导出。|You can currently export all content with attachments.
+暂无可导出的记录。|No records to export.
+接通前不会创建导出任务或使用额度。|No export task or allowance will be used until connected.
+最近生成备份：|Last archive generated:
 原句待定位，可查看原通话|Quote not located. You can open the original call.
 原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
 通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
