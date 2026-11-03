@@ -7,6 +7,7 @@ export interface ModelDirectoryReaders {
   dsh?: (() => Promise<DshRemoteModelCatalog>) | undefined
   arko(signal?: AbortSignal): Promise<ArkmeArkoModelCatalog>
   recording(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig>
+  explore?: ((signal?: AbortSignal) => Promise<{models: UnifiedModelCatalog['models']; failures: UnifiedModelCatalog['failures']}>) | undefined
 }
 /** Read-only aggregation, never model activation or paid generation. */
 export class ModelDirectoryService {
@@ -24,11 +25,12 @@ export class ModelDirectoryService {
       ] })) : Promise.reject(new Error('模型目录正在连接，请稍后刷新')),
       this.readers.arko(signal).then(value => ({ models: arkoModelChoices(value), failures: [] })),
       this.readers.recording(signal).then(value => ({ models: recordingModelChoices(value), failures: [] })),
+      ...(this.readers.explore ? [this.readers.explore(signal)] : []),
     ])
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${current.userId}` !== scope) throw new ArkmePluginError('model-directory-account-changed', '账号已切换，请重新读取模型', false, 409)
-    const sources = ['DSH', 'Arko', '录音'], models = [], failures = []
+    const sources = ['DSH', 'Arko', '录音', '探索'], models = [], failures = []
     for (const [index, item] of result.entries()) {
       if (item.status === 'fulfilled') { models.push(item.value.models); failures.push(...item.value.failures) }
       else failures.push({ source: sources[index]!, message: item.reason instanceof Error ? item.reason.message : '目录读取失败，请重试' })

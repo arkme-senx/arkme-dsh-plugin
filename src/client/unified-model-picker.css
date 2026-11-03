@@ -15,6 +15,7 @@
 .arkme-unified-model-option { display:flex;align-items:center;gap:10px;width:100%;min-height:39px;padding:9px 12px;border:0;border-radius:7px;background:transparent;text-align:left; }
 .arkme-unified-model-option:hover,.arkme-unified-model-option[aria-selected=true] { background:var(--dsw-alias-interactive-bg-hover,#f0f2f6); }
 .arkme-unified-model-name { flex:1;min-width:0;font-size:14px;font-weight:400;overflow-wrap:anywhere;line-height:1.45; }
+.arkme-unified-model-bound-account { display:block;margin-top:2px; }
 .arkme-unified-model-option small { flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,#9097a1); }
 .arkme-unified-model-check { width:16px;flex:none;display:grid;place-items:center; }
 .arkme-unified-model-footer { flex:none;padding:7px 18px 5px;border-top:1px solid var(--dsw-alias-border-inverted,#e8e8eb);display:flex;flex-direction:column;gap:2px; }
