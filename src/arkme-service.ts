@@ -3321,6 +3321,10 @@ arkoImagesV1:true,
   }
 
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
+  async arrangementOccurrenceRequest(...args: Parameters<ArrangementService['occurrenceRequest']>) {return this.arrangement.occurrenceRequest(...args)}
+
+  async arrangementRecognitionRequest(...args: Parameters<ArrangementService['recognitionRequest']>) { return this.arrangement.recognitionRequest(...args) }
+
   async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
 
   async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {

@@ -1,7 +1,7 @@
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from './types.js'
 import type { DshRemoteModelCatalog } from './dsh-remote/types.js'
 
-export type ModelScene = 'dsh' | 'arko' | 'recording'
+export type ModelScene = 'dsh' | 'arko' | 'recording' | 'arrangement'
 export interface ModelChoice {
   id: string
   name: string
@@ -17,6 +17,7 @@ export interface ModelChoice {
   reasoning?: { efforts: { id: string; name: string; description?: string }[]; defaultEffort?: string }
   dsh?: { provider: string; model: string }
   arko?: string
+  arrangement?: string
   recording?: string
 }
 export interface UnifiedModelCatalog {

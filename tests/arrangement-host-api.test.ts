@@ -141,3 +141,15 @@ it('reads a source quote with opaque references and forwards cancellation', asyn
   await dispatchArkmeHostOperation({ arrangementSourceRead } as unknown as ArkmeService, 'arrangements.source.read', { arrangementRef: 'a', evidenceId: 'e', userId: 99, uid: 'must-not-cross-host' }, undefined, undefined, undefined, undefined, signal)
   expect(arrangementSourceRead).toHaveBeenCalledWith('a', 'e', signal)
 })
+
+it('keeps recognition settings and previews on account-bound, cancellable operations',async () => {
+  const arrangementRecognitionRequest=vi.fn(async () => ({})),signal=new AbortController().signal
+  await dispatchArkmeHostOperation({arrangementRecognitionRequest} as unknown as ArkmeService,'arrangements.recognition.preview',{arrangementRef:'opaque',expectedAccountScope:'test:42',expectedRouteKey:'dashscope/qwen-flash',uid:'untrusted',userId:99},undefined,undefined,undefined,undefined,signal)
+  expect(arrangementRecognitionRequest).toHaveBeenCalledWith('preview','test:42',{arrangementRef:'opaque',expectedRouteKey:'dashscope/qwen-flash'},signal)
+})
+
+it('passes occurrence preview and apply only through account-scoped opaque references',async()=>{
+ const arrangementOccurrenceRequest=vi.fn(async()=>({})),signal=new AbortController().signal
+ await dispatchArkmeHostOperation({arrangementOccurrenceRequest} as unknown as ArkmeService,'arrangements.occurrences.history.apply',{expectedAccountScope:'test:42',arrangementRef:'master-ref',reviewId:'preview',selectedRefs:['child-ref'],userId:99,uid:'untrusted'},undefined,undefined,undefined,undefined,signal)
+ expect(arrangementOccurrenceRequest).toHaveBeenCalledWith('history/apply','test:42',{arrangementRef:'master-ref',reviewId:'preview',selectedRefs:['child-ref']},signal)
+})
