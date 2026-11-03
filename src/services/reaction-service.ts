@@ -40,7 +40,7 @@ export class ReactionService {
  private readonly chatSourceKey?: (viewer: number, sessionUID: string) => Promise<string>,
  private readonly historyContext?: (items: { sessionUID: string; senderID: number; sourceKind: string; message?: { recordUID: string; ownerUserID: number; sendAtMillis: number } }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionHistoryContext[]>,
  private readonly notificationContext?: (items: { sessionUID: string; actorUserId: number }[], signal?: AbortSignal) => Promise<import('../reaction-contract.js').ReactionNotificationContext[]>,
- private readonly endpoint?: { prefix: string; contract: string }) {}
+ private readonly endpoint?: { prefix: string; contract: string; reference?: (target: ReactionWireTarget) => Promise<ReactionTargetRef> }) {}
   async request(input: ReactionRequest, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession()
     const accountKey = `${this.runtime.config.environment}:${session.userId}`
@@ -116,7 +116,7 @@ export class ReactionService {
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`${this.endpoint?.prefix ?? '/api/v1/reactions/'}${path}`, body, session, signal,
       input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
-    if (this.endpoint && result.contract !== this.endpoint.contract) throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态接口尚未完成对接，请稍后重试', false, 502)
+    if (this.endpoint && result.contract !== this.endpoint.contract) throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态数据暂时无法读取，请刷新后重试', false, 502)
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     if (input.action === 'query') {
@@ -126,12 +126,20 @@ export class ReactionService {
         const item = objectValue(raw), target = objectValue(item.target), wireKey = targetKey(target as ReactionWireTarget), aliases = ids.get(wireKey)
         if (!aliases || seen.has(wireKey)) return invalid()
         seen.add(wireKey)
-        const snapshot = { mine: state(item.mine), groups: array(item.groups, 100).map(group), has_more: boolean(item.has_more), actors_visible: boolean(item.actors_visible), private: boolean(item.private) }
+        const snapshot = { ...(item.actor_count === undefined ? {} : { actor_count: integer(item.actor_count) }), mine: state(item.mine), groups: array(item.groups, 100).map(group), has_more: boolean(item.has_more), actors_visible: boolean(item.actors_visible), private: boolean(item.private) }
         return aliases.map(id => ({target_id:id,...snapshot}))
       }) }
     }
     if (input.action === 'notifications-read') return { ok: boolean(result.ok) }
     if (input.action === 'notifications') {
+      if (this.endpoint?.reference) {
+        const items = await Promise.all(array(result.items, 50).map(async raw => {
+          const item = objectValue(raw)
+          return { id: key(item.id), revision: integer(item.revision, 1), actorUserId: integer(item.actor_user_id, 1), unread: boolean(item.unread), target: await this.endpoint!.reference!(objectValue(item.target)), ...(this.worldReference ? { recordRef: await this.worldReference(String(objectValue(item.target).record_uid)) } : {}), selections: state({ revision: item.revision, selections: item.selections }).selections }
+        }))
+        if (signal?.aborted || `${this.runtime.config.environment}:${(await this.runtime.requireSession()).userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+        return { items, has_more: boolean(result.has_more), after_id: result.after_id === '' ? '' : key(result.after_id) }
+      }
       if (!this.chatSourceKey) return invalid()
       const rows = array(result.items, 50).map(objectValue)
       const items = await Promise.all(rows.map(async item => {
@@ -167,7 +175,7 @@ export class ReactionService {
     if (input.action === 'history' || input.action === 'received') {
       const rows = array(result.items, 100).map(objectValue)
       const contextRows = rows.filter(item => item.restricted === false)
-      const contexts = input.action === 'history' && this.historyContext
+      const contexts = input.action === 'history' && !this.endpoint && this.historyContext
         ? await this.historyContext(contextRows.map(item => {
           const original = objectValue(item.original_message)
           return { sessionUID: String(objectValue(item.target).chat_session_uid ?? ''), senderID: integer(item.sender_user_id ?? 0), sourceKind: String(item.source_kind ?? ''),
@@ -179,6 +187,10 @@ export class ReactionService {
       return {
       items: await Promise.all(rows.map(async item => {
         const target = objectValue(item.target)
+        if (this.endpoint?.reference) {
+          const ref = await this.endpoint.reference(target)
+          return { event_uid: key(item.event_uid), target_id: ref.id, target: ref, expression: expression(item.expression), active: boolean(item.active), at: integer(item.at), restricted: boolean(item.restricted), source_kind: 'world', ...(item.state === undefined ? {} : { state: state(item.state) }), ...(input.action === 'received' ? { actor_user_id: integer(item.actor_user_id, 1), private: boolean(item.private) } : {}) }
+        }
         if (typeof target.chat_session_uid !== 'string' || typeof target.rel_uid !== 'string') return invalid()
         const targetID = createHash('sha256').update(JSON.stringify([session.userId, targetKey(target as ReactionWireTarget)])).digest('hex')
         const received = input.action === 'received' ? { actor_user_id: integer(item.actor_user_id, 1), private: boolean(item.private), ...(input.world_only && typeof target.record_uid === 'string' && this.worldReference ? { target: { id: targetID, worldRecordRef: await this.worldReference(target.record_uid) } } : {}) } : {}

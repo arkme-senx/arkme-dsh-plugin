@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
-import { TEAM_WORLD_PENDING_TEXT, type TeamWorldTarget, type TeamWorldView } from '../team-world-contract.js'
+import { type TeamWorldTarget, type TeamWorldView } from '../team-world-contract.js'
 import { callArkme } from './api.js'
 import { WorldPublishGuide } from './WorldPublishGuide.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
@@ -25,7 +25,7 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
     setState({ loading: true })
     void callArkme<TeamWorldView>('team.app.world.view', { expectedAccountKey: accountKey, jotmoId: target.jotmoId }, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      if (value.state !== 'backend_pending' || value.team?.jotmoId !== target.jotmoId || !value.team.name
+      if (value.state !== 'ready' || value.team?.jotmoId !== target.jotmoId || !value.team.name
         || (value.memberTeam && (value.memberTeam.jotmoId !== target.jotmoId || !value.memberTeam.teamRef))) throw new Error(tr('团队世界返回异常，请重试'))
       setState({ value, loading: false })
     }).catch(error => { if (!controller.signal.aborted) setState({ loading: false, error: error instanceof Error ? error.message : tr('团队世界暂时无法加载') }) })
@@ -47,7 +47,7 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
         {state.loading && <p role="status" style={hint}>{tr('正在加载团队世界…')}</p>}
         {state.error && <p role="alert" style={hint}>{state.error} <button type="button" style={icon} onClick={refresh}>{tr('重试')}</button></p>}
         {state.value && <div role="status" style={{ ...hint, marginTop: 32, padding: 18, borderRadius: 12, background: arkmeTheme.subtle }}>
-          <p>{tr(TEAM_WORLD_PENDING_TEXT)}</p><p style={{ marginBottom: 0 }}>{tr('接口接通后，这里统一展示该团队发布的公开内容。')}</p>
+          <p>{tr('团队内容页面将在后续版本提供。')}</p><p style={{ marginBottom: 0 }}>{tr('已发布的公开内容可在世界中查看。')}</p>
         </div>}
       </div>
     </section>

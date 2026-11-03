@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import {appendFileSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
+import {appendFileSync,mkdirSync,mkdtempSync,readFileSync,statSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {DatabaseSync} from 'node:sqlite'
@@ -25,7 +25,7 @@ function fixture(){
  const callback=vi.fn();let valid=true
  const scan=async(events=[prompt])=>{store.schedule(11,source,events,()=>valid,callback);await store.idle()}
  const projected=()=>store.project(11,source,[prompt])[0]!
- return {root,home,path,db,source,store,callback,scan,projected,revoke:()=>{valid=false;store.fence()}}
+ return {root,home,path,db,index,source,store,callback,scan,projected,revoke:()=>{valid=false;store.fence()}}
 }
 describe('event-driven public Codex progress',()=>{
  it('separates public progress from completion, excludes tools/reasoning/subagents, and redacts private media',async()=>{
@@ -41,12 +41,25 @@ describe('event-driven public Codex progress',()=>{
  })
  it('captures append from a file notification without another poll, coalesces duplicates, and preserves Unicode partial lines',async()=>{
   const f=fixture();await f.scan()
-  const text=progress('你好 🌏'),buffer=Buffer.from(text),split=buffer.indexOf(Buffer.from('🌏'))+2
+  const text=line('response_item',{id:'public_message_1',type:'message',role:'assistant',phase:'commentary',status:'completed',content:[{type:'output_text',text:'你好 🌏'}]},at+1000),buffer=Buffer.from(text),split=buffer.indexOf(Buffer.from('🌏'))+2
   appendFileSync(f.path,buffer.subarray(0,split));await f.scan();expect(f.projected().localProgress).toBeUndefined()
   appendFileSync(f.path,buffer.subarray(split))
   await vi.waitFor(()=>expect(f.projected().localProgress).toHaveLength(1),{timeout:2500,interval:100})
   expect(f.projected().localProgress![0]!.text).toBe('你好 🌏')
   appendFileSync(f.path,text);await f.scan();expect(f.projected().localProgress).toHaveLength(1)
+ })
+ it('uses native identity for updates and original record positions when native identity is absent',async()=>{
+  const f=fixture()
+  const message=(text:string,time:number)=>line('response_item',{id:'stable_message',type:'message',role:'assistant',phase:'commentary',status:'completed',content:[{type:'output_text',text}]},time)
+  appendFileSync(f.path,message('first',at+1000));await f.scan()
+  const before=f.projected().localProgress![0]!
+  appendFileSync(f.path,message('updated',at+2000));await f.scan()
+  expect(f.projected().localProgress).toHaveLength(1)
+  expect(f.projected().localProgress![0]).toMatchObject({id:before.id,sourceSequence:before.sourceSequence,at:before.at,text:'updated'})
+  appendFileSync(f.path,progress('相同文字',at+3000)+progress('相同文字',at+3000));await f.scan()
+  const equal=f.projected().localProgress!.filter(p=>p.text==='相同文字')
+  expect(equal).toHaveLength(2);expect(equal[0]!.id).not.toBe(equal[1]!.id)
+  expect(equal[0]!.sourceSequence).toBeLessThan(equal[1]!.sourceSequence!)
  })
  it('persists cursor and progress across reopen, scopes account and cloud turn mapping, and replays a missed terminal',async()=>{
   const f=fixture();appendFileSync(f.path,progress()+complete());await f.scan();f.store.fence()
@@ -89,4 +102,49 @@ describe('event-driven public Codex progress',()=>{
   const cursor=f.db.prepare('SELECT offset FROM codex_live_cursors').get()!
   await f.scan();expect(f.db.prepare('SELECT offset FROM codex_live_cursors').get()).toEqual(cursor)
  })
+})
+
+it('keeps previously collected facts if a future source version removes the recognized local index',async()=>{
+ const f=fixture();appendFileSync(f.path,progress('已采集的旧正文'));await f.scan()
+ expect(f.projected().localProgress?.[0]?.text).toBe('已采集的旧正文')
+ f.index.close();dbs.splice(dbs.indexOf(f.index),1);rmSync(join(f.home,'state_5.sqlite'));await f.scan()
+ expect(f.projected().localProgress?.[0]?.text).toBe('已采集的旧正文')
+ expect(f.callback).not.toHaveBeenCalled()
+})
+
+it('does not reinterpret unknown upstream records/channels as replies and resumes on recognized records',async()=>{
+ const f=fixture();appendFileSync(f.path,line('future_native_record',{type:'message',text:'不公开的未来字段'})+progress('未来私有频道',at+1000,'future_private')+progress('仍可识别的公开回复',at+2000))
+ await f.scan();expect(f.projected().localProgress?.map(p=>p.text)).toEqual(['仍可识别的公开回复'])
+})
+
+it('collects steering inputs in source order without duplicating the root Hook, including a large image input',async()=>{
+ const f=fixture()
+ const input=(id:string,text:string,image=false)=>line('response_item',{id,type:'message',role:'user',content:[{type:'input_text',text},...(image?[{type:'input_image',image_url:'data:image/png;base64,'+'A'.repeat(5*1024*1024)}]:[])]})
+ appendFileSync(f.path,input('root_input','初始输入',true)+progress('开始处理')+input('steering_one','追加说明一')+started()+input('steering_two','追加说明二')+input('root_input','初始输入',true))
+ const stat=statSync(f.path),nativeScope=JSON.stringify([11,session])
+ f.db.exec('CREATE TABLE codex_image_spans(scope TEXT,turn TEXT,start INTEGER,end INTEGER);CREATE TABLE codex_image_cursors(scope TEXT,identity TEXT)')
+ f.db.prepare('INSERT INTO codex_image_spans VALUES(?,?,?,?)').run(nativeScope,turn,Buffer.byteLength(line('session_meta',{id:session})),stat.size)
+ f.db.prepare('INSERT INTO codex_image_cursors VALUES(?,?)').run(nativeScope,`${stat.dev}:${stat.ino}`)
+ await f.scan();expect(Number(f.db.prepare('SELECT offset FROM codex_live_cursors').get()!.offset)).toBeLessThan(stat.size)
+ for(let i=0;i<8;i++){await f.scan();if(f.db.prepare("SELECT 1 FROM codex_live_messages WHERE kind='input'").get())break}
+ const inputs=f.db.prepare("SELECT * FROM codex_live_messages WHERE kind='input' ORDER BY source_order").all()
+ expect(inputs.map(r=>r.text)).toEqual(['追加说明一','追加说明二'])
+ expect(inputs[0]!.source_order).toBeGreaterThan(5*1024*1024)
+ expect(inputs[1]!.source_order).toBeGreaterThan(Number(inputs[0]!.source_order))
+ expect(f.projected().localProgress?.map(p=>p.text)).toEqual(['开始处理'])
+ await f.scan();expect(f.db.prepare("SELECT count(*) n FROM codex_live_messages WHERE kind='input'").get()!.n).toBe(2)
+ expect(JSON.stringify(inputs)).not.toMatch(/base64|初始输入/)
+})
+
+it('keeps consumed facts and reads only the append when a verified source has no recognized root input',async()=>{
+ const f=fixture();appendFileSync(f.path,progress('旧版公开正文'))
+ const scope=JSON.stringify([11,session]),stat=statSync(f.path)
+ f.db.exec('CREATE TABLE codex_image_spans(scope TEXT,turn TEXT,start INTEGER,end INTEGER);CREATE TABLE codex_image_cursors(scope TEXT,identity TEXT)')
+ f.db.prepare('INSERT INTO codex_image_spans VALUES(?,?,?,?)').run(scope,turn,Buffer.byteLength(line('session_meta',{id:session})),stat.size)
+ f.db.prepare('INSERT INTO codex_image_cursors VALUES(?,?)').run(scope,`${stat.dev}:${stat.ino}`)
+ await f.scan();expect(f.projected().localProgress?.map(p=>p.text)).toEqual(['旧版公开正文'])
+ // A future source rewrites consumed fields in place; previously collected history must survive.
+ writeFileSync(f.path,readFileSync(f.path,'utf8').replace('旧版公开正文','新版其他正文'))
+ appendFileSync(f.path,progress('新的公开回复',at+2000))
+ await f.scan();expect(f.projected().localProgress?.map(p=>p.text)).toEqual(['旧版公开正文','新的公开回复'])
 })

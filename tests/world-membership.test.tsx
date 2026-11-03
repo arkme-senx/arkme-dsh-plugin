@@ -8,7 +8,7 @@ const services: WorldService[] = []
 afterEach(() => { services.splice(0).forEach(service => service.dispose()); vi.restoreAllMocks(); vi.useRealTimers() })
 async function fixture() {
   let viewer = 42
-  const raw = [7, 7, 8, 9, 10, 11, 42].map((id, index) => ({ user_id: id, record_uid: `record-${index}`, nick_name: `作者${id}`, text_content: '公开正文', images: [], videos: [], voices: [] }))
+  const raw = [7, 7, 8, 9, 10, 11, 42].map((id, index) => ({ principal: { kind: 'person', user_id: id, name: `作者${id}` }, user_id: id, record_uid: `record-${index}`, nick_name: `作者${id}`, text_content: '公开正文', images: [], videos: [], voices: [] }))
   const publicRead = vi.fn(async (_path, _body, _session, _signal) => ({ items: [
     { user_id: 7, member_type: 1 }, { user_id: 8, member_type: 2 }, { user_id: 9, member_type: 0 },
     { user_id: 10 }, { user_id: 99, member_type: 2 },
@@ -17,7 +17,7 @@ async function fixture() {
   const remarks = vi.fn(async () => new Map([[7, '我的备注']]))
   const runtime = { config: { environment: 'test', worldBaseUrl: 'https://world.test' }, stateStore: { async uniqueCode() { return 'world-member-test' } },
     async requireSession() { return { userId: viewer, accessToken: 'access', refreshToken: `refresh-${viewer}` } },
-    async post(_base, path, body) { return path.endsWith('/world-list') ? { list: raw, total: raw.length } : raw.find(item => item.record_uid === body.record_uid) },
+    async post(_base, path, body) { return path.endsWith('/query') ? { items: raw, has_more: false } : raw.find(item => item.record_uid === body.record_uid) },
     authenticatedAuthPost: publicRead, authenticatedAuthReadPost: ownRead }
   const world = new WorldService(runtime as never, {} as never, {} as never, {} as never, { privateDisplayNamesByUserIds: remarks })
   services.push(world)

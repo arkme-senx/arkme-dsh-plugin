@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamDirectoryActions } from '../src/client/redesign/contacts/TeamDirectoryActions.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { invalidateTeamMessages, openTeamMessages } from '../src/client/team-messaging-events.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeClientError } from '../src/sdk/index.js'
 import { teamMembershipErrorText } from '../src/client/redesign/contacts/team-membership-feedback.js'
 
@@ -20,8 +21,8 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 const text = () => JSON.stringify(root.toJSON())
 const input = () => root.root.findByType('input')
 async function change(value: string) { await act(async () => { input().props.onChange({ target: { value } }); await tick() }) }
-async function open(mode: 'join' | 'link') {
-  await act(async () => { root = create(<TeamDirectoryActions accountKey="account" onChanged={changed} onSelect={() => {}} />) })
+async function open(mode: 'join' | 'link', accountKey = 'account') {
+  await act(async () => { root = create(<TeamDirectoryActions accountKey={accountKey} onChanged={changed} onSelect={() => {}} />) })
   await act(async () => { root.root.findByType(ArkmeActionMenu).props.actions.find((a: { id: string }) => a.id === mode).onSelect() })
 }
 async function submit() { await act(async () => { root.root.findByType('form').props.onSubmit({ preventDefault() {} }); await tick() }) }
@@ -44,9 +45,13 @@ it.each(['dawd', '/team-message?channel=' + 'a'.repeat(32), 'http://example.com/
   await change('corrected'); expect(root.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
 })
 it('opens a valid link using only its public reference and closes the form', async () => {
-  await open('link'); await change(` https://example.com/team-message?channel=${'a'.repeat(32)} `); await submit()
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42})
+  call.mockImplementation(async op => op === 'team.app.open' ? {channel:{teamRef:'folder'},openInbox:true} : {items:[],hasMore:false})
+  await open('link', 'test:42'); await change(` https://example.com/team-message?channel=${'a'.repeat(32)} `); await submit()
   expect(openTeamMessages).toHaveBeenCalledExactlyOnceWith({ kind: 'link', publicRef: 'a'.repeat(32) })
-  expect(root.root.findAllByType('form')).toHaveLength(0); expect(call).not.toHaveBeenCalled()
+  expect(root.root.findAllByType('form')).toHaveLength(0)
+  expect(call.mock.calls.filter(([op]) => op === 'team.app.open')).toHaveLength(1)
+  expect(call.mock.calls.some(([op]) => op === 'team.app.entries.change')).toBe(false)
 })
 it.each(['joined', 'pending'] as const)('shows the %s result without a query or duplicate application action', async state => {
   call.mockResolvedValue({ state })

@@ -1,3 +1,4 @@
+import {readRecordExcerpt,type RecordExcerpt} from './record-excerpt.js'
 import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
@@ -54,6 +55,7 @@ interface RecordRow {
   last_error: string | null
   record_duration_millis?: number
   capture_context_json?: string | null
+  content_payload_json?: string | null
   created_at_millis: number
 }
 
@@ -299,6 +301,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     }
     if (!recordColumns.some(column => column.name === 'capture_context_json')) {
       this.database.exec('ALTER TABLE record_cache ADD COLUMN capture_context_json TEXT')
+    }
+    if (!recordColumns.some(column => column.name === 'content_payload_json')) {
+      this.database.exec('ALTER TABLE record_cache ADD COLUMN content_payload_json TEXT')
     }
     const metaColumns = this.database.prepare('PRAGMA table_info(cache_meta)').all() as unknown as Array<{ name: string }>
     if (!metaColumns.some(column => column.name === 'pagination_initialized')) {
@@ -809,19 +814,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
       SELECT record_uid, text_content, created_at_millis, send_at_millis, attempts, last_error,
-             record_duration_millis, capture_context_json
+             record_duration_millis, capture_context_json, content_payload_json
       FROM record_cache
       WHERE user_id = ? AND sync_state IN ('pending', 'failed')
       ORDER BY created_at_millis ASC, record_uid ASC
     `).all(userId) as unknown as Array<Pick<
       RecordRow, 'record_uid' | 'text_content' | 'created_at_millis' | 'send_at_millis' | 'attempts' | 'last_error'
-        | 'record_duration_millis' | 'capture_context_json'
+        | 'record_duration_millis' | 'capture_context_json' | 'content_payload_json'
     >>
     return rows.map(row => {
       const captureContext = this.pendingCaptureContext(row.capture_context_json)
       const recordDurationMillis = Math.max(0, Math.trunc(row.record_duration_millis ?? 0))
       return {
         recordUid: row.record_uid,
+        ...this.excerptFields(row.content_payload_json,row.text_content),
         textContent: row.text_content,
         createdAtMillis: row.created_at_millis,
         sendAtMillis: row.send_at_millis,
@@ -1070,6 +1076,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
 
   private recordFromRow(row: RecordRow): ArkmeSelfRecordItem {
     return {
+      ...this.excerptFields(row.content_payload_json,row.text_content),
       ...(row.sender_avatar_ref ? { avatarRef: row.sender_avatar_ref } : {}),
       ...(row.sender_name ? { senderName: row.sender_name } : {}),
       recordUid: row.record_uid,
@@ -1107,12 +1114,19 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const now = Date.now()
     const recordDurationMillis = Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0))
     const captureContextJson = pending.captureContext === undefined ? null : JSON.stringify(pending.captureContext)
+    const contentPayloadJson = pending.excerpt ? JSON.stringify({excerpt:pending.excerpt}) : null
+    if (pending.excerpt && !readRecordExcerpt(pending.excerpt,pending.textContent)) throw new Error('摘录待发送数据无效')
+    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    if (existing && existing.sync_state !== 'synced' && (pending.excerpt || existing.content_payload_json)) {
+      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson) throw new Error('发送内容已冻结，请使用原内容重试')
+      return
+    }
     this.database.prepare(`
       INSERT INTO record_cache (
         user_id, record_uid, send_at_millis, title, text_content, template_kind,
         status, version, sync_state, attempts, last_error,
-        record_duration_millis, capture_context_json, created_at_millis, updated_at_millis
-      ) VALUES (?, ?, ?, '', ?, 1, 0, 0, 'pending', ?, ?, ?, ?, ?, ?)
+        record_duration_millis, capture_context_json, content_payload_json, created_at_millis, updated_at_millis
+      ) VALUES (?, ?, ?, '', ?, 1, 0, 0, 'pending', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, record_uid) DO UPDATE SET
         send_at_millis = excluded.send_at_millis,
         text_content = excluded.text_content,
@@ -1122,11 +1136,21 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         last_error = excluded.last_error,
         record_duration_millis = excluded.record_duration_millis,
         capture_context_json = excluded.capture_context_json,
+        content_payload_json = excluded.content_payload_json,
         updated_at_millis = excluded.updated_at_millis
     `).run(
       userId, pending.recordUid, pending.sendAtMillis, pending.textContent,
-      pending.attempts, pending.lastError ?? null, recordDurationMillis, captureContextJson, pending.createdAtMillis, now,
+      pending.attempts, pending.lastError ?? null, recordDurationMillis, captureContextJson, contentPayloadJson, pending.createdAtMillis, now,
     )
+  }
+
+  private excerptFields(raw:string|null|undefined,text:string):{excerpt?:RecordExcerpt} {
+    if (!raw) return {}
+    const payload = JSON.parse(raw) as {excerpt?:unknown}
+    if (payload.excerpt === undefined) return {}
+    const excerpt = readRecordExcerpt(payload.excerpt,text)
+    if (!excerpt) throw new Error('摘录恢复数据损坏，已保留原文件')
+    return {excerpt}
   }
 
   private pendingCaptureContext(raw: string | null | undefined): ArkmeRecordCaptureContext | undefined {
@@ -1159,8 +1183,8 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       INSERT INTO record_cache (
         user_id, record_uid, send_at_millis, title, text_content, template_kind,
         status, version, sync_state, attempts, last_error,
-        created_at_millis, updated_at_millis, sender_avatar_ref, sender_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', 0, NULL, ?, ?, ?, ?)
+        created_at_millis, updated_at_millis, sender_avatar_ref, sender_name, content_payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', 0, NULL, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, record_uid) DO UPDATE SET
         send_at_millis = excluded.send_at_millis,
         title = excluded.title,
@@ -1170,12 +1194,13 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         version = excluded.version,
         sender_avatar_ref = excluded.sender_avatar_ref,
         sender_name = excluded.sender_name,
+        content_payload_json = excluded.content_payload_json,
         sync_state = 'synced',
         last_error = NULL,
         updated_at_millis = excluded.updated_at_millis
     `).run(
       userId, item.recordUid, item.sendAtMillis, item.title, item.textContent,
-      item.templateKind, item.status, item.version, item.sendAtMillis || now, now, item.avatarRef ?? null, item.senderName ?? null,
+      item.templateKind, item.status, item.version, item.sendAtMillis || now, now, item.avatarRef ?? null, item.senderName ?? null, item.excerpt ? JSON.stringify({excerpt:item.excerpt}) : null,
     )
   }
 
@@ -1234,6 +1259,17 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       try { Object.assign(result, normalizeLocalDirectoryPreferences({ [row.entry_key]: JSON.parse(row.payload) })) } catch { /* Ignore corrupt individual entries. */ }
     }
     return result
+  }
+
+  async teamEntryPreferenceState(accountKey: string, value?: unknown): Promise<unknown> {
+    const key = 'team-cloud-state:v1'
+    if (value !== undefined) {
+      const payload = JSON.stringify(value)
+      if (Buffer.byteLength(payload, 'utf8') > 4 * 1024 * 1024) throw new Error('团队入口同步缓存过大，请重新核对')
+      this.transaction(() => { this.database.prepare('INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)').run(accountKey, key, payload) })
+    }
+    const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as {payload: string} | undefined
+    return row ? JSON.parse(row.payload) : {}
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

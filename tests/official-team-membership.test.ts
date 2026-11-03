@@ -75,9 +75,9 @@ it('reuses only a visible official conversation and restores the shortcut when t
   const status = { state: 'ready' as const, value: value(false) }
   expect(shouldShowOfficialContact(status, [conversation], {})).toBe(false)
   const key = teamConversationEntryKey(conversation)
-  const hidden = { [key]: { pinned: false, removal: { at: 10, sequences: { [key]: 4 } } } }
+  const hidden = { [key]: { pinned: false, dismissed: true } }
   expect(shouldShowOfficialContact(status, [conversation], hidden)).toBe(true)
-  expect(shouldShowOfficialContact(status, [{ ...conversation, lastSeq: 5 }], hidden)).toBe(false)
+  expect(shouldShowOfficialContact(status, [{ ...conversation, lastSeq: 5 }], hidden)).toBe(true)
   expect(shouldShowOfficialContact(status, [{ ...conversation, channel: { ...conversation.channel, jotmoId: 'another' } }], {})).toBe(true)
   expect(shouldShowOfficialContact({ state: 'ready', value: value(true) }, [conversation], hidden)).toBe(false)
 })

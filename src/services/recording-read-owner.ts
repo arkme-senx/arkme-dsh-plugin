@@ -1,7 +1,7 @@
 import { parseRecordingAsrInputMetrics, addRecordingAsrInputMetrics, type RecordingAsrInputMetrics } from '../recording-asr-input-metrics.js'
 import type { ArkmeRecordingCoverage } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
-import { addRecordingStorageMetrics, parseRecordingStorageMetrics, type RecordingStorageMetrics } from '../recording-daily-metrics.js'
+import { addRecordingStorageMetrics, parseRecordingStorageMetrics, projectRecordingDailyMetrics, recordingTextCount, type RecordingStorageMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from './service.js'
 
@@ -71,6 +71,9 @@ export interface RecordingOwnerDayPage {
   coverage: RecordingOwnerCoverage
   captureCoverage?: { receiving: number; interrupted: number }
   next?: RecordingDayReadCursor
+}
+export interface RecordingOwnerDayOverview extends Omit<RecordingOwnerDayPage, 'items' | 'next'> {
+  items: Array<Omit<RecordingOwnerFragment, 'text'> & { textCount: number; textPreview: string }>
 }
 
 const objectID = /^(?!0{24}$)[a-f0-9]{24}$/
@@ -142,6 +145,7 @@ function validateWindow(window: RecordingReadWindow): void {
 /** Authenticated, cancellable consumption of Audio's semantic read contract.
  * No OSS path, speaker-number inference, or full-day fallback belongs here. */
 export class RecordingReadOwner {
+  private metadataBatch = false
   constructor(private readonly runtime: Pick<ServiceRuntime, 'authenticatedAudioPost' | 'requireSession'>, private readonly lane: 'interactive-read' | 'background-read' = 'interactive-read') {}
 
   private async read(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
@@ -163,11 +167,12 @@ export class RecordingReadOwner {
     validateWindow(window)
     const facts: RecordingOwnerFact[] = []
     const seen = new Set<string>(), cursors = new Set<string>()
-    let cursor = ''
+    let cursor = '', metadataBatch = true
     do {
       const row = record(await this.read('/api/v1/audio/recordings/query', {
         start_at: window.startAt, end_at: window.endAt, order: 'asc', limit: 50, ...(cursor === '' ? {} : { page_cursor: cursor }),
       }, session, signal))
+      metadataBatch &&= row.transcript_metadata_batch === true
       if (!Array.isArray(row.items) || row.items.length > 50) return invalid()
       for (const value of row.items) {
         const item = record(value)
@@ -182,6 +187,7 @@ export class RecordingReadOwner {
       if (cursor !== '' && cursors.has(cursor)) return invalid()
       cursors.add(cursor)
     } while (cursor !== '')
+    this.metadataBatch = metadataBatch
     return facts
   }
 
@@ -263,6 +269,11 @@ export class RecordingReadOwner {
       recording_uid: recordingId, source, text_mode: 'full', start_at: window.startAt, end_at: window.endAt, limit,
       ...(options.cursor === undefined || options.cursor === '' ? {} : { page_cursor: options.cursor }),
     }, session, signal))
+    return this.parseTranscript(row, recordingId, source, window, options)
+  }
+
+  private parseTranscript(row: Record<string, unknown>, recordingId: string, source: RecordingReadSource, window: RecordingReadWindow, options: { cursor?: string; limit?: number; revision?: string }): RecordingOwnerTranscriptPage {
+    const limit = options.limit ?? 100
     if (row.status === 'unavailable') return stale()
     if (row.status !== 'available' || id(row.recording_uid) !== recordingId) return invalid()
     const version = revision(row.revision)
@@ -295,12 +306,86 @@ export class RecordingReadOwner {
     return { recordingId, revision: version, startAt, items, nextCursor: cursor, coverage: coverage(row.coverage), asrInput: parseRecordingAsrInputMetrics(row.asr_input), storage: parseRecordingStorageMetrics(row.storage) }
   }
 
+  private async batchMetadata(positions: RecordingDayReadCursor['positions'], window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const pages = new Map<string, RecordingOwnerTranscriptPage>()
+    for (let offset = 0; offset < positions.length; offset += 20) {
+      const batch = positions.slice(offset, offset + 20)
+      let raw: unknown
+      try {
+        raw = await this.read('/api/v1/audio/recordings/transcript/metadata', {
+          recording_uids: batch.map(position => position.fact.recording_uid), source, start_at: window.startAt, end_at: window.endAt,
+        }, session, signal)
+      } catch (error) {
+        // A capability reply and its follow-up may hit different rollout nodes.
+        // Only a missing route permits the established per-recording read path.
+        if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? 0)) {
+          this.metadataBatch = false
+          return undefined
+        }
+        throw error
+      }
+      const value = record(raw)
+      if (!Array.isArray(value.items) || value.items.length !== batch.length) return invalid()
+      for (let i = 0; i < batch.length; i++) {
+        const position = batch[i]!, raw = record(value.items[i])
+        const page = this.parseTranscript(raw, position.fact.recording_uid, source, window, { limit: 1, revision: position.revision })
+        if (page.items.length || page.nextCursor) return invalid()
+        pages.set(position.fact.recording_uid, page)
+      }
+    }
+    return pages
+  }
+
+  async dayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    return await this.readDayMetrics(window, session, signal, false)
+  }
+
+  /** Old servers expose metrics on a small text page. Never follow its cursor. */
+  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    return await this.readDayMetrics(window, session, signal, true)
+  }
+
+  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean) {
+    const facts = await this.recordings(window, session, signal)
+    // Older owners keep supplying metrics on the first text page. Do not add
+    // another body scan solely to make the loading indicator disappear.
+    if (!this.metadataBatch && !allowLegacy) return undefined
+    const positions = facts.map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false }))
+    let pages = this.metadataBatch ? await this.batchMetadata(positions, window, 'primary', session, signal) : undefined
+    if (!pages) {
+      if (!allowLegacy) return undefined
+      pages = new Map<string, RecordingOwnerTranscriptPage>()
+      const controller = new AbortController()
+      const readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+      let next = 0
+      const lanes = Array.from({ length: Math.min(2, facts.length) }, async () => {
+        for (;;) {
+          readSignal.throwIfAborted()
+          const fact = facts[next++]
+          if (!fact) return
+          const page = await this.transcript(fact.recording_uid, 'primary', window, session, { limit: 1 }, readSignal)
+          pages!.set(fact.recording_uid, page)
+        }
+      })
+      try { await Promise.all(lanes) }
+      catch (error) { controller.abort(); await Promise.allSettled(lanes); throw error }
+    }
+    const storage: RecordingStorageMetrics = { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+    const input: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
+    for (const page of pages.values()) { addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(input, page.asrInput) }
+    return projectRecordingDailyMetrics(storage, [], input)
+  }
+
   async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
     validateWindow(window)
     if (continuation !== undefined && (continuation.startAt !== window.startAt || continuation.endAt !== window.endAt || continuation.source !== source)) return stale()
     const state: RecordingDayReadCursor = continuation === undefined
       ? { ...window, source, positions: (await this.recordings(window, session, signal)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
       : structuredClone(continuation)
+    if (this.metadataBatch) {
+      const metadata = await this.batchMetadata(state.positions, window, source, session, signal)
+      if (metadata) return await this.dayPageWithMetadata(state, window, source, session, metadata, signal)
+    }
     const pages = new Map<string, RecordingOwnerTranscriptPage>()
     const total = emptyCoverage()
     const asrInput = { duration_ms:0,confirmed_count:0,pending_count:0,unknown_count:0,estimated_count:0 }
@@ -373,6 +458,142 @@ export class RecordingReadOwner {
       totalDurationMillis: state.positions.reduce((sum, position) => sum + Math.max(0, Math.min(window.endAt, position.fact.end_at) - Math.max(window.startAt, position.fact.start_at)), 0),
       ...(state.positions.every(position => position.done) ? {} : { next: state }),
     }
+  }
+
+  private async dayPageWithMetadata(state: RecordingDayReadCursor, window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, metadata: Map<string, RecordingOwnerTranscriptPage>, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
+    const storage: RecordingStorageMetrics = { bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+    const asrInput: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
+    const total = emptyCoverage(), pages = new Map<string, RecordingOwnerTranscriptPage>()
+    const ordered = [...state.positions].sort((a, b) => a.fact.start_at - b.fact.start_at)
+    const overlapping = new Set<RecordingDayPosition>()
+    let furthest: RecordingDayPosition | undefined, furthestEnd = -Infinity
+    for (const position of ordered) {
+      const end = position.fact.end_at > position.fact.start_at ? position.fact.end_at : window.endAt
+      if (furthest && position.fact.start_at < furthestEnd) { overlapping.add(furthest); overlapping.add(position) }
+      if (end > furthestEnd) { furthest = position; furthestEnd = end }
+    }
+    for (const position of state.positions) {
+      const page = metadata.get(position.fact.recording_uid)!
+      // Overlapping sources need only one head each to establish merge order.
+      // A sequential recording can contribute the full visible page directly.
+      if (!position.revision) position.limit = overlapping.has(position) ? 1 : 100
+      position.revision = page.revision
+      addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(asrInput, page.asrInput)
+      for (const key of Object.keys(total) as Array<keyof RecordingOwnerCoverage>) total[key] += page.coverage[key]
+      if (page.coverage.ready_count === 0) position.done = true
+    }
+    const items: RecordingOwnerFragment[] = []
+    let characters = 0
+    while (items.length < 100 && characters < 20_000) {
+      let selected: RecordingDayReadCursor['positions'][number] | undefined, fragment: RecordingOwnerFragment | undefined
+      for (const position of ordered) {
+        if (position.done || fragment && position.fact.start_at > fragment.startAt) continue
+        let page = pages.get(position.fact.recording_uid)
+        if (!page) {
+          page = await this.transcript(position.fact.recording_uid, source, window, session, { cursor: position.cursor, limit: position.limit, revision: position.revision }, signal)
+          pages.set(position.fact.recording_uid, page)
+        }
+        if (position.skip > page.items.length) return invalid()
+        if (position.skip === page.items.length) {
+          if (!page.nextCursor) { position.done = true; continue }
+          position.cursor = page.nextCursor; position.skip = 0; position.limit = 100
+          page = await this.transcript(position.fact.recording_uid, source, window, session, { cursor: position.cursor, limit: position.limit, revision: position.revision }, signal)
+          pages.set(position.fact.recording_uid, page)
+        }
+        const candidate = page.items[position.skip]
+        if (!candidate) return invalid()
+        if (position.last) follows(position.last, candidate)
+        if (!fragment || compare(candidate, fragment) < 0) { selected = position; fragment = candidate }
+      }
+      if (!selected || !fragment) break
+      const length = fragment.textEnd - fragment.textStart
+      if (characters + length > 20_000) break
+      items.push({ ...fragment, recordingBelongsToViewer: selected.fact.memoryOwnerUserId === session.userId }); characters += length
+      const { text: _text, ...last } = fragment
+      selected.last = last; selected.skip++
+    }
+    for (const position of state.positions) {
+      const page = pages.get(position.fact.recording_uid)
+      if (page && position.skip === page.items.length) {
+        if (!page.nextCursor) position.done = true
+        else { position.cursor = page.nextCursor; position.skip = 0; position.limit = 100 }
+      }
+    }
+    const captures = state.positions.filter(position => position.fact.capture_state !== '')
+    return { items, coverage: total, storage, asrInput,
+      views: state.positions.map(position => ({ recording_uid: position.fact.recording_uid, revision: position.revision, source })),
+      totalDurationMillis: state.positions.reduce((sum, position) => sum + Math.max(0, Math.min(window.endAt, position.fact.end_at) - Math.max(window.startAt, position.fact.start_at)), 0),
+      ...(captures.length ? { captureCoverage: { receiving: captures.filter(position => position.fact.capture_state === 'receiving').length, interrupted: captures.filter(position => position.fact.capture_state === 'interrupted').length } } : {}),
+      ...(state.positions.every(position => position.done) ? {} : { next: state }),
+    }
+  }
+
+  /** Scan each recording once rather than revalidating every recording for each
+   * merged UI page. Return compact navigation facts and revalidate the complete
+   * snapshot before publishing; no whole-day transcript body is retained. */
+  async dayOverview(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials,
+    snapshot: RecordingDayReadCursor, signal?: AbortSignal, onFragment?: (item: RecordingOwnerFragment) => void): Promise<RecordingOwnerDayOverview> {
+    validateWindow(window)
+    if (snapshot.startAt !== window.startAt || snapshot.endAt !== window.endAt || snapshot.source !== source) return stale()
+    const items = new Map<string, RecordingOwnerDayOverview['items'][number]>()
+    const storage: RecordingStorageMetrics = { bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+    const asrInput: RecordingAsrInputMetrics = { duration_ms: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0, estimated_count: 0 }
+    const total = emptyCoverage()
+    const controller = new AbortController()
+    const readSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const parallel = async (read: (position: RecordingDayPosition) => Promise<void>) => {
+      let next = 0
+      const lanes = Array.from({ length: Math.min(2, snapshot.positions.length) }, async () => {
+        for (;;) { const position = snapshot.positions[next++]; if (!position) return; readSignal.throwIfAborted(); await read(position) }
+      })
+      try { await Promise.all(lanes) }
+      catch (error) { controller.abort(); await Promise.allSettled(lanes); throw error }
+    }
+    await parallel(async position => {
+      let cursor = '', first = true, previous: Omit<RecordingOwnerFragment, 'text'> | undefined
+      const cursors = new Set<string>()
+      do {
+        const page = await this.transcript(position.fact.recording_uid, source, window, session, { cursor, limit: 100, revision: position.revision }, readSignal)
+        if (first) {
+          addRecordingStorageMetrics(storage, page.storage); addRecordingAsrInputMetrics(asrInput, page.asrInput)
+          for (const key of Object.keys(total) as Array<keyof RecordingOwnerCoverage>) total[key] += page.coverage[key]
+          first = false
+        }
+        for (const item of page.items) {
+          if (previous) follows(previous, item)
+          else if (item.textStart !== 0) return invalid()
+          onFragment?.(item)
+          const { text: body, ...metadata } = item
+          const key = `${item.recordingId}:${item.index}`, existing = items.get(key)
+          items.set(key, { ...metadata, textStart: existing?.textStart ?? metadata.textStart,
+            recordingBelongsToViewer: position.fact.memoryOwnerUserId === session.userId,
+            textCount: (existing?.textCount ?? 0) + recordingTextCount(body),
+            textPreview: Array.from((existing?.textPreview ?? '') + body).slice(0, 80).join('') })
+          previous = metadata
+        }
+        cursor = page.nextCursor
+        if (cursor && cursors.has(cursor)) return invalid()
+        cursors.add(cursor)
+      } while (cursor)
+      if (previous && previous.textEnd !== previous.textTotal) return invalid()
+    })
+    // Detect additions, removals, ownership and range changes, then validate every
+    // recording revision again to reject a mix produced by concurrent ASR/edits.
+    const facts = await this.recordings(window, session, readSignal)
+    const identities = (values: RecordingOwnerFact[]) => JSON.stringify(values.toSorted((a,b) => a.recording_uid.localeCompare(b.recording_uid)))
+    if (identities(facts) !== identities(snapshot.positions.map(position => position.fact))) return stale()
+    const metadata = this.metadataBatch ? await this.batchMetadata(snapshot.positions, window, source, session, readSignal) : undefined
+    if (!metadata) await parallel(async position => {
+      await this.transcript(position.fact.recording_uid, source, window, session, { limit: 1, revision: position.revision }, readSignal)
+    })
+    readSignal.throwIfAborted()
+    const captures = snapshot.positions.filter(position => position.fact.capture_state !== '')
+    return { items: [...items.values()].sort((a,b) => a.startAt - b.startAt || a.recordingId.localeCompare(b.recordingId) || a.index - b.index),
+      storage, asrInput, coverage: total,
+      views: snapshot.positions.map(position => ({ recording_uid: position.fact.recording_uid, revision: position.revision, source })),
+      totalDurationMillis: snapshot.positions.reduce((sum,position) => sum + Math.max(0,Math.min(window.endAt,position.fact.end_at)-Math.max(window.startAt,position.fact.start_at)),0),
+      ...(captures.length ? { captureCoverage: { receiving: captures.filter(position => position.fact.capture_state === 'receiving').length,
+        interrupted: captures.filter(position => position.fact.capture_state === 'interrupted').length } } : {}) }
   }
 
   /** Explicit full-content consumer. No caller can mistake an initial page for

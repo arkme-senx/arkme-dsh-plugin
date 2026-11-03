@@ -19,7 +19,7 @@ describe('ArkmeSettingsSurface', () => {
     const disabled = renderToStaticMarkup(<BackgroundSoundSettingsRow
       checked={false}
       busy={false}
-      description="未开启；开启后会在首次输入时请求麦克风权限"
+      description="未开启；开启时授权麦克风，输入过程中自动记录"
       onChange={() => {}}
     />)
     const enabled = renderToStaticMarkup(<BackgroundSoundSettingsRow
@@ -33,7 +33,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(disabled).toContain('role="switch"')
     expect(disabled).toContain('aria-label="文字背景音"')
     expect(disabled).toContain('aria-checked="false"')
-    expect(disabled).toContain('首次输入时请求麦克风权限')
+    expect(disabled).toContain('开启时授权麦克风')
     expect(enabled).toContain('aria-checked="true"')
     expect(enabled).toContain('aria-busy="true"')
     expect(enabled).toContain('disabled=""')
@@ -100,7 +100,7 @@ describe('ArkmeSettingsSurface', () => {
       eligibility: 'eligible',
       enabled: true,
       permission: 'prompt',
-    })).toBe('已开启，首次输入时会请求麦克风权限')
+    })).toBe('已开启，请在此授权麦克风；输入时不会弹出授权窗口')
     expect(describeArkmeBackgroundSoundSetting({
       capability: 'supported',
       eligibility: 'eligible',

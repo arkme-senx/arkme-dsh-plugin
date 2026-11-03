@@ -1,4 +1,5 @@
 import { LocationSearchService } from './location-search-service.js'
+import { ConversationLocationService } from './conversation-location-service.js'
 import type { LocationQuery } from '../location-search.js'
 import { selfRoleSnapshotFromCloud } from '../self-role-sync-store.js'
 import type { ProfileService } from './profile-service.js'
@@ -35,6 +36,8 @@ function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 export class SearchService {
+  private conversationLocations?: ConversationLocationService
+  ownLocationSnapshot?: (recordUid: string, signal?: AbortSignal) => Promise<{ locationCapture?: import('../types.js').ArkmeRecordLocationCapture; locationLabel?: string }>
   localDshQuery?: () => unknown
   articleActionRef?: (raw: Record<string, unknown>, sourceRef: string, signal?: AbortSignal) => Promise<string>
 
@@ -51,6 +54,12 @@ export class SearchService {
     return await new LocationSearchService(this.runtime, this.privacy, async (items, locked, requestSignal) =>
       (await this.withNavigationTargets(this.recordSearchResult({ items }, locked), requestSignal)).items,
     ).query(query, signal)
+  }
+
+  async searchConversationLocations(query: import('../conversation-location.js').ConversationLocationQuery, signal?: AbortSignal) {
+    if (!this.source || !this.ownLocationSnapshot) throw new ArkmePluginError('source-unavailable', '会话暂不可用', true)
+    this.conversationLocations ??= new ConversationLocationService(this.runtime, this.source, this.privacy, this.ownLocationSnapshot)
+    return await this.conversationLocations.page(query, signal)
   }
 
   async searchRecords(options: {
@@ -153,6 +162,58 @@ export class SearchService {
       ...(nextSendAt > 0 && nextRecordUid !== '' ? { next_cursor: `${String(nextSendAt)}:${nextRecordUid}` } : {}),
     })
     return await this.withNavigationTargets(result, options.signal)
+  }
+
+  async composerResources(options: { kind: 'file' | 'gallery'; query?: string; limit: number; cursor?: string; expectedUserId: number; signal?: AbortSignal }): Promise<import('../types.js').ArkmeComposerResourcePage> {
+    const session = await this.runtime.requireSession()
+    const assertAccount = async () => {
+      if ((await this.runtime.requireSession()).userId !== options.expectedUserId || session.userId !== options.expectedUserId) throw new ArkmePluginError('file-account-changed', '账号已切换，请重新选择', false, 403)
+      options.signal?.throwIfAborted()
+    }
+    await assertAccount()
+    if (!['file', 'gallery'].includes(options.kind)) throw new ArkmePluginError('composer-resource-kind-invalid', '请选择文件或视图库', false, 400)
+    let cursor = options.cursor?.trim(), lastPage: ArkmeRecordSearchResult | undefined
+    const seen = new Set<string>(cursor ? [cursor] : [])
+    for (let pass = 0; pass < 8; pass++) {
+      const page = options.query?.trim()
+        ? await this.searchRemote({ ...options, query: options.query.trim(), ...(cursor ? { cursor } : {}) })
+        : await this.searchScene({ ...options, scene: options.kind === 'file' ? 'file' : 'image_video', ...(cursor ? { cursor } : {}) })
+      lastPage = page
+      const owned = page.items.filter(item => recordOwnerId(item.recordOwnerUserId) === session.userId
+        && (item.recordCreatorUserId === undefined || recordOwnerId(item.recordCreatorUserId) === session.userId))
+      const candidates = owned.flatMap(record => (options.kind === 'file' ? record.files : record.media).map(asset => ({ record, asset })))
+      const assetUids = [...new Set(candidates.map(item => item.asset.fileAssetUid).filter(Boolean))]
+      const display = new Map<string, ArkmeFileAssetDisplayItem>()
+      for (let start = 0; start < assetUids.length; start += 50) {
+        for (const asset of await this.media.queryFileAssets(assetUids.slice(start, start + 50), options.signal)) display.set(asset.fileAssetUid, asset)
+      }
+      const resources = candidates.flatMap(({ record, asset }): import('../types.js').ArkmeComposerResource[] => {
+        const metadata = display.get(asset.fileAssetUid)
+        const mime = metadata?.mimeType?.trim() || asset.mimeType?.trim() || 'application/octet-stream'
+        const kind = mime.startsWith('image/') ? 1 : mime.startsWith('video/') ? 3 : mime.startsWith('audio/') ? 2 : metadata?.fileKind ?? asset.fileKind ?? 4
+        if (!asset.fileAssetUid || ![1, 2, 3, 4].includes(kind) || options.kind === 'gallery' && kind !== 1 && kind !== 3) return []
+        const fileName = metadata?.fileName || asset.fileName || (kind === 1 ? '图片' : kind === 3 ? '视频' : '文件')
+        const size = Math.max(0, metadata?.size ?? asset.size ?? 0)
+        const previewUrl = kind === 1 ? metadata?.previewUrl ?? metadata?.downloadUrl : undefined
+        return [{ key: `${record.recordUid}:${asset.fileAssetUid}`, recordUid: record.recordUid, sendAtMillis: record.sendAtMillis,
+          asset: { fileAssetUid: asset.fileAssetUid, fileName, mimeType: mime, size, fileKind: kind as 1 | 2 | 3 | 4 },
+          ...(previewUrl ? { thumbnailRef: this.media.issueImageMediaRef(session.userId, { remoteUrl: previewUrl, mimeType: mime, fileName, size }, asset.fileAssetUid) } : {}) }]
+      })
+      const unique = [...new Map(resources.map(item => [item.asset.fileAssetUid, item])).values()]
+      const refs = new Map<string, string>()
+      for (let start = 0; start < unique.length; start += 50) {
+        const part = await this.media.issueSearchFileMediaRefs(unique.slice(start, start + 50).map(item => ({ recordUid: item.recordUid, fileAssetUid: item.asset.fileAssetUid })), options.signal)
+        for (const [key, value] of part) refs.set(key, value)
+      }
+      await assertAccount()
+      const next = page.nextCursor?.trim(), more = page.hasMore && !!next && !seen.has(next)
+      if (unique.length || !more || pass === 7) return {
+        items: unique.map(item => { const mediaRef = refs.get(`${item.recordUid}\0${item.asset.fileAssetUid}`); return { ...item, ...(mediaRef ? { mediaRef } : {}) } }),
+        hasMore: more, ...(more ? { nextCursor: next } : {}),
+      }
+      seen.add(next!); cursor = next
+    }
+    return { items: [], hasMore: lastPage?.hasMore ?? false, ...(lastPage?.nextCursor ? { nextCursor: lastPage.nextCursor } : {}) }
   }
 
   async searchFiles(options: { query?: string; limit: number; cursor?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> {

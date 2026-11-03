@@ -2,7 +2,7 @@ import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useState } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import type { ArkmeWorldFeedItem, ArkmeWorldFeedPage } from '../../../types.js'
-import { loadWorldImageDataUrl } from '../../ArkmeWorldSurface.js'
+import { loadWorldImageDataUrl, subscribeWorldImageInvalidation } from '../../world-image-cache.js'
 import { ArkmeRichText } from '../../ArkmeRichText.js'
 import { formatContactDate } from './contact-date.js'
 
@@ -19,7 +19,7 @@ export interface ContactWorldState {
   identity: ContactDetailIdentity
   status: ContactWorldStatus
   items: ArkmeWorldFeedItem[]
-  total: number
+  total: number | undefined
   hasMore: boolean
   nextOffset: number | undefined
   loadingMode: ContactWorldLoadMode | undefined
@@ -95,7 +95,7 @@ export function contactWorldReducer(
         : [...action.page.items]
       return {
         ...state,
-        status: items.length === 0 && action.page.total === 0 ? 'empty' : 'ready',
+        status: items.length === 0 && !action.page.hasMore && (action.page.total === undefined || action.page.total === 0) ? 'empty' : 'ready',
         items,
         total: action.page.total,
         hasMore: action.page.hasMore,
@@ -117,10 +117,11 @@ function ContactWorldImage({ imageRef, alt }: { imageRef: string; alt: string })
     let active = true
     setSource(undefined)
     setFailed(false)
+    const stop = subscribeWorldImageInvalidation(imageRef, () => { active = false; setSource(undefined); setFailed(true) })
     void loadWorldImageDataUrl(imageRef)
       .then(value => { if (active) setSource(value) })
       .catch(() => { if (active) setFailed(true) })
-    return () => { active = false }
+    return () => { active = false; stop() }
   }, [imageRef])
   if (failed) return <span className="arkme-contact-world-image-error" role="img" aria-label={tr("{v0}加载失败", { v0: alt })}>{tr("图片加载失败")}</span>
   if (source === undefined) return <span className="arkme-contact-world-image-loading" aria-hidden />

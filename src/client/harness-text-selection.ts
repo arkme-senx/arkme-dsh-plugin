@@ -74,7 +74,7 @@ export function observeNativeTextTargets(doc: Document, chat: NativeChat, source
       active.get(row)?.dispose()
       // Dispose removes old prose attributes too, so restore the current ones.
       for (const element of prose) element.setAttribute('data-arkme-quote-prose', '')
-      const target: MessageSelectionTarget = { sourceRef, selectionDomain: 'native', localMarkRef: JSON.stringify([sourceRef, key, text, node.eventSeq === undefined ? null : { eventSeq: node.eventSeq, role: node.isMe ? 'user' : 'assistant' }]), item: {
+      const target: MessageSelectionTarget = { sourceRef, selectionDomain: 'native', ...(node.eventSeq===undefined?{}:{excerptOrigin:{kind:'dsh',itemRef:JSON.stringify({sessionRef:JSON.parse(sourceRef)[2],eventSeq:node.eventSeq,role:node.isMe?'user':'assistant'})}}), localMarkRef: JSON.stringify([sourceRef, key, text, node.eventSeq === undefined ? null : { eventSeq: node.eventSeq, role: node.isMe ? 'user' : 'assistant' }]), item: {
         itemUid: key, title: '', textContent: text, textFormat: 'plain', status: node.settled ? 1 : 0,
         senderName: node.isMe ? '你' : 'DeepSeek Harness', isMe: node.isMe, sendAtMillis: node.time,
       } }

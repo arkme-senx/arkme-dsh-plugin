@@ -102,7 +102,8 @@ it('uses the same business names in controls and usage help without performing a
   await render()
   expect(host.querySelector('h3')?.textContent).toBe('自动使用额度')
   await act(async () => host.querySelector('details summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-  for (const title of Object.values(names)) {
+  for (const oldTitle of Object.values(names)) {
+    const title = oldTitle.replaceAll('阿森', 'Arko')
     expect(Array.from(host.querySelectorAll('[role="switch"]')).some(node => node.getAttribute('aria-label') === title)).toBe(true)
     expect(Array.from(host.querySelectorAll('details strong')).some(node => node.textContent === title)).toBe(true)
   }

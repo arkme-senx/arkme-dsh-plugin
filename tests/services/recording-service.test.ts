@@ -73,6 +73,44 @@ describe('RecordingService', () => {
     } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
   })
 
+  it('leaves new imports parameterless and never reads the retired account preference', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme server selected recording '))
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: async () => {} },
+    }))
+    try {
+      const preference = vi.spyOn(service, 'recordingStrategies').mockRejectedValue(new Error('retired preference must not be queried'))
+      await service.acceptRecordingImport('/private/fixture.upload', { clientTaskId: recordingImportBatchID(), fileName: 'server-current.wav', mimeType: 'audio/wav', fileSize: 16044,
+        sha256: 'a'.repeat(64), startAtMillis: 1725000000000, belongUserId: 42, recordingKind: 3 }, 42)
+      const jobs = await new ArkmeStateStore(root).listRecordingImportJobs(42)
+      expect(jobs).toHaveLength(1)
+      expect(jobs[0]).not.toHaveProperty('strategy')
+      expect(preference).not.toHaveBeenCalled()
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
+  })
+
+  it('replays a parameterless receipt after a legacy client registers the equivalent current recipe', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme mixed-version receipt '))
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const inspect = vi.fn(async () => ({ kind: 'wav' as const, durationMillis: 1000 }))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gatewayNoop(), {
+      recordingImportSource: { inspect, discard: async () => {} },
+    }))
+    try {
+      const metadata = { clientTaskId: recordingImportBatchID(), fileName: 'mixed-version.wav', mimeType: 'audio/wav', fileSize: 16044,
+        sha256: 'a'.repeat(64), startAtMillis: 1725000000000, belongUserId: 42, recordingKind: 3 as const }
+      const accepted = await service.acceptRecordingImport('/private/fixture.upload', metadata, 42)
+      await service.registerRecordingImportStrategies([{ taskId: metadata.clientTaskId, strategy: 'system-sd-asr/v1' }], 42)
+      await expect(service.acceptRecordingImport('/private/retry.upload', metadata, 42)).resolves.toMatchObject({ importRef: accepted.importRef })
+      const jobs = await new ArkmeStateStore(root).listRecordingImportJobs(42)
+      expect(jobs).toHaveLength(1)
+      expect(jobs[0]).not.toHaveProperty('strategy')
+      expect(inspect).toHaveBeenCalledOnce()
+      await expect(service.registerRecordingImportStrategies([{ taskId: metadata.clientTaskId, strategy: 'baseline-sd-asr/20261026' }], 42)).rejects.toMatchObject({ code: 'recording-import-task-conflict' })
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true, maxRetries: 3 }) }
+  })
+
   it('exposes only aggregate capture coverage alongside received transcript work', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme capture coverage '))
     try {
@@ -302,6 +340,41 @@ describe('RecordingService', () => {
     return { root, database, runtime, service, state, calls, fetchImpl,
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
+
+  it('reads monthly day totals with the same window as day details and checks account/date before upstream work', async () => {
+    const fixture = await speakerCacheFixture(), date = new Date(2026, 9, 8).getTime()
+    fixture.state.ownerRecordings = [{ startAt: date, items: [{ text: '当天', start: 1000, end: 2000 }] }]
+    try {
+      const result = await fixture.service.recordingTotalsDay('test:42', date)
+      expect(result).toHaveProperty('storage')
+      expect(result).toHaveProperty('asrInput')
+      expect(fixture.calls.some(path => /get-session-ls|one-day-trans|playback/.test(path))).toBe(false)
+      const count = fixture.calls.length
+      await expect(fixture.service.recordingTotalsDay('test:7', date)).rejects.toMatchObject({ code: 'account-changed' })
+      await expect(fixture.service.recordingTotalsDay('test:42', date + 1)).rejects.toMatchObject({ code: 'recording-date-invalid' })
+      expect(fixture.calls).toHaveLength(count)
+    } finally { await fixture.close() }
+  })
+
+  it('serves a complete compact day overview bound to the same account, date and transcript snapshot', async () => {
+    const fixture = await speakerCacheFixture(), date = new Date(2026, 9, 8).getTime()
+    fixture.state.ownerRecordings = [{ startAt: date, items: [{ text: '汉🎙'.repeat(15000), start: 1000, end: 2000 }] },
+      { id: '345678901234567890123456', startAt: date + 3600000, items: [{ text: '后半天', start: 1000, end: 2000 }] }]
+    try {
+      const day = await fixture.service.recordingDay(date)
+      expect(day.transcript.nextCursor).not.toBe('')
+      const value = await fixture.service.recordingDayOverview(date, day.transcript.viewRef, day.transcript.nextCursor)
+      expect(value.viewRef).toBe(day.transcript.viewRef)
+      expect(value.items).toHaveLength(2)
+      expect(value.items.every(item => !('text' in item))).toBe(true)
+      expect(value.metrics?.textCount).toBe(30003)
+      const review = await fixture.service.recordingDayReview(date, day.transcript.viewRef, day.transcript.nextCursor)
+      expect(review.items.map(item => item.text)).toEqual(['汉🎙'.repeat(15000), '后半天'])
+      expect(review.items.map(item => item.itemId)).toEqual(value.items.map(item => item.itemId))
+      await expect(fixture.service.recordingDayOverview(date + 86400000, day.transcript.viewRef, day.transcript.nextCursor)).rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+      await expect(fixture.service.recordingDayOverview(date, 'wrong-view', day.transcript.nextCursor)).rejects.toMatchObject({ code: 'recording-view-changed' })
+    } finally { await fixture.close() }
+  })
 
   it('resolves complete entity evidence through the paged owner without speaker or profile requests', async () => {
     const profiles = vi.fn(async () => new Map())

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: mocks.callArkme,
 }))
+import { recordingDayCache } from '../src/client/recordings/recording-day-cache.js'
 import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
@@ -31,6 +32,7 @@ describe('recording surface selection and real playback controller', () => {
   const audios: FakeAudio[] = []
   const timeline = () => renderer.root.findByType(ArkmeRecordingTimeline)
   beforeEach(async () => {
+    recordingDayCache.clear()
     // Keep another past day selectable in the current month, even when run on the 1st.
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 15, 12))
@@ -63,6 +65,53 @@ describe('recording surface selection and real playback controller', () => {
     await act(async () => { renderer.unmount(); await tick() })
     vi.unstubAllGlobals(); vi.restoreAllMocks()
     vi.useRealTimers()
+  })
+
+  it('loads all-day speakers and totals without scrolling, then keeps them stable while the body pages', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    const remaining = Promise.withResolvers<any>()
+    let first: any, last: any
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day.overview') return remaining.promise
+      if (operation === 'recordings.day.review') return { viewRef: first.viewRef, items: [...first.items, ...last.items] }
+      if (operation === 'recordings.transcript.page') return last
+      const value = await original(operation, params, signal)
+      if (operation !== 'recordings.day') return value
+      const items = [0, 1, 2].map(index => ({ ...value.transcript.items[0], itemId: `whole-${index}`, itemRef: `whole-ref-${index}`,
+        sessionKey: 'recording', transcriptSource: 'system', startAtMillis: params.dateStamp + (index + 1) * 60_000,
+        endAtMillis: params.dateStamp + (index + 1) * 60_000 + 10_000, speakerKey: `person-${index}`, speakerLabel: `全天说话人${index}`,
+        text: 'abc', textStartOffset: 0, textEndOffset: 3, textTotalLength: 3 }))
+      const metrics = { archiveBytes: 123, archiveState: 'ready', confirmedCount: 1, pendingCount: 0, unknownCount: 0, textCount: 3 }
+      first = { ...value.transcript, viewRef: 'whole-day-view', items: items.slice(0, 1), dailyMetrics: metrics, nextCursor: 'rest' }
+      last = { ...first, items: items.slice(1), dailyMetrics: { ...metrics, textCount: 6 }, nextCursor: '' }
+      return { ...value, transcript: first }
+    })
+    await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42001 }); await tick() })
+    expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(1)
+    expect(timeline().props.loading).toBe(true)
+    expect(timeline().props.dailyMetrics).toMatchObject({ archiveBytes: 123 })
+    expect(timeline().props.textCountLoading).toBe(true)
+    await act(async () => { remaining.resolve({viewRef:first.viewRef,items:[...first.items,...last.items].map(({text,...item}:any)=>item),metrics:{...last.dailyMetrics,textCount:9,speakerTextCounts:{'person-0':3,'person-1':3,'person-2':3}}}); await tick() })
+    expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(1)
+    expect(timeline().props.items.map((item: any) => item.speakerKey)).toEqual(['person-0', 'person-1', 'person-2'])
+    expect(timeline().props.dailyMetrics).toMatchObject({ textCount: 9, speakerTextCounts: { 'person-0': 3, 'person-1': 3, 'person-2': 3 } })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.transcript.page')).toHaveLength(0)
+    const overviewItems = timeline().props.items
+    await act(async () => { await timeline().props.onReviewSpeaker(overviewItems[2], { left: 0, right: 0, top: 0, bottom: 0 }); await tick() })
+    const editor = renderer.root.findByType(ArkmeRecordingSpeakerEditor)
+    expect(editor.props.item.itemId).toBe('whole-2')
+    expect(await editor.props.loadReviewItems(new AbortController().signal)).toHaveLength(3)
+    expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.day.review')).toHaveLength(1)
+    await act(async () => { editor.props.onClose(); await tick() })
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => button.children.join('') === '加载更多')!.props.onClick()
+      await tick()
+    })
+    expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(3)
+    expect(timeline().props.items).toBe(overviewItems)
+    expect(timeline().props.dailyMetrics.textCount).toBe(9)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.transcript.page')).toHaveLength(1)
   })
 
   it('discards completed day statistics while the next account is loading', async () => {
@@ -145,6 +194,46 @@ describe('recording surface selection and real playback controller', () => {
     expect(audios).toHaveLength(1)
     expect(audios[0]!.paused).toBe(true)
     expect(timeline().props.isPlaying).toBe(false)
+  })
+
+  it('pauses and resumes from either control without reopening media or losing progress', async () => {
+    const rows = () => renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
+    const button = (label: string) => renderer.root.findAllByType('button').find(node => node.props['aria-label'] === label)!
+    await act(async () => { rows()[0]!.findByType('li').props.onDoubleClick(); await tick() })
+    const audio = audios[0]!
+    await act(async () => { audio.currentTime = 6; audio.dispatchEvent(new Event('timeupdate')); await tick() })
+    const position = timeline().props.playheadMillis
+    await act(async () => { button('暂停此段录音').props.onClick(); await tick() })
+    expect(audio.paused).toBe(true)
+    expect(timeline().props.playheadMillis).toBe(position)
+    expect(button('继续播放此段录音')).toBeDefined()
+    await act(async () => { button('继续播放此段录音').props.onClick(); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(audio.currentTime).toBe(6)
+    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
+    expect(audio.paused).toBe(true)
+    await act(async () => { timeline().props.onTogglePlayback(); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(audio.currentTime).toBe(6)
+    await act(async () => { rows()[0]!.findByType('li').props.onDoubleClick(); await tick() })
+    expect(audios).toHaveLength(1)
+    expect(audio.currentTime).toBe(6)
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.playback.open')).toHaveLength(1)
+  })
+
+  it('shows the pending row immediately and cancels a late media open from its button', async () => {
+    const original = mocks.callArkme.getMockImplementation()!, pending = Promise.withResolvers<any>()
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'recordings.playback.open' ? pending.promise : original(operation, ...args))
+    const rows = () => renderer.root.findAllByType(ArkmeRecordingTranscriptRow)
+    await act(async () => { rows()[0]!.findByType('li').props.onDoubleClick(); await tick() })
+    const cancel = renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '取消此段录音加载')!
+    expect(cancel).toBeDefined()
+    const signal = mocks.callArkme.mock.calls.find(call => call[0] === 'recordings.playback.open')![2] as AbortSignal
+    await act(async () => { cancel.props.onClick(); await tick() })
+    expect(signal.aborted).toBe(true)
+    await act(async () => { pending.resolve({ playbackRef: 'late', startOffsetMillis: 0, endOffsetMillis: 10000 }); await tick() })
+    expect(audios).toHaveLength(0)
+    expect(rows()[0]!.props.isPlaybackActive).toBe(false)
   })
 
   it('plays double-clicked sentences immediately and marks only the currently playing row', async () => {

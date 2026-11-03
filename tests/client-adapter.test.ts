@@ -30,7 +30,7 @@ describe('official DSH client adapter', () => {
     } finally { vi.unstubAllGlobals() }
   })
 
-  it('shadows only the native settings seat inside the embedded Harness document', () => {
+  it('leaves settings contributions to the separate embedded Harness owner', () => {
     const previousWindow = globalThis.window
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -52,14 +52,13 @@ describe('official DSH client adapter', () => {
       else Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
     }
 
-    expect(inject).toHaveBeenCalledOnce()
-    expect(inject.mock.calls[0]?.[0]).toBe('sidebar.settings')
+    expect(inject).not.toHaveBeenCalled()
     expect(effect).not.toHaveBeenCalled()
-    expect(register).toHaveBeenCalledOnce()
-    expect(registered).toEqual([{ name: 'sidebar.settings', priority: -100 }])
+    expect(register).not.toHaveBeenCalled()
+    expect(registered).toEqual([])
   })
 
-  it('owns Arkme seats and contributes the account section to DSH settings', () => {
+  it('owns resident Arkme seats and delegates product settings to an independent modal', () => {
     const registered: Array<{
       name: string
       id?: string
@@ -89,7 +88,7 @@ describe('official DSH client adapter', () => {
     const closeDetails = vi.fn()
     const cleanups: Array<() => void> = []
     const effect = vi.fn((factory: () => unknown, label: string) => {
-      if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
+      if (!label.includes('embedded DeepSeek Harness') && !label.includes('permanent Arkme sidebar')) return
       const cleanup = factory()
       if (typeof cleanup === 'function') cleanups.push(cleanup)
     })
@@ -103,22 +102,10 @@ describe('official DSH client adapter', () => {
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
-      'arkme.topic.actions',
-      'arkme.send-to-self.entry',
-      'settings.launcher',
-      'sidebar',
-      'main',
-      'rightbar',
-      'settings.section',
-      'settings.section',
-      'settings.section',
-      'settings.general.item',
-      'settings.section',
-      'shell.overlay',
-      'shell.overlay',
+      'arkme.topic.actions', 'arkme.send-to-self.entry', 'sidebar',
+      'main', 'rightbar', 'shell.overlay', 'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'settings.section', id: 'arkme-data', order: -2.5, label: expect.any(Function) }),
       expect.objectContaining({
         name: 'sidebar',
         priority: -100,
@@ -139,16 +126,10 @@ describe('official DSH client adapter', () => {
         id: 'arkme-web-login-overlay',
         order: 100,
       }),
-      expect.objectContaining({
-        name: 'settings.section',
-        id: 'arkme-account',
-        order: -3,
-        label: expect.any(Function),
-      }),
     ]))
     expect(effect).toHaveBeenCalledWith(
       expect.any(Function),
-      'dsh-arkme: render Arkme settings navigation icons',
+      'dsh-arkme: independent product settings',
     )
 
     const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {
@@ -163,8 +144,8 @@ describe('official DSH client adapter', () => {
     expect(registered).not.toContainEqual(expect.objectContaining({ id: 'arkme-app-update-dialog' }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
-    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.general.item', id: 'arkme-general' }))
-    expect(registered).toContainEqual(expect.objectContaining({ name: 'settings.section', id: 'arkme-about', label: expect.any(Function) }))
+    expect(registered.map(item => item.name)).not.toContain('settings.general.item')
+    expect(registered.map(item => item.name)).not.toContain('settings.section')
     expect(registered.find(item => item.name === 'main')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })
   })
@@ -182,7 +163,7 @@ describe('official DSH client adapter', () => {
       return registerEntry()
     })
     const effect = vi.fn((factory: () => unknown, label: string) => {
-      if (label.includes('official settings sidebar') || label.includes('embedded DeepSeek Harness')) return factory()
+      if (label.includes('permanent Arkme sidebar') || label.includes('embedded DeepSeek Harness')) return factory()
     })
 
     apply({
@@ -198,75 +179,35 @@ describe('official DSH client adapter', () => {
     expect(registeredNames).toContain('main')
   })
 
-  it('tracks the official settings trigger instead of mistaking an unrelated dialog for settings', () => {
-    const previousWindow = globalThis.window
-    const previousDocument = globalThis.document
-    let tick: (() => void) | undefined
-    let triggerExpanded = false
-    const trigger = {
-      click: vi.fn(() => { triggerExpanded = true }),
-      getAttribute: vi.fn((name: string) => name === 'aria-expanded' ? String(triggerExpanded) : null),
-    }
-    const nativeSidebar = {
-      querySelector: vi.fn((selector: string) => selector.includes('sidebar.settings') ? trigger : null),
-    }
-    Object.defineProperty(globalThis, 'window', {
-      configurable: true,
-      value: {
-        location: { hostname: 'localhost', search: '' },
-        setInterval: vi.fn((callback: () => void) => { tick = callback; return 1 }),
-        clearInterval: vi.fn(),
+  it('retains the sidebar through independent settings without polling native dialogs', async () => {
+    vi.useFakeTimers()
+    const sidebarDispose = vi.fn()
+    const cleanup: Array<() => void> = []
+    const register = vi.fn((options: { name: string }) => options.name === 'sidebar' ? sidebarDispose : vi.fn())
+    apply({
+      slots: { inject: (_key: string, factory: () => unknown) => factory(), register },
+      locale: createClientLocaleStub(),
+      layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+      effect: (factory: () => unknown, label: string) => {
+        if (!label.includes('permanent Arkme sidebar')) return
+        const stop = factory()
+        if (typeof stop === 'function') cleanup.push(stop)
       },
-    })
-    Object.defineProperty(globalThis, 'document', {
-      configurable: true,
-      value: {
-        querySelector: vi.fn((selector: string) => {
-          if (selector.includes('[role="dialog"]') && !selector.includes('settings.header')) return {}
-          if (selector === '[data-slot="sidebar"]') return nativeSidebar
-          return null
-        }),
-      },
-    })
-
-    const sidebarDisposers: Array<ReturnType<typeof vi.fn>> = []
-    const cleanups: Array<() => void> = []
-    const register = vi.fn((options: { name: string }) => {
-      const dispose = vi.fn()
-      if (options.name === 'sidebar') sidebarDisposers.push(dispose)
-      return dispose
-    })
+    } as never)
     try {
-      apply({
-        slots: {
-          inject: vi.fn((_key: string, factory: () => unknown) => factory()),
-          register,
-        },
-        locale: createClientLocaleStub(),
-        layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
-        effect: vi.fn((factory: () => unknown, label: string) => {
-          if (!label.includes('official settings sidebar')) return
-          const cleanup = factory()
-          if (typeof cleanup === 'function') cleanups.push(cleanup)
-        }),
-      } as never)
-
-      expect(sidebarDisposers).toHaveLength(1)
+      expect(register.mock.calls.filter(([options]) => options.name === 'sidebar')).toHaveLength(1)
       arkmeUi.openDshSettings()
-      expect(sidebarDisposers[0]).toHaveBeenCalledOnce()
-      tick?.()
-      expect(trigger.click).toHaveBeenCalledOnce()
-      tick?.()
-      triggerExpanded = false
-      tick?.()
-      expect(sidebarDisposers).toHaveLength(2)
+      await Promise.resolve()
+      arkmeUi.showConversations()
+      await Promise.resolve()
+      expect(sidebarDispose).not.toHaveBeenCalled()
+      expect(register.mock.calls.filter(([options]) => options.name === 'sidebar')).toHaveLength(1)
+      expect(vi.getTimerCount()).toBe(0)
     } finally {
-      cleanups.forEach(cleanup => { cleanup() })
-      if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
-      else Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
-      if (previousDocument === undefined) delete (globalThis as { document?: Document }).document
-      else Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument })
+      cleanup.forEach(stop => stop())
+      vi.useRealTimers()
     }
+    expect(sidebarDispose).toHaveBeenCalledOnce()
   })
 
   it('keeps the Arkme shell mounted while DeepSeek Harness is embedded in its conversation seat', async () => {
@@ -281,7 +222,7 @@ describe('official DSH client adapter', () => {
       locale: createClientLocaleStub(),
       sessions: { open: vi.fn() },
       effect: vi.fn((factory: () => unknown, label: string) => {
-        if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
+        if (!label.includes('embedded DeepSeek Harness') && !label.includes('permanent Arkme sidebar')) return
         const cleanup = factory()
         if (typeof cleanup === 'function') cleanups.push(cleanup)
       }),

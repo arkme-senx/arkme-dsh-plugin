@@ -191,6 +191,12 @@ export class MessageActionService {
     return await this.deliver(references, session, options)
   }
 
+  async worldSourceIdentity(conversationRef: string, actionRef: string, signal?: AbortSignal): Promise<MessageActionReference> {
+    const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
+    const reference = references[0]!
+    if (reference.role !== 'user' || reference.senderUserId !== session.userId) throw new ArkmePluginError('world-source-not-owned', '只能公开自己发出的内容', false, 403)
+    return reference
+  }
   async worldPublishSource(conversationRef: string, actionRef: string, signal?: AbortSignal) {
     const { session, references } = await this.openConversationActions(conversationRef, [actionRef], signal)
     const reference = references[0]!
@@ -212,13 +218,19 @@ export class MessageActionService {
   async forwardCodex(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> {
     const session = await this.gateway.requireSession()
     if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) throw new ArkmePluginError('codex-account-changed', '账号已变化，请重新选择', false, 409)
-    const raw = snapshot as { taskTitle?: unknown; inputName?: unknown }
+    const raw = snapshot as { taskTitle?: unknown; inputName?: unknown;cloudSources?:({source_id:string;task_id:string;event_id:string;version:number}|undefined)[] }
     if (!raw || typeof raw.taskTitle !== 'string' || !raw.taskTitle.trim() || raw.taskTitle.length > 500 || typeof raw.inputName !== 'string' || raw.inputName.length > 200) throw new ArkmePluginError('codex-selection-invalid', 'Codex 对话来源无效，请重新选择', false, 400)
-    const references = this.nativeMessages(snapshot, session.userId).map(message => ({ ...message, ownerKind: 'codex' as const, taskTitle: raw.taskTitle as string,
-      senderUserId: 0, senderName: message.role === 'user' ? (raw.inputName as string || '用户') : 'Codex' }))
+    const references = this.nativeMessages(snapshot, session.userId).map((message,index) => ({ ...message,...(raw.cloudSources?.[index]?{cloudSource:raw.cloudSources[index]!}:{}),ownerKind: 'codex' as const, taskTitle: raw.taskTitle as string,
+      senderUserId: message.role==='user'?session.userId:0, senderName: message.role === 'user' ? (raw.inputName as string || '用户') : 'Codex' }))
     return this.deliver(references, session, options)
   }
 
+  async copyLinkCodex(snapshot:unknown,expectedUserId:number,signal?:AbortSignal):Promise<ArkmeMessageCopyLinkResult>{
+    const session=await this.gateway.requireSession();if(session.userId!==expectedUserId)throw new ArkmePluginError('codex-account-changed','账号已切换',false,409)
+    const raw=snapshot as {taskTitle:string;cloudSources?:({source_id:string;task_id:string;event_id:string;version:number}|undefined)[]}
+    const references=this.nativeMessages(snapshot,session.userId).map((message,index)=>({...message,ownerKind:'codex' as const,taskTitle:raw.taskTitle,senderName:message.role==='assistant'?'Codex':message.senderName,...(raw.cloudSources?.[index]?{cloudSource:raw.cloudSources[index]!}:{})}))
+    return this.gateway.createCopyLink(references,session,signal)
+  }
   async copyLinkNative(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> {
     const session = await this.gateway.requireSession()
     if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0 || session.userId !== expectedUserId) {

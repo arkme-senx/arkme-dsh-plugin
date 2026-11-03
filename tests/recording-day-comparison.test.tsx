@@ -36,11 +36,14 @@ it('shows every recording in the selected day without choosing an hour, preservi
   await render()
   expect(document.body.textContent).toContain('当天全部录音')
   expect(document.querySelectorAll('select')).toHaveLength(0)
-  const official = document.querySelector('section[aria-label="系统转写 · 正式结果"]')!
-  expect(official.textContent).toContain(`正文 one-${baseline}`)
-  expect(official.textContent).toContain(`正文 two-${current}`)
-  expect(official.textContent).toContain('默认版 · 正式结果'); expect(official.textContent).toContain('测试版v1 · 正式结果')
-  expect(document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!.textContent).toContain('尚未生成')
+  const currentColumn = document.querySelector('section[aria-label="v2026-10"]')!
+  const baselineColumn = document.querySelector('section[aria-label="v2025-12"]')!
+  expect(currentColumn.textContent).toContain(`正文 two-${current}`)
+  expect(baselineColumn.textContent).toContain(`正文 one-${baseline}`)
+  expect(currentColumn.textContent).not.toContain(`正文 one-${baseline}`)
+  expect(baselineColumn.textContent).not.toContain(`正文 two-${current}`)
+  expect(currentColumn.querySelector('header')?.textContent).toBe('v2026-10')
+  expect(baselineColumn.querySelector('header')?.textContent).toBe('v2025-12')
   expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })
 it('follows empty recording pages and all source pages, rather than stopping at the first 50 recordings', async () => {
@@ -76,8 +79,8 @@ it('reads later recordings while an earlier one is pending, then resumes it with
   complete = true
   await act(async () => vi.advanceTimersByTimeAsync(3000))
   expect(document.body.textContent).toContain('正文 recovered')
-  const official = document.querySelector('section[aria-label="系统转写 · 正式结果"]')!
-  expect(official.querySelectorAll('[data-transcript-time]')).toHaveLength(2)
+  const official = document.querySelector('section[aria-label="v2025-12"]')!
+  expect(official.querySelectorAll('[data-transcript-time]')).toHaveLength(1)
 })
 it('recovers a pending result after a transient status failure without submitting work again', async () => {
   vi.useFakeTimers(); let statusReads = 0
@@ -135,7 +138,7 @@ it('submits only eligible missing results on explicit action and does not resubm
   let started = false
   api.call.mockImplementation(async (op, p) => {
     if (op.endsWith('.start')) { started = true; return { accepted: true } }
-    if (p.action === 'options' && p.sourceRef === 'one') return { ...options(), results: started ? [{ strategy: current, complete: true, failed: false }] : [] }
+    if (p.action === 'options') return p.sourceRef === 'one' ? { ...options(), results: started ? [{ strategy: current, complete: true, failed: false }] : [] } : { ...options(current), results: [{ strategy: baseline, complete: true, failed: false }] }
     return read(op, p)
   })
   await render()
@@ -147,7 +150,7 @@ it('submits only eligible missing results on explicit action and does not resubm
 })
 it('rechecks retention at submission and never submits an expired source', async () => {
   let expired = false
-  api.call.mockImplementation(async (op, p) => p.action === 'options' && p.sourceRef === 'one' ? { ...options(), canStart: !expired, expiresAtMillis: expired ? 1 : Date.now() + 60_000 } : read(op, p))
+  api.call.mockImplementation(async (op, p) => p.action === 'options' ? p.sourceRef === 'one' ? { ...options(), canStart: !expired, expiresAtMillis: expired ? 1 : Date.now() + 60_000 } : { ...options(current), results: [{ strategy: baseline, complete: true, failed: false }] } : read(op, p))
   await render(); expired = true
   await act(async () => Array.from(document.querySelectorAll('button')).find(row => row.textContent?.startsWith('处理当天未生成'))!.click())
   expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
@@ -208,7 +211,7 @@ it('keeps completed empty files out of the reading area and groups their status 
     return read(op, p)
   })
   await render()
-  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  const column = document.querySelector('section[aria-label="v2026-10"]')!
   expect(column.textContent).toContain('已完成 9 / 9')
   expect(column.querySelector('details')?.open).toBe(false)
   expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(1)
@@ -225,14 +228,14 @@ it('summarizes pending, failed and missing sources without hiding completed text
     return read(op, p)
   })
   await render()
-  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  const column = document.querySelector('section[aria-label="v2026-10"]')!
   expect(column.textContent).toContain('已完成 1 / 4')
   expect(column.textContent).toContain('处理中 1')
   expect(column.textContent).toContain('处理失败 1')
   expect(column.textContent).toContain('未生成 1')
   expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(1)
   expect(column.textContent).toContain('正文 kept')
-  expect(column.textContent).toContain('处理当天未生成部分（1）')
+  expect(document.body.textContent).toContain('处理当天未生成部分（1）')
   expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })
 
@@ -243,9 +246,24 @@ it('shows a single honest empty state only after all completed sources have been
     return read(op, p)
   })
   await render()
-  const column = document.querySelector('section[aria-label="测试版v1 · 对比结果"]')!
+  const column = document.querySelector('section[aria-label="v2026-10"]')!
   expect(column.querySelectorAll('[data-comparison-empty]')).toHaveLength(1)
   expect(column.querySelectorAll('[data-comparison-source]')).toHaveLength(0)
   expect(column.textContent).toContain('已完成，当天没有可展示的转写内容')
   expect(api.call.mock.calls.filter(([, p]) => p.action === 'page' && p.strategy === current)).toHaveLength(2)
+})
+
+it('uses the retained current comparison for a historical baseline official result', async () => {
+  api.call.mockImplementation(async (op, p) => {
+    if (p.action === 'sources') return { items: [source('history')] }
+    if (p.action === 'options') return { ...options(baseline), canStart: false, expiresAtMillis: 1, results: [{ strategy: current, complete: true, failed: false }] }
+    return read(op, p)
+  })
+  await render(baseline)
+  const official = document.querySelector('section[aria-label="v2025-12"]')!
+  const comparison = document.querySelector('section[aria-label="v2026-10"]')!
+  expect(official.textContent).toContain(`正文 history-${baseline}`)
+  expect(comparison.textContent).toContain(`正文 history-${current}`)
+  expect(comparison.querySelector('header')?.textContent).toBe('v2026-10')
+  expect(api.call.mock.calls.some(([op]) => op.endsWith('.start'))).toBe(false)
 })

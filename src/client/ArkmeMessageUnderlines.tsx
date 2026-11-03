@@ -129,7 +129,10 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
     const scan = async (force = false) => {
       const currentGeneration = ++generation
       if (document.hidden) return
-      const targets = registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element))
+      const registered = registeredMessageTargets(session.sourceRef)
+      // Offscreen mounted rows still support selection; evicted pages release their marks.
+      session.retain(registered.map(({ target }) => target))
+      const targets = registered.filter(({ element }) => visibleBox(element))
       const nextSignature = targets.map(({ target }) => messageSelectionReference(target,session.storage)).join('|')
       if (force || nextSignature !== signature.current) {
         signature.current = nextSignature

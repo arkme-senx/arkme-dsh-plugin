@@ -1,4 +1,5 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
+import { RecordThoughtContent } from './RecordThoughts.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -105,6 +106,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
             }} />}
             {(detail?.transcriptFailed || detail?.transcriptPending || detail?.summaryStatus === 'pending') && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>{tr("刷新")}</button>}
           </>}
+      <RecordThoughtContent item={item}/>
     </div>
   </aside>
 }

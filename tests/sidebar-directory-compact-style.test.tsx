@@ -70,7 +70,7 @@ describe('compact conversation directory styles', () => {
     }
   })
 
-  it.each([false, true])('shares the rail marker and follows only the selected conversation (compact=%s)', compactDirectory => {
+  it.each([false, true])('keeps the compact rail background separate and marks only the selected conversation (compact=%s)', compactDirectory => {
     const markerRules = css.match(/[^{}]*\[data-arkme-selection-marker\][^{}]*\{[^{}]*\}/g) ?? []
     for (const [label, select] of [
       ['DeepSeek Harness', () => arkmeUi.showHarness()],
@@ -90,9 +90,13 @@ describe('compact conversation directory styles', () => {
         const rules = Array.from(document.styleSheets[0]!.cssRules) as CSSStyleRule[]
         const shared = rules.find(rule => rule.style.position === 'absolute')!
         expect(shared, 'navigation and conversation rows must use one marker rule').toBeDefined()
-        const railMarker = document.querySelector('[data-arkme-selection-marker]')!
+        const railMarker = document.querySelector('[data-arkme-selection-marker]')
+        expect(railMarker).toBeNull()
+        const activeRailButton = document.querySelector<HTMLButtonElement>('nav button[aria-current="page"]')!
+        expect(activeRailButton.style.width).toBe('36px')
+        expect(activeRailButton.style.height).toBe('36px')
+        expect(activeRailButton.style.borderRadius).toBe('10px')
         const selectors = shared.selectorText.split(/,(?![^()]*\))/).map(selector => selector.trim())
-        expect(selectors.some(selector => railMarker.matches(selector))).toBe(true)
         expect(shared.style.width).toBe('2px')
         expect(shared.style.height).toBe('33px')
         expect(shared.style.getPropertyValue('border-radius')).toBe('2px')
@@ -118,7 +122,7 @@ describe('compact conversation directory styles', () => {
         const dark = rules.find(rule => rule.selectorText.startsWith('body[data-ds-dark-theme]'))!
         expect(dark.style.getPropertyValue('--arkme-directory-accent')).toBe('var(--dsw-alias-state-business-primary)')
         expect(document.body.matches(dark.selectorText)).toBe(true)
-        expect(document.body.contains(railMarker) && document.body.contains(marked[0]!)).toBe(true)
+        expect(document.body.contains(activeRailButton) && document.body.contains(marked[0]!)).toBe(true)
       } finally { dom.window.close() }
     }
   })
@@ -144,13 +148,17 @@ describe('compact conversation directory styles', () => {
     } finally { dom.window.close() }
   })
 
-  it.each([false, true])('keeps the entire rail selection marker inside the scroll viewport (hosted=%s)', hosted => {
+  it.each([false, true])('keeps the compact selected rail button inside the scroll viewport (hosted=%s)', hosted => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} hosted={hosted} />)
     const dom = new JSDOM(markup)
     try {
-      const marker = dom.window.document.querySelector<HTMLElement>('[data-arkme-selection-marker]')!
-      const scroll = marker.parentElement!.parentElement!
-      expect(Number.parseFloat(marker.style.left) + Number.parseFloat(scroll.style.paddingLeft)).toBe(0)
+      expect(dom.window.document.querySelector('[data-arkme-selection-marker]')).toBeNull()
+      const selected = dom.window.document.querySelector<HTMLButtonElement>('nav button[aria-current="page"]')!
+      const scroll = selected.parentElement!
+      expect(selected.style.width).toBe('36px')
+      expect(selected.style.height).toBe('36px')
+      expect(scroll.style.overflowY).toBe('auto')
+      expect(Number.parseFloat(scroll.style.padding)).toBeGreaterThanOrEqual(4)
     } finally { dom.window.close() }
   })
 

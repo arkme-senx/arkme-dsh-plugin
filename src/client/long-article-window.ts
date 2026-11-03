@@ -7,12 +7,13 @@ export interface LongArticleWindowTarget {
   sourceRef: string
   displayName: string
   surface?: 'location' | 'library'
-  location?: { initialDate?: import('./day-location-cache.js').LocationDateFilter; initialLocation?: import('../types.js').ArkmeRecordLocationObservation }
+  location?: { initialSource?: ArkmeSourceItem; initialDate?: import('./day-location-cache.js').LocationDateFilter; initialLocation?: import('../types.js').ArkmeRecordLocationObservation }
   autoPublish?: boolean
   article?: { mode: 'existing' | 'snapshot'; item: ArkmeTimelineItem }
 }
 export interface LongArticleWindowReceipt extends LongArticleWindowTarget { item: ArkmeTimelineItem }
 export interface LongArticleWindowBridge {
+  scopedLocations?: boolean
   version: 1 | 2 | 3
   navigate?(target: WindowNavigation): Promise<boolean>
   changed?(): Promise<boolean>
@@ -74,13 +75,14 @@ export interface WindowNavigation {
 }
 export async function openBrowseWindow(surface: 'location' | 'library', location?: LongArticleWindowTarget['location']): Promise<boolean> {
   const bridge = longArticleWindowBridge()
-  if (!bridge || bridge.version < 3) return false
+  if (!bridge || bridge.version < 3 || location?.initialSource && bridge.scopedLocations !== true) return false
   const accountKey = longArticleAccountKey()
   if (!accountKey) throw new Error('请先登录')
   if (longArticleWindowRequested()) {
     if (!await bridge.active()) throw new Error('账号已切换，请重试')
   } else await bridge.account(accountKey)
   if (longArticleAccountKey() !== accountKey) throw new Error('账号已切换，请重试')
-  return bridge.open({ accountKey, sourceKey: `browse:${surface}`, sourceRef: `browse:${surface}`,
+  const scope = location?.initialSource?.sourceKey ?? location?.initialSource?.sourceRef
+  return bridge.open({ accountKey, sourceKey: `browse:${surface}${scope ? `:${scope}` : ''}`, sourceRef: `browse:${surface}`,
     displayName: surface === 'location' ? '位置' : '长文', surface, ...(location ? { location } : {}) })
 }

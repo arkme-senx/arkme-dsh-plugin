@@ -14,7 +14,7 @@ it('counts later pages, merges repeated ids by latest event, and ignores other m
   const read = vi.fn(async(_team:string,p:number)=>p===1?page([task('same'),task('old',{state:'finished'})],true):page([
     task('same',{state:'finished',updatedAt:3}),task('new'),task('colleague',{member:{...self,userRef:'other'}}),
   ]))
-  const result = await readCodexActivity(teams.slice(0,1),'11',read,signal())
+  const result = await readCodexActivity('11',read,signal())
   expect(read.mock.calls.map(c=>c[1])).toEqual([1,2])
   expect(result.complete).toBe(true)
   expect(result.tasks.map(t=>t.id).sort()).toEqual(['new','old','same'])
@@ -23,14 +23,14 @@ it('counts later pages, merges repeated ids by latest event, and ignores other m
 })
 it('deduplicates a shared cloud identity across teams, but not different tasks with identical names',async()=>{
   const shared = task('local',{title:'Same title',cloud:{ownerRef:'11',sourceId:'device',taskId:'cloud-id',sourceName:'Laptop',remote:false}})
-  const result = await readCodexActivity(teams,'11',async ref=>page(ref==='a'?[shared]:[
+  const result = await readCodexActivity('11',async ref=>page(ref==='a'?[shared]:[
     {...shared,id:'remote-view'},task('different',{title:'Same title'}),
   ]),signal())
   expect(result.tasks).toHaveLength(2)
   expect(codexActivityPresentation(result).count).toBe(2)
 })
 it.each(['offline','blocked','reviewing','throw'] as const)('never presents an incomplete %s scan as an exact zero or total',async failure=>{
-  const result = await readCodexActivity(teams,'11',async ref=>{
+  const result = await readCodexActivity('11',async ref=>{
     if(ref==='a')return page([task('working')])
     if(failure==='throw')throw Error('offline')
     const value=page([])
@@ -42,19 +42,19 @@ it.each(['offline','blocked','reviewing','throw'] as const)('never presents an i
 })
 it('finishes local-only sources in one page and excludes paused/excluded tasks from running',async()=>{
   const read=vi.fn(async()=>({...page([task('paused',{status:'paused'}),task('excluded',{excluded:true})],true),localOnly:true}))
-  const result=await readCodexActivity(teams.slice(0,1),'11',read,signal())
+  const result=await readCodexActivity('11',read,signal())
   expect(read).toHaveBeenCalledTimes(1)
   expect(codexActivityPresentation(result).kind).toBe('idle')
 })
 it('bounds pagination and retains an incomplete status when a server never ends',async()=>{
   const read=vi.fn(async()=>page([task('repeated')],true))
-  const result=await readCodexActivity(teams.slice(0,1),'11',read,signal())
+  const result=await readCodexActivity('11',read,signal())
   expect(read).toHaveBeenCalledTimes(100)
   expect(result.complete).toBe(false)
 })
 it('aborts old-account work without publishing a partial result',async()=>{
   const controller=new AbortController()
-  await expect(readCodexActivity(teams,'11',async()=>{controller.abort();return page([])},controller.signal)).rejects.toThrow()
+  await expect(readCodexActivity('11',async()=>{controller.abort();return page([])},controller.signal)).rejects.toThrow()
 })
 it('counts a verified online cloud mirror, but not stale, paused, buffered, or unverified sources',()=>{
   const cloud={taskId:'c',sourceId:'s',sourceName:'Laptop',ownerRef:'11',remote:true}

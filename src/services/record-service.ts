@@ -1,3 +1,4 @@
+import { readRecordExcerpt, recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { projectForwardRecordsPreview, projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
 import type { ProfileService } from './profile-service.js'
 import { projectedMessageQuote, readMessageQuote, type ArkmeMessageQuote } from '../message-quote.js'
@@ -25,7 +26,8 @@ import type {
   ArkmeRecordReeditPrepareInput,
   ArkmeRecordReeditPreparedContext,
 } from '../record-reedit-contract.js'
-import { ArkmeRecordReeditDraftConflict } from '../record-reedit-contract.js'
+import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditCapture } from '../record-reedit-contract.js'
+import { arkmeBackgroundSoundContent } from '../record-background-sound.js'
 import { RecordReeditSubmissions, recordReeditSubmissionView, type RecordReeditExecutionOutcome } from './record-reedit-submissions.js'
 import {
   recordReeditAttachmentChanges, recordReeditAttachmentSelection, recordReeditMediaGroups,
@@ -59,7 +61,7 @@ import { projectRecordRecordingForward } from '../recording-forward-presentation
 import { MediaService } from './media-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
-import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeRecordSourceReader {
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
@@ -149,6 +151,7 @@ function recordReeditReadContentPayload(raw: unknown): Record<string, unknown> |
     )
   }
   const output = cloneKnownFields(source, ['payload_kind', 'schema_version', 'text_state', 'text_format'])
+  if(source.excerpt !== undefined)output.excerpt=structuredClone(source.excerpt)
   // Background waveform belongs to the original Record, independently of editable attachments.
   if (listValue(source.background_sound_amplitudes).length > 0) {
     output.background_sound_amplitudes = structuredClone(source.background_sound_amplitudes)
@@ -353,7 +356,8 @@ export class RecordService {
           this.assertReeditActive()
           await this.runtime.stateStore.putRecordReeditSubmission(userId, job, expectedId)
         }
-        const refs = job.draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []
+        const refs = [...(job.draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []),
+          ...(job.draft.capture?.backgroundSound?.fileRefs ?? [])]
         return expectedId !== job.submissionId && refs.length > 0
           ? this.recordReeditFiles().withReferences(refs, userId, persist) : persist()
       },
@@ -524,6 +528,7 @@ export class RecordService {
     input: ArkmeRecordReeditPrepareInput, owner: RecordReeditOwnerSnapshot, session: ArkmeSessionCredentials, draftOnly: boolean,
   ): Promise<ArkmeRecordReeditPreparedContext> {
     const { sourceRef, itemUid } = input
+    const capture = input.capture === undefined ? undefined : parseArkmeRecordReeditCapture(input.capture)
     const previous = await this.runtime.stateStore.getRecordReeditDraft(
       session.userId, owner.sourceIdentityKey, itemUid,
     )
@@ -580,6 +585,10 @@ export class RecordService {
         if (item.fileRef !== undefined) await this.recordReeditFiles().readLocal(item.fileRef)
       }
     }
+    if (capture?.backgroundSound && !draftOnly) for (const ref of capture.backgroundSound.fileRefs) {
+      const { file } = await this.recordReeditFiles().readLocal(ref)
+      if (!file.mimeType.startsWith('audio/')) throw new ArkmePluginError('background-sound-file-invalid', '背景音必须是音频文件', false, 400)
+    }
     if ((await this.runtime.requireSession()).userId !== session.userId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
     }
@@ -603,6 +612,7 @@ export class RecordService {
       baseVersion,
       baseContentFingerprint,
       editDurationMillis: previous?.editDurationMillis ?? owner.editDurationMillis,
+      ...(capture ?? previous?.capture ? { capture: capture ?? previous!.capture! } : {}),
       updatedAtMillis: Date.now(),
     }, input.expectedDraftRevision ?? previous?.draftRevision ?? 0)
     return {
@@ -799,6 +809,27 @@ export class RecordService {
       body.content_payload = updated.contentPayload
       if (draft.textContent === '' && updated.contentPayload.text_state === 1) updated.contentPayload.text_state = 3
     }
+    if (draft.capture) {
+      const capture = parseArkmeRecordReeditCapture(draft.capture)
+      const point = capture.location
+      body.edit_capture_context = { schema_version: 1, captured_at: capture.completedAtMillis,
+        device_state: capture.captureContext.clientName ? 'recorded' : 'unavailable',
+        location_state: point ? 'recorded' : 'not_recorded',
+        ...arkmeRecordCaptureContextPayload(capture.captureContext),
+        ...(point ? { automatic_location: { lat: point.latitude, lon: point.longitude, captured_at: point.capturedAtMillis,
+          ...(point.accuracyMeters === undefined ? {} : { accuracy_meters: point.accuracyMeters }),
+          ...(point.altitudeMeters === undefined ? {} : { alt: point.altitudeMeters }),
+          ...(point.speedMetersPerSecond === undefined ? {} : { speed: point.speedMetersPerSecond }) } } : {}) }
+      body.edit_duration_millis = owner.editDurationMillis + (capture.durationMillis ?? 0)
+      const payload: Record<string, unknown> = { payload_kind: 1, schema_version: 1, text_state: draft.textContent ? 1 : 3, ...objectValue(body.content_payload) }
+      const refs = listValue(payload.media_refs).map(objectValue).filter(ref => numberValue(ref.content_file_role) !== 4)
+      const assets = capture.backgroundSound ? await this.recordReeditFiles().uploadRefs(capture.backgroundSound.fileRefs) : []
+      const sound = arkmeBackgroundSoundContent(assets.length ? { assets, amplitudes: capture.backgroundSound!.amplitudes } : undefined, refs.length)
+      const hasVoice = stringValue(objectValue(payload.voice).source_file_asset_uid) !== ''
+      const kind = hasVoice ? (refs.length + sound.refs.length > 0 ? 4 : 3) : payload.payload_kind
+      if (hasVoice) body.template_kind = kind
+      body.content_payload = { ...payload, payload_kind: kind, media_refs: [...refs, ...sound.refs], background_sound_amplitudes: sound.amplitudes }
+    }
     const committedContentPayload = recordReeditReadContentPayload(body.content_payload)
     const { source: _source, sourceIdentityKey: _sourceIdentityKey, fingerprint: _fingerprint, attachmentData: _attachmentData, ...baseFields } = owner
     const expectedCommittedFingerprint = recordReeditFingerprint({
@@ -808,6 +839,7 @@ export class RecordService {
       templateKind: numberValue(body.template_kind),
       ...(committedContentPayload === undefined ? {} : { contentPayload: committedContentPayload }),
       version: owner.version + 1,
+      editDurationMillis: numberValue(body.edit_duration_millis),
     })
     if ((await this.runtime.requireSession()).userId !== session.userId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
@@ -877,13 +909,21 @@ export class RecordService {
     return { status: 'discarded', itemUid: context.itemUid }
   }
 
+  async excerptNavigationSource(recordUid:string,signal?:AbortSignal):Promise<import('../record-excerpt.js').RecordExcerptSource> {
+    const session=await this.runtime.requireSession()
+    const raw=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:recordUid},session,signal,{bypassCache:true,cacheMs:0,lane:'interactive-read'})
+    const core=objectValue(raw.record_core),excerpt=readRecordExcerpt(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
+    if(core.record_uid!==recordUid||Number(core.owner_user_id)!==session.userId||Number(core.status)!==1||Number(core.content_access_state??raw.content_access_state)!==1||arkmePrivacyLockedRecord(raw)||!excerpt?.source)throw new ArkmePluginError('excerpt-source-unavailable','这条摘录没有可访问的原文位置',false,404)
+    return excerpt.source
+  }
+
   /** Personal detail access never depends on a Home entry or a Team/Chat grant. */
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> {
     const session = await this.runtime.requireSession()
     const uid = recordUid.trim()
     if (!uid) throw new ArkmePluginError('record-uid-required', '快记标识无效', false, 400)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read' },
+      '/api/v1/records/detail', { record_uid: uid }, session, signal, { lane: 'interactive-read', bypassCache: true },
     )
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid) !== uid || recordOwnerId(core.owner_user_id) !== session.userId
@@ -1118,7 +1158,8 @@ export class RecordService {
         this.assertReeditActive()
         return await this.runtime.stateStore.putRecordReeditDraft(userId, draft, expectedRevision)
       }
-      const refs = draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []
+      const refs = [...(draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []),
+        ...(draft.capture?.backgroundSound?.fileRefs ?? [])]
       return refs.length === 0 ? await persist() : await this.recordReeditFiles().withReferences(refs, userId, persist)
     } catch (error) {
       if (error instanceof ArkmeRecordReeditDraftConflict) {
@@ -1390,6 +1431,7 @@ export class RecordService {
     expectedUserId?: number,
     signal?: AbortSignal,
     textFormat?: 'plain' | 'markdown',
+    offset = 0,
   ): Promise<void> {
     const tags = textFormat === 'markdown' ? arkmeMarkdownHashTagRanges(textContent).map(tag => ({ tag: tag.tag, start_index: tag.startIndex, length: tag.length })) : arkmeHashTagPayload(textContent)
     if (tags.length === 0) return
@@ -1403,7 +1445,7 @@ export class RecordService {
           expected_record_version: 1,
           tags: tags.map(tag => ({
             tag_text: tag.tag,
-            start_index: tag.start_index,
+            start_index: tag.start_index + offset,
             length: tag.length,
           })),
         },
@@ -1511,14 +1553,14 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
       throw new ArkmePluginError('file-account-changed', '账号已切换，本次发送已取消', false, 409)
     }
     const normalizedUid = recordUid.trim()
-    const normalizedText = textContent.trim()
+    const normalizedText = options.excerpt ? textContent : textContent.trim()
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
       throw new ArkmePluginError('record-uid-invalid', '写入标识无效，请重试', false)
     }
@@ -1532,12 +1574,20 @@ export class RecordService {
         false,
       )
     }
+    const excerpt = readRecordExcerpt(options.excerpt,normalizedText)
+    if(options.excerpt && !excerpt)throw new ArkmePluginError('self-note-invalid','摘录结构无效，未发送',false,400)
+    const previous=(await this.runtime.stateStore.listPending(session.userId)).find(p=>p.recordUid===normalizedUid)
+    if(previous){
+      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt))throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      return this.sendPending(session,previous)
+    }
     const now = Date.now()
     const recordDurationMillis = Math.max(0, Math.trunc(options.recordDurationMillis ?? 0))
     const captureContext = normalizedRecordCaptureContext(options.captureContext)
     const pending: ArkmePendingWrite = {
       recordUid: normalizedUid,
       textContent: normalizedText,
+      ...(excerpt?{excerpt}:{}),
       createdAtMillis: now,
       sendAtMillis: now,
       attempts: 0,
@@ -1551,7 +1601,7 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
@@ -1680,6 +1730,7 @@ export class RecordService {
     assets: readonly ArkmeUploadedAsset[] = [],
     textFormat?: 'plain' | 'markdown',
     quote?: ArkmeMessageQuote,
+    mentionMetadata?: Record<string, unknown>,
   ): Promise<ArkmeConversationWriteResult & { localState: 'synced' }> {
     const session = await this.runtime.requireSession()
     const normalizedParentUid = parentRecordUid.trim()
@@ -1716,6 +1767,7 @@ export class RecordService {
           payload_kind: assets.length === 0 ? 1 : 2,
           ...(textFormat === undefined ? {} : { text_format: textFormat }),
           schema_version: 1,
+          ...(mentionMetadata === undefined ? {} : { mention_metadata: mentionMetadata }),
           text_state: normalizedText === '' ? 3 : 1,
           ...(hashTags.length === 0 ? {} : { hash_tags: hashTags }),
           ...(assets.length === 0 ? {} : {
@@ -1777,9 +1829,12 @@ export class RecordService {
       const captureContext = pending.captureContext === undefined
         ? undefined
         : arkmeRecordCaptureContextPayload(pending.captureContext)
-      const hashTags = arkmeHashTagPayload(pending.textContent)
+      const noteStart=pending.excerpt?.note_start??0
+      const ownText=pending.textContent.slice(noteStart)
+      const hashTags = arkmeHashTagPayload(ownText).map(tag=>({...tag,start_index:tag.start_index+noteStart}))
       const senderSnapshot = await this.currentSenderSnapshot?.(session)
-      const data = await this.createPersonalRecord<Record<string, unknown>>(
+      let data:Record<string,unknown>
+      try { data = await this.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/records/create',
         {
           record_uid: pending.recordUid,
@@ -1793,18 +1848,27 @@ export class RecordService {
           ...(captureContext === undefined || Object.keys(captureContext).length === 0
             ? {}
             : { capture_context: captureContext }),
-          ...(hashTags.length === 0
-            ? {}
-            : { content_payload: { payload_kind: 1, schema_version: 1, text_state: 1, hash_tags: hashTags } }),
+          ...(hashTags.length===0 && !pending.excerpt ? {} : {content_payload:{payload_kind:1,schema_version:1,text_state:1,text_format:'plain',...(hashTags.length?{hash_tags:hashTags}:{}),...(pending.excerpt?{excerpt:pending.excerpt}:{})}}),
           send_at: pending.sendAtMillis,
         },
         session,
-      )
+      ) } catch(error) {
+        // A Host/UI receipt may be lost after the durable outbox was acknowledged.
+        // Reconcile the exact immutable excerpt with its real owner; never recreate or overwrite it.
+        if(!pending.excerpt||!(error instanceof ArkmeUpstreamResponseError)||error.code!=='arkme-code-40001'||error.writeOutcomeUnknown)throw error
+        const existing=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:pending.recordUid},session,undefined,{bypassCache:true,cacheMs:0,lane:'interactive-read'})
+        const core=objectValue(existing.record_core),excerpt=readRecordExcerpt(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
+        if(core.record_uid!==pending.recordUid||Number(core.owner_user_id)!==session.userId||Number(core.status)!==1||Number(core.content_access_state??existing.content_access_state)!==1||arkmePrivacyLockedRecord(existing)||core.text_content!==pending.textContent||JSON.stringify(excerpt)!==JSON.stringify(pending.excerpt))throw error
+        const at=Number(core.send_at)
+        if(!Number.isSafeInteger(at)||at<=0)throw error
+        await this.runtime.stateStore.putPending(session.userId,{...pending,sendAtMillis:at})
+        data={record_uid:pending.recordUid,status:core.status}
+      }
       const result = {
         recordUid: stringValue(data.record_uid) || pending.recordUid,
         status: numberValue(data.status),
       }
-      await this.syncCreatedRecordTags(result.recordUid, pending.textContent, session.userId)
+      await this.syncCreatedRecordTags(result.recordUid, ownText, session.userId, undefined, undefined, noteStart)
       await this.runtime.stateStore.markSynced(session.userId, pending.recordUid, result.status)
       return result
     } catch (error) {
@@ -1819,8 +1883,10 @@ export class RecordService {
   }
 
   recordTimelineItem(item: ArkmeSelfRecordItem): ArkmeTimelineItem {
+    const excerptQuote=item.status===1?recordExcerptPresentation(item.excerpt,item.textContent):undefined
     return {
       itemUid: item.recordUid,
+      ...(excerptQuote?{localSelfQuote:excerptQuote}:{}),
       ...(item.selfRole === undefined ? {} : { selfRole: item.selfRole }),
       ...(item.hasManualEdit === undefined ? {} : { hasManualEdit: item.hasManualEdit }),
       senderName: item.senderName || '我',
@@ -1915,8 +1981,10 @@ export class RecordService {
     const localSelfQuote = (options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId) && numberValue(item.status ?? core.status) === 1
       ? this.runtime.stateStore?.selfNoteQuotes?.project(`${this.runtime.config.environment}:${userId}`,
         stringValue(item.record_uid ?? core.record_uid).trim(), stringValue(item.text_content ?? core.text_content)) : undefined
+    const excerptQuote=recordExcerptPresentation(objectValue(item.content_payload??core.content_payload).excerpt,stringValue(item.text_content??core.text_content))??localSelfQuote
     return {
-      ...(localSelfQuote === undefined ? {} : { localSelfQuote }),
+      ...(excerptQuote?{localSelfQuote:excerptQuote}:{}),
+      ...(Number.isSafeInteger(Number(item.owner_user_id??core.owner_user_id??userId))&&Number(item.owner_user_id??core.owner_user_id??userId)>0?{excerptSource:{kind:'record' as const,record_uid:stringValue(item.record_uid??core.record_uid),owner_user_id:Number(item.owner_user_id??core.owner_user_id??userId)}}:{}),
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       ...recordSenderSnapshot(raw),
       ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),
@@ -1958,8 +2026,10 @@ export class RecordService {
       ?? (userId === undefined ? undefined : projectForwardRecordsPreview(
         objectValue(item.content_payload ?? core.content_payload), userId, numberValue(item.send_at ?? core.send_at), this.media))
     const contentBlocks = userId === undefined ? undefined : this.media.richContentBlocks(raw, userId, options.displayItems)
+    const excerpt = readRecordExcerpt(objectValue(item.content_payload ?? core.content_payload).excerpt,stringValue(item.text_content ?? core.text_content))
     return {
       recordUid,
+      ...(excerpt?{excerpt}:{}),
       ...recordSenderSnapshot(raw),
       ...cloudSelfRolePresentation(item.self_role_snapshot ?? core.self_role_snapshot),
       sendAtMillis: numberValue(item.send_at ?? core.send_at),

@@ -21,21 +21,21 @@ export function ArkmeArrangementContent({ item, expanded, onSourceNavigate, read
     void withArkmeReadDeadline(signal => callArkme<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal), controller.signal)
       .then(value => {
         if (controller.signal.aborted) return
-        if (value.arrangementRef !== arrangementRef) throw new Error('Arrangement identity mismatch')
+        if (value.arrangementRef !== arrangementRef && value.resolvedFromRef !== arrangementRef) throw new Error('Arrangement identity mismatch')
         setDetail(value)
       })
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [arrangementRef, expanded, attempt, readDetail])
-  const currentDetail = detail?.arrangementRef === arrangementRef ? detail : undefined
+  const currentDetail = detail && (detail.arrangementRef === arrangementRef || detail.resolvedFromRef === arrangementRef) ? detail : undefined
   const source = currentDetail?.creationSource ?? item.creationSource
   const provenance = currentDetail?.provenance ?? item.provenance
   const hasSource = !!source?.items.length || !!source?.unavailableCount
   return <div className="arkme-arrangement-content" draggable={false}
     onDragStart={event => { event.preventDefault(); event.stopPropagation() }}>
     {!provenance && <ArkmeArrangementRecordingSource source={currentDetail?.recordingSource ?? item.recordingSource} {...(onSourceNavigate ? { onNavigate: onSourceNavigate } : {})} />}
-    {provenance && <ArkmeArrangementSources arrangementRef={arrangementRef} sources={provenance} expanded={expanded} {...(onSourceNavigate ? {onNavigate:onSourceNavigate} : {})} />}
+    {provenance && <ArkmeArrangementSources arrangementRef={currentDetail?.arrangementRef ?? arrangementRef} sources={provenance} expanded={expanded} {...(onSourceNavigate ? {onNavigate:onSourceNavigate} : {})} />}
     {expanded && <div id={regionId} className="arkme-arrangement-content-detail" role="region" aria-label={tr('创建原文')}>
       {!provenance && <strong>{tr('创建原文')}</strong>}
       {!provenance && source?.items.map((entry, index) => <div className="arkme-arrangement-source-item" key={index}>

@@ -82,6 +82,35 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires a subsequent trusted human confirmation for public social writes', async () => {
+    const ctx=await setup(), publicSocialWrite=vi.fn(async()=>({operation:'resolve',status:2,requestRef:'opaque'}))
+    const mounted=await mountArkmeTools(ctx,'business',{...ports,publicSocialWrite} as unknown as ArkmeToolPorts)
+    const events=sessionEvents(), agent={id:SessionId('social-confirmation'),session:{events}} as unknown as Agent
+    const args={operation:'resolve',account_scope:'test:1',reference:'group-source',request_ref:'opaque',enabled:true}
+    const run=(id:string)=>ctx.tools.execute({callId:CallId(id),name:'arkme_social_write',arguments:args,agent,signal:new AbortController().signal})
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'plugin'},content:[{type:'text',text:'确认'}]}})
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'确认同意入群申请'}]}})
+    expect((await run('confirmed')).isError).toBe(false);expect(publicSocialWrite).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
+
+  it('requires a later human grant before changing personal Team entries', async () => {
+    const ctx = await setup(), changeTeamEntryPreferences = vi.fn(async () => ({ schemaVersion: 1, items: [], hasMore: false }))
+    await mountArkmeTools(ctx, 'business', { ...ports, changeTeamEntryPreferences } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('team-entry'), session: { events } } as unknown as Agent
+    const args = { kind: 'folder', ref: 'opaque', action: 'pin', expected_version: 0, operation_id: '11111111-1111-4111-8111-111111111111' }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_team_entry_preference_change', arguments: args, agent, signal: new AbortController().signal })
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+    expect(changeTeamEntryPreferences).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认置顶我的团队入口' }] } })
+    expect((await run('human')).isError).toBe(false)
+    expect(changeTeamEntryPreferences).toHaveBeenCalledExactlyOnceWith({ operationId: args.operation_id, changes: [{ target: { kind: 'folder', ref: 'opaque' }, action: 'pin', expectedVersion: 0 }] }, expect.any(AbortSignal))
+  })
+
   it('requires the existing conversation confirmation before scheduling evidence', async () => {
     const ctx = await setup()
     const recordingSpeakerEvidenceQuery = vi.fn(async () => ({state:'building',queuedCount:1,missingMaterialChildren:0}))
@@ -278,10 +307,13 @@ describe('registerArkmeTools', () => {
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
-      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_member_candidates', 'arkme_team_members_add', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send',
+      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_member_candidates', 'arkme_team_members_add', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_history', 'arkme_team_messages', 'arkme_team_message_send', 'arkme_codex_work_records', 'arkme_codex_work_record_change',
       'arkme_team_notification_conversations',
       'arkme_team_notification_policy',
       'arkme_team_notification_policy_set',
+      'arkme_team_entry_preferences',
+      'arkme_team_entry_preference',
+      'arkme_team_entry_preference_change',
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_device_lock_status',
@@ -322,6 +354,11 @@ describe('registerArkmeTools', () => {
       'arkme_group_bot_add',
       'arkme_group_bot_remove',
       'arkme_world_recent',
+      'arkme_world_reactions_read',
+      'arkme_world_reactions_write',
+      'arkme_team_world_read',
+      'arkme_team_world_write',
+      'arkme_world_reply',
       'arkme_world_mine',
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',
@@ -338,7 +375,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
-      'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
+      'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',
@@ -372,6 +409,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
       'arkme_common_groups',
+      'arkme_social_read', 'arkme_social_write',
       'arkme_source_read',
       'arkme_analytics_read', 'arkme_conversation_words_generate',
       'arkme_copy_link_extend',

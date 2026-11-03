@@ -1,3 +1,4 @@
+import {createScreenshotEditorRoutes} from './screenshot-editor-route.js'
 import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
 import { readLocalContentProof } from './dsh-remote/history-content-proof.js'
@@ -41,7 +42,7 @@ import {
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
+import { createArkmeTeamHistoryExportHandler, createArkmeTeamMediaHandler, createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler, createArkmeSelfRoleAvatarHandler } from './rich-media-routes.js'
 import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
@@ -339,11 +340,14 @@ export function apply(ctx: Context, config: Config): void {
     },
     profile: () => service.cachedProfile(),
     teams: teamService,
-    ...(config.environment === 'prod' ? { cloud: {
+    cloud: {
       post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
+      bytes:(owner,path,body,headers,signal)=>service.teamCodexBytes(owner,path,body,headers,signal),
       selectedTeam: async (teamRef: string, signal: AbortSignal) => (await teamService.listMembers(teamRef, { limit: 1, signal })).team,
-    } } : {}),
+      memberAvatars: (userIds, signal) => service.publicAvatarPresentationsByUserIds(userIds, signal),
+    },
   })
+  service.setCodexWorkRecords(teamCodex)
   ctx.effect(() => {
     const stop = teamCodex.start()
     const unsubscribe = service.accountScope.subscribe(() => { teamCodex.fence() })
@@ -584,6 +588,7 @@ export function apply(ctx: Context, config: Config): void {
           : { defaultModelSelection: () => agentDefaultModel.currentSelection!() }),
       },
     )
+    apiCtx.effect(() => service.attachModelDirectoryReader(() => apiProxy.models()))
     service.accountScope.attachGuestConversationProbe(async () => {
       try {
         let cursor: string | undefined
@@ -810,6 +815,7 @@ export function apply(ctx: Context, config: Config): void {
     allowNonLoopback: config.allowNonLoopback,
     temporaryDirectory: join(stateDirectory, 'recording-imports'),
   })
+  const teamHistoryExportHandler = createArkmeTeamHistoryExportHandler(service, richMediaOptions)
   const teamMediaHandler = createArkmeTeamMediaHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
@@ -829,6 +835,10 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
   })
+  const screenshotEditor=readFileSync(new URL('../lib/screenshot-editor.js',import.meta.url))
+  for(const route of createScreenshotEditorRoutes(screenshotEditor)) {
+    ctx.effect(()=>ctx.webServer.register(route),`arkme: standalone screenshot ${route.path}`)
+  }
   const sessionClient = {
     source: readFileSync(new URL('../lib/harness-session-client.js', import.meta.url)),
     ...(config.dshRemoteFeatureEnabled ? { apiPath: config.routePath } : {}),
@@ -1005,6 +1015,7 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/self-role-avatar`,
     handler: selfRoleAvatarHandler,
   }), 'dsh-arkme: local self-role avatar route')
+  ctx.effect(() => ctx.webServer.register({kind:'exact',path:`${config.routePath}/team/history/export`,handler:teamHistoryExportHandler}),'dsh-arkme: authorized Team history export')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/team/media`, handler: teamMediaHandler }), 'dsh-arkme: authorized team media')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
@@ -1166,6 +1177,7 @@ function validateConfig(ctx: Context, config: Config): void {
 }
 
 export type {
+  ArkmeConversationArrangement, ArkmeConversationArrangementPage, ArkmeArrangementSourceConversation,
   ArkmeAiVideoJob,
   ArkmeAiVideoListItem,
   ArkmeAiVideoListResult,

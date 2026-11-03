@@ -7,7 +7,7 @@ import type { DayActivityEntry, DayActivityLocationDetail, DayActivityQuery, Day
 import type { ArkmeRecordLocationObservation } from '../src/types.js'
 
 import { reactionFixture } from './reaction-fixture.js'
-vi.mock('../src/client/api.js', async importOriginal => ({ ...await importOriginal<object>(), callArkme: (operation: string, input: never) => input.accountKey === 'test:42' ? reactionFixture.call(operation, input) : Promise.resolve({items:[],has_more:false}) }))
+vi.mock('../src/client/api.js', async importOriginal => ({ ...await importOriginal<object>(), callArkme: (operation: string, input: never) => input.accountKey === 'test:42' && operation === 'reactions' ? reactionFixture.call(operation, input) : Promise.resolve({items:[],has_more:false}) }))
 beforeEach(() => reactionFixture.reset())
 function seed(target: {id:string;source?:string;sourceKind?:string;text:string}, label:string, time:number) {
  const previous = reactionFixture.history.filter(item=>item.target_id===target.id && item.expression.text===label).at(-1)

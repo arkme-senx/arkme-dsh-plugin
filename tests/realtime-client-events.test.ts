@@ -749,6 +749,38 @@ it('mark hints refresh only visible marks, preserving bodies, quote sources and 
   }
 })
 
+it('keeps Codex and record-thought invalidations independent', async () => {
+  const { subscribeThoughtInvalidation } = await import('../src/client/thought-invalidations.js')
+  const { subscribeMessageMarkInvalidations } = await import('../src/client/message-mark-invalidations.js')
+  let socket!: { onmessage: ((event: MessageEvent<string>) => void) | null }
+  vi.stubGlobal('WebSocket', class { onopen = null; onmessage = null; constructor() { socket = this } close() {} })
+  const window = new EventTarget()
+  vi.stubGlobal('window', window)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  const read = vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  const codex = vi.fn(), thoughts = vi.fn(), marks = vi.fn()
+  window.addEventListener('arkme-codex-changed', codex)
+  const stopThoughts = subscribeThoughtInvalidation(thoughts), stopMarks = subscribeMessageMarkInvalidations(marks)
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  let renderer!: ReactTestRenderer
+  try {
+    await act(async () => { renderer = create(createElement(Harness)) })
+    read.mockClear(); codex.mockClear(); thoughts.mockClear(); marks.mockClear()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'projection-invalidated', projection: 'team_codex', revision: 1 }) } as MessageEvent<string>) })
+    expect(codex).toHaveBeenCalledOnce()
+    expect(marks).toHaveBeenCalledExactlyOnceWith(false)
+    expect(thoughts).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'projection-invalidated', projection: 'record', revision: 2 }) } as MessageEvent<string>) })
+    expect(thoughts).toHaveBeenCalledExactlyOnceWith({ accountScope: 'test:42' })
+    expect(codex).toHaveBeenCalledOnce()
+  } finally {
+    stopThoughts(); stopMarks()
+    window.removeEventListener('arkme-codex-changed', codex)
+    await act(async () => renderer?.unmount())
+  }
+})
+
 it('retains Team notices across auth refresh and closes them only when the account retires', async () => {
   let socket!: FakeWebSocket
   class FakeWebSocket {

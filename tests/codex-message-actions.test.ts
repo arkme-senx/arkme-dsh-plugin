@@ -1,12 +1,19 @@
 import { describe,it,expect,vi,beforeEach } from 'vitest'
 import { codexEventKey,codexSelectionSnapshot } from '../src/client/redesign/contacts/codex-message-actions.js'
-import { wrappedCodexPrompt, questionReplyPrompt } from './fixtures/codex-prompt.js'
+import { wrappedCodexPrompt, questionReplyPrompt, responseAnnotationPrompt } from './fixtures/codex-prompt.js'
 import { callArkme } from '../src/client/api.js'
 import type { TeamCodexEvent,TeamCodexTask } from '../src/team-codex-contract.js'
 vi.mock('../src/client/api.js',()=>({callArkme:vi.fn()}))
 const task={id:'task',title:'对话标题',member:{displayName:'同事'},cloud:{sourceId:'machine-a'}} as TeamCodexTask
 const event=(sequence:number,kind:TeamCodexEvent['kind']='Stop',text='回答'):TeamCodexEvent=>({sequence,kind,text,at:1000+sequence,turnId:`turn-${sequence}`,truncated:false})
 beforeEach(()=>vi.mocked(callArkme).mockReset())
+it('exports annotation prose once without interpreting a selected protocol example as a new envelope',()=>{
+ const nested=responseAnnotationPrompt('这是被引用的协议示例')
+ const raw=responseAnnotationPrompt('',[{text:nested,source:{messageId:'msg_nested',startOffset:0,endOffset:nested.length}}])
+ const a=event(1,'UserPromptSubmit',raw)
+ expect(codexSelectionSnapshot('team',task,[a],new Set([codexEventKey(a)])).messages[0]?.text).toBe(nested)
+ expect(a.text).toBe(raw)
+})
 it('exports question replies as readable question-answer prose instead of transport JSON',()=>{
  const a=event(1,'UserPromptSubmit',questionReplyPrompt([{question:'选择方式',answer:'本机引用'}]))
  const snapshot=codexSelectionSnapshot('team',task,[a],new Set([codexEventKey(a)]))

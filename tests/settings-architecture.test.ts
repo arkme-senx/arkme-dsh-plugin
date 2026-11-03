@@ -6,14 +6,15 @@ function source(path: string): string {
 }
 
 describe('Arkme settings architecture', () => {
-  it('keeps DSH settings as the only account settings entrypoint', () => {
+  it('opens an independent Arkme settings dialog without registering product sections in DSH', () => {
     expect(existsSync(new URL('../src/client/ArkmeAccountMenu.tsx', import.meta.url))).toBe(false)
     expect(existsSync(new URL('../src/client/ArkmeSettingsRow.tsx', import.meta.url))).toBe(false)
     expect(existsSync(new URL('../src/client/redesign/ArkmeRootFrame.tsx', import.meta.url))).toBe(false)
 
     const adapter = source('../src/client/index.tsx')
-    expect(adapter).toContain("ctx.slots.inject('settings.section'")
-    expect(adapter).toContain("id: 'arkme-account'")
+    expect(adapter).not.toContain("ctx.slots.inject('settings.section'")
+    expect(adapter).toContain("installArkmeSettingsDialog(ctx)")
+    expect(source("../src/client/ArkmeSettingsDialog.tsx")).toContain("id: 'arkme-account'")
     expect(adapter).not.toContain('ArkmeAccountMenu')
     expect(adapter).not.toContain('ArkmeSettingsRow')
     expect(adapter).not.toContain('ArkmeRootFrame')

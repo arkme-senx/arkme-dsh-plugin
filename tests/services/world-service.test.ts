@@ -15,6 +15,11 @@ const config: ArkmeServiceConfig = {
   maxTextLength: 20_000, geetestCaptchaId: 'captcha-test-id-1234567890', interwovenMomentsEnabled: true,
 }
 
+function mixedPerson(item: Record<string, unknown>) {
+  const { user_id, nick_name, avatar, ...body } = item
+  return { ...body, principal: { kind: 'person', user_id, name: nick_name ?? 'Arkme用户', avatar } }
+}
+
 describe('WorldService', () => {
   it('leaves the Team Open write budget available after a burst of interaction reads', async () => {
     vi.useFakeTimers()
@@ -25,10 +30,10 @@ describe('WorldService', () => {
     }, { async uniqueCode() { return 'world-admission-test-secret' } } as StateStore, async input => {
       const path = new URL(String(input)).pathname
       starts.push(path)
-      const data = path.endsWith('/world-list') ? { list: [{
+      const data = path.endsWith('/world/query') ? { items: [mixedPerson({
         record_uid: 'public-root', user_id: 7, nick_name: '小明', text_content: '根内容',
         images: [], videos: [], voices: [], extend_count: 1,
-      }], total: 1 } : { list: [], total: 0, has_more: false }
+      })], has_more: false } : { list: [], total: 0, has_more: false }
       return new Response(JSON.stringify({ code: 200, data }))
     })
     const world = new WorldService(runtime, {} as never, {} as never, {} as never)
@@ -229,22 +234,23 @@ describe('WorldService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('keeps avatar and published-image refs stable across World reloads while refreshing signed URLs', async () => {
+  it('keeps controlled-image refs stable until the publication version changes', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
     let requestIndex = 0
     let textContent = '带图片的世界'
+    let mediaVersion = 'a'.repeat(64)
     const fetchImpl = vi.fn(async () => {
       requestIndex += 1
       return new Response(JSON.stringify({ code: 200, data: {
-        list: [{
+        items: [mixedPerson({
           record_uid: 'record-1', user_id: 7, nick_name: `小明${String(requestIndex)}`, text_content: textContent,
           avatar: `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?version=${String(requestIndex)}`,
-          images: [`https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world.png?version=${String(requestIndex)}`],
-        }],
-        total: 1,
+          images: [`https://world.test/api/public/v1/public-record/media?record_uid=record-1&version=${mediaVersion}&kind=image&index=0`],
+        })],
+        has_more: false,
       } }), { status: 200 })
     }) as typeof fetch
     const service = new WorldService(
@@ -264,11 +270,14 @@ describe('WorldService', () => {
     const imageRef = second.items[0]?.imageRefs[0]
     expect(imageRef).toBeDefined()
     await expect(service.openWorldImageRef(imageRef ?? '', 42)).resolves.toMatchObject({
-      sourceUrl: expect.stringContaining('version=2'),
+      sourceUrl: expect.stringContaining(`version=${mediaVersion}`),
     })
     textContent = '修改后的正文'
+    mediaVersion = 'b'.repeat(64)
     const changed = await service.listWorldFeed()
     expect(changed.items[0]?.localReactionTarget).not.toEqual(first.items[0]?.localReactionTarget)
+    expect(changed.items[0]?.imageRefs).not.toEqual(first.items[0]?.imageRefs)
+    await expect(service.openWorldImageRef(imageRef!, 42)).resolves.toMatchObject({ sourceUrl: expect.stringContaining(`version=${'a'.repeat(64)}`) })
   })
 
   it('reuses resolved file-asset avatar URLs for a quick World re-entry', async () => {
@@ -288,8 +297,8 @@ describe('WorldService', () => {
         }] } }), { status: 200 })
       }
       return new Response(JSON.stringify({ code: 200, data: {
-        list: [{ record_uid: 'record-1', user_id: 7, nick_name: '小明', text_content: '世界正文', avatar: 'file_asset://avatar-1' }],
-        total: 1,
+        items: [mixedPerson({ record_uid: 'record-1', user_id: 7, nick_name: '小明', text_content: '世界正文', avatar: 'file_asset://avatar-1' })],
+        has_more: false,
       } }), { status: 200 })
     }) as typeof fetch
     const service = new WorldService(
@@ -343,7 +352,7 @@ describe('World notification sources and targets', () => {
     const record = { record_uid: 'root', user_id: 42, text_content: '原文', is_public: true, check_status: 2 }
     const fetchImpl = vi.fn(async input => {
       if (disposeDuringRead) world.dispose()
-      return new Response(JSON.stringify({ code: 200, data: String(input).endsWith('/my-list') ? { list: [record], total: 1 } : record }), { status: 200 })
+      return new Response(JSON.stringify({ code: 200, data: String(input).endsWith('/my-list') ? { list: [record], total: 1 } : { items: [mixedPerson(record)] } }), { status: 200 })
     }) as typeof fetch
     const world = new WorldService(new ServiceRuntime(config, sessions, { async uniqueCode() { return 'secret' } } as StateStore, fetchImpl), {} as never, {} as never, {} as never)
     const sources = await world.worldNotificationSources()
@@ -364,7 +373,7 @@ describe('World notification sources and targets', () => {
       const data = url.endsWith('/my-list')
         ? { list: [records.comment, records.root, { ...records.comment, record_uid: 'pending', check_status: 1 }], total: 3 }
         : url.endsWith('/extend-list') ? { list: [records.reply], total: 1 }
-        : { ...records[body.record_uid], is_public: visible }
+        : { items: visible ? [records.root!, records.comment!, records.reply!].map(mixedPerson) : [] }
       return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
     }) as typeof fetch
     const sessions: ArkmeSessionStore = { async read() { return { userId, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
@@ -378,10 +387,94 @@ describe('World notification sources and targets', () => {
     const target = await world.worldNotificationTarget(ref)
     expect(target.root.textContent).toBe('原动态')
     expect(target.interactionRef).toBe(ref)
-    expect(requests.filter(path => path.endsWith('/detail'))).toHaveLength(3)
+    expect(requests.filter(path => path.endsWith('/world/thread'))).toHaveLength(1)
+    expect(target.path.map(item => item.textContent)).toEqual(['我的评论', '回复我的评论'])
     visible = false
     await expect(world.worldNotificationTarget(ref)).rejects.toThrow('不可查看')
     userId = 99
     await expect(world.worldNotificationTarget(ref)).rejects.toThrow()
   })
+})
+
+it('reads personal comment facts as bounded account-scoped pages including typed team replies and redacted history', async () => {
+  let actor = 42
+  const session = () => ({ userId: actor, accessToken: 'token', refreshToken: 'refresh' })
+  const post = vi.fn(async () => ({ items: [
+    { comment_uid: 'reply', sequence: 5, at: 100, publication: { record_uid: 'reply', parent_record_uid: 'root', principal: { kind: 'team', team_id: 9, name: '团队', jotmo_id: 'our_team' }, text_content: '团队回复', images: [], videos: [], voices: [] } },
+    { comment_uid: 'old', sequence: 4, at: 90 },
+  ], has_more: true, before_sequence: 4 }))
+  const runtime = { config, requireSession: async () => session(), stateStore: { uniqueCode: async () => 'key' }, authenticatedWorldPost: post } as unknown as ServiceRuntime
+  const world = new WorldService(runtime, {} as never, {} as never, {} as never)
+  try {
+    const page = await world.worldCommentNotifications()
+    expect(page.items[0]).toMatchObject({ teamAuthor: { jotmoId: 'our_team' }, textContent: '团队回复', unavailable: false })
+    expect(page.items[0]).not.toHaveProperty('authorRef')
+    expect(page.items[1]).toMatchObject({ unavailable: true, textContent: '这条回复已不可访问', parentRef: '' })
+    expect(JSON.stringify(page)).not.toContain('comment_uid')
+    expect(post).toHaveBeenCalledWith('/api/v1/world-interaction/notifications', { before_sequence: 0, limit: 20 }, session(), undefined, { lane: 'interactive-read' })
+    actor = 43
+    await expect(world.worldCommentNotifications({ cursor: page.nextCursor! })).rejects.toThrow()
+    expect(post).toHaveBeenCalledTimes(1)
+  } finally { world.dispose() }
+})
+
+it('reads comment previews in one bounded request with ancestor binding and preserves denied slots', async () => {
+  const session = { userId:42, accessToken:'access', refreshToken:'refresh' }
+  const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+    const path = new URL(String(input)).pathname
+    if (path.endsWith('/world/previews')) {
+      expect(JSON.parse(String(init?.body))).toEqual({ items:[{record_uid:'comment-a',ancestor_uid:'team-root'},{record_uid:'comment-b',ancestor_uid:'team-root'}] })
+      return new Response(JSON.stringify({code:200,data:{items:[mixedPerson({record_uid:'comment-a',user_id:7,nick_name:'作者',text_content:'评论正文',parent_record_uid:'team-root',images:[],videos:[],voices:[]}),null]}}))
+    }
+    return new Response(JSON.stringify({code:200,data:{items:[]}}))
+  })
+  const runtime = new ServiceRuntime(config, {async read(){return session},async write(){},async delete(){}}, {async uniqueCode(){return 'test-preview-secret'}} as StateStore, fetcher)
+  const service = new WorldService(runtime, {} as never, {} as never, {} as never)
+  try {
+    const items = await service.readPublicPreviews([{recordUID:'comment-a',ancestorUID:'team-root'},{recordUID:'comment-b',ancestorUID:'team-root'}])
+    expect(items[0]?.textContent).toBe('评论正文');expect(items[1]).toBeUndefined()
+    expect(fetcher.mock.calls.filter(([url])=>String(url).endsWith('/world/previews'))).toHaveLength(1)
+    await expect(service.readPublicPreviews(Array.from({length:51},()=>({recordUID:'a',ancestorUID:'root'})))).rejects.toThrow()
+  } finally {service.dispose();runtime.dispose()}
+})
+
+it('projects public team avatars and first publishers in one profile batch without private fields', async () => {
+  const calls: Array<{ path: string; body: any }> = []
+  const fetchImpl = vi.fn(async (input, init) => {
+    const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body || '{}')); calls.push({ path, body })
+    let data: unknown
+    if (path.endsWith('/world/query')) data = { items: [1,2].map(i => ({ record_uid: `team-${i}`, principal: { kind: 'team', team_id: 9, jotmo_id: 'public_team', name: '团队', avatar: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/team.png' }, publisher_user_id: 7, text_content: `内容${i}` })), has_more: false }
+    else if (path.endsWith('/get-public-users-by-ids')) data = { items: [{ user_id: 7, nickname: '首次发布人', avatar: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/person.png', private_remark: 'secret' }] }
+    else throw new Error(`unexpected ${path}`)
+    return new Response(JSON.stringify({ code:200, data }))
+  }) as typeof fetch
+  const sessions = { read: async () => ({ userId:42, accessToken:'access', refreshToken:'refresh' }), write: async()=>{}, delete:async()=>{} }
+  const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async()=> 'unique-code' } as StateStore, fetchImpl)
+  const world = new WorldService(runtime, {} as never, {} as never, {} as never)
+  const page = await world.listWorldFeed()
+  expect(page.items).toHaveLength(2)
+  expect(page.items[0]).toMatchObject({ authorName:'团队', teamAuthor:{ jotmoId:'public_team' }, publisher:{ name:'首次发布人' } })
+  expect(page.items[0]?.avatarRef).toBeTruthy(); expect(page.items[0]?.publisher?.avatarRef).toBeTruthy()
+  expect(calls.filter(call=>call.path.endsWith('/get-public-users-by-ids')).map(call=>call.body)).toEqual([{user_ids:[7]}])
+  expect(JSON.stringify(page)).not.toContain('secret'); expect(JSON.stringify(page)).not.toContain('publisher_user_id')
+  expect(page.items[0]?.authorRef).toBeUndefined()
+  world.dispose()
+})
+
+it('retains opaque public image capabilities in replies without per-comment reads', async () => {
+ const paths: string[] = []
+ const fetchImpl = vi.fn(async input => {
+  const path = new URL(String(input)).pathname; paths.push(path)
+  if (!path.endsWith('/world/query')) throw new Error(`unexpected ${path}`)
+  return new Response(JSON.stringify({code:200,data:{items:[{record_uid:'image-comment',principal:{kind:'person',user_id:42,name:'我'},text_content:'图片评论',images:['https://world.test/api/public/v1/public-record/media?record_uid=image-comment&kind=image&index=0&version=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','https://untrusted.invalid/private.jpg']}],has_more:false}}))
+ }) as typeof fetch
+ const sessions = {read:async()=>({userId:42,accessToken:'access',refreshToken:'refresh'}),write:async()=>{},delete:async()=>{}}
+ const runtime=new ServiceRuntime(config,sessions,{uniqueCode:async()=> 'unique-code'} as StateStore,fetchImpl)
+ const world=new WorldService(runtime,{} as never,{} as never,{} as never)
+ const parent=await world.publicationReference('root')
+ const page=await world.listWorldReplies(parent)
+ expect(page.items[0]?.imageRefs).toHaveLength(1)
+ expect(page.items[0]?.imageRefs?.[0]).not.toContain('https://')
+ expect(paths).toEqual(['/api/public/v1/world/query'])
+ runtime.dispose()
 })

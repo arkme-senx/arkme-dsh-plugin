@@ -111,32 +111,12 @@ describe('team group frontend handoff boundary', () => {
   })
 })
 
-describe('team World frontend boundary', () => {
-  const member = { team_id: '9223372036854775800', jotmo_id: 'our_team', name: '团队', role: 3 }
-  it('reads a separate team namespace and returns no fake personal feed or publishing grant', async () => {
-    const f = fixture(() => ({ teams: [member] }))
-    const page = await f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:90' }) as import('../src/team-world-contract.js').TeamWorldView
-    expect(page).toMatchObject({ state: 'backend_pending', team: { jotmoId: 'our_team' }, memberTeam: { jotmoId: 'our_team' } })
-    expect(page).not.toHaveProperty('items'); expect(page).not.toHaveProperty('canPublish')
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: page.memberTeam!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
-  })
-  it('uses only public discovery for a non-member and never returns private membership or uses member-only profile reads', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { jotmo_id: 'public_team', name: '公开团队', requires_approval: false, state: 'not_member' } })
-    const page = await f.service.execute('team.app.world.view', { jotmoId: 'public_team' }) as import('../src/team-world-contract.js').TeamWorldView
-    expect(page.team).toMatchObject({ name: '公开团队', jotmoId: 'public_team' }); expect(page.memberTeam).toBeUndefined()
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
-  })
-  it('rechecks removed membership, account binding and malformed requests without writes', async () => {
-    let joined = true
-    const f = fixture(() => ({ teams: joined ? [member] : [] }))
-    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
-    joined = false
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef })).rejects.toThrow()
-    await expect(f.service.execute('team.app.world.view', { jotmoId: '' })).rejects.toThrow()
-    await expect(f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:91' })).rejects.toThrow('账号已在其他页面切换')
-    expect(f.requests.every(v => v.path.endsWith('/list-mine'))).toBe(true)
+describe('team World reference boundary', () => {
+  it('preserves large team IDs in account-scoped references without granting publication', async () => {
+    const f = fixture(), ref = await f.service.worldTeamRef('9223372036854775800', 90)
+    await expect(f.service.worldTeamID(ref, 90)).resolves.toBe('9223372036854775800')
+    await expect(f.service.worldTeamID(ref, 91)).rejects.toThrow()
+    expect(f.requests).toHaveLength(0)
   })
 })
 
@@ -229,7 +209,7 @@ it.each([
   [0, 'free'], [1, 'vip'], [2, 'svip'], ['vip', 'vip'], ['SVIP', 'svip'],
   [undefined, 'unknown'], [null, 'unknown'], [99, 'unknown'],
 ])('projects current visitor member_type %s consistently across directory and timeline', async (raw, expected) => {
-  const visitor = { nickname: '访客', ...(raw === undefined ? {} : { member_type: raw }) }
+  const visitor = { nickname: '访客', kind:'person',account_state:'active', ...(raw === undefined ? {} : { member_type: raw }) }
   const value = { ...conversation, side: 'team', visitor }
   const f = fixture(path => path.endsWith('/conversations/list') ? { items: [value], has_more: false }
     : { channel, conversation: value, messages: [{ ...message, sender: { ...message.sender, member_type: 'svip' } }] })
@@ -244,12 +224,12 @@ it.each([
 })
 
 it('clears a former membership when a fresh response is free or unavailable', async () => {
-  let visitor: Record<string, unknown> = { nickname: '访客', member_type: 'svip' }
+  let visitor: Record<string, unknown> = { nickname: '访客',kind:'person',account_state:'active', member_type: 'svip' }
   const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', visitor }, messages: [] }))
   const opened = await open(f)
   expect(opened.conversation!.visitor?.memberType).toBe('svip')
   for (const raw of ['free', undefined]) {
-    visitor = { nickname: '访客', member_type: raw }
+    visitor = { nickname: '访客',kind:'person',account_state:'active', member_type: raw }
     const value = await f.service.execute('team.app.timeline', { conversationRef: opened.conversation!.ref }) as TeamTimeline
     expect(value.conversation.visitor?.memberType).toBe(raw ?? 'unknown')
   }
@@ -865,8 +845,17 @@ it('projects scoped conversation cursor metadata without fetching bodies and rej
 })
 
 describe('Team visitor private chat authority', () => {
+  it('resolves a world target from a fresh authorized visitor without opening a private chat', async () => {
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客', kind: 'person', account_state: 'active' } }, messages: [] }))
+    const opened = await open(f)
+    await expect(f.service.execute('team.app.visitor.world-target', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', userId: 999 })).resolves.toEqual({ userId: 200 })
+    expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    expect(f.requests.at(-1)?.path).toContain('conversations/timeline/page')
+    f.changeAccount()
+    await expect(f.service.execute('team.app.visitor.world-target', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90' })).rejects.toThrow()
+  })
   it('resolves the visitor on the host from a fresh conversation instead of client identity', async () => {
-    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客' } }, messages: [] }))
+    const f = fixture(() => ({ channel, conversation: { ...conversation, side: 'team', external_user_id: 200, visitor: { nickname: '访客',kind:'person',account_state:'active' } }, messages: [] }))
     const opened = await open(f)
     const result = await f.service.execute('team.app.visitor.private.open', { conversationRef: opened.conversation!.ref, expectedAccountKey: 'test:90', peerUserId: 999, displayName: '伪造昵称' })
     expect(result).toEqual({ source: { kind: 'private_chat', sourceRef: 'private-ref' } })
@@ -1302,4 +1291,21 @@ it.each([false,true])('requires saved metadata on published send and accepted er
  await expect(f.service.execute('team.app.send',command)).resolves.toMatchObject({message:{state:'published',metadataSaved:true}})
  const sends=f.requests.filter(v=>v.path.endsWith('/messages/send'))
  expect(sends).toHaveLength(2);expect(sends[0]!.body).toEqual(sends[1]!.body)
+})
+
+
+it.each([undefined, 'unknown', 'bot', 'system', 'person'])('does not infer visitor identity from timeline messages for unavailable kind %s', async kind => {
+ const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:undefined,visitor:{nickname:'同名客户',kind,account_state:'active',member_type:'svip'}},messages:[{...message,side:'external',actor_user_id:200}]}))
+ const opened=await open(f)
+ const value=await f.service.execute('team.app.timeline',{conversationRef:opened.conversation!.ref}) as TeamTimeline
+ expect(value.conversation.visitor).toMatchObject({nickname:'同名客户',memberType:'unknown'})
+ expect(value.conversation.visitor?.personRef).toBeUndefined()
+ expect(value.messages[0]!.sender.personRef).toBeTruthy()
+})
+it.each(['unknown','cancelled'])('does not expose current visitor actions or membership for account state %s',async account_state=>{
+ const f=fixture(()=>({channel,conversation:{...conversation,side:'team',external_user_id:'200',visitor:{kind:'person',account_state,member_type:'svip'}},messages:[]}))
+ const opened=await open(f)
+ expect(opened.conversation!.visitor?.memberType).toBe('unknown')
+ expect(opened.conversation!.visitor?.personRef).toBeUndefined()
+ await expect(f.service.execute('team.app.visitor.private.open',{conversationRef:opened.conversation!.ref})).rejects.toThrow()
 })

@@ -1,7 +1,10 @@
 import {TeamMemberAddition} from './team-member-addition.js'
+import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
+import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-contract.js'
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-preference-service.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
@@ -17,7 +20,6 @@ import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
 import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team-group-contract.js'
-import type { TeamWorldView, TeamWorldPrepareResult } from '../team-world-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { readTeamUnderlineSnapshot, underlineId, type MessageUnderlineChange } from '../message-annotations.js'
@@ -48,6 +50,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  snapshot_expired: '历史内容已变化或结果已过期，请重新查询', cursor_invalid: '历史分页已失效，请重新查询', cancelled: '导出已取消',
   invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
   invalid_external_chat: '对外私聊请求无效，请重新打开',
@@ -56,6 +59,7 @@ const reasons: Record<string, string> = {
   member_management_forbidden: '仅当前团队所有者或管理员可添加成员', request_conflict: '同一批次的成员不一致，请核对原批次', snapshot_stale: '团队成员已变化，请重新加载',
   not_owner:'仅团队所有者可以编辑资料', profile_edit_rejected:'本次编辑已过期，请重新打开编辑', invalid_team_profile:'团队资料无效',
   message_recalled:'消息已撤回', message_not_published:'消息尚未发布，请取消发送',
+  entry_preference_version_conflict: '入口设置已在其他设备变化，请核对后重试',
   not_accessible: '你已无权访问该团队消息，请刷新列表', channel_paused: '团队已暂停接收新消息',
   reply_conflict: '服务暂时不可用，请使用原请求重试',
   version_conflict: '内容已被更新，请重新读取后编辑',
@@ -90,6 +94,7 @@ function imagePresentationIdentity(raw: string): string {
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
 export class TeamAppService {
+  private readonly entryPreferences: TeamEntryPreferenceService
   private readonly policies = new Map<string,TeamNotificationPolicy>()
   private policy(raw:unknown, actor:number, uid:string, required=false):TeamNotificationPolicy {
     const key=`${actor}:${uid}`, next=mergeTeamNotificationPolicy(this.policies.get(key),notificationPolicy(raw,required))
@@ -105,6 +110,7 @@ export class TeamAppService {
     private readonly memberCandidates?: TeamMemberCandidatePort,
  private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
+    this.entryPreferences = new TeamEntryPreferenceService(runtime.stateStore, { open: (kind, ref, actor) => this.open(kind, ref, actor), seal: (kind, value, actor) => this.ref(kind, value, actor) })
 
   }
   private async ref(kind: string, value: Record<string, unknown>, actor: number): Promise<string> {
@@ -115,6 +121,12 @@ export class TeamAppService {
     if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
     return decoded
   }
+  async worldTeamID(ref: string, actor: number): Promise<import('../record-owner-id.js').RecordOwnerId> {
+    const value = await this.open('team', ref, actor), id = recordOwnerId(value.team_id)
+    if (!id) throw invalid()
+    return id
+  }
+  async worldTeamRef(id: import('../record-owner-id.js').RecordOwnerId, actor: number): Promise<string> { return this.ref('team', { team_id: id }, actor) }
   async resolveConversation(ref:string,actor:number):Promise<{conversation_uid:string;side:TeamSide}>{
     const value=await this.open('conversation',ref,actor)
     if(!str(value.conversation_uid)||!['team','external'].includes(str(value.side)))throw invalid()
@@ -131,6 +143,12 @@ export class TeamAppService {
   async conversationKey(ref: string, actor: number): Promise<string> {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
+  }
+  async excerptSource(messageRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource> {
+    const actor=(await this.runtime.requireSession()).userId
+    const value=await this.open('message',messageRef,actor)
+    if(!str(value.conversation_uid)||!str(value.message_uid))throw invalid()
+    return {kind:'team_message',team_conversation_uid:str(value.conversation_uid),team_message_uid:str(value.message_uid),side:value.side==='external'?'external':'team'}
   }
   async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
     return {kind:hint.kind,
@@ -227,11 +245,13 @@ export class TeamAppService {
   }
   private async channel(raw: unknown, actor: number): Promise<TeamChannel> {
     const v = obj(raw)
+    const entryKey = teamEntryCloudKey(actor, 'folder', String(v.team_id))
+    if (recordOwnerId(v.team_id)) this.entryPreferences.register(actor, {entry_kind:'team_folder',team_id:recordOwnerId(v.team_id)}, JSON.stringify(['folder', str(v.jotmo_id)]))
     const identity = await this.identity({ nickname: v.name, avatar_url: v.avatar_url }, actor)
     const publicRef = str(v.public_ref)
     const link = new URL('/team-message', this.runtime.config.shareWebsite || 'https://www.jotmo.cc')
     link.searchParams.set('channel', publicRef)
-    return { teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+    return { entryKey, teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
       avatar: await this.avatar(v,actor,publicRef),
       ...(identity.imageRef ? { imageRef: identity.imageRef, imageKey: identity.imageKey } : {}), publicRef, link: publicRef ? link.toString() : '',
       enabled: v.enabled === true, revision: num(v.revision), canManage: v.can_manage === true,
@@ -240,10 +260,14 @@ export class TeamAppService {
   private async conversation(raw: unknown, actor: number): Promise<TeamConversation> {
     const v = obj(raw), uid = str(v.conversation_uid), side: TeamSide = v.side === 'team' ? 'team' : 'external'
     if (!uid) throw invalid()
+    const legacyKey = await this.key(`${uid}:${side}`, actor)
+    this.entryPreferences.register(actor, {entry_kind:'team_conversation',team_id: recordOwnerId(obj(v.channel).team_id),conversation_uid:uid,side}, JSON.stringify(['conversation',side,str(obj(v.channel).jotmo_id),legacyKey]))
+    const visitor = obj(v.visitor)
+    const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
-    return { ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: await this.key(`${uid}:${side}`, actor),
-      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity(v.visitor, actor, { id: v.external_user_id, context: { conversation_uid: uid, side } }) } : {}), side,
+    return { entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
+      channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
       needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
@@ -277,7 +301,7 @@ export class TeamAppService {
     } : undefined
     const markContent = { title: str(content.title), textContent: str(content.text_content), textFormat: obj(content.content_payload).text_format === 'markdown' ? 'markdown' as const : 'plain' as const }
     const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
-    const projectedMedia = await this.mediaItems(content.media, actor, locator, num(content.version))
+    const projectedMedia = (await this.mediaItems(content.media, actor, locator, num(content.version))).map((media, index) => num(content.display_kind) === 1 ? { ...media, inlineRef: str(list(content.media)[index]?.file_asset_uid) } : media)
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
     return teamMessageProjection({ ...(v.own===true&&typeof v.metadata_saved==='boolean'?{metadataSaved:v.metadata_saved}:{}), ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
@@ -289,7 +313,7 @@ export class TeamAppService {
       ...(typeof v.recipient_read === 'boolean' ? { recipientRead: v.recipient_read } : {}),
       ...(replyPreview ? {reply:replyPreview} : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record && v.state !== 'recalled' ? { content: {
-        ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1,
+        ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1, display_kind: num(content.display_kind),
         ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
@@ -418,6 +442,7 @@ export class TeamAppService {
   private async dispatch(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials,
     post: (path: string, body?: Record<string, unknown>, read?: boolean) => Promise<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown> {
     const actor = session.userId
+    if (operation.startsWith('team.app.entries.')) return this.entryPreferences.execute(operation, p, actor, this.runtime.config.environment, post)
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
     }
@@ -433,6 +458,31 @@ export class TeamAppService {
     const message = async () => {
       const v = await this.open('message', p.messageRef, actor)
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
+    }
+    if (operation === 'team.app.history' || operation === 'team.app.history.chunk') {
+      let context: {conversation_uid:string;side:TeamSide}
+      if (operation === 'team.app.history.chunk') {
+        const value = await this.open('history-result', p.resultRef, actor)
+        if (!str(value.conversation_uid) || !['team','external'].includes(str(value.side))) throw invalid()
+        context = {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+      } else context = await this.resolveConversation(str(p.conversationRef), actor)
+      const adapter: TeamHistoryAdapter = {
+        viewer:actor,context,routePath:this.runtime.config.routePath,post,
+        seal:(kind,value)=>this.ref(kind,value,actor),open:(kind,ref)=>this.open(kind,ref,actor),
+        identity:(value,id)=>this.identity(value,actor,{id,context}),
+        preview:async raw=>{
+          if (!str(raw.message_uid) || num(raw.seq)<=0 || !['team','external'].includes(str(raw.side))) throw invalid()
+          return {historyPreview:true,historyMedia:list(raw.media).map(v=>({name:str(v.name),kind:str(v.kind)})),
+            ref:await this.ref('message',{...context,message_uid:raw.message_uid},actor),key:await this.key(str(raw.message_uid),actor),
+            seq:num(raw.seq),revision:num(raw.revision),version:num(raw.version),side:raw.side as TeamSide,
+            sender:await this.identity(raw.sender,actor,{id:raw.actor_user_id,context}),own:raw.own===true,
+            state:'published',createdAt:num(raw.created_at),canEdit:false,canDelete:false,contentStatus:'available',media:[],
+            content:{text_content:str(raw.text),title:str(raw.title),template_kind:1,content_payload:{text_format:'plain'}}}
+        },
+      }
+      return operation === 'team.app.history.chunk'
+        ? await teamHistoryChunk(adapter,str(p.resultRef),str(p.cursor)||undefined)
+        : await teamHistoryOperation(adapter,p.action as TeamHistoryAction,(p.options ?? {}) as TeamHistoryOptions)
     }
     switch (operation) {
       case 'team.app.snapshot.capabilities': {
@@ -659,31 +709,6 @@ export class TeamAppService {
             throw applyError
           }
         }
-      }
-      case 'team.app.world.prepare': {
-        const id = await teamID()
-        if (!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
-        const mine = await post('list-mine', {}, true)
-        if (!Array.isArray(mine.teams)) throw invalid()
-        if (!list(mine.teams).some(team => String(recordOwnerId(team.team_id)) === String(id))) {
-          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
-        }
-        // Membership only: no record, upload, publication or cloud publishing grant.
-        return { state: 'backend_pending' } satisfies TeamWorldPrepareResult
-      }
-      case 'team.app.world.view': {
-        const jotmoId = str(p.jotmoId).trim()
-        if (!jotmoId || jotmoId.length > 128) throw invalid()
-        const mine = await post('list-mine', {}, true)
-        if (!Array.isArray(mine.teams)) throw invalid()
-        const raw = list(mine.teams).find(team => str(team.jotmo_id) === jotmoId)
-        if (raw) {
-          const team = await this.team(raw, actor)
-          return { state: 'backend_pending', team: { name: team.name, jotmoId, avatar: team.avatar }, memberTeam: team } satisfies TeamWorldView
-        }
-        const team = await this.searchContactTeam(jotmoId, session, signal)
-        if (!team || team.jotmoId !== jotmoId) throw new ArkmePluginError('team-not_accessible', '团队资料暂不可用', false, 404)
-        return { state: 'backend_pending', team: { name: team.name, jotmoId, avatar: team.avatar } } satisfies TeamWorldView
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.public-card': {
@@ -921,18 +946,15 @@ export class TeamAppService {
             : list(obj(obj(obj(row.record).content_payload).mention_metadata).human_mentions).some(m => String(m.user_id) === String(person.user_id))))
         }
         const current = await this.conversation(data.conversation, actor)
-        const external = list(data.messages).find(v => v.side === 'external')
-        if (current.side === 'team' && current.visitor && !current.visitor.personKey && external) {
-          current.visitor = await this.identity(obj(data.conversation).visitor, actor, { id: external.actor_user_id, context })
-        }
         return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
+      case 'team.app.person.world-target':
       case 'team.app.person.private.open':
       case 'team.app.people.remarks': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
-        const refs = operation === 'team.app.person.private.open' ? [p.personRef] : p.personRefs
+        const refs = operation === 'team.app.people.remarks' ? p.personRefs : [p.personRef]
         if (!Array.isArray(refs) || !refs.length || refs.length > 50) throw invalid()
         const people = await Promise.all(refs.map(async ref => {
           const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
@@ -942,6 +964,7 @@ export class TeamAppService {
         }))
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
+        if (operation === 'team.app.person.world-target') return { userId: people[0]! }
         if (operation === 'team.app.person.private.open') {
           if (!this.privateChat || String(people[0]) === String(actor)) throw invalid()
           return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
@@ -950,6 +973,7 @@ export class TeamAppService {
         const remarks = await this.contacts.privateRemarksByUserIds(people, signal ? { signal } : {})
         return { items: await Promise.all([...new Set(people)].map(async id => ({ personKey: await this.key(`person:${id}`, actor), remark: remarks.get(id) ?? '' }))) }
       }
+      case 'team.app.visitor.world-target':
       case 'team.app.visitor.private.open': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
@@ -958,10 +982,11 @@ export class TeamAppService {
         const current = obj(data.conversation)
         const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        if (!peer || String(peer) === String(actor) || !this.privateChat || (typeof peer === 'string' && obj(current.visitor).kind !== 'person') || (obj(current.visitor).kind !== undefined && obj(current.visitor).kind !== 'person') || obj(current.visitor).account_state === 'cancelled') {
+        if (!peer || (operation === 'team.app.visitor.private.open' && (String(peer) === String(actor) || !this.privateChat)) || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
-        return await this.privateChat.openPrivateChatFromUser(peer, {
+        if (operation === 'team.app.visitor.world-target') return { userId: peer }
+        return await this.privateChat!.openPrivateChatFromUser(peer, {
           presentationDisplayName: str(obj(current.visitor).nickname), expectedViewerUserId: actor,
           ...(signal ? { signal } : {}),
         })

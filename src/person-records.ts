@@ -1,3 +1,4 @@
+import type { RecordOwnerId } from './record-owner-id.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSourceItem } from './types.js'
 import { ArkmePluginError } from './services/service.js'
@@ -10,7 +11,7 @@ export interface PersonRecordSourcesPage {
 }
 export interface PersonSourcesCursor {
   scope: string
-  target: number
+  target: RecordOwnerId
   entry: string
   phase: 'groups' | 'private'
   after?: string

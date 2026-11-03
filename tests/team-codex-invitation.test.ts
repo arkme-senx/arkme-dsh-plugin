@@ -52,12 +52,20 @@ describe('account-bound cloud onboarding instructions',()=>{
     expect(other.id).not.toBe(before.id)
     expect(other.context).toMatchObject({account:{jotmoId:'another_account'},cloudUpload:'disabled'})
   })
-  it.each([false,true])('truthfully describes unsupported local environment/team (cloud=%s)',async cloud=>{
-    const f=fixture(cloud);f.team.jotmoId='another_team'
+  it('truthfully describes an environment without cloud support',async()=>{
+    const f=fixture(false);f.team.jotmoId='another_team'
     const invite=await f.service.invite(teamRef)
     expect(invite.context?.cloudUpload).toBe('unsupported')
     expect(invite.instructions).toContain('仅支持本机采集，不上传云端')
     expect(f.post).not.toHaveBeenCalled()
+  })
+  it('supports onboarding for an ordinary authorized team without enabling upload',async()=>{
+    const f=fixture();f.team.jotmoId='another_team'
+    f.post.mockResolvedValue({teams:[{team_id:202,jotmo_id:'another_team'}]})
+    const invite=await f.service.invite(teamRef)
+    expect(invite.context).toMatchObject({team:{jotmoId:'another_team'},cloudUpload:'disabled'})
+    expect(invite.instructions).toContain('不要代我开启上传')
+    expect(f.post).toHaveBeenCalledWith(11,'/api/v1/team/list-mine',{},expect.any(AbortSignal))
   })
   it('does not claim an enabled connection when permission/network checks fail',async()=>{
     const f=fixture();f.post.mockRejectedValue(new Error('network unavailable'))

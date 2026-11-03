@@ -197,7 +197,7 @@ describe('reaction review UI', () => {
     reactionPreview.setScope('test:1')
     let triggerTop = 400
     const anchor = { focus() {}, getBoundingClientRect: () => ({ left: 200, top: triggerTop, bottom: triggerTop + 26 }) }
-    const panel = { getBoundingClientRect: () => ({ width: 340 }) }
+    const panel = { getBoundingClientRect: () => ({ width: 340 }), querySelector: () => ({ focus() {} }) }
     let ui: ReturnType<typeof create>
     await act(async () => { ui = create(<ArkmeReactionPreview scope="test:1" target={{ id: 'm', source: '我', text: '正文' }} />, {
       createNodeMock: node => node.props['aria-label'] === '表态' ? anchor : node.props['aria-label'] === '表态面板' ? panel : null,
@@ -245,7 +245,8 @@ describe('reaction review UI', () => {
     let ui: ReturnType<typeof create>
     await act(async () => { ui = create(<ArkmeReactionSelections scope="test:1" target={target} actorName="小陈" />) })
     await act(async () => ui!.root.findByProps({ 'aria-label': '查看小陈的资料' }).props.onClick({ stopPropagation() {} }))
-    expect(ui!.root.findByProps({ role: 'dialog' }).props['aria-label']).toBe('小陈 的用户卡片')
+    const titleId = ui!.root.findByProps({ role: 'dialog' }).props['aria-labelledby']
+    expect(ui!.root.findByProps({ id: titleId }).children.join('')).toBe('小陈 的用户卡片')
     expect(reactionPreview.selections('m')).toEqual(['👌 收到'])
     await act(async () => ui!.root.findByProps({ 'aria-label': '取消我的👌 收到' }).props.onClick({ stopPropagation() {} }))
     expect(reactionPreview.selections('m')).toEqual([])
@@ -524,7 +525,7 @@ describe('reaction review UI', () => {
     await act(async () => { ui!.update(<ArkmeReactionPreview scope="test:1" target={target} openRequested />) })
     expect(ui!.root.findByProps({ 'aria-label': '表态面板' })).toBeTruthy()
     await act(async () => { ui!.update(<ArkmeReactionPreview scope="test:1" target={target} />) })
-    await act(async () => { ui!.root.findByProps({ 'aria-label': '表态面板' }).props.onKeyDown({ key: 'Escape' }) })
+    await act(async () => { ui!.root.findByProps({ 'aria-label': '表态面板' }).props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} }) })
     await act(async () => { ui!.update(<ArkmeReactionPreview scope="test:1" target={target} openRequested />) })
     expect(ui!.root.findByProps({ 'aria-expanded': true })).toBeTruthy()
     await act(async () => { ui!.unmount() })

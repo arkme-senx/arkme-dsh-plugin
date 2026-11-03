@@ -1,5 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+原句待定位，可查看原通话|Quote not located. You can open the original call.
+原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
+通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
+通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
+即我设置|Arkme settings
+即我设置分类|Arkme settings categories
+语言|Language
+外观|Appearance
+浅色|Light
+深色|Dark
+跟随系统|System
 长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
@@ -553,6 +564,7 @@ AI 摘要：|AI summary:
 选择二维码图片|Choose QR code image
 条新消息|new messages
 暂时无法回到底部，请重试|Unable to jump to the latest message. Please retry.
+已移除，可在团队中重新打开|Removed. Reopen it from Teams.
 已移除对话，可在联系人中找回|Conversation removed. Find it again in Contacts.
 搜索结果暂不完整，请缩小范围或调整关键词|Results may be incomplete. Narrow your search or change the keywords.
 查看媒体消息|View media message
@@ -663,6 +675,8 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+录音处理版本：{v0}|Recording processing version: {v0}
+新录音和新导入使用此版本，历史录音保留原处理版本|New recordings and imports use this version. Historical recordings keep their original version.
 音频文件列表|Audio files
 当天暂无音频文件|No audio files for this day
 暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
@@ -2046,6 +2060,7 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 查看录音|View recordings
 查看总结|View summary
 查看时间轴|View timeline
+图片暂不可读，请稍后重试|Images are temporarily unavailable. Please try again later.
 暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
 表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
 通知操作失败，请重试|Notification action failed. Try again.

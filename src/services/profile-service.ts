@@ -220,6 +220,15 @@ export class ProfileService {
     this.publicProfileCache.delete(key)
   }
 
+  private cachePublicProfileAvatar(key: string, avatarUrl?: string): void {
+    this.publicProfileAvatarCache.delete(key)
+    if (avatarUrl === undefined) return
+    this.publicProfileAvatarCache.set(key, { avatarUrl, expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS })
+    while (this.publicProfileAvatarCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
+      this.publicProfileAvatarCache.delete(this.publicProfileAvatarCache.keys().next().value!)
+    }
+  }
+
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     const session = await this.runtime.requireAuthFlowSession()
     const cached = await this.runtime.stateStore.cachedProfile(session.userId)
@@ -335,6 +344,44 @@ export class ProfileService {
       displayName,
       ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, userId) }),
     }
+  }
+
+  /** Resolve the public handle on the receiving account; sender-local refs never travel in links. */
+  async shareIdentityByArkmeId(arkmeId: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.accountScopedPublicAuthReadPost<Record<string, unknown>>(
+      '/api/public/v1/auth/get-public-user-by-jotmo-ids', { jotmo_ids: [arkmeId] }, session.userId, signal,
+      { lane: 'interactive-read', bypassCache: true },
+    )
+    return await this.shareIdentityFromPublicResponse(arkmeId, data, session.userId)
+  }
+
+  /** Project identity and avatar from the same response; no second profile request. */
+  private async shareIdentityFromPublicResponse(arkmeId: string, data: Record<string, unknown>, viewerUserId: number) {
+    if (!Array.isArray(data.items)) throw new ArkmePluginError('identity-share-profile-invalid', '联系人资料响应不完整，请重试', false, 502)
+    const matches = data.items.map(objectValue).filter(item => item.jotmo_id === arkmeId)
+    if (matches.length !== 1 || !Number.isSafeInteger(matches[0]?.user_id) || Number(matches[0]?.user_id) <= 0) {
+      throw new ArkmePluginError('identity-share-person-unavailable', '该联系人链接暂不可用，可能已更改即我号', false, 404)
+    }
+    const item = matches[0]!, userId = Number(item.user_id)
+    const avatar = await this.publicAvatarPresentation(item, viewerUserId, userId)
+    return { userId, accountName: arkmeId, displayName: stringValue(item.nick_name).trim() || arkmeId, ...avatar }
+  }
+
+  private async publicAvatarPresentation(item: Record<string, unknown>, viewerUserId: number, userId: number): Promise<ArkmePublicAvatarPresentation> {
+    const avatarUrl = stringValue(item.head_img).trim()
+    const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
+    if (avatarFallback !== undefined) return { avatarFallback }
+    if (avatarUrl === '') {
+      this.publicProfileAvatarCache.delete(`${viewerUserId}:${userId}`)
+      return {}
+    }
+    try {
+      const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
+      const avatarRef = await this.sealProfileImageRef(viewerUserId, userId)
+      this.cachePublicProfileAvatar(`${viewerUserId}:${userId}`, trustedAvatarUrl)
+      return { avatarRef }
+    } catch { return {} }
   }
 
   async profileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
@@ -586,11 +633,7 @@ export class ProfileService {
           }
         }
         const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
-        if (trustedAvatarUrl === undefined) this.publicProfileAvatarCache.delete(avatarCacheKey)
-        else this.publicProfileAvatarCache.set(avatarCacheKey, {
-          avatarUrl: trustedAvatarUrl,
-          expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-        })
+        this.cachePublicProfileAvatar(avatarCacheKey, trustedAvatarUrl)
         profiles.set(userId, {
           userId,
           displayName,
@@ -637,6 +680,20 @@ export class ProfileService {
     return profiles
   }
 
+  async publicAvatarPresentationsByUserIds(
+    userIds: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<Map<number, ArkmePublicAvatarPresentation>> {
+    const session = await this.runtime.requireSession()
+    const profiles = await this.publicProfileSummariesByUserIds(userIds, session, signal)
+    const result = new Map<number, ArkmePublicAvatarPresentation>()
+    for (const [userId, profile] of profiles) {
+      result.set(userId, profile.avatarFallback ? { avatarFallback: profile.avatarFallback }
+        : profile.avatarUrl ? { avatarRef: await this.sealProfileImageRef(session.userId, userId) } : {})
+    }
+    return result
+  }
+
   async publicAvatarPresentationsByArkmeIds(
     arkmeIds: readonly string[],
     signal?: AbortSignal,
@@ -664,28 +721,7 @@ export class ProfileService {
         if (!requested.has(arkmeId) || userId <= 0 || presentations.has(arkmeId)) {
           throw new ArkmePluginError('profile-contract-invalid', 'Arkme公开头像响应无效', true, 502)
         }
-        const avatarUrl = stringValue(item.head_img).trim()
-        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
-        if (avatarFallback !== undefined) {
-          presentations.set(arkmeId, { avatarFallback })
-          continue
-        }
-        if (avatarUrl === '') {
-          this.publicProfileAvatarCache.delete(`${String(session.userId)}:${String(userId)}`)
-          presentations.set(arkmeId, {})
-          continue
-        }
-        try {
-          const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
-          const avatarRef = await this.sealProfileImageRef(session.userId, userId)
-          this.publicProfileAvatarCache.set(`${String(session.userId)}:${String(userId)}`, {
-            avatarUrl: trustedAvatarUrl,
-            expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-          })
-          presentations.set(arkmeId, { avatarRef })
-        } catch {
-          presentations.set(arkmeId, {})
-        }
+        presentations.set(arkmeId, await this.publicAvatarPresentation(item, session.userId, userId))
       }
     }
     return presentations

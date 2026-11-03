@@ -7,7 +7,12 @@ export function socialWriteAction(operation: string, params?: Record<string, unk
     case 'related-recordings.share': return '共享录音'
     case 'contacts.team-join': return '加入团队'
     case 'contacts.add': return '添加联系人'
-    case 'group.create': return '创建群聊'
+    case 'group.create': case 'group.private.create': return '创建群聊'
+    case 'social.groups.requests.resolve': return params?.approved === true ? '同意入群申请' : '拒绝入群申请'
+    case 'social.groups.join': case 'identity.share.join': return '加入群聊'
+    case 'social.people.listing.set': return params?.isListed === true ? '展示自己' : undefined
+    case 'social.groups.settings.set': return params?.isPublic === true ? '公开群聊' : undefined
+    case 'social.groups.showcase.set': return params?.isShown === true ? '展示群聊' : undefined
     case 'group.members.add': return '邀请群成员'
     case 'team.create': case 'team.app.create': return '创建团队'
     case 'team.join-by-jotmo-id': case 'team.app.join': case 'dsh-beta-community.join': return '加入团队或社群'

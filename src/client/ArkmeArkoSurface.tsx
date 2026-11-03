@@ -1225,7 +1225,6 @@ export function ArkmeArkoSurface() {
   const displayName = arkoPresentationName(profile)
   const composerPlaceholder = tr("问问 {v0}...", { v0: displayName })
   const selectedModel = catalog === undefined && modelError === '' ? tr('正在加载模型…') : selectedModelName(catalog)
-  const canChooseModel = (catalog?.options.length ?? 0) > 0
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   useEffect(() => {
     if (!pendingComposerFocusRef.current || loading || interactionLocked
@@ -1464,7 +1463,7 @@ export function ArkmeArkoSurface() {
       </p>}
     </ArkmeDetailShell>}
 
-    {modelAnchor !== null && catalog !== undefined && <ArkoModelMenu
+    {modelAnchor !== null && <ArkoModelMenu
       anchor={modelAnchor} catalog={catalog} busy={selectingModel} error={modelError}
       onSelect={selectModel} onClose={closeModelMenu}
     />}
@@ -1555,8 +1554,8 @@ export function ArkmeArkoSurface() {
           aria-haspopup="menu"
           aria-expanded={modelDialogOpen}
           title={selectedModel}
-          style={{ ...styles.modelTrigger, opacity: !canChooseModel || interactionLocked || clearing || selectingModel ? .55 : 1 }}
-          disabled={!canChooseModel || interactionLocked || clearing || selectingModel}
+          style={{ ...styles.modelTrigger, opacity: interactionLocked || clearing || selectingModel ? .55 : 1 }}
+          disabled={interactionLocked || clearing || selectingModel}
           onClick={event => { toggleModelMenu(event.currentTarget) }}
         ><span style={styles.modelLabel}>{selectedModel}</span><CaretDownIcon size={12} style={{ flex: 'none' }} aria-hidden /></button>
         {activeRun === undefined ? <ArkmeComposerSendButton

@@ -116,6 +116,6 @@ export function ArkmeMentionSuggestionRow({ candidate, active, disabled = false,
         ? <span style={styles.secondary}>{secondary}</span>
         : null}
     </span>
-    {reservedAgent ? <span style={reservedAgentBadgeStyle}>{tr("AI智能体")}</span> : null}
+    {reservedAgent ? <span style={reservedAgentBadgeStyle}>{tr("Arko")}</span> : null}
   </button>
 }

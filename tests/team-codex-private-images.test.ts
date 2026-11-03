@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -122,4 +122,21 @@ describe('private image text projection',()=>{
   expect(safe).not.toContain('[ref]')
   expect(safe).toContain('图片仅本人可见')
  })
+})
+
+it('associates each steering input with its own images, leaving the original prompt unchanged',async()=>{
+ const f=await fixture()
+ const root=message('user',[{type:'input_image',image_url:f.data}])
+ appendFileSync(f.path,root)
+ const before=(await f.run())[0]!.privateImages![0]!
+ const seq=Buffer.byteLength(readFileSync(f.path))+1
+ appendFileSync(f.path,message('user',[{type:'input_text',text:'追加需求'},{type:'input_image',image_url:f.data},{type:'input_image',image_url:f.data}]))
+ const nextSeq=Buffer.byteLength(readFileSync(f.path))+1
+ appendFileSync(f.path,message('user',[{type:'input_text',text:'最后补充，无图片'}]))
+ const result=await f.run([event(),{...event(),messageSequence:seq},{...event(),messageSequence:nextSeq}])
+ expect(result[0]!.privateImages?.map(i=>i.ref)).toEqual([before.ref])
+ expect(result[1]!.privateImages).toHaveLength(2)
+ expect(result[1]!.privateImages?.some(i=>i.ref===before.ref)).toBe(false)
+ expect(result[2]!.privateImages).toBeUndefined()
+ expect(f.store.project(22,f.source,result.map(e=>({...e,privateImages:undefined})))[1]!.privateImages).toBeUndefined()
 })

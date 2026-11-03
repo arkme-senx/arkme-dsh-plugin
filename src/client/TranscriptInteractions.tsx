@@ -17,7 +17,7 @@ import { applyMessageTextReplacement, resolveMessageTextReplacement } from './me
 import { quoteDigest } from './message-quote-selection.js'
 import { copyText } from './clipboard-text.js'
 
-export interface TranscriptInteractionRow { id: string; text: string; speaker: string; at: number; playable: boolean }
+export interface TranscriptInteractionRow { id: string; text: string; speaker: string; at: number; playable: boolean;excerptOrigin?:{kind:'recording'|'call';itemRef:string};excerptSource?:import('../record-excerpt.js').RecordExcerptSource }
 function TextTarget({ target, children }: { target: MessageSelectionTarget; children: ReactNode }) {
   const ref = useMessageTextSelectionTarget(target.item.textContent, target)
   return <span ref={ref} style={{ cursor: 'text', userSelect: 'text', whiteSpace: 'pre-wrap' }}>{children}</span>
@@ -110,7 +110,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
   const display = (row: TranscriptInteractionRow, entry = entriesRef.current[row.id]) => entry?.original === row.text ? entry.text : row.text
   const target = (row: TranscriptInteractionRow): MessageSelectionTarget => {
     const text = display(row)
-    return { sourceRef, selectionDomain: 'transcript', localMarkRef: JSON.stringify([row.id, text]),
+    return { sourceRef,...(row.excerptOrigin?{excerptOrigin:row.excerptOrigin}:{}),...(row.excerptSource?{excerptSource:row.excerptSource}:{}),selectionDomain: 'transcript', localMarkRef: JSON.stringify([row.id, text]),
       item: { itemUid: row.id, senderName: row.speaker, isMe: false, sendAtMillis: row.at, title: '', textContent: text, textFormat: 'plain', status: 1 } }
   }
   const snapshot = async (row: TranscriptInteractionRow, entry: LocalTranscriptEntry | undefined): Promise<MessageUnderlineSnapshot> => {
