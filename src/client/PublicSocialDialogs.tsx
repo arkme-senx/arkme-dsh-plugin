@@ -3,6 +3,7 @@ import type { PublicGroupSettings, PublicPerson } from '../public-social-contrac
 import { callArkme } from './api.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { PublicGroupJoinRequests } from './PublicGroupJoinRequests.js'
 import { publicSocialStyles as s } from './public-social-styles.js'
 
 function message(error: unknown): string { return error instanceof Error ? error.message : tr('操作失败，请重试') }
@@ -71,6 +72,7 @@ export function PublicGroupSettingsDialog({ accountScope, sourceRef, onClose, on
       <p style={s.secondary}>{tr('公开后会出现在群聊目录和你创建的公开群中。')}</p>
       <label style={s.label}>{tr('群介绍（选填）')}<textarea aria-label={tr('群介绍')} style={s.textarea} value={introduction} disabled={busy} maxLength={1000} onChange={e => setIntroduction(e.currentTarget.value)} /></label>
       <p style={{ ...s.secondary, textAlign: 'right' }}>{Array.from(introduction).length}/500</p>
+      <PublicGroupJoinRequests accountScope={accountScope} sourceRef={sourceRef} disabled={busy} onBusyChange={setBusy} />
     </> : <>
       <label style={s.check}><input type="checkbox" checked={isShown} disabled={busy || !settings.isPublic} onChange={e => setShown(e.currentTarget.checked)} />{tr('在我的世界展示此群')}</label>
       <p style={s.secondary}>{tr(settings.isPublic ? '其他人可以从你的世界发现并申请加入此群。' : '此群目前未公开，公开后才可以展示在个人世界。')}</p>

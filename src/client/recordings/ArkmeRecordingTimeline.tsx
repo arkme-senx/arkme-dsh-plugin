@@ -276,11 +276,13 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, hasActivePlayback = false, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, metricsLoading, textCountLoading = false, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, hasActivePlayback = false, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: RecordingTimelineItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
   dailyMetrics?: (ArkmeRecordingDailyMetrics & { speakerTextCounts?: Readonly<Record<string, number>> }) | undefined
+  metricsLoading?: boolean
+  textCountLoading?: boolean
   arrangementEntry?: ReactNode
   dayStartMillis?: number
   playheadMillis?: number
@@ -762,7 +764,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       {coverageState !== 'ready' && <span role="status">{coverageState === 'error' ? '云端录音范围读取失败' : '部分录音范围待确认'}</span>}
       {coverage.some(range => range.status === 'processing' || range.status === 'submitted') && <span role="status">{tr("录音处理中，人声结果待更新")}</span>}
     </div>}
-    <RecordingDailyMetrics metrics={dailyMetrics} loading={loading} localPending={coverage.some(range=>range.status==='recording'||range.status==='submitted'||range.status==='local')}>{arrangementEntry}</RecordingDailyMetrics>
+    <RecordingDailyMetrics metrics={dailyMetrics} loading={metricsLoading ?? loading} textCountLoading={textCountLoading} localPending={coverage.some(range=>range.status==='recording'||range.status==='submitted'||range.status==='local')}>{arrangementEntry}</RecordingDailyMetrics>
     {loading ? <span style={styles.loadingControl} data-timeline-layer="loading" aria-label={tr("正在读取录音")} /> : showEmptyState ? <span style={styles.emptyControl} data-timeline-layer="empty">
       <span style={styles.emptyIndicator} aria-hidden />
       <span>{tr("无录音")}</span>

@@ -66,3 +66,7 @@
   margin-left: auto;
   align-self: flex-end;
 }
+/* A thought owns a footer row; its clock needs no reservation in the body. */
+[data-arkme-thought-message-footer] .arkme-message-timestamp { position:static;margin:0; }
+.arkme-timed-bubble:has(> [data-arkme-thought-message-footer]) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
+.arkme-timed-bubble:has(> [data-arkme-thought-message-footer]) > [data-arkme-message-content] .arkme-markdown > p:last-child::after { display:none; }

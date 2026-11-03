@@ -192,12 +192,11 @@ export function createArkmeRecordingImportHandler(
       const known = error instanceof ArkmePluginError
         ? error
         : new ArkmePluginError('recording-import-internal-error', '录音导入失败', true, 500, { cause: error })
+      if (!accepted && temporaryPath !== '') await unlink(temporaryPath).catch(() => undefined)
       writeJson(res, known.httpStatus, {
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
       })
-    } finally {
-      if (!accepted && temporaryPath !== '') await unlink(temporaryPath).catch(() => undefined)
     }
   }
 }

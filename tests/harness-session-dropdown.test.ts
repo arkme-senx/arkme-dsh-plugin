@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { installHarnessSessionDropdown } from '../src/client/harness-session-dropdown.js'
 import { CONVERSATION_MENU_LAYOUT } from '../src/client/conversation-selector-style.js'
 import { HARNESS_MENU_OPEN } from '../src/client/harness-session-menu-bridge.js'
+import { HARNESS_SETTINGS_OPEN, HARNESS_SETTINGS_READY } from '../src/client/harness-settings.js'
 
 let cleanup: (() => void) | undefined
 it('signals directory refresh when opening the native title menu', () => {
@@ -16,7 +17,7 @@ it('signals directory refresh when opening the native title menu', () => {
     expect(listener).toHaveBeenCalledOnce()
   } finally { document.removeEventListener(HARNESS_MENU_OPEN, listener) }
 })
-afterEach(() => { cleanup?.(); cleanup = undefined; document.body.replaceChildren(); vi.restoreAllMocks() })
+afterEach(() => { cleanup?.(); cleanup = undefined; document.body.replaceChildren(); document.documentElement.removeAttribute(HARNESS_SETTINGS_READY); vi.restoreAllMocks() })
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
 function mount() {
   document.body.innerHTML = `<div style="display:grid;grid-template-columns:280px minmax(0px, 1fr) 0px">
@@ -40,6 +41,33 @@ function mount() {
   const trigger = document.querySelector<HTMLButtonElement>('[data-arkme-session-trigger]')!
   return { frame, column, header, nativeTitle, rows, create, draft, trigger }
 }
+
+it('opens native settings from the rightmost footer control without replacing the draft or native actions', async () => {
+  const { trigger, column, draft } = mount()
+  const actions = document.querySelector('[data-arkme-session-tools-actions]')!
+  const view = actions.querySelector('[aria-label="视图选项"]')
+  const add = actions.querySelector('[aria-label="添加工作区"]')
+  const settings = actions.querySelector<HTMLButtonElement>('[data-arkme-session-settings]')!
+  expect(settings.disabled).toBe(true)
+  document.documentElement.setAttribute(HARNESS_SETTINGS_READY, '')
+  await flush()
+  const opened = vi.fn()
+  document.addEventListener(HARNESS_SETTINGS_OPEN, opened)
+  try {
+    trigger.click()
+    settings.click()
+    expect(opened).toHaveBeenCalledOnce()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(column.inert).toBe(true)
+    expect(actions.lastElementChild).toBe(settings)
+    expect(actions.querySelector('[aria-label="视图选项"]')).toBe(view)
+    expect(actions.querySelector('[aria-label="添加工作区"]')).toBe(add)
+    expect(document.querySelector('textarea')).toBe(draft)
+    expect(draft.value).toBe('未发送草稿')
+    cleanup!(); cleanup = undefined
+    expect(actions.contains(settings)).toBe(false)
+  } finally { document.removeEventListener(HARNESS_SETTINGS_OPEN, opened) }
+})
 
 it('keeps native components, actions and draft identity; closes after native session selection', async () => {
   const { trigger, column, rows, nativeTitle, draft, frame } = mount()

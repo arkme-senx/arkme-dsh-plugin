@@ -24,6 +24,8 @@ const teamItems = Array.from({ length: 6 }, (_, i) => teamMessage(i + 90))
 let host: HTMLDivElement, root: Root
 let frames: FrameRequestCallback[], resize: Array<{ callback: ResizeObserverCallback; targets: Element[] }>, intersections: Array<{ callback: IntersectionObserverCallback; targets: Element[] }>
 let growth = 0
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
+let scrollIntoView: ReturnType<typeof vi.fn>
 const viewSelector = '[data-arko-message-viewport],.team-message-list'
 const isView = (node: Element) => node.matches(viewSelector)
 const view = () => host.querySelector<HTMLDivElement>(viewSelector)!
@@ -45,6 +47,8 @@ async function resized() {
 }
 beforeEach(() => {
   frames = []; resize = []; intersections = []; growth = 0
+  scrollIntoView = vi.fn()
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -69,13 +73,14 @@ beforeEach(() => {
     if (method === 'arko.models') return { options: [] } as never
     if (method === 'arko.profile') return { displayName: 'Arko', version: 2 } as never
     if (method === 'user.profile') return { profile: {} } as never
+    if (method === 'team.app.locate') return { conversation, messages: [teamMessage(1)], hasMore: false, beforeSeq: 0 } as never
     if (method === 'team.app.timeline') return { conversation, messages: params?.beforeSeq ? [teamMessage(1)] : teamItems, hasMore: false, beforeSeq: 0 } as never
     return [] as never
   })
   installArkoPendingHostMock(vi.mocked(callArkme))
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); arkmeArkoProfileStore.activateUser(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); arkmeArkoProfileStore.activateUser(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); if(originalScrollIntoView)Object.defineProperty(Element.prototype,'scrollIntoView',originalScrollIntoView);else delete (Element.prototype as any).scrollIntoView })
 
 it.each(['arko', 'team'] as const)('%s shows the shared bottom-right control on scroll-up and hides it at latest', async kind => {
   await mount(kind)
@@ -115,6 +120,10 @@ it.each(['arko', 'team'] as const)('%s returns from historical lookup using a fr
   await mount(kind)
   await click([...host.querySelectorAll('button')].find(node => node.textContent === (kind === 'arko' ? '定位 Arko 历史' : '定位团队历史'))!)
   expect(button('回到最新')).not.toBeNull()
+  if (kind === 'team') {
+    expect(vi.mocked(callArkme)).toHaveBeenCalledWith('team.app.locate', { conversationRef: 'conv', messageRef: 'ref1' }, expect.any(AbortSignal))
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
+  }
   expect(view().textContent).toContain('消息 1')
   const reads = vi.mocked(callArkme).mock.calls.filter(([method]) => method === (kind === 'arko' ? 'arko.messages' : 'team.app.timeline')).length
   await click(button('回到最新')!)

@@ -90,6 +90,12 @@ describe('core-only DeepSeek Harness iframe route', () => {
     })({ method: 'GET' } as IncomingMessage, response.value)
     expect(response.status()).toBe(200)
     expect(response.body()).toContain('/sidebar-client.js')
+    const dom = new JSDOM(response.body())
+    const preload = dom.window.document.querySelector('link[rel="preload"][as="script"]')!
+    expect(preload.getAttribute('href')).toBe('/sidebar-client.js')
+    expect(preload.getAttribute('fetchpriority')).toBe('high')
+    expect(dom.window.document.querySelector('[data-arkme-document-started]')?.textContent).toContain('window.parent.postMessage')
+    dom.window.close()
   })
 
   it('adds trajectory navigation only when native views and the original menu are available', async () => {

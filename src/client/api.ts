@@ -165,6 +165,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.totals.day'
   | 'recordings.day.review'
   | 'recordings.day.overview'
   | 'recordings.day'
