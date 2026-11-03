@@ -3,6 +3,7 @@ import { RecordingVoiceTriggerEntry } from './recordings/RecordingVoiceTriggers.
 import { RecordingProcessingSetting } from './recordings/RecordingProcessingSetting.js'
 import { recordingDayNeedsRefresh, recordingCaptureNotice, readCompleteRecordingTranscript } from '../recording-transcript-page.js'
 import { useRecordingTranscriptPages } from './recordings/useRecordingTranscriptPages.js'
+import { RecordingDayCache, recordingDayCache, type RecordingCachedTab, type RecordingDayView } from './recordings/recording-day-cache.js'
 import { RecordingPlaybackToggle } from './recordings/RecordingPlaybackToggle.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { captureRecordingScrollAnchor, restoreRecordingScrollAnchor, type RecordingScrollAnchor } from './recordings/recording-scroll-anchor.js'
@@ -674,7 +675,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const selectedDateRef = useRef(selectedDate.getTime())
   selectedDateRef.current = selectedDate.getTime()
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))
-  const [activeTab, setActiveTab] = useState<RecordingTab | 'files'>('transcript')
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0)
   const entityAccount = auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : ''
   const entities = useRecordingEntities(entityAccount, selectedDate.getTime(), active && workbenchEnabled && !tour.sample, `${recordingRefreshRevision}:${fileRefreshRevision}`)
@@ -690,32 +690,70 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const dayScope = `${entityAccount}:${selectedDate.getTime()}:${JSON.stringify(notificationWindow ?? null)}`
   const currentDayScope = useRef(dayScope)
   currentDayScope.current = dayScope
+  const [anonymousDayCache] = useState(() => new RecordingDayCache())
+  const dayCache = entityAccount ? recordingDayCache : anonymousDayCache
+  const cacheAccount = entityAccount || 'anonymous'
+  const cachedDay = dayCache.get(dayScope, cacheAccount)
+  const [viewSelection, setViewSelection] = useState<RecordingDayView & { scope: string }>(() => ({
+    scope: dayScope, tab: 'transcript', summaryVersionId: '', timelineVersionId: '', ...cachedDay?.view,
+  }))
+  const dayView = viewSelection.scope === dayScope ? viewSelection : {
+    scope: dayScope, tab: cachedDay?.view?.tab ?? viewSelection.tab,
+    summaryVersionId: cachedDay?.view?.summaryVersionId ?? '', timelineVersionId: cachedDay?.view?.timelineVersionId ?? '',
+  }
+  const updateDayView = (update: (current: RecordingDayView) => RecordingDayView) => {
+    if (currentDayScope.current !== dayScope) return
+    setViewSelection(current => ({ ...update(current.scope === dayScope ? current : dayView), scope: dayScope }))
+  }
+  const activeTab = dayView.tab
+  const setActiveTab = (tab: RecordingCachedTab) => updateDayView(current => ({ ...current, tab }))
+  const summaryVersionId = dayView.summaryVersionId, timelineVersionId = dayView.timelineVersionId
+  const setSummaryVersionId = (value: string | ((current: string) => string)) => updateDayView(current => ({ ...current,
+    summaryVersionId: typeof value === 'function' ? value(current.summaryVersionId) : value }))
+  const setTimelineVersionId = (value: string | ((current: string) => string)) => updateDayView(current => ({ ...current,
+    timelineVersionId: typeof value === 'function' ? value(current.timelineVersionId) : value }))
   const [daySnapshot, setDaySnapshot] = useState<{ scope: string; value: ArkmeRecordingDay }>()
-  const day = daySnapshot?.scope === dayScope ? daySnapshot.value : undefined
+  const day = daySnapshot?.scope === dayScope ? daySnapshot.value : cachedDay?.day
   const dayRef = useRef(day)
   dayRef.current = day
   const dayReadRevision = useRef(0)
   const setDay = (update: ArkmeRecordingDay | undefined | ((current: ArkmeRecordingDay | undefined) => ArkmeRecordingDay | undefined)) => {
     setDaySnapshot(current => {
       if (currentDayScope.current !== dayScope) return current
-      const previous = current?.scope === dayScope ? current.value : undefined
+      const previous = current?.scope === dayScope ? current.value : dayCache.get(dayScope, cacheAccount)?.day
       const value = typeof update === 'function' ? update(previous) : update
       return value === undefined ? undefined : { scope: dayScope, value }
     })
   }
-  const [dayRefreshError, setDayRefreshError] = useState('')
+  const [refreshFailure, setRefreshFailure] = useState({ scope: '', message: '' })
+  const dayRefreshError = refreshFailure.scope === dayScope ? refreshFailure.message : ''
+  const setDayRefreshError = (message: string) => setRefreshFailure({ scope: dayScope, message })
   const [dayRetryRevision, setDayRetryRevision] = useState(0)
   const localCoverage = useLocalRecordingCoverage(auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${String(auth.auth.userId)}` : undefined, selectedDate.getTime(), day?.coverage?.intervals)
   const [calendarLoading, setCalendarLoading] = useState(true)
-  const [dayLoading, setDayLoading] = useState(true)
+  const [dayReading, setDayLoading] = useState(true)
+  const dayLoading = day === undefined && dayReading
   const [calendarError, setCalendarError] = useState('')
-  const [dayError, setDayError] = useState('')
+  const [dayFailure, setDayFailure] = useState({ scope: '', message: '' })
+  const dayError = dayFailure.scope === dayScope ? dayFailure.message : ''
+  const setDayError = (message: string) => setDayFailure({ scope: dayScope, message })
+  const invalidationVersions = useRef(new Map<string, string>())
+  useLayoutEffect(() => {
+    const version = `${recordingRefreshRevision}:${fileRefreshRevision}`
+    const previous = invalidationVersions.current.get(cacheAccount)
+    if (previous !== undefined && previous !== version) dayCache.invalidateAccount(cacheAccount)
+    invalidationVersions.current.set(cacheAccount, version)
+  }, [dayCache, cacheAccount, recordingRefreshRevision, fileRefreshRevision])
+  useLayoutEffect(() => {
+    if (day) {
+      dayCache.setDay(dayScope, cacheAccount, day)
+      dayCache.setView(dayScope, cacheAccount, dayView)
+    }
+  }, [dayCache, cacheAccount, dayScope, day, activeTab, summaryVersionId, timelineVersionId])
   // Do not retain local placeholders once the cloud has confirmed their complete range.
   const coverage = [...(day?.coverage?.intervals ?? []), ...localCoverage.filter(local => local.status === 'recording' || !recordingCoverageContains(day?.coverage?.intervals ?? [], local.startAtMillis, local.endAtMillis))]
   const awaitingCoverageSync = coverage.some(range => range.status === 'submitted')
   const awaitingAsrInputMetrics = (day?.transcript.dailyMetrics?.asrInputPendingCount ?? 0) > 0
-  const [summaryVersionId, setSummaryVersionId] = useState('')
-  const [timelineVersionId, setTimelineVersionId] = useState('')
   const [generatingKinds, setGeneratingKinds] = useState<Record<ArkmeRecordingProjectionKind, boolean>>({ summary: false, timeline: false })
   const [generationErrors, setGenerationErrors] = useState<Partial<Record<ArkmeRecordingProjectionKind, string>>>({})
   const generationAbortRef = useRef<Partial<Record<ArkmeRecordingProjectionKind, AbortController>>>({})
@@ -778,7 +816,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const [forwardAttempt, setForwardAttempt] = useState(() => createRecordingForwardAttempt([]))
   const selectedForwardItems = forwardAttempt.items
   const [forwardOpen, setForwardOpen] = useState(false)
-  const overview = useRecordingDayOverview(day?.dateStamp === selectedDate.getTime() && !dayError ? day.transcript : undefined, dayScope, active && workbenchEnabled && !tour.sample, `${recordingRefreshRevision}:${fileRefreshRevision}:${dayRetryRevision}`)
+  const overview = useRecordingDayOverview(day?.dateStamp === selectedDate.getTime() && !dayError ? day.transcript : undefined, dayScope, active && workbenchEnabled && !tour.sample, `${recordingRefreshRevision}:${fileRefreshRevision}:${dayRetryRevision}`, { cache: dayCache, account: cacheAccount })
   const dayScopeRef = useRef(dayScope)
   dayScopeRef.current = dayScope
   const pageScope = `${dayScope}:${activeTab}`
@@ -797,10 +835,23 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }, [active, activeTab, day?.transcript.nextCursor, pages.loading, pages.error, pages.next])
   const playback = useRecordingPlayback(recordingMediaPath, async (last, signal) => (await pages.through(last.startAtMillis, signal))?.items ?? [], day?.transcript.items)
   const selectedTimelineMillis = playback.positionAtMillis
+  const displayedPane = useRef('')
   useLayoutEffect(() => {
-    restoreRecordingScrollAnchor(transcriptRootRef.current, readingAnchor.current)
+    const pane = transcriptRootRef.current, scope = `${dayScope}:${activeTab}`
+    if (pane && displayedPane.current !== scope) {
+      const position = dayCache.get(dayScope, cacheAccount)?.positions[activeTab]
+      pane.scrollTop = position?.top ?? 0; pane.scrollLeft = position?.left ?? 0
+      restoreRecordingScrollAnchor(pane, position?.anchor)
+    } else restoreRecordingScrollAnchor(pane, readingAnchor.current)
+    displayedPane.current = scope
     readingAnchor.current = undefined
-  }, [day?.transcript])
+  }, [dayScope, activeTab, day?.transcript])
+  const rememberReadingPosition = () => {
+    const pane = transcriptRootRef.current
+    if (!pane) return
+    // Scroll events must stay O(1), even after a whole day has been read.
+    dayCache.setPosition(dayScope, cacheAccount, activeTab, { top: pane.scrollTop, left: pane.scrollLeft })
+  }
   const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
   const entityDrawer = useSyncExternalStore(subscribeRecordingLayout, () => typeof window !== 'undefined' && window.innerWidth < 1440, () => false)
 
@@ -884,6 +935,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const controller = new AbortController()
     const readRevision = ++dayReadRevision.current
     const initialRead = dayRef.current === undefined
+    setDayLoading(initialRead)
     if (initialRead) {
       setDay(undefined); setDayLoading(true)
       setSummaryVersionId(''); setTimelineVersionId('')
@@ -1537,7 +1589,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       </div>}{activeTab === 'transcript' && speakerFeedback?.visible && <div role="status" aria-live="polite" data-recording-speaker-feedback style={{ position: 'absolute', right: 18, bottom: 12, zIndex: 3, maxWidth: 'calc(100% - 36px)', padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.base, color: colors.text, boxShadow: '0 2px 8px rgba(0,0,0,.08)', fontSize: 12, pointerEvents: 'none' }}>{speakerFeedback.message}</div>}{dayRefreshError && day && <div role="status" title={dayRefreshError} style={{ position: 'absolute', bottom: 12, right: 18, zIndex: 3, padding: '6px 10px', borderRadius: 8, border: `1px solid ${colors.border}`, background: colors.base, color: colors.secondary, fontSize: 12 }}>
         {tr('更新暂未完成，当前内容已保留')}
         <button type="button" onClick={() => setDayRetryRevision(value => value + 1)} style={{ border: 0, background: 'transparent', color: colors.accent, font: 'inherit', cursor: 'pointer', marginLeft: 8 }}>{tr('重试更新')}</button>
-      </div>}<div ref={transcriptRootRef} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{selectionMode && selectedForwardItems.some(selected => { const row = interactionRows.find(row => row.id === selected.itemId); return row && transcriptInteraction.text(row) !== row.text }) && <div role="status" style={styles.status}>分享链接使用云端转写原文，不包含本机更正和标记。</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}<div hidden={activeTab !== 'files'}><ArkmeRecordingFiles mediaPath={recordingMediaPath}
+      </div>}<div ref={transcriptRootRef} data-recording-day-pane onScroll={rememberReadingPosition} style={{ ...styles.pane, ...(activeTab === 'transcript' ? styles.transcriptPane : {}) }}>{exportNotice !== '' && <div role="status" style={styles.status}>{exportNotice}</div>}{selectionMode && selectedForwardItems.some(selected => { const row = interactionRows.find(row => row.id === selected.itemId); return row && transcriptInteraction.text(row) !== row.text }) && <div role="status" style={styles.status}>分享链接使用云端转写原文，不包含本机更正和标记。</div>}{(activeTab === 'summary' || activeTab === 'timeline') && generationErrors[activeTab] !== undefined && <div style={styles.error} role="alert">{generationErrors[activeTab]}</div>}<div hidden={activeTab !== 'files'}><ArkmeRecordingFiles mediaPath={recordingMediaPath}
         accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined}
         dateStamp={selectedDate.getTime()} active={active && activeTab === 'files'} refreshRevision={recordingRefreshRevision}
         onCountChange={setAudioFileCount}
