@@ -7,9 +7,14 @@ import type { RecordingFile } from './recording-day-files.js'
 
 // Match the existing file list's 1024-based MB conversion. Keep small positive
 // files visible instead of rounding them to a misleading zero.
-const megabyteFormatters = Object.fromEntries(['zh-CN', 'en-US'].map(locale => [locale, new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 6 })]))
+const megabyteFormatters = Object.fromEntries(['zh-CN', 'en-US'].map(locale => [locale, {
+  normal: new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  small: new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 6 }),
+}]))
 export function recordingMegabytesLabel(bytes: number): string {
-  return `${megabyteFormatters[arkmeIntlLocale()]!.format(bytes / 1024 / 1024)} MB`
+  const megabytes = bytes / 1024 / 1024
+  const formatters = megabyteFormatters[arkmeIntlLocale()]!
+  return `${(megabytes > 0 && megabytes < 0.01 ? formatters.small : formatters.normal).format(megabytes)} MB`
 }
 
 export function useRecordingFileStorage(files: readonly RecordingFile[], active: boolean, refreshRevision: string) {

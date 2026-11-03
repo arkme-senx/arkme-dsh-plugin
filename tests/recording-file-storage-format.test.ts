@@ -6,6 +6,7 @@ it('keeps all audio sizes in MB, including zero and sub-megabyte files', () => {
   expect(recordingMegabytesLabel(0)).toBe('0.00 MB')
   expect(recordingMegabytesLabel(1)).toBe('0.000001 MB')
   expect(recordingMegabytesLabel(1048576)).toBe('1.00 MB')
+  expect(recordingMegabytesLabel(115239321)).toBe('109.90 MB')
   expect(recordingMegabytesLabel(1024 ** 3)).toBe('1,024.00 MB')
 })
 
