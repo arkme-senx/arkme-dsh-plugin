@@ -79,7 +79,7 @@ export function CodexConversationSurface({ accountKey, userId, active }: { accou
   return <section className="arkme-codex-surface" aria-label={tr('Codex 对话')}>
     {error && <p className="arkme-codex-scope-error" role="alert">{error} <button type="button" disabled={busy} onClick={()=>{void load()}}>{tr('重试')}</button></p>}
     <div className="arkme-codex-team-panel" hidden={!active || !!target}>
-      <TeamCodexActivity conversation active={active && !target && loaded} teamRef="" personalTeams={teams} selfMember={String(userId)}
+      <TeamCodexActivity conversation active={active && !target} teamRef="" personal selfMember={String(userId)}
         headerActions={workspaceButton} onManage={()=>setWorkspaceOpen(true)}/>
     </div>
     {panels.map(panel => <div key={codexTargetScopeKey(panel)} className="arkme-codex-team-panel" hidden={!active || !target || codexTargetScopeKey(panel)!==codexTargetScopeKey(target) || !!error}>

@@ -1,3 +1,5 @@
+import{codexImageTool}from'./conversation/codex-image.js'
+import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
 import { publicSocialToolModules } from './groups/public-social.js'
 import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
@@ -90,6 +92,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamMemberTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
+  ...codexWorkRecordTools,
+  codexImageTool,
   ...teamNotificationTools,
   ...teamEntryTools,
   recentRecordsToolModule,

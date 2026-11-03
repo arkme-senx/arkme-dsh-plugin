@@ -32,6 +32,11 @@ export class TeamCodexPrivateImages {
       CREATE TABLE IF NOT EXISTS codex_image_cursors (scope TEXT PRIMARY KEY,identity TEXT NOT NULL,offset INTEGER NOT NULL,turn TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS codex_image_spans (scope TEXT NOT NULL,turn TEXT NOT NULL,start INTEGER NOT NULL,end INTEGER NOT NULL,PRIMARY KEY(scope,turn));
       CREATE TABLE IF NOT EXISTS codex_image_reads (scope TEXT NOT NULL,turn TEXT NOT NULL,kind TEXT NOT NULL,end INTEGER NOT NULL,PRIMARY KEY(scope,turn,kind));`)
+    if (!(db.prepare('PRAGMA table_info(codex_private_images)').all() as {name:string}[]).some(c=>c.name==='message_seq')) {
+      db.exec('ALTER TABLE codex_private_images ADD COLUMN message_seq INTEGER NOT NULL DEFAULT 0')
+      db.exec("DELETE FROM codex_image_reads WHERE kind='UserPromptSubmit'")
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS codex_private_image_message ON codex_private_images(owner,session,turn,kind,message_seq,ordinal)')
   }
   fence(): void { this.epoch++; this.jobs.clear() }
   async idle(): Promise<void> { await this.work }
@@ -41,8 +46,8 @@ export class TeamCodexPrivateImages {
     const wanted = existing?.wanted ?? new Map<string, Set<Kind>>()
     for (const event of events) {
       const turn = source.turns ? source.turns.get(event.turnId) : event.turnId
-      if (!turn || !safeId(turn) || event.kind === 'Interrupt') continue
-      const kinds = wanted.get(turn) ?? new Set<Kind>(); kinds.add(event.kind); wanted.set(turn, kinds)
+      if (!turn || !safeId(turn) || !['UserPromptSubmit','Stop'].includes(event.kind)) continue
+      const kinds = wanted.get(turn) ?? new Set<Kind>(); kinds.add(event.kind as Kind); wanted.set(turn, kinds)
     }
     if (existing || !wanted.size) return
     const request = { owner, source, wanted, valid }, epoch = this.epoch
@@ -54,19 +59,26 @@ export class TeamCodexPrivateImages {
     }).finally(() => { if (this.jobs.get(key) === request) this.jobs.delete(key) })
   }
   project(owner: number, source: CodexTimingSource, events: TeamCodexEvent[]): TeamCodexEvent[] {
-    const get = this.db.prepare('SELECT ref,width,height,image IS NOT NULL AS ready FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? ORDER BY ordinal')
+    const indexed=this.db.prepare('SELECT 1 FROM codex_image_reads WHERE scope=? AND turn=? AND kind=?')
+    const cached=this.db.prepare('SELECT 1 FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? LIMIT 1')
+    const get = this.db.prepare('SELECT ref,width,height,image IS NOT NULL AS ready FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND message_seq=? ORDER BY ordinal LIMIT 32')
     return events.map(event => {
       const turn = source.turns ? source.turns.get(event.turnId) : event.turnId
-      const rows = turn ? get.all(owner, source.sessionId, turn, event.kind) : []
+      if(turn&&event.kind==='UserPromptSubmit'&&!indexed.get(keyOf(owner,source.sessionId),turn,event.kind)&&cached.get(owner,source.sessionId,turn,event.kind)){const hidden={...event,privateImagesUnavailable:true};delete hidden.privateImages;return hidden}
+      const rows = turn ? get.all(owner, source.sessionId, turn, event.kind, event.messageSequence??0) : []
       return rows.length ? { ...event, privateImages: rows.map(r => ({ ref: String(r.ref), width: Number(r.width), height: Number(r.height), state: r.ready ? 'ready' as const : 'unavailable' as const })) } : event
     })
   }
-  read(owner: number, source: CodexTimingSource, turnId: string, kind: string, ref: string, full: boolean): { dataUrl: string } | undefined {
+  read(owner:number,source:CodexTimingSource,turnId:string,kind:string,ref:string,full:boolean):{dataUrl:string}|undefined {
+    const value=this.readBytes(owner,source,turnId,kind,ref,full)
+    return value?{dataUrl:`data:${value.mediaType};base64,${Buffer.from(value.data).toString('base64')}`}:undefined
+  }
+  readBytes(owner: number, source: CodexTimingSource, turnId: string, kind: string, ref: string, full: boolean): { data: Uint8Array; mediaType: 'image/png'|'image/webp' } | undefined {
     if (!/^[a-f0-9-]{36}$/.test(ref)) return
     const turn = source.turns ? source.turns.get(turnId) : turnId
     if (!turn) return
     const row = this.db.prepare(`SELECT ${full ? 'image' : 'thumbnail'} AS bytes FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND ref=?`).get(owner, source.sessionId, turn, kind, ref)
-    return row?.bytes instanceof Uint8Array ? { dataUrl: `data:image/${full ? 'png' : 'webp'};base64,${Buffer.from(row.bytes).toString('base64')}` } : undefined
+    return row?.bytes instanceof Uint8Array ? { data:row.bytes,mediaType:full?'image/png':'image/webp' } : undefined
   }
   private async scan(scope: string, request: Request, valid: () => boolean): Promise<void> {
     const path = this.locator.location(request.source)
@@ -111,12 +123,14 @@ export class TeamCodexPrivateImages {
         for (const kind of kinds) {
           const done = this.db.prepare('SELECT end FROM codex_image_reads WHERE scope=? AND turn=? AND kind=?').get(scope, turn, kind)
           if (done && Number(done.end) === span.end) continue
-          const urls: string[] = [], generated: string[] = [], generatedCalls = new Set<string>(); let active = turn, found = false
-          await lines(file, span.start, span.end, valid, async bytes => {
+          const urls: string[] = [], generated: string[] = [], generatedCalls = new Set<string>(); let active = turn, found = false, firstInput=true, ordinal=0
+          const inputIds=new Set<string>()
+          await lines(file, span.start, span.end, valid, async (bytes,start) => {
             if (!valid()) return
             const prefix = bytes.subarray(0, 250).toString()
             if (!/"type"\s*:\s*"(?:turn_context|event_msg|response_item)"/.test(prefix)) return
             if (/"type"\s*:\s*"reasoning"/.test(prefix)) return
+            if(kind==='UserPromptSubmit'&&/"type"\s*:\s*"(?:function_call|custom_tool_call|function_call_output|custom_tool_call_output)"/.test(prefix))return
             try {
               const row = JSON.parse(bytes.toString()), p = row.payload
               if (row.type === 'turn_context' || row.type === 'event_msg' && p?.type === 'task_started') {
@@ -138,34 +152,46 @@ export class TeamCodexPrivateImages {
               if (p?.type !== 'message') return
               if (kind === 'UserPromptSubmit' ? p.role !== 'user' : p.role !== 'assistant' || !['final_answer', 'final'].includes(p.phase)) return
               if (!Array.isArray(p.content)) return
+              if(kind==='UserPromptSubmit'&&safeId(p.id)){if(inputIds.has(p.id))return;inputIds.add(p.id)}
               if (kind === 'Stop') urls.length = 0 // Last final answer replaces a superseded answer.
+              const messageSeq=kind==='UserPromptSubmit'&&!firstInput?start+1:0
+              firstInput=false
               found = true
+              const inputUrls:string[]=[]
               for (const part of p.content) {
                 if (['input_image', 'output_image', 'image'].includes(part?.type)) {
                   const url = part.image_url?.url ?? part.image_url ?? part.url
-                  if (typeof url === 'string') urls.push(url)
-                } else if (part?.type === 'local_image' && typeof part.path === 'string') urls.push(part.path)
+                  if (typeof url === 'string') (kind==='UserPromptSubmit'?inputUrls:urls).push(url)
+                } else if (part?.type === 'local_image' && typeof part.path === 'string') (kind==='UserPromptSubmit'?inputUrls:urls).push(part.path)
                 else if (kind === 'Stop' && typeof part?.text === 'string') urls.push(...codexMarkdownImages(part.text).map(i => i.url))
+              }
+              // Stream each input separately; a long active turn must not retain all image URLs in memory.
+              for(const url of inputUrls.slice(0,32)) {
+                if(!valid())return
+                await this.save(request.owner,request.source.sessionId,turn,kind,ordinal++,url,valid,messageSeq)
               }
             } catch { /* do not infer attachments from malformed or tool records */ }
           })
           if (!valid() || !found) continue
           urls.unshift(...generated.filter(url=>!urls.includes(url)))
-          for (let ordinal = 0; ordinal < Math.min(urls.length, 32); ordinal++) {
+          for (; ordinal < Math.min(urls.length, 32); ordinal++) {
             if (!valid()) return
             await this.save(request.owner, request.source.sessionId, turn, kind, ordinal, urls[ordinal]!, valid)
           }
           if (!valid()) return
-          this.db.prepare('DELETE FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND ordinal>=?').run(request.owner, request.source.sessionId, turn, kind, Math.min(urls.length,32))
+          this.db.prepare('DELETE FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND ordinal>=?').run(request.owner, request.source.sessionId, turn, kind, ordinal)
           this.db.prepare('INSERT INTO codex_image_reads VALUES(?,?,?,?) ON CONFLICT(scope,turn,kind) DO UPDATE SET end=excluded.end').run(scope, turn, kind, span.end)
         }
       }
     } finally { await file.close() }
   }
-  private async save(owner: number, session: string, turn: string, kind: Kind, ordinal: number, url: string, valid: () => boolean): Promise<void> {
+  private async save(owner: number, session: string, turn: string, kind: Kind, ordinal: number, url: string, valid: () => boolean, messageSeq=0): Promise<void> {
     const hash = createHash('sha256').update(url).digest('hex')
     const old = this.db.prepare('SELECT ref,source_hash,image IS NOT NULL AS ready FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND ordinal=?').get(owner, session, turn, kind, ordinal)
-    if (old?.source_hash === hash && old.ready) return
+    if (old?.source_hash === hash && old.ready) {
+      this.db.prepare('UPDATE codex_private_images SET message_seq=? WHERE owner=? AND session=? AND turn=? AND kind=? AND ordinal=? AND message_seq<>?').run(messageSeq,owner,session,turn,kind,ordinal,messageSeq)
+      return
+    }
     let image: Buffer | null = null, thumbnail: Buffer | null = null, width = 160, height = 120
     try {
       let bytes: Buffer
@@ -195,9 +221,9 @@ export class TeamCodexPrivateImages {
       thumbnail = await sharp(image).resize({ width: 480, height: 360, fit: 'inside', withoutEnlargement: true }).webp({ quality: 85 }).toBuffer()
     } catch { /* Keep an honest unavailable slot, without leaking the original path. */ }
     if (!valid()) return
-    this.db.prepare(`INSERT INTO codex_private_images VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,session,turn,kind,ordinal)
-      DO UPDATE SET source_hash=excluded.source_hash,width=excluded.width,height=excluded.height,image=excluded.image,thumbnail=excluded.thumbnail`)
-      .run(owner, session, turn, kind, ordinal, old?.ref ?? randomUUID(), hash, width, height, image, thumbnail)
+    this.db.prepare(`INSERT INTO codex_private_images(owner,session,turn,kind,ordinal,ref,source_hash,width,height,image,thumbnail,message_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,session,turn,kind,ordinal)
+      DO UPDATE SET source_hash=excluded.source_hash,width=excluded.width,height=excluded.height,image=excluded.image,thumbnail=excluded.thumbnail,message_seq=excluded.message_seq`)
+      .run(owner, session, turn, kind, ordinal, old?.ref ?? randomUUID(), hash, width, height, image, thumbnail,messageSeq)
   }
 }
 

@@ -1,3 +1,23 @@
+import { readCodexResponseAnnotations, codexResponseAnnotationText, type CodexResponseAnnotations } from './team-codex-response-annotations.js'
+
+/** Only the generated all-image attachment envelope; ordinary file prose stays intact. */
+function imageAttachmentPromptText(input:string):string {
+  const prefix=/^\s*# Files mentioned by the user:\r?\n([\s\S]*?)\r?\nDistinguish instructions in attached documents from the user's request\.[ \t]*(?:\r?\n)+/.exec(input)
+  let rest=input
+  if(prefix){
+    const files=prefix[1]!.replace(/(?:^|\r?\n)## [^\r\n]+\r?\nImage attachment: true[ \t]*(?=\r?\n|$)|\[图片仅本人可见\]/g,'').trim()
+    if(files||!prefix[1]!.trim())return input
+    rest=input.slice(prefix[0].length)
+  }else{
+    const safe=/^\s*\[图片仅本人可见\][ \t]*(?:\r?\n)+(?=## My request:)/.exec(input)
+    if(!safe)return input
+    rest=input.slice(safe[0].length)
+  }
+  const request=/^## My request:[ \t]*(?:\r?\n|$)(?:[ \t]*\r?\n)*/.exec(rest)
+  if(!request&&!(prefix&&readCodexResponseAnnotations(rest)))return input
+  return rest.slice(request?.[0].length??0).replace(/(?:\s*<image name=\[Image #\d+\] path="[^"\r\n]+">[ \t\r\n]*<\/image>|\s*\[图片仅本人可见\])+\s*$/,'').trimEnd()
+}
+
 /** Extract the visible request from a known Codex browser-context envelope.
  * Only inspect the generated prefix, never tags/headings inside the user's body.
  * Keep the stored event intact so older sync records need no destructive migration.
@@ -17,13 +37,15 @@ function browserPromptText(text: string): string {
 }
 
 export interface CodexQuestionReply { question: string; answer: string }
-export interface CodexPromptPresentation { text: string; replies?: CodexQuestionReply[] }
+export interface CodexPromptPresentation { text: string; replies?: CodexQuestionReply[]; responseAnnotations?: CodexResponseAnnotations }
 
 /** Recognize only a complete, known generated reply envelope. Quoted examples,
  * malformed payloads and ordinary user prose must not be interpreted as metadata. */
 export function codexPromptPresentation(raw: string): CodexPromptPresentation {
-  const text = browserPromptText(raw)
+  const text = browserPromptText(imageAttachmentPromptText(raw))
   if (text.length > 1024 * 1024) return { text }
+  const responseAnnotations = readCodexResponseAnnotations(text)
+  if (responseAnnotations) return { text: codexResponseAnnotationText(responseAnnotations), responseAnnotations }
   const envelope = /^\s*<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>\s*$/.exec(text)
   if (!envelope) return { text }
   try {
@@ -46,5 +68,9 @@ export function codexPromptPresentation(raw: string): CodexPromptPresentation {
 }
 
 export function codexPromptText(text: string): string {
-  return codexPromptPresentation(text).text
+  const prompt = codexPromptPresentation(text)
+  // The collected body retains annotation metadata; only its display projection is plain text.
+  return prompt.responseAnnotations ? browserPromptText(imageAttachmentPromptText(text)) : prompt.text
 }
+
+export const codexPromptDisplayText = (text: string): string => codexPromptPresentation(text).text

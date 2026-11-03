@@ -1,5 +1,4 @@
-import type { TeamCodexState, TeamCodexTask } from '../../../team-codex-contract.js'
-import type { CodexTeamScope } from './personal-codex-state.js'
+import type { TeamCodexState, TeamCodexTask, CodexTaskPosition } from '../../../team-codex-contract.js'
 import { codexTaskStatus, mergeCodexActivityTasks, type CodexTaskStatus } from './codex-task-status.js'
 
 export interface CodexActivitySnapshot {
@@ -10,37 +9,35 @@ export interface CodexActivitySnapshot {
 
 /** Bounded metadata-only scan; no message bodies and no dependence on the picker page. */
 export async function readCodexActivity(
-  teams: readonly CodexTeamScope[], member: string,
-  read: (teamRef: string, page: number) => Promise<TeamCodexState>, signal: AbortSignal,
+  member: string,
+  read: (teamRef: string, page: number,position?:CodexTaskPosition) => Promise<TeamCodexState>, signal: AbortSignal,
   progress?: (value: CodexActivitySnapshot) => void,
 ): Promise<CodexActivitySnapshot> {
   const tasks: TeamCodexTask[] = []
-  let index = 0, complete = true
-  await Promise.all(Array.from({length:Math.min(3,teams.length)}, async () => {
-    while (index < teams.length) {
-      const team = teams[index++]!
-      for (let page = 1; page <= 100; page++) {
-        signal.throwIfAborted()
-        try {
-          const state = await read(team.teamRef,page)
-          signal.throwIfAborted()
-          if (state.cloud?.status === 'offline' || state.cloud?.status === 'blocked') { complete = false; break }
-          for (const task of state.tasks) {
-            const own = task.cloud ? task.cloud.ownerRef === member : !!state.self && task.member.userRef === state.self.userRef
-            if (own && !task.excluded && !task.projectExcluded) tasks.push(task)
-          }
-          if (state.cloud?.reviewingTasks) complete = false
-          progress?.({tasks:mergeCodexActivityTasks(tasks),complete:false,checkedAt:Date.now()})
-          if (state.localOnly || !state.cloud?.hasMore || state.cloud.status === 'unsupported') break
-          if (page === 100) complete = false
-        } catch {
-          signal.throwIfAborted()
-          complete = false
-          break
-        }
+  let complete = true
+  let position:CodexTaskPosition={}
+  for (let page = 1; page <= 100; page++) {
+    signal.throwIfAborted()
+    try {
+      const state = await read('self', page,position)
+      signal.throwIfAborted()
+      if (state.cloud?.status === 'offline' || state.cloud?.status === 'blocked') { complete = false; break }
+      for (const task of state.tasks) {
+        const own = task.cloud ? task.cloud.ownerRef === member : !!state.self && task.member.userRef === state.self.userRef
+        if (own && !task.excluded && !task.projectExcluded) tasks.push(task)
       }
+      if (state.cloud?.reviewingTasks) complete = false
+      progress?.({tasks:mergeCodexActivityTasks(tasks),complete:false,checkedAt:Date.now()})
+      const paging=state.localTaskPage??(state.localOnly?undefined:state.cloud)
+      if (!paging?.hasMore) break
+      position={cursor:paging.nextCursor}
+      if (page === 100) complete = false
+    } catch {
+      signal.throwIfAborted()
+      complete = false
+      break
     }
-  }))
+  }
   signal.throwIfAborted()
   return {tasks:mergeCodexActivityTasks(tasks),complete,checkedAt:Date.now()}
 }

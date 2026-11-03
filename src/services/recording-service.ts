@@ -2619,6 +2619,33 @@ export class RecordingService {
     return candidate.speakerIdentity === selected.speakerIdentity && candidate.transcriptSource === selected.transcriptSource
   }
 
+  async excerptSource(itemRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource>{
+    const item=await this.openRecordingItemRef(itemRef)
+    return {kind:'recording_segment',recording_uid:item.sessionId,segment_uid:JSON.stringify([item.childId,item.asrItemIndex,item.transcriptSource,item.dateStamp,item.startAtMillis,item.endAtMillis,item.window??null])}
+  }
+  async excerptOriginal(recordingUid:string,segmentUid:string,signal?:AbortSignal):Promise<import('../record-excerpt.js').RecordExcerptOriginal> {
+    let key:unknown;try{key=JSON.parse(segmentUid)}catch{throw new ArkmePluginError('excerpt-source-unavailable','录音缺少精确来源位置',false,404)}
+    if(!Array.isArray(key)||key.length!==7||typeof key[0]!=='string'||!Number.isSafeInteger(key[1])||!['system','doubao'].includes(key[2])||![key[3],key[4],key[5]].every(Number.isSafeInteger)||key[5]<=key[4])throw new ArkmePluginError('excerpt-source-unavailable','录音缺少精确来源位置',false,404)
+    const window=key[6]===null?undefined:key[6] as ArkmeRecordingWindow;this.validateRecordingWindow(window)
+    const session=await this.runtime.requireSession(),scoped=signal?AbortSignal.any([signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000)
+    let cursor='',revision='',text='',offset=0,previousIndex=-1,previousEnd=-1
+    // Read only the selected clip's interval; retain its text, never an entire day.
+    do {
+      const page=await this.readOwner.transcript(recordingUid,key[2]==='system'?'primary':'enhanced',{startAt:key[4],endAt:key[5]},session,{cursor,revision,limit:100},scoped)
+      revision=page.revision
+      for(const item of page.items){
+        if(item.index<previousIndex||item.index===previousIndex&&item.textStart!==previousEnd)throw new ArkmePluginError('excerpt-source-unavailable','录音分页位置无效',false,502)
+        previousIndex=item.index;previousEnd=item.textEnd
+        if(item.locator.child_id!==key[0]||item.locator.ordinal!==key[1]||item.startAt!==key[4]||item.endAt!==key[5])continue
+        if(item.textStart!==offset)throw new ArkmePluginError('excerpt-source-unavailable','原转写已变化，请重新打开',false,409)
+        text+=item.text;offset=item.textEnd
+        if(Buffer.byteLength(text,'utf8')>512*1024)throw new ArkmePluginError('excerpt-source-too-large','原文过长，请在来源录音查看',false,413)
+        if(offset===item.textTotal){await this.ensureRecordingSession(session,scoped);return {title:'录音原文',text,at:item.startAt}}
+      }
+      cursor=page.nextCursor
+    }while(cursor!=='')
+    throw new ArkmePluginError('excerpt-source-unavailable','原转写已删除或无权查看',false,404)
+  }
   private async openRecordingCorrectionItemRef(itemRef: string): Promise<RecordingCorrectionItemRefPayload> {
     if (typeof itemRef !== 'string' || itemRef.length > 16384) throw new ArkmePluginError('recording-item-ref-invalid', '录音片段引用无效', false, 400)
     if (!itemRef.startsWith('arkme-recording-evidence-item-v1.')) return this.openRecordingItemRef(itemRef)

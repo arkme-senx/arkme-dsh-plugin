@@ -16,6 +16,15 @@ export class NativeAnnotationsService {
   private flights = new Map<string, Promise<unknown>>()
   private contexts = new Map<string, NativeAnnotationContext>()
   constructor(private runtime: ServiceRuntime) {}
+  async excerptSource(raw:unknown,signal?:AbortSignal):Promise<import('../record-excerpt.js').RecordExcerptSource|undefined> {
+    const target=raw as NativeAnnotationTarget
+    if(!target||!underlineId(target.sessionRef)||!Number.isSafeInteger(target.eventSeq)||target.eventSeq<0||!['user','assistant'].includes(target.role))throw invalid()
+    if(!this.source||!this.sourceRuntime?.())return undefined
+    const scoped=signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)
+    const source=await this.source(target,scoped)
+    if(source.entry.event.seq!==target.eventSeq||!source.runtimeRef)throw invalid()
+    return {kind:'dsh_message',runtime_ref:source.runtimeRef,session_ref:target.sessionRef,event_seq:target.eventSeq,role:target.role}
+  }
   async execute(request: NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown> {
     if (!request || typeof request !== 'object') throw invalid()
     const session = await this.runtime.requireSession()

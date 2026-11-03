@@ -35,7 +35,7 @@ export function TeamMessageContent({ message, conversationRef, presentation, onO
   return <ArkmeMediaAccessContext.Provider value={teamMessageMediaAccess(message,urls,conversationRef,conversationKey)}>
     <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
       selectionTarget={!readOnly && conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
-        ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref } : undefined} />
+        ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref,excerptOrigin:{kind:'team_message',itemRef:message.ref} } : undefined} />
   </ArkmeMediaAccessContext.Provider>
 }
 

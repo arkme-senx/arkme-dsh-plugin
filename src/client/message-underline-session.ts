@@ -25,13 +25,27 @@ export class MessageUnderlineSession {
   private failures = new Map<string, { notice: string; retry: () => Promise<void> }>()
   private loading = false
   private queuedTargets: MessageSelectionTarget[] | undefined
+  private retained: Set<string> | undefined
   capability: MessageUnderlineCapabilities | undefined
   notice = ''
   retry: (() => Promise<void>) | undefined
+  private get cloudStorage() { return (this.capability?.storage ?? this.storage) === 'cloud' }
   constructor(public sourceRef: string, readonly viewerId: number, private emit: () => void, readonly storage: 'cloud' | 'local' = 'cloud', private transport?: MessageMarkTransport) {}
   invalidate() { this.accessEpoch++; this.snapshots.clear(); this.failures.clear(); this.notice = ''; this.retry = undefined; this.publish() }
   subscribe(invalidate: () => void) { return this.transport?.subscribe?.(invalidate) }
-  dispose() { this.queuedTargets = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear() }
+  retain(targets: MessageSelectionTarget[]) {
+    this.retained = new Set(targets.filter(target => target.sourceRef === this.sourceRef).map(underlineTargetKey))
+    this.trim()
+  }
+  dispose() { this.queuedTargets = undefined; this.retained = undefined; this.controller.abort(); this.snapshots.clear(); this.pending.clear(); this.failures.clear(); this.epochs.clear(); this.retry = undefined }
+  private trim() {
+    if (!this.retained) return
+    const discardedRetry = [...this.failures].some(([key, failure]) => !this.retained!.has(key) && !this.pending.has(key) && this.retry === failure.retry)
+    for (const map of [this.snapshots, this.epochs, this.failures]) {
+      for (const key of map.keys()) if (!this.retained.has(key) && !this.pending.has(key)) map.delete(key)
+    }
+    if (discardedRetry) { const failure = this.failures.values().next().value; this.retry = failure?.retry; this.notice = failure?.notice ?? ''; this.publish() }
+  }
   private publish() {
     const failure = this.failures.values().next().value
     if (failure) { this.notice = failure.notice; this.retry = failure.retry }
@@ -81,6 +95,7 @@ export class MessageUnderlineSession {
           const target = unique.get(row.actionRef)
           if (!target) continue
           const key = underlineTargetKey(target)
+          if (this.retained && !this.retained.has(key) && !this.pending.has(key)) continue
           if (row.snapshot.accessible && (accessEpoch !== this.accessEpoch || (epochs.get(key) ?? 0) !== (this.epochs.get(key) ?? 0))) continue
           const next = acceptUnderlineSnapshot(this.snapshots.get(key), row.snapshot, this.pending.has(key))
           if (next) this.snapshots.set(key, next)
@@ -92,7 +107,7 @@ export class MessageUnderlineSession {
       if (!this.controller.signal.aborted) {
         // A failed cloud lookup cannot confirm source visibility. Invalidate
         // pending completions too: rollback must not restore the cleared text.
-        if (this.storage === 'cloud' || accessLost(error)) {
+        if (this.cloudStorage || accessLost(error)) {
           this.accessEpoch++
           this.snapshots.clear()
         }
@@ -107,6 +122,7 @@ export class MessageUnderlineSession {
     if (this.controller.signal.aborted || target.sourceRef !== this.sourceRef || !reference || target.item.status !== 1) throw new Error('会话已变化，请重新选择')
     if (!this.capability?.supported) throw new Error(this.notice || '正在确认标记支持情况，请稍后重试')
     const key = underlineTargetKey(target), before = this.snapshots.get(key)
+    if(this.capability?.requiresBaseRevision && change.baseRevision===undefined)change={...change,baseRevision:before?.revision??0}
     if (this.pending.has(key)) throw new Error('这条消息的标记正在同步')
     if (change.kind === 'remove' && !before?.items.some(item => item.id === change.annotationId && item.mine)) throw new Error('只能取消自己的标记')
     if (change.kind === 'add' && change.anchor.text.length > this.capability.maxLength) throw new Error(`标记最多 ${this.capability.maxLength} 个字符`)
@@ -125,10 +141,10 @@ export class MessageUnderlineSession {
       if (this.controller.signal.aborted) return
       const current = this.snapshots.get(key)
       if ((!result.accessible || accessEpoch === this.accessEpoch) && current?.accessible !== false) this.snapshots.set(key, acceptUnderlineSnapshot(current, result)!)
-      this.failures.delete(key); this.notice = this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''; this.retry = undefined
+      this.failures.delete(key); this.notice = result.syncNotice ?? (this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''); this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted || accessEpoch !== this.accessEpoch) return
-      if (this.storage === 'cloud' || accessLost(error)) {
+      if (this.cloudStorage || accessLost(error)) {
         this.accessEpoch++
         this.snapshots.clear()
       }
@@ -139,7 +155,7 @@ export class MessageUnderlineSession {
       this.retry = async () => {
         // Reconfirm access after clearing cloud text; preserve the original
         // operation ID when the owner allows the same command to be retried.
-        if (this.storage === 'cloud') {
+        if (this.cloudStorage) {
           await this.read([target])
           const confirmed = this.snapshots.get(key)
           if (!confirmed?.accessible || this.pending.has(key)) return
@@ -162,7 +178,7 @@ export class MessageUnderlineSession {
       }
       this.failures.set(key, { notice: this.notice, retry: this.retry })
     } finally {
-      this.pending.delete(key); this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1); this.publish()
+      this.pending.delete(key); this.epochs.set(key, (this.epochs.get(key) ?? 0) + 1); this.trim(); this.publish()
     }
   }
 }

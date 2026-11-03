@@ -144,6 +144,12 @@ export class TeamAppService {
     const context = await this.open('conversation', ref, actor)
     return await this.key(`${str(context.conversation_uid)}:${str(context.side)}`, actor)
   }
+  async excerptSource(messageRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource> {
+    const actor=(await this.runtime.requireSession()).userId
+    const value=await this.open('message',messageRef,actor)
+    if(!str(value.conversation_uid)||!str(value.message_uid))throw invalid()
+    return {kind:'team_message',team_conversation_uid:str(value.conversation_uid),team_message_uid:str(value.message_uid),side:value.side==='external'?'external':'team'}
+  }
   async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
     return {kind:hint.kind,
       ...(hint.messageRevision?{messageRevision:hint.messageRevision}:{}),

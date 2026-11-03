@@ -342,6 +342,7 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
+          if(update.projection==='team_codex'){window.dispatchEvent(new Event('arkme-codex-changed'));invalidateMessageMarks();return}
           if (update.projection === 'record') publishThoughtInvalidation({ accountScope: authenticatedAccountScope })
           if (update.projection === 'dsh_annotations') { publishNativeAnnotationInvalidation(authenticatedAccountScope); return }
           if (update.projection === 'offline_context') {

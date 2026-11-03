@@ -79,12 +79,13 @@ export function projectForwardRecordsPreview(
       const isDeepSeekReply = rawType === 'agent'
         && numberValue(sourceSender) === 0 && stringValue(item.source_avatar_kind ?? item.sourceAvatarKind) === 'deepseek'
       // Chat omits the zero AI speaker ID; content ownership must not turn that reply into a human speaker.
-      const senderUserId = isDeepSeekReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
-      const senderName = isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
+      const isCodexReply=rawType==='codex'&&numberValue(sourceSender)===0
+      const senderUserId = isDeepSeekReply||isCodexReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
+      const senderName = isCodexReply?'Codex':isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
         item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
       ).trim() || 'Arkme用户'
       // Agent forward snapshots use render_format; ordinary Record text_format has a separate contract.
-      const textFormat = rawType === 'agent'
+      const textFormat = (rawType === 'agent'||rawType==='codex')
         && stringValue(item.render_format ?? item.renderFormat) === 'markdown' ? 'markdown' : arkmeRecordTextFormat(item)
       const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
       let textContent = textFormat === 'markdown' ? rawText : rawText.trim()
@@ -92,7 +93,7 @@ export function projectForwardRecordsPreview(
       const title = stringValue(item.title).trim()
       const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
         rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
-          || rawType === 'agent' || rawType === 'ai_letter' ? rawType : 'unknown'
+          || rawType === 'agent' || rawType === 'codex' || rawType === 'ai_letter' ? rawType : 'unknown'
       const files = listValue(item.files)
       const longArticle = displayKind === 1
       const contentBlocks = media.forwardContentBlocks(files, viewerUserId, { longArticle })

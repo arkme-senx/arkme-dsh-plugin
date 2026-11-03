@@ -1,3 +1,4 @@
+import{readSelectedTextNoteQuote}from'./selected-text-note.js'
 import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
 import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
@@ -40,6 +41,7 @@ import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} fro
 import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { sendSelectedTextForward } from './services/selected-text-forward.js'
+import { readExcerptOriginal } from './services/excerpt-original.js'
 import { sendSelectedTextSelfNote } from './services/selected-text-self-note.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -50,7 +52,7 @@ import { readReactionNotificationContext } from './services/reaction-notificatio
 import { TeamSendQueue } from './services/team-send-queue.js'
 import type { TeamSendInput } from './team-send-contract.js'
 import { SelfRoleService } from './services/self-role-service.js'
-import { teamCodexPost } from './services/team-codex-transport.js'
+import { teamCodexPost, teamCodexBytes } from './services/team-codex-transport.js'
 import { AiPointsService } from './services/ai-points-service.js'
 import { ModelDirectoryService } from './services/model-directory-service.js'
 import { ThoughtRealtimeService } from './services/thought-realtime-service.js'
@@ -1109,6 +1111,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   async resolveManagedAccessCredential(): Promise<SecretValue> { return await resolveManagedAccessCredential(this.runtime) }
+  async teamCodexBytes(owner:number,path:string,body:Uint8Array|Record<string,unknown>,headers:Record<string,string>,signal:AbortSignal){return teamCodexBytes(this.runtime,owner,path,body,headers,signal)}
   async teamCodexPost<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T> {
     return await teamCodexPost<T>(this.runtime, owner, path, body, signal)
   }
@@ -1596,6 +1599,10 @@ arkoImagesV1:true,
     signal?: AbortSignal,
   ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
     return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
+  }
+  /** @internal Public decoration only; source authorization stays with the calling owner. */
+  async publicAvatarPresentationsByUserIds(userIds: readonly number[], signal?: AbortSignal): Promise<Map<number, ArkmePublicAvatarPresentation>> {
+    return await this.profile.publicAvatarPresentationsByUserIds(userIds, signal)
   }
   async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal, expectedAccountKey?: string): Promise<{ state: string }> {
     const result = await this.teamApp.execute('team.app.join', { jotmoId, requestUid, ...(expectedAccountKey ? { expectedAccountKey } : {}) }, signal) as { state: string }
@@ -2689,13 +2696,41 @@ arkoImagesV1:true,
   }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal) { return await this.chat.ownLongArticle(itemUid, expectedUserId, signal) }
-  async forwardCodexChat(snapshot: unknown, expectedUserId: number, options: import('./services/message-action-service.js').MessageActionForwardOptions) { return this.messageActions.forwardCodex(snapshot, expectedUserId, options) }
+  async copyCodexChatLink(snapshot:unknown,expectedUserId:number,signal?:AbortSignal){return this.messageActions.copyLinkCodex(snapshot,expectedUserId,signal)}
+  async forwardCodexChat(snapshot: unknown, expectedUserId: number, options: import('./services/message-action-service.js').MessageActionForwardOptions) {
+    const session=await this.runtime.requireSession()
+    if(session.userId!==expectedUserId)throw new ArkmePluginError('codex-account-changed','账号已切换，请重新选择',false,409)
+    const sender=await this.profile.recordSenderSnapshot(session)
+    return this.messageActions.forwardCodex({...objectValue(snapshot),inputName:sender?.nickname||'用户'},expectedUserId,options)
+  }
   async copyNativeChatLink(snapshot: unknown, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> { return await this.messageActions.copyLinkNative(snapshot, expectedUserId, signal) }
 
   async forwardNativeChat(snapshot: unknown, expectedUserId: number, options: MessageActionForwardOptions): Promise<ArkmeSourceSendResult> { return await this.messageActions.forwardNative(snapshot, expectedUserId, options) }
-  codexLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime, 'codex').capabilities(sourceRef, signal) }
-  codexLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return new NativeLocalMarks(this.runtime, 'codex').list(sourceRef, refs, signal) }
-  changeCodexLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime, 'codex').change(sourceRef, ref, change, signal) }
+  async codexWorkRecords(request:import('./codex-work-records-port.js').CodexWorkRequest,signal?:AbortSignal):Promise<import('./codex-work-records-port.js').CodexWorkResult>{
+    signal?.throwIfAborted();if(!request||typeof request!=='object'||typeof request.action!=='string')throw new ArkmePluginError('INVALID_PARAMETER','Codex 请求无效',false,400);const owner=this.codexWorkRecordsOwner
+    if(request.action==='excerpt-source')return this.excerptOriginal(request.recordUid,signal)
+    if(!owner)throw new ArkmePluginError('CAPABILITY_UNSUPPORTED','当前环境不支持 Codex 工作记录',false,503)
+    switch(request.action){
+      case 'tasks':return owner.state(request.teamRef,request.page,request.memberRef,request.sourceId,request.projectKey,{cursor:request.cursor,after:request.after,from:request.from},signal)
+      case 'events':return owner.events(request.teamRef,request.id,request.before,request.sourceId,request.cursor,{...(request.after?{after:request.after}:{}),...(request.from?{from:request.from}:{}),...(request.through?{through:request.through}:{})},signal)
+      case 'marks':return this.codexLocalMarks(request.sourceRef,request.refs,signal)
+      case 'mark':return this.changeCodexLocalMark(request.sourceRef,request.ref,request.change,signal)
+      case 'settings':await owner.change(request.teamRef,request.id,request.mode,undefined,request.sourceName);return {ok:true}
+      case 'excerpt':return this.sendQuotedSelfNote(request,signal)
+      case 'copy-link':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot,signal);return this.copyCodexChatLink(snapshot,request.expectedUserId,signal)}
+      case 'forward':{const snapshot=await owner.prepareExport(request.teamRef,request.id,request.sourceId,request.snapshot,signal);return this.forwardCodexChat(snapshot,request.expectedUserId,{targetSourceRef:request.targetSourceRef,requestId:request.requestId,recordUid:request.recordUid,sendAtMillis:request.sendAtMillis,...(request.commentRecordUid?{commentRecordUid:request.commentRecordUid}:{}),...(request.commentText?{commentText:request.commentText}:{}),...(signal?{signal}:{})})}
+      default:throw new ArkmePluginError('INVALID_PARAMETER','不支持的 Codex 操作',false,400)
+    }
+  }
+  private codexWorkRecordsOwner?:Pick<import('./team-codex-service.js').TeamCodexService,'cloudMarkCapabilities'|'cloudMarks'|'changeCloudMark'|'state'|'events'|'change'|'prepareExport'|'readPrivateImage'|'canonicalMessageTarget'>
+  async readCodexImage(ref:string,options:{maxBytes:number;signal?:AbortSignal}){if(!this.codexWorkRecordsOwner)throw new ArkmePluginError('CAPABILITY_UNSUPPORTED','Codex 来源未就绪',false,503);return this.codexWorkRecordsOwner.readPrivateImage(ref,options)}
+  setCodexWorkRecords(owner:NonNullable<ArkmeService['codexWorkRecordsOwner']>){this.codexWorkRecordsOwner=owner}
+  async codexLocalMarkCapabilities(sourceRef:string,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.cloudMarkCapabilities(sourceRef,signal)??new NativeLocalMarks(this.runtime,'codex').capabilities(sourceRef,signal)}
+  async codexLocalMarks(sourceRef:string,refs:string[],signal?:AbortSignal){
+    const cloud=await this.codexWorkRecordsOwner?.cloudMarks(sourceRef,refs,signal)
+    return cloud??new NativeLocalMarks(this.runtime,'codex').list(sourceRef,refs,signal)
+  }
+  async changeCodexLocalMark(sourceRef:string,ref:string,change:import('./message-annotations.js').MessageUnderlineChange,signal?:AbortSignal){return await this.codexWorkRecordsOwner?.changeCloudMark(sourceRef,ref,change,signal)??new NativeLocalMarks(this.runtime,'codex').change(sourceRef,ref,change,signal)}
   nativeLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).capabilities(sourceRef, signal) }
   nativeLocalMarks(sourceRef: string, refs: string[], signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).list(sourceRef, refs, signal) }
   changeNativeLocalMark(sourceRef: string, ref: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return new NativeLocalMarks(this.runtime).change(sourceRef, ref, change, signal) }
@@ -2705,17 +2740,47 @@ arkoImagesV1:true,
     const session = await this.runtime.requireSession()
     if (`${this.config.environment}:${session.userId}` !== input.expectedAccountKey) throw new ArkmePluginError('selected-text-account-changed', '账号已变化，请重新选择', false, 409)
     const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
+    if(target.kind==='send_to_self'||target.kind==='default_category')return this.sendQuotedSelfNote({expectedAccountKey:input.expectedAccountKey,recordUid:input.recordUid,noteText:input.commentText,quote:input.quote},signal,true)
     return sendSelectedTextForward(this.runtime, input, target, (text, userId) => this.chat.sendSourceText(input.targetSourceRef, text, {
       recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId: userId, ...(signal ? { signal } : {}),
     }), signal)
   }
 
-  async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal) {
-    return sendSelectedTextSelfNote(this.runtime, input, async (text, userId) => {
+  async excerptOriginal(recordUid:string,signal?:AbortSignal) {
+    const account=await this.runtime.requireSession()
+    const source=await this.record.excerptNavigationSource(recordUid,signal)
+    return readExcerptOriginal(this.runtime,source,{
+      personal:(uid,s)=>this.record.personalRecordDetail(uid,s),
+      agent:async(session,message,user,s)=>{const rows=await this.arko.actionMessages([{sessionId:session,messageId:message}],user,s);const row=rows.find(item=>item.sessionId===session&&item.messageId===message&&item.status===1);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原文已失效或无权查看',false,404);return row},
+      recording:(uid,segment,s)=>this.recording.excerptOriginal(uid,segment,s),
+      call:async(uid,segment,s)=>{const detail=await this.callHistory.arrangementCallDetail(uid,s),row=detail.transcriptSegments.find(item=>item.sourceSegmentId===segment);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原通话片段已失效',false,404);return {title:'通话原文',text:row.text,...(row.spokenAtMillis?{at:row.spokenAtMillis}:{})}},
+    },signal,account)
+  }
+
+  async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal, allowEmptyNote=false) {
+    const quote=readSelectedTextNoteQuote(input.quote)
+    if(quote?.origin){
+      let source:import('./record-excerpt.js').RecordExcerptSource|undefined
+      try {
+      if(quote.origin.kind==='recording')source=await this.recording.excerptSource(quote.origin.itemRef)
+      else if(quote.origin.kind==='call'){const key=JSON.parse(quote.origin.itemRef);if(Array.isArray(key)&&key.length===2&&key.every(v=>typeof v==='string'))source=await this.callHistory.excerptSource(key[0]!,key[1]!)}
+      else if(quote.origin.kind==='dsh'){let target:unknown;try{target=JSON.parse(quote.origin.itemRef)}catch{throw new ArkmePluginError('self-note-invalid','摘录来源无效',false,400)};source=await this.nativeAnnotationService.excerptSource(target,signal)}
+      else if(quote.origin.kind==='team_message')source=await this.teamApp.excerptSource(quote.origin.itemRef)
+      else{
+        let locator:unknown;try{locator=JSON.parse(quote.origin.itemRef)}catch{throw new ArkmePluginError('self-note-invalid','摘录来源无效',false,400)}
+        if(!Array.isArray(locator)||locator.length!==2||locator.some(v=>typeof v!=='string'))throw new ArkmePluginError('self-note-invalid','摘录来源无效',false,400)
+        const target=await this.codexWorkRecordsOwner?.canonicalMessageTarget(locator[0],JSON.stringify([locator[0],locator[1],'']))
+        if(target)source={kind:'codex_event',...target}
+      }
+      } catch { signal?.throwIfAborted() } // Missing provenance never prevents saving a personal excerpt.
+      const {source:ignoredSource,...frozenQuote}=quote
+      input={...input,quote:{...frozenQuote,...(source?{source}:{})}}
+    }
+    return sendSelectedTextSelfNote(this.runtime, input, async (text, userId, excerpt) => {
       const target = await this.source.selfTarget(signal)
       if (target.kind !== 'send_to_self') throw new ArkmePluginError('self-note-target-invalid', '发给自己入口暂不可用', true, 503)
-      return this.chat.sendSourceText(target.sourceRef, text, { recordUid: input.recordUid, expectedUserId: userId, ...(signal ? { signal } : {}) })
-    }, signal)
+      return this.chat.sendSourceText(target.sourceRef, text, { recordUid: input.recordUid, expectedUserId: userId, excerpt, ...(signal ? { signal } : {}) })
+    }, signal, allowEmptyNote)
   }
 
   async groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('./team-group-contract.js').TeamGroupContext>{return await this.teamApp.execute('team.app.group.context',{sourceRef},signal) as import('./team-group-contract.js').TeamGroupContext}

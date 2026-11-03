@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+ 'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
@@ -102,6 +103,8 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
+  if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'
   if (name === 'arkme_records_export') return '是否导出当前账号的全部非隐私锁定快记及图片、语音为 ZIP？这会使用一次导出额度。'
   if (name === 'arkme_realtime_dictation') return '是否对刚才提供的音频执行实时听写操作？这会使用当前账号的语音权益，不获取麦克风或发送消息。'
   if (name === 'arkme_recording_strategy_preference') return `是否将当前账号的统一录音处理策略设为${args.strategy === 'baseline-sd-asr/20261026' ? '默认版' : '测试版v1'}？新录音和新提交的导入使用此设置，已提交任务保持原方案。`
@@ -328,7 +331,7 @@ export function registerArkmeTools(
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
     for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile, 'attachments')) {
-      imageCtx.tools.register(definition)
+      imageCtx.tools.register(withCoreConversationalConfirmation(definition,coreConversation))
     }
   })
 }
