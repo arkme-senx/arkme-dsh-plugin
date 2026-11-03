@@ -86,6 +86,11 @@ export class MemberEventService {
     return { session, event, userId }
   }
 
+  async worldTarget(sourceRef: string, eventId: string, signal?: AbortSignal) {
+    const { userId } = await this.detail(sourceRef, eventId, signal)
+    return { userId }
+  }
+
   async memberProfile(sourceRef: string, eventId: string, signal?: AbortSignal): Promise<ArkmeMemberEventProfile> {
     const { session, event, userId } = await this.detail(sourceRef, eventId, signal)
     const profile = (await this.profile.publicProfileSummariesByUserIds([userId], session, signal).catch(error => {

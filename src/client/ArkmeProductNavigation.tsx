@@ -1,4 +1,5 @@
 import { currentClientVersionCode, formatProductVersion } from './product-version.js'
+import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
 import { ExploreNavigation } from './explore/ExploreNavigation.js'
 import { usePhoneBindingStatus, socialAccessStore } from './social-access-store.js'
@@ -400,6 +401,7 @@ export function ArkmeProductNavigation({
           </button>
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
+            <IdentityCopyLinkButton target={{ kind: 'self' }} label="复制我的链接" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', border: 0, background: 'transparent', padding: '10px 12px', color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 13 }} />
             {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr('锁定')}</strong></span><CaretRight size={15} /></button>}
             {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>

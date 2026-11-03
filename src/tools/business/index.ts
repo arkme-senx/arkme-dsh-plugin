@@ -1,3 +1,4 @@
+import { publicSocialToolModules } from './groups/public-social.js'
 import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
 import {teamMemberTools} from './contacts/team-members.js'
@@ -120,6 +121,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   privateInteractionSummaryToolModule,
   privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
+  ...publicSocialToolModules,
   readSourceToolModule,
   ...analyticsToolModules,
   copyLinkExtendToolModule,

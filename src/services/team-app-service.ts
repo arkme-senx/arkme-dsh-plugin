@@ -1,4 +1,6 @@
 import {TeamMemberAddition} from './team-member-addition.js'
+import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
+import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-contract.js'
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
@@ -49,6 +51,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  snapshot_expired: '历史内容已变化或结果已过期，请重新查询', cursor_invalid: '历史分页已失效，请重新查询', cancelled: '导出已取消',
   invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
   invalid_external_chat: '对外私聊请求无效，请重新打开',
@@ -444,6 +447,31 @@ export class TeamAppService {
     const message = async () => {
       const v = await this.open('message', p.messageRef, actor)
       return { conversation_uid: v.conversation_uid, message_uid: v.message_uid, side: v.side }
+    }
+    if (operation === 'team.app.history' || operation === 'team.app.history.chunk') {
+      let context: {conversation_uid:string;side:TeamSide}
+      if (operation === 'team.app.history.chunk') {
+        const value = await this.open('history-result', p.resultRef, actor)
+        if (!str(value.conversation_uid) || !['team','external'].includes(str(value.side))) throw invalid()
+        context = {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+      } else context = await this.resolveConversation(str(p.conversationRef), actor)
+      const adapter: TeamHistoryAdapter = {
+        viewer:actor,context,routePath:this.runtime.config.routePath,post,
+        seal:(kind,value)=>this.ref(kind,value,actor),open:(kind,ref)=>this.open(kind,ref,actor),
+        identity:(value,id)=>this.identity(value,actor,{id,context}),
+        preview:async raw=>{
+          if (!str(raw.message_uid) || num(raw.seq)<=0 || !['team','external'].includes(str(raw.side))) throw invalid()
+          return {historyPreview:true,historyMedia:list(raw.media).map(v=>({name:str(v.name),kind:str(v.kind)})),
+            ref:await this.ref('message',{...context,message_uid:raw.message_uid},actor),key:await this.key(str(raw.message_uid),actor),
+            seq:num(raw.seq),revision:num(raw.revision),version:num(raw.version),side:raw.side as TeamSide,
+            sender:await this.identity(raw.sender,actor,{id:raw.actor_user_id,context}),own:raw.own===true,
+            state:'published',createdAt:num(raw.created_at),canEdit:false,canDelete:false,contentStatus:'available',media:[],
+            content:{text_content:str(raw.text),title:str(raw.title),template_kind:1,content_payload:{text_format:'plain'}}}
+        },
+      }
+      return operation === 'team.app.history.chunk'
+        ? await teamHistoryChunk(adapter,str(p.resultRef),str(p.cursor)||undefined)
+        : await teamHistoryOperation(adapter,p.action as TeamHistoryAction,(p.options ?? {}) as TeamHistoryOptions)
     }
     switch (operation) {
       case 'team.app.snapshot.capabilities': {
@@ -935,11 +963,12 @@ export class TeamAppService {
         return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
+      case 'team.app.person.world-target':
       case 'team.app.person.private.open':
       case 'team.app.people.remarks': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
-        const refs = operation === 'team.app.person.private.open' ? [p.personRef] : p.personRefs
+        const refs = operation === 'team.app.people.remarks' ? p.personRefs : [p.personRef]
         if (!Array.isArray(refs) || !refs.length || refs.length > 50) throw invalid()
         const people = await Promise.all(refs.map(async ref => {
           const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
@@ -949,6 +978,7 @@ export class TeamAppService {
         }))
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
+        if (operation === 'team.app.person.world-target') return { userId: people[0]! }
         if (operation === 'team.app.person.private.open') {
           if (!this.privateChat || String(people[0]) === String(actor)) throw invalid()
           return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
@@ -957,6 +987,7 @@ export class TeamAppService {
         const remarks = await this.contacts.privateRemarksByUserIds(people, signal ? { signal } : {})
         return { items: await Promise.all([...new Set(people)].map(async id => ({ personKey: await this.key(`person:${id}`, actor), remark: remarks.get(id) ?? '' }))) }
       }
+      case 'team.app.visitor.world-target':
       case 'team.app.visitor.private.open': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
@@ -965,10 +996,11 @@ export class TeamAppService {
         const current = obj(data.conversation)
         const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        if (!peer || String(peer) === String(actor) || !this.privateChat || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
+        if (!peer || (operation === 'team.app.visitor.private.open' && (String(peer) === String(actor) || !this.privateChat)) || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
-        return await this.privateChat.openPrivateChatFromUser(peer, {
+        if (operation === 'team.app.visitor.world-target') return { userId: peer }
+        return await this.privateChat!.openPrivateChatFromUser(peer, {
           presentationDisplayName: str(obj(current.visitor).nickname), expectedViewerUserId: actor,
           ...(signal ? { signal } : {}),
         })

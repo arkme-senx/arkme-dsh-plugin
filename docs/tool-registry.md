@@ -29,6 +29,12 @@ Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extens
 
 Business and hybrid profiles expose `arkme_group_member_candidates` and `arkme_group_member_add`. Candidate discovery accepts only an account-bound group `source_ref`, excludes current members and returns signed, opaque `candidate_ref` values for people from the signed-in user's private chats. The write Tool accepts 1-20 unchanged candidate refs, requires explicit-user-write confirmation, reports each outcome independently, and sends private invitation links when the group's join policy requires approval. Raw user IDs are never exposed to the model.
 
+## Public social Tools
+
+Business and hybrid profiles expose `arkme_social_read` and `arkme_social_write`. Reads cover public group/person directories, the current person's listing, exact group settings and pending join requests. Writes cover joining, opening a listed person's private chat, listing consent, group visibility, personal group showcase and approving/rejecting requests. The shared `PublicSocialService` owns account checks, server permissions, opaque references and result projection; Tools never create a second approval or membership fact. Neither Tool reads or sends chat messages or creates a friend relationship.
+
+Read results carry `accountScope`; cursors, directory targets and approval identities are opaque and account-bound. Group management uses an existing group `source_ref`. Reuse the same `request_id` after an uncertain join result. `arkme_social_write` is registered in the existing conversational confirmation owner: an initial call only prepares the question, and execution requires a subsequent direct human confirmation of unchanged arguments. Metadata alone does not grant a write. No raw user/group/request ID, credential or signed avatar URL is returned. Official packaged DSH acceptance is implemented by `scripts/public-social-dsh-acceptance.mjs` against an explicitly isolated loopback fixture.
+
 ## Adding a tool
 
 1. Add one module under `src/tools/business`, `src/tools/atomic` or `src/tools/system`.

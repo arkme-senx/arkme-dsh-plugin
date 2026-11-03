@@ -1,3 +1,4 @@
+import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
 import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
 import type {TeamRepresentationSelection} from './team-group-contract.js'
@@ -159,6 +160,8 @@ import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { PublicSocialService } from './services/public-social-service.js'
 import { PrivateGroupCreateService } from './services/private-group-create-service.js'
+import { IdentityShareService } from './services/identity-share-service.js'
+import type { IdentityShareTarget } from './identity-share-contract.js'
 import type { PrivateGroupRequest, PrivateGroupSelection, PrivateGroupCreateInput } from './private-group-create-contract.js'
 import type { PublicGroupQuery, PublicPeopleQuery } from './public-social-contract.js'
 import { CommonGroupService } from './services/common-group-service.js'
@@ -439,6 +442,7 @@ export class ArkmeService {
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService
+  private readonly conversationArrangement: ConversationArrangementService
   private readonly arrangementSource: ArrangementSourceService
   private readonly arrangement: ArrangementService
   private readonly calendar: CalendarService
@@ -478,6 +482,7 @@ export class ArkmeService {
   private readonly group: GroupService
   private readonly publicSocial: PublicSocialService
   private readonly privateGroupCreate: PrivateGroupCreateService
+  private readonly identityShare: IdentityShareService
   private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
@@ -572,6 +577,8 @@ export class ArkmeService {
   async readTeamExtensions(conversationRef:string,messageRef:string,options:import('./team-message-contract.js').TeamExtensionOptions={},signal?:AbortSignal):Promise<import('./team-app-contract.js').TeamExtensionPage> {
     return await this.executeTeamApp('team.app.extensions',{conversationRef,messageRef,...options},signal) as import('./team-app-contract.js').TeamExtensionPage
   }
+  async teamHistory(conversationRef:string,action:import('./team-history-contract.js').TeamHistoryAction,options:import('./team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryResponse>{return await this.executeTeamApp('team.app.history',{conversationRef,action,options},signal) as import('./team-history-contract.js').TeamHistoryResponse}
+  async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryExportChunk>{return await this.executeTeamApp('team.app.history.chunk',{resultRef,...(cursor?{cursor}:{})},signal) as import('./team-history-contract.js').TeamHistoryExportChunk}
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -706,6 +713,8 @@ export class ArkmeService {
         }
       },
     }, { resolve: async (recipient, session, signal) => {
+      if(recipient.kind==='profile-link') return await this.identityShare.teamRecipient(`${this.config.environment}:${session.userId}`, recipient.url, recipient.expectedUserId, signal)
+      if(recipient.kind==='public-person')return recipient.userId
       if(recipient.kind==='chat-member')return (await this.chat.memberWorldTarget(recipient.sourceRef,recipient.memberRef,signal)).userId
       if(recipient.kind==='directory-contact')return await this.contactDirectory.resolveTeamRecipient(recipient.contactRef,signal)
       return await this.contact.resolveRegisteredContactUserId(recipient.contactRef,session,signal)
@@ -759,6 +768,7 @@ export class ArkmeService {
     async (source, text, humans, bots, session, textFormat) => await this.chat.resolveMentions(
       source, text, text, humans, bots, session, undefined, textFormat,
     ), async session => await this.profile.recordSenderSnapshot(session), this.profile)
+    this.conversationArrangement = new ConversationArrangementService(this.runtime, this.source, this.arrangement)
     this.arrangementSource = new ArrangementSourceService(this.runtime, this.arrangement, this.privacy, this.record, this.callHistory, this.source)
     this.record.selfRoles = this.selfRoles
     this.calendar = new CalendarService(this.runtime, this.privacy, this.media, this.record, this.source, this.callHistory,
@@ -812,7 +822,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         )
       },
     }, () => { void this.realtime.refreshAttentionSummary() })
-    this.publicSocial = new PublicSocialService(this.runtime, this.source, this.group)
+    this.publicSocial = new PublicSocialService(this.runtime, this.source)
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
@@ -901,6 +911,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
     this.privateGroupCreate = new PrivateGroupCreateService(this.runtime, this.source, this.group, this.contactDirectory)
+    this.identityShare = new IdentityShareService(this.runtime, this.profile, this.source, this.contactDirectory, this.group, this.chat, this.world,
+      async (target, scope, signal) => await this.teamApp.execute(target.personRef ? 'team.app.person.world-target' : 'team.app.visitor.world-target', {
+        expectedAccountKey: scope, conversationRef: target.conversationRef, ...(target.personRef ? { personRef: target.personRef } : {}),
+      }, signal) as { userId: import('./record-owner-id.js').RecordOwnerId })
     const recordingImportGateway = new AudioRecordingImportGateway(this.runtime)
     this.recording = new RecordingService(this.runtime, {
       recordingImportGateway,
@@ -1329,6 +1343,7 @@ arkoImagesV1:true,
         teamMessageInteractions: 1,
         teamMessageRecall: 1,
         teamMessageSnapshot: 1,
+        teamHistoryV1: true,
         teamPersonMentions: 1,
         teamNotificationPoliciesV1: true,
         teamEntryPreferencesV1: true,
@@ -1361,6 +1376,7 @@ arkoImagesV1:true,
         selfRoles: true,
         imageCacheRead: true,
         directMessageAdmission: true,
+        publicSocialV1: true,
         messageTextAnchorsV1: true,
         reactionsV1: true,
         groupOwnerGovernance: true,
@@ -1577,6 +1593,7 @@ arkoImagesV1:true,
   async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal) { return await this.recording.recordingTotalsIndex(account, toMillis, offset, signal) }
   /** @internal Account-scoped, read-only local aggregation. */
   async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsBucket(account, dateStamp, signal) }
+  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsDay(account, dateStamp, signal) }
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
@@ -1598,6 +1615,7 @@ arkoImagesV1:true,
   async recordingDayOverview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeRecordingDayOverview> { return await this.recording.recordingDayOverview(dateStamp, viewRef, cursor, signal) }
   async recordingDayReview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<{ viewRef: string; items: import('./types.js').ArkmeRecordingWorkbenchItem[] }> { return await this.recording.recordingDayReview(dateStamp, viewRef, cursor, signal) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }
+  async recordingDayPart(dateStamp: number, part: import('./types.js').ArkmeRecordingDayPart, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow) { return await this.recording.recordingDayPart(dateStamp, part, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
   async speakerDirectorySimilar(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.similar(input, signal) }
@@ -2161,6 +2179,11 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.person(scope, target, signal) }
+  async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
+  async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
+  async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }
+  async identityShareJoin(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.join(scope, url, signal) }
   async privateGroupPeople(input: PrivateGroupRequest & { cursor?: string }, signal?: AbortSignal) { return await this.privateGroupCreate.people(input, signal) }
   async privateGroupMatches(input: PrivateGroupSelection, signal?: AbortSignal) { return await this.privateGroupCreate.matches(input, signal) }
   async createGroupFromPrivate(input: PrivateGroupCreateInput, signal?: AbortSignal) { return await this.privateGroupCreate.create(input, signal) }
@@ -2168,6 +2191,11 @@ arkoImagesV1:true,
   async publicGroupSettings(sourceRef: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.groupSettings(sourceRef, scope, signal) }
   async setPublicGroup(sourceRef: string, scope: string, isPublic: boolean, introduction: string, signal?: AbortSignal) { return await this.publicSocial.setGroup(sourceRef, scope, isPublic, introduction, signal) }
   async setPublicGroupShowcase(sourceRef: string, scope: string, isShown: boolean, signal?: AbortSignal) { return await this.publicSocial.setShowcase(sourceRef, scope, isShown, signal) }
+
+  async publicGroupJoinRequests(sourceRef: string, scope: string, cursor?: string, signal?: AbortSignal) { return await this.publicSocial.requests(sourceRef, scope, cursor, signal) }
+  async resolvePublicGroupJoinRequest(sourceRef: string, scope: string, requestRef: string, approved: boolean, signal?: AbortSignal) { return await this.publicSocial.resolveRequest(sourceRef, scope, requestRef, approved, signal) }
+  async publicSocialRead(input: import('./public-social-contract.js').PublicSocialReadInput, signal?: AbortSignal) { return await this.publicSocial.read(input, signal) }
+  async publicSocialWrite(input: import('./public-social-contract.js').PublicSocialWriteInput, signal?: AbortSignal) { return await this.publicSocial.write(input, signal) }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {
     return await this.group.groupSettings(sourceRef, signal)
@@ -3380,6 +3408,14 @@ arkoImagesV1:true,
 
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
     return await this.arrangement.reorderArrangement(input, signal)
+  }
+
+  async conversationArrangements(sourceRef: string, cursor = '', signal?: AbortSignal): Promise<import('./types.js').ArkmeConversationArrangementPage> {
+    return await this.conversationArrangement.read(sourceRef, cursor, undefined, signal) as import('./types.js').ArkmeConversationArrangementPage
+  }
+
+  async conversationArrangementDetail(sourceRef: string, relatedRef: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeConversationArrangement> {
+    return await this.conversationArrangement.read(sourceRef, '', relatedRef, signal) as import('./types.js').ArkmeConversationArrangement
   }
 
   async arrangementSourceOpen(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementSourceTarget> {

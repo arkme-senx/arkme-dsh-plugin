@@ -68,7 +68,7 @@ describe('recording summary and timeline generation', () => {
     let dayReads = 0
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
       const value = await original(operation, params, signal)
-      if (operation !== 'recordings.day') return value
+      if (operation !== 'recordings.day' || params?.part !== 'transcript') return value
       dayReads++
       return { ...value, transcript: { ...value.transcript,
         captureCoverage: { receiving: 0, interrupted: 1 }, processingCount: dayReads === 1 ? 1 : 0,
@@ -89,12 +89,13 @@ describe('recording summary and timeline generation', () => {
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     let dayReads = 0
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day' && (params?.part === 'coverage' || params?.part === 'metrics')) return { dateStamp: Number(params?.dateStamp) }
       if (operation === 'recordings.day') {
         dayReads += 1
         const day = await originalImplementation(operation, params, signal)
         return {
           ...day,
-          summary: dayReads <= 91
+          summary: dayReads <= 92
             ? { state: 'processing', message: '内容仍在生成', items: [] }
             : { state: 'failed', message: '生成失败，请重试', items: [] },
         }
@@ -114,25 +115,26 @@ describe('recording summary and timeline generation', () => {
       await act(async () => { vi.advanceTimersByTime(milliseconds); await tick() })
     }
     await advancePoll(1_500)
-    expect(dayReads).toBe(2)
+    expect(dayReads).toBe(3)
     for (let attempt = 1; attempt < 90; attempt += 1) await advancePoll(3_000)
-    expect(dayReads).toBe(91)
+    expect(dayReads).toBe(92)
     expect(renderedText(renderer.root)).toContain('生成总结中...')
 
     await advancePoll(14_999)
-    expect(dayReads).toBe(91)
-    await advancePoll(1)
     expect(dayReads).toBe(92)
+    await advancePoll(1)
+    expect(dayReads).toBe(93)
     expect(renderedText(renderer.root)).toContain('生成未完成，请重试或选择其他模型。')
     expect(button(renderer, '选择模型并重试')).toBeDefined()
     await advancePoll(60_000)
-    expect(dayReads).toBe(92)
+    expect(dayReads).toBe(93)
   }, 15_000)
 
   it('preserves the selected timeline version while polling an independent summary generation', async () => {
     vi.useFakeTimers()
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day' && (params?.part === 'coverage' || params?.part === 'metrics')) return { dateStamp: Number(params?.dateStamp) }
       if (operation === 'recordings.day') {
         const day = await originalImplementation(operation, params, signal)
         return {
@@ -187,6 +189,7 @@ describe('recording summary and timeline generation', () => {
   it('keeps timeline rows concise and opens the full event details in a dialog', async () => {
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day' && (params?.part === 'coverage' || params?.part === 'metrics')) return { dateStamp: Number(params?.dateStamp) }
       if (operation === 'recordings.day') {
         const day = await originalImplementation(operation, params, signal) as Record<string, unknown>
         return {
@@ -419,6 +422,7 @@ describe('recording summary and timeline generation', () => {
   it('uses the desktop model chooser before regenerating an existing version', async () => {
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'recordings.day' && (params?.part === 'coverage' || params?.part === 'metrics')) return { dateStamp: Number(params?.dateStamp) }
       if (operation === 'recordings.day') {
         const dateStamp = Number(params?.dateStamp)
         return {
@@ -532,6 +536,7 @@ describe('recording summary and timeline generation', () => {
         modelConfigReads += 1
         if (modelConfigReads === 1) throw new Error('模型配置暂时不可用')
       }
+      if (operation === 'recordings.day' && (params?.part === 'coverage' || params?.part === 'metrics')) return { dateStamp: Number(params?.dateStamp) }
       if (operation === 'recordings.day') {
         const day = await originalImplementation(operation, params, signal)
         return {

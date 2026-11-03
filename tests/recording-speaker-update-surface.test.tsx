@@ -4,6 +4,7 @@ import type { ArkmeRecordingDay, ArkmeRecordingWorkbenchItem } from '../src/type
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call, ArkmeClientError: class extends Error {} }))
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { recordingDayCache } from '../src/client/recordings/recording-day-cache.js'
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
 const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
@@ -30,6 +31,7 @@ describe('speaker update in a long recording transcript', { timeout: 15_000 }, (
   let initial: ArkmeRecordingDay, updated: ArkmeRecordingDay
   let reads: number, resolvePoll: (value: ArkmeRecordingDay) => void
   beforeEach(() => {
+    recordingDayCache.clear()
     vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 9, 14, 22))
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
@@ -44,6 +46,8 @@ describe('speaker update in a long recording transcript', { timeout: 15_000 }, (
       if (op === 'recordings.speaker.cached-options') return null
       if (op === 'recordings.speaker.options') return []
       if (op === 'recordings.speaker.recommendation') return {}
+      if (op === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: initial.coverage }
+      if (op === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (op === 'recordings.day') {
         reads++
         if (params.dateStamp !== stamp) return { ...updated, dateStamp: params.dateStamp }

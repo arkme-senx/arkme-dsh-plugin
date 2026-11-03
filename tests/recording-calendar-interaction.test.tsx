@@ -9,6 +9,7 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 import { ArkmeRecordingFiles } from '../src/client/recordings/ArkmeRecordingFiles.js'
+import * as monthTotals from '../src/client/recordings/use-recording-month-totals.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import type { ArkmeRecordingDailyMetrics, ArkmeRecordingDay } from '../src/types.js'
 
@@ -50,12 +51,34 @@ describe('recording calendar selection', () => {
     vi.useRealTimers()
   })
 
+  it('keeps month reuse aligned with the independent day metrics when the body arrives later', async () => {
+    const dateStamp = new Date(2026, 8, 4).getTime(), publish = vi.spyOn(monthTotals, 'cacheRecordingDayTotals')
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.calendar') return { days: [] }
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp, metrics: inputMetrics('ready') }
+      if (operation === 'recordings.day') {
+        const value = recordingDay(dateStamp, '正文')
+        value.transcript.dailyMetrics = { ...inputMetrics('ready'), asrInputDurationMillis: 9000 }
+        return value
+      }
+      return { options: [] }
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+      expect(publish).toHaveBeenCalled()
+      expect(publish.mock.calls.at(-1)?.[2].asrInputDurationMillis).toBe(6000)
+    } finally { publish.mockRestore() }
+  })
+
   it.each(['import-dialog', 'day-files'] as const)('replaces the calendar duration after a %s mutation and shows progress until the read settles', async source => {
     const dayStamp = new Date(2026, 8, 4).getTime()
     const calendar = (durationMillis: number) => ({ fromStamp: 0, toStamp: 1,
       days: [{ dateStamp: dayStamp, durationMillis, hasRecording: durationMillis > 0, unreviewedCount: 0 }] })
     let calendarReads = 0, resolveCalendar!: (value: ReturnType<typeof calendar>) => void
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') {
         if (++calendarReads === 1) return calendar(7200000)
         return await new Promise(resolve => { resolveCalendar = resolve })
@@ -94,6 +117,8 @@ describe('recording calendar selection', () => {
     const dayStamp = new Date(2026, 8, 4).getTime()
     let resolveOld!: (value: unknown) => void, reads = 0
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') {
         if (++reads === 1) return await new Promise(resolve => { resolveOld = resolve })
         return { days: [] }
@@ -113,6 +138,8 @@ describe('recording calendar selection', () => {
     const dayStamp = new Date(2026, 8, 4).getTime()
     let reads = 0
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') {
         reads++
         if (reads === 1) return { days: [{ dateStamp: dayStamp, durationMillis: 7200000, hasRecording: true, unreviewedCount: 0 }] }
@@ -133,6 +160,8 @@ describe('recording calendar selection', () => {
 
   it('keeps the browsed month distinct from the selected date and import date', async () => {
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: params.fromStamp, toStamp: params.toStamp, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation === 'recordings.day') return recordingDay(params.dateStamp, '当前录音')
@@ -143,7 +172,7 @@ describe('recording calendar selection', () => {
       renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={onOpenRecordingImport} recordingRefreshRevision={0} />)
     })
     await act(async () => { renderer.root.findByProps({ 'aria-label': '上个月' }).props.onClick() })
-    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.day')).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'recordings.day' && params.part === 'transcript')).toHaveLength(1)
     expect(renderer.root.findAll(node => node.type === 'button' && node.props['aria-pressed'] === true)).toHaveLength(0)
     await act(async () => { renderer.root.findByProps({ 'aria-label': '8月31日' }).props.onClick() })
     expect(renderer.root.findByProps({ 'aria-label': '8月31日' }).props['aria-pressed']).toBe(true)
@@ -161,13 +190,15 @@ describe('recording calendar selection', () => {
     await act(async () => { tab('转写').props.onClick() })
     expect(tab('转写').props['aria-current']).toBe('page')
     expect(JSON.stringify(renderer.toJSON())).toContain('当前录音')
-    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.day').map(([, params]) => params.dateStamp))
+    expect(mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'recordings.day' && params.part === 'transcript').map(([, params]) => params.dateStamp))
       .toEqual([new Date(2026, 8, 4).getTime(), new Date(2026, 7, 31).getTime(), new Date(2026, 8, 3).getTime()])
   })
 
   it.each(['first-open', 'transcript-finishes', 'mixed-history'] as const)('refreshes a late input receipt automatically: %s', async scenario => {
     let reads = 0
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation !== 'recordings.day') throw new Error(`unexpected operation: ${operation}`)
@@ -197,6 +228,8 @@ describe('recording calendar selection', () => {
   it('does not keep polling historical unknown input', async () => {
     let reads = 0
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation !== 'recordings.day') throw new Error(`unexpected operation: ${operation}`)
@@ -214,6 +247,8 @@ describe('recording calendar selection', () => {
   it('refreshes retry input automatically without hiding previously observed input', async () => {
     let reads = 0
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation !== 'recordings.day') throw new Error(`unexpected operation: ${operation}`)
@@ -236,6 +271,8 @@ describe('recording calendar selection', () => {
     const todayStamp = new Date(2026, 8, 4).getTime()
     let todayReads = 0, finishOldPoll!: (day: ArkmeRecordingDay) => void
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation !== 'recordings.day') throw new Error(`unexpected operation: ${operation}`)
@@ -263,6 +300,8 @@ describe('recording calendar selection', () => {
     const oldDay = new Promise<ArkmeRecordingDay>((resolve, reject) => { resolveOld = resolve; rejectOld = reject })
     const todayStamp = new Date(2026, 8, 4).getTime()
     mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'recordings.day' && params.part === 'coverage') return { dateStamp: params.dateStamp, coverage: { state: 'ready', intervals: [] } }
+      if (operation === 'recordings.day' && params.part === 'metrics') return { dateStamp: params.dateStamp }
       if (operation === 'recordings.calendar') return { fromStamp: 0, toStamp: 1, days: [] }
       if (operation === 'recordings.summary-model-config') return { options: [] }
       if (operation === 'recordings.day') return params.dateStamp === todayStamp ? await oldDay : recordingDay(params.dateStamp, '新日期内容')
@@ -328,7 +367,7 @@ describe('recording calendar selection', () => {
     expectSelection(4)
     expect(returnToday.props.disabled).toBe(true)
     expect(onOpenRecordingImport).not.toHaveBeenCalled()
-    const dayReads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.day')
+    const dayReads = mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'recordings.day' && params.part === 'transcript')
     expect(dayReads.map(([, params]) => params.dateStamp)).toEqual([4, 3, 2, 3, 4].map(day => new Date(2026, 8, day).getTime()))
     expect(dayReads.slice(0, -1).every(([, , signal]) => signal.aborted)).toBe(true)
     expect([...new Set(mocks.callArkme.mock.calls.map(([operation]) => operation))].sort())
