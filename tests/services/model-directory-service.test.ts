@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ModelDirectoryService } from '../../src/services/model-directory-service.js'
-import { mergeModelChoices, dshModelChoices } from '../../src/model-directory.js'
+import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling } from '../../src/model-directory.js'
+import { exploreModelChoices } from '../../src/explore-models.js'
 function fixture() {
   const session = { userId: 42 }
   const runtime = { config: { environment: 'production' }, requireSession: async () => session }
@@ -38,13 +39,35 @@ describe('unified read-only model directory', () => {
     expect(mergeModelChoices(full, [{ ...full[0]!, name: 'Updated' }])[0]).toMatchObject({ name: 'Updated', images: true })
   })
   it('includes Explore-only models across selectors and retains partial Explore read failures',async()=>{
-    const f=fixture(),explore=vi.fn(async()=>({models:[{id:'explore-only',name:'Explore only',identifier:'route-c',channel:'分析模型',exploreRouteKey:'governed/route-c'}],failures:[{source:'目标',message:'暂时无法读取'}]}))
+    const f=fixture(),explore=vi.fn(async()=>({models:[{id:'explore-only',origin:'official' as const,name:'Explore only',identifier:'route-c',channel:'分析模型',exploreRouteKey:'governed/route-c'}],failures:[{source:'目标',message:'暂时无法读取'}]}))
     const service=new ModelDirectoryService(f.runtime as never,{dsh:f.dsh,arko:f.arko,recording:f.recording,explore})
     const value=await service.read('production:42')
     expect(value.models.find(model=>model.id==='explore-only')).toMatchObject({exploreRouteKey:'governed/route-c'})
     expect(value.models.find(model=>model.id==='explore-only')?.explore).toBeUndefined()
     expect(value.failures).toEqual([{source:'目标',message:'暂时无法读取'}])
   })
+})
+
+it('classifies native official catalogs independently of supplier and of confirmed scene billing', async () => {
+  const f = fixture(), value = await f.service.read('production:42')
+  expect(value.models.filter(model => model.origin === 'official')).toHaveLength(3)
+  const own = value.models.find(model => model.dsh?.provider === 'deepseek')!
+  expect(own.origin).toBe('user-provided')
+  expect(modelSceneBilling(own, 'dsh')).toBe('provider-account')
+  expect(modelSceneBilling(value.models.find(model => model.arko)!, 'arko')).toBe('arkme-points')
+  expect(modelSceneBilling(value.models.find(model => model.recording)!, 'recording')).toBe('unknown')
+})
+
+it('preserves billing per scene and never reconciles user-provided models into official routes', async () => {
+  const f = fixture(), arko = arkoModelChoices(await f.arko())
+  const local = exploreModelChoices('events', { ref: 'settings', models: [{ ref: 'events/alias', label: 'DeepSeek', routeKey: 'managed-ai/alias', provider: 'managed-ai', selected: true }], sources: [] })
+  const [model] = mergeModelChoices(arko, local)
+  expect(model?.origin).toBe('official')
+  expect(modelSceneBilling(model!, 'arko')).toBe('arkme-points')
+  expect(modelSceneBilling(model!, 'explore')).toBe('unknown')
+  expect(modelSceneBilling(model!, 'dsh')).toBe('unknown')
+  const user = { ...arko[0]!, id: 'user-owned', origin: 'user-provided' as const }
+  expect(mergeModelChoices([user], local)).toHaveLength(2)
 })
 
 it('projects existing managed catalog revisions and supplier identity without exposing private metadata or calling them model versions', async () => {

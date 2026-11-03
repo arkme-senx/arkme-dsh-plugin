@@ -35,7 +35,7 @@ beforeEach(() => {
       const { module, scope } = JSON.parse(input.ref); current = input.modelRef.endsWith('/b') ? 'b' : 'a'
       return { saved: true, settings: settings(module, scope), message: '新模型已排队分析' }
     }
-    if (op === 'models.directory') return { accountScope: input.expectedAccountScope, observedAt: 1, failures: [], models: [{ id: 'dsh-only', identifier: 'dsh-only', name: '系统对话模型', channel: 'Arkme 托管', billing: 'arkme-points', dsh: { provider: 'arkme-managed', model: 'dsh-only' } }] }
+    if (op === 'models.directory') return { accountScope: input.expectedAccountScope, observedAt: 1, failures: [], models: [{ id: 'dsh-only', origin: 'official', identifier: 'dsh-only', name: '系统对话模型', channel: 'Arkme 托管', billing: 'arkme-points', dsh: { provider: 'arkme-managed', model: 'dsh-only' } }] }
     if (op === 'account.points.query') return { accountScope: input.expectedAccountScope, unit: 'ai_points', availablePoints: '123.45', reservedPoints: '0' }
   })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -107,7 +107,7 @@ it('does not infer common routes or billing from identical model names', () => {
 it('reuses an existing catalog row only for the exact public Intelligent route', async () => {
   const data = settings('profile'); data.models[0]!.routeKey = 'dashscope/a'
   const local = exploreModelChoices('profile', data)
-  const existing = { id: 'recording-a', name: '原目录名称', channel: '百炼', identifier: 'a', recording: 'dashscope/a' }
+  const existing = { id: 'recording-a', origin: 'official' as const, name: '原目录名称', channel: '百炼', identifier: 'a', recording: 'dashscope/a' }
   const combined = mergeModelChoices([existing], local)
   expect(combined).toHaveLength(2); expect(combined[0]).toMatchObject({ ...existing, explore: 'profile/a' })
   expect(mergeModelChoices([{...existing,channel:'分析模型',recording:undefined,exploreRouteKey:'dashscope/a'} as never],local)[0]?.channel).toBe('百炼')

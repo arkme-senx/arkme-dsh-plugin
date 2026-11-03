@@ -27,8 +27,10 @@ export function ArkmeModelSelect({ directory, locked, available }: { directory: 
   if (!available) return null
   const models: ModelChoice[] = state.groups.flatMap(provider => provider.models.map(model => ({
     id: JSON.stringify(['dsh', provider.id, model.id]), name: model.name, identifier: model.id,
+    origin: provider.id === 'arkme-managed' ? 'official' : 'user-provided',
     channel: provider.id === 'arkme-managed' ? 'Arkme 托管' : provider.name,
     billing: provider.id === 'arkme-managed' ? 'arkme-points' as const : 'provider-account' as const,
+    billingByScene: { dsh: provider.id === 'arkme-managed' ? 'arkme-points' : 'provider-account' },
     ...(provider.id === 'arkme-managed' && model.description ? { pricing: model.description } : {}),
     ...(model.reasoning ? { reasoning: { efforts: model.reasoning.efforts.map(effort => ({ id: effort.id, name: effort.name,
       ...(effort.description ? { description: effort.description } : {}) })), ...(model.reasoning.defaultEffort ? { defaultEffort: model.reasoning.defaultEffort } : {}) } } : {}),

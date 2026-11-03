@@ -5,7 +5,7 @@ import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
-import { mergeModelChoices, type ModelChoice, type ModelScene } from '../model-directory.js'
+import { mergeModelChoices, modelSceneBilling, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { ThinkingEffortSlider } from './ThinkingEffortSlider.js'
@@ -39,13 +39,9 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   const selected = choices.find(model => model.id === resolveId(selectedId))
   const requiresConfirmation = scene === 'recording' || scene === 'explore'
   const checkedId = resolveId(requiresConfirmation ? selectedId : currentId)
-  const groups = [...choices.reduce((groups, model) => {
-    const group = groups.get(model.channel) ?? []
-    group.push(model); groups.set(model.channel, group); return groups
-  }, new Map<string, ModelChoice[]>())].sort((a, b) => {
-    const rank = (models: ModelChoice[]) => models.some(model => model.billing === 'arkme-points') ? 0 : models.some(model => model.billing === 'provider-account') ? 1 : 2
-    return rank(a[1]) - rank(b[1])
-  })
+  const groups = (['official', 'user-provided'] as const).map(origin => [origin, choices.filter(model => model.origin === origin)] as const)
+    .filter(([, models]) => models.length)
+  const originLabel = (origin: ModelOrigin) => tr(origin === 'official' ? '即我官方' : '用户自提供')
   const hasReadError = !!(data.catalogError || data.accountError || data.catalog?.failures.length)
   const restoreSelection = () => { setSelectedId(currentId); setEffort(currentEffort ?? '') }
   useEffect(() => { mounted.current = true; void data.refresh(); return () => { mounted.current = false } }, [])
@@ -108,7 +104,8 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   const retry = () => { setNotice(''); void Promise.all([data.refresh(), onRefresh?.()]).catch(() => setNotice('暂时无法更新，请稍后重试')) }
   const balanceText = data.account ? tr('Arkme 积分') + ' ' + formatAiPoints(data.account.availablePoints)
     : tr(data.accountError ? 'Arkme 积分暂不可用' : data.scope ? 'Arkme 积分加载中…' : '登录后查看 Arkme 积分')
-  const billingHint = tr(selected?.billing === 'arkme-points' ? '使用 Arkme 积分' : selected?.billing === 'provider-account' ? '外部账户结算' : '计费归属待确认')
+  const billing = selected ? modelSceneBilling(selected, scene) : 'unknown'
+  const billingHint = tr(billing === 'arkme-points' ? '使用 Arkme 积分' : billing === 'provider-account' ? '使用已绑定账户' : '此场景计费待确认')
   const body = <ArkmeBillingSettings key={data.scope ?? 'guest'} active={false} modal onCreditsChanged={() => { void data.refresh() }} renderTrigger={({ onOpen }) =>
     <div className={'arkme-unified-model-backdrop' + (anchor ? ' is-anchored' : '')} onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section ref={panel} tabIndex={-1} className="arkme-unified-model-panel" style={position} role="dialog" aria-modal="true" aria-label={ariaLabel} aria-labelledby={ariaLabel ? undefined : title}
@@ -133,10 +130,10 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
         </header>
         {view === 'models' ? <>
           <div className="arkme-unified-model-list" role="group" aria-label={tr('全部已接入模型')} aria-busy={applying}>
-            {groups.map(([channel, models]) => <div key={channel} role="group" aria-label={channel} className="arkme-unified-model-group">
+            {groups.map(([origin, models]) => <div key={origin} role="group" aria-label={originLabel(origin)} className="arkme-unified-model-group">
               <div className="arkme-unified-model-group-title">
-                <span>{channel}</span>
-                {channel === 'Arkme 托管' && <div className="arkme-unified-model-account" role="group" aria-label={tr('Arkme 积分账户')}>
+                <span>{originLabel(origin)}</span>
+                {origin === 'official' && <div className="arkme-unified-model-account" role="group" aria-label={tr('Arkme 积分账户')}>
                   <button type="button" className="arkme-unified-model-balance" aria-label={balanceText} title={tr('Arkme 可用积分')} disabled={!data.scope} onClick={() => setView('usage')}>
                     {data.account ? `· ${formatAiPoints(data.account.availablePoints)} ${tr('积分')}` : balanceText}
                   </button>
@@ -144,10 +141,12 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
                   <button type="button" aria-label={tr('Arkme 积分用量')} disabled={!data.scope} onClick={() => setView('usage')}>{tr('用量')}</button>
                 </div>}
               </div>
-              <div role="listbox" aria-label={channel}>
+              <div role="listbox" aria-label={originLabel(origin)}>
               {models.map(model => <button key={model.id} type="button" role="option" aria-selected={model.id === checkedId} disabled={busy || applying}
                 className="arkme-unified-model-option" onClick={() => choose(model)}>
-                <span className="arkme-unified-model-name">{model.name}</span>
+                <span className="arkme-unified-model-name">{model.name}
+                  {origin === 'user-provided' && <small className="arkme-unified-model-bound-account">{model.channel}</small>}
+                </span>
                 {!model[scene] && <small>{tr('支持待确认')}</small>}
                 <span className="arkme-unified-model-check" aria-hidden>{model.id === checkedId && <Check size={16} weight="bold"/>}</span>
               </button>)}
@@ -177,17 +176,17 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
               {pointsUnits(data.account.reservedPoints) > 0n && <span>{tr('已预占')} {formatAiPoints(data.account.reservedPoints)} {tr('积分')}</span>}</div>}
             {data.scope && <ArkmePointsConsumption scope={data.scope} revision={data.catalog?.observedAt ?? 0}/>}
           </> : selected && <>
-            <h3>{selected.name}</h3><p className="arkme-unified-model-muted">{selected.channel}</p>
-            <p className="arkme-unified-model-muted">{tr(selected.billing === 'arkme-points'
-              ? '本模型使用 Arkme 积分，充值增加的是 Arkme 积分账户余额。'
-              : selected.billing === 'provider-account' ? '本模型由外部账户结算，充值 Arkme 积分不会增加该账户余额。'
-                : '当前目录尚未明确本模型的计费账户，不能据 Arkme 积分余额判断是否可用。')}</p>
-            <dl><dt>{tr('计费账户')}</dt><dd>{selected.billing === 'arkme-points' ? tr('Arkme 积分') : selected.billing === 'provider-account' ? selected.channel : tr('待确认')}</dd>
+            <h3>{selected.name}</h3><p className="arkme-unified-model-muted">{originLabel(selected.origin)} · {selected.channel}</p>
+            <p className="arkme-unified-model-muted">{tr(billing === 'arkme-points'
+              ? '此场景使用 Arkme 积分，充值增加的是 Arkme 积分账户余额。'
+              : billing === 'provider-account' ? '使用你绑定账户的额度或结算方式，不消耗 Arkme 积分。'
+                : '当前场景的收费方式尚未确认，不能据 Arkme 积分余额判断是否可用。')}</p>
+            <dl><dt>{tr('计费账户')}</dt><dd>{billing === 'arkme-points' ? tr('Arkme 积分') : billing === 'provider-account' ? selected.channel : tr('待确认')}</dd>
               <dt>{tr('具体版本')}</dt><dd>{selected.version ?? tr('待确认')}</dd>
               <dt>{tr('生效范围')}</dt><dd>{tr(scopeLabel)}</dd>
               {selected.images && <><dt>{tr('图片输入')}</dt><dd>{tr('支持')}</dd></>}</dl>
-            <p className="arkme-unified-model-price">{selected.pricing || tr(selected.billing === 'provider-account' ? '按该渠道账户结算。' : '该模型的报价待确认。')}</p>
-            {selected.billing !== 'provider-account' && <p className="arkme-unified-model-muted">{tr('实际费用按用量结算，是否可启动以服务端校验为准。')}</p>}
+            <p className="arkme-unified-model-price">{billing !== 'unknown' && selected.pricing || tr(billing === 'provider-account' ? '使用已绑定账户的额度或结算方式。' : '此场景的报价待确认。')}</p>
+            {billing === 'arkme-points' && <p className="arkme-unified-model-muted">{tr('实际费用按用量结算，是否可启动以服务端校验为准。')}</p>}
           </>}
           {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr('部分信息暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr('重试')}</button></div>}
         </div>}

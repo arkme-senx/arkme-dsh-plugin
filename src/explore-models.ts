@@ -6,10 +6,12 @@ export function exploreModelChoices(module: ExploreModelModule, settings: Explor
   return settings.models.map(model => ({
     id: JSON.stringify(['explore', module, model.key ?? model.ref]),
     name: model.label,
+    origin: 'official',
     identifier: model.key ?? model.ref,
     channel: model.provider === 'managed-ai' || model.provider === 'arkme-managed' ? 'Arkme 托管'
       : model.provider === 'dashscope' ? '百炼' : model.provider || '分析模型',
-    ...(model.provider === 'managed-ai' || model.provider === 'arkme-managed' ? { billing: 'arkme-points' as const } : {}),
+    // These official catalogs do not publish per-scene billing contracts yet.
+    billingByScene: { explore: 'unknown' },
     explore: model.ref,
     ...(model.routeKey ? { exploreRouteKey: model.routeKey } : {}),
   }))
