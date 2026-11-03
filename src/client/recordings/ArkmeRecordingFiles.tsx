@@ -1,4 +1,6 @@
+import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
+import { RecordingFileStorageLabel, recordingMegabytesLabel, useRecordingFileStorage } from './recording-file-storage.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -57,9 +59,7 @@ function duration(value: number) {
   const minutes = Math.floor(seconds / 60)
   return seconds % 60 === 0 ? tr('{v0}分钟', { v0: minutes }) : tr('{v0}分{v1}秒', { v0: minutes, v1: seconds % 60 })
 }
-function size(value: number) {
-  return value > 0 ? value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB` : '—'
-}
+function size(value: number) { return value > 0 ? recordingMegabytesLabel(value) : '—' }
 
 /** Account-key remount isolates file actions and late responses across login changes. */
 export function ArkmeRecordingFiles(props: Props) {
@@ -84,6 +84,8 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   const [start, setStart] = useState('')
   const [ownership, setOwnership] = useState<'self' | 'other'>('self')
   const [menu, setMenu] = useState<{ file: RecordingFile; anchor: HTMLButtonElement; left: number; top: number }>()
+  const comparisonSession = menu && 'sessionRef' in menu.file ? menu.file.sessionRef : undefined
+  const comparisonAvailability = useRecordingComparisonAvailability(dateStamp, active && !!comparisonSession, refreshRevision, comparisonSession)
   const menuRef = useRef<HTMLDivElement>(null)
   const request = useRef<FileRead>()
   const deleted = useRef(new Set<string>())
@@ -278,7 +280,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
         const key = recordingFileKey(file)
         const rows = [...(section.current?.querySelectorAll<HTMLElement>('[data-recording-file-key]') ?? [])]
         const index = rows.findIndex(row => row.dataset.recordingFileKey === key)
-        const focus = index < 0 ? undefined : (rows[index + 1] ?? rows[index - 1])?.querySelector<HTMLButtonElement>('button') ?? undefined
+        const focus = index < 0 ? undefined : (rows[index + 1] ?? rows[index - 1])?.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]') ?? undefined
         const scroll: { element: HTMLElement; top: number; left: number }[] = []
         for (let element = section.current?.parentElement; element; element = element.parentElement) {
           if (element.scrollTop || element.scrollLeft) scroll.push({ element, top: element.scrollTop, left: element.scrollLeft })
@@ -313,11 +315,13 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   }
   const { from, to } = recordingFileDayBounds(dateStamp)
   const complete = !loading && !currentLoading && !hasMore && !historyError && !currentWarning
+  const storage = useRecordingFileStorage(files, active, `${dateStamp}:${revision}:${refreshRevision}`)
 
   useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete, loading: active && (loading || currentLoading) }) }, [dateStamp, files.length, complete, active, loading, currentLoading, onCountChange])
 
   return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
     {notice && <p role="status" style={note}>{notice}</p>}
+    {storage.error && <p role="alert" style={note}>{tr('读取录音存储失败，请重试')}<button type="button" style={{ ...button, marginLeft: 8 }} onClick={storage.retry}>{tr('重试读取存储')}</button></p>}
     {currentWarning && <p role="status" style={note}>{currentWarning}{currentReadFailed && <button type="button" style={{ ...button, marginLeft: 8 }} disabled={loading || currentLoading || busy} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</p>}
     <ul aria-label={tr('音频文件列表')} style={{ margin: 0, padding: 0, listStyle: 'none' }}>
       {files.map(file => {
@@ -330,7 +334,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
             <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
             <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
               <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(file.endAtMillis, crossDay)}</span>
-              <span>· {duration(file.durationMillis)}</span><span>· {size(file.fileSize)}</span><span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
+              <span>· {duration(file.durationMillis)}</span><span>· {size(file.fileSize)}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
           {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
@@ -353,7 +357,9 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
-      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
+      {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
+      {comparisonSession && comparisonAvailability.loading && <button role="menuitem" type="button" disabled style={button}>正在检查策略对比…</button>}
+      {comparisonSession && !comparisonAvailability.loading && comparisonAvailability.availability.strategy === 'unknown' && <button role="menuitem" type="button" style={button} onClick={comparisonAvailability.retry}>重试检查策略对比</button>}
       {(['start', 'ownership', 'delete'] as const).filter(kind => !('importRef' in menu.file) || kind === 'delete').map(kind => <button key={kind} role="menuitem" type="button" style={{ ...button, display: 'block', width: '100%', textAlign: 'left', border: 0, background: 'transparent', color: kind === 'delete' ? theme.danger : theme.text }} onClick={() => openAction(menu.file, kind)}>{tr(kind === 'start' ? '修改录音时间' : kind === 'ownership' ? '修改数据归属' : '删除文件')}</button>)}
     </div>, document.body)}
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}

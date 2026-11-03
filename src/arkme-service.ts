@@ -159,6 +159,8 @@ import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { PublicSocialService } from './services/public-social-service.js'
 import { PrivateGroupCreateService } from './services/private-group-create-service.js'
+import { IdentityShareService } from './services/identity-share-service.js'
+import type { IdentityShareTarget } from './identity-share-contract.js'
 import type { PrivateGroupRequest, PrivateGroupSelection, PrivateGroupCreateInput } from './private-group-create-contract.js'
 import type { PublicGroupQuery, PublicPeopleQuery } from './public-social-contract.js'
 import { CommonGroupService } from './services/common-group-service.js'
@@ -478,6 +480,7 @@ export class ArkmeService {
   private readonly group: GroupService
   private readonly publicSocial: PublicSocialService
   private readonly privateGroupCreate: PrivateGroupCreateService
+  private readonly identityShare: IdentityShareService
   private readonly commonGroups: CommonGroupService
   private readonly relatedRecording: RelatedRecordingService
   private readonly community: CommunityService
@@ -706,6 +709,8 @@ export class ArkmeService {
         }
       },
     }, { resolve: async (recipient, session, signal) => {
+      if(recipient.kind==='profile-link') return await this.identityShare.teamRecipient(`${this.config.environment}:${session.userId}`, recipient.url, recipient.expectedUserId, signal)
+      if(recipient.kind==='public-person')return recipient.userId
       if(recipient.kind==='chat-member')return (await this.chat.memberWorldTarget(recipient.sourceRef,recipient.memberRef,signal)).userId
       if(recipient.kind==='directory-contact')return await this.contactDirectory.resolveTeamRecipient(recipient.contactRef,signal)
       return await this.contact.resolveRegisteredContactUserId(recipient.contactRef,session,signal)
@@ -901,6 +906,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
     this.privateGroupCreate = new PrivateGroupCreateService(this.runtime, this.source, this.group, this.contactDirectory)
+    this.identityShare = new IdentityShareService(this.runtime, this.profile, this.source, this.contactDirectory, this.group, this.chat, this.world,
+      async (target, scope, signal) => await this.teamApp.execute(target.personRef ? 'team.app.person.world-target' : 'team.app.visitor.world-target', {
+        expectedAccountKey: scope, conversationRef: target.conversationRef, ...(target.personRef ? { personRef: target.personRef } : {}),
+      }, signal) as { userId: import('./record-owner-id.js').RecordOwnerId })
     const recordingImportGateway = new AudioRecordingImportGateway(this.runtime)
     this.recording = new RecordingService(this.runtime, {
       recordingImportGateway,
@@ -1345,6 +1354,7 @@ arkoImagesV1:true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
         recordingStrategiesV1: true,
+        recordingFileStorageV1: true,
         recordingStrategyRecordingsV1: true,
         recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
@@ -1584,6 +1594,7 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
+  recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
   /** @internal Built-in loopback UI; detection and exactly-once note writes are Audio-owner capabilities. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
     return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingSpeakerCorrectionItems(query, signal)).request(action, input, signal)
@@ -2160,6 +2171,11 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.person(scope, target, signal) }
+  async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
+  async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
+  async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }
+  async identityShareJoin(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.join(scope, url, signal) }
   async privateGroupPeople(input: PrivateGroupRequest & { cursor?: string }, signal?: AbortSignal) { return await this.privateGroupCreate.people(input, signal) }
   async privateGroupMatches(input: PrivateGroupSelection, signal?: AbortSignal) { return await this.privateGroupCreate.matches(input, signal) }
   async createGroupFromPrivate(input: PrivateGroupCreateInput, signal?: AbortSignal) { return await this.privateGroupCreate.create(input, signal) }
@@ -3352,6 +3368,10 @@ arkoImagesV1:true,
   }
 
   /** Read a bounded Arrangement page while keeping stable owner UIDs inside the Provider. */
+  async arrangementOccurrenceRequest(...args: Parameters<ArrangementService['occurrenceRequest']>) {return this.arrangement.occurrenceRequest(...args)}
+
+  async arrangementRecognitionRequest(...args: Parameters<ArrangementService['recognitionRequest']>) { return this.arrangement.recognitionRequest(...args) }
+
   async arrangementBoardCache(accountScope: string, pages?: unknown) { return this.arrangement.arrangementBoardCache(accountScope, pages) }
 
   async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {

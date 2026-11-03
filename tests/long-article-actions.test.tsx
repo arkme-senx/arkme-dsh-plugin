@@ -70,3 +70,16 @@ it('forwards through the personal/chat source operation with a stable record ide
     recordUid: expect.any(String), relationUid: expect.any(String) }), expect.any(AbortSignal))
   expect(mocks.call.mock.calls.some(([operation]) => operation === 'message-actions.forward')).toBe(false)
 })
+
+it('opens the menu without publishing an incomplete edit and retains the guard for content actions', async () => {
+  const beforeAction = vi.fn(async () => { throw new Error('当前修改尚未准备完成，请等待输入或图片处理完成') })
+  await act(async () => root.render(<ArkmeLongArticleActions sourceRef="self-one" detail={detail()} dismissRef={dismissRef} beforeAction={beforeAction} onDeleted={()=>{}}/>))
+  await act(async () => button('长文更多操作').click())
+  expect(host.querySelector('[role=menu]')).not.toBeNull()
+  expect(beforeAction).not.toHaveBeenCalled()
+  expect(host.querySelector('[role=alert]')).toBeNull()
+  await act(async () => button('复制链接').click())
+  expect(beforeAction).toHaveBeenCalledOnce()
+  expect(mocks.call).not.toHaveBeenCalled()
+  expect(mocks.copy).not.toHaveBeenCalled()
+})

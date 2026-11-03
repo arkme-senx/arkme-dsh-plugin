@@ -45,3 +45,30 @@ it('does not publish a temporary edit that was fully undone before the idle dead
   expect(writes()).toHaveLength(0)
   expect(mocks.call.mock.calls.some(([op]) => op === 'source.long-article.draft.delete')).toBe(true)
 })
+
+it('keeps an emptied Markdown body as a recoverable draft when returning to the library', async () => {
+  const close = vi.fn()
+  const mode = {displayName:'发给自己',verifyAccount:async()=>{},subscribeClose:()=>()=>{},cancelClose:()=>{}}
+  await act(async () => root.render(<ArkmeLongArticleDialog sourceRef="self" item={{itemUid:'article',title:'标题',textContent:'',sendAtMillis:1}} windowMode={mode} returnToLibrary onClose={close}/>))
+  const textbox = element.querySelector('.ProseMirror') as HTMLElement & {editor:Editor}
+  textbox.editor.view.setProps({handleScrollToSelection:()=>true})
+  act(() => textbox.editor.commands.clearContent())
+  const back = [...element.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '← 返回')!
+  await act(async () => back.click())
+  expect(close).toHaveBeenCalledOnce()
+  expect(writes()).toHaveLength(0)
+  expect(mocks.call.mock.calls.filter(([op])=>op==='source.long-article.draft.put').at(-1)?.[1]).toMatchObject({itemUid:'article',textContent:'',textFormat:'markdown',autoPublish:true,baseVersion:1})
+  expect(element.textContent).not.toContain('当前修改尚未准备完成')
+})
+
+it('opens more actions after clearing Markdown without attempting publication', async () => {
+  const textbox = await mount()
+  act(() => textbox.editor.commands.clearContent())
+  await act(async () => element.querySelector<HTMLButtonElement>('[aria-label="长文更多操作"]')!.click())
+  expect(element.querySelector('[aria-label="长文更多操作"]')?.getAttribute('aria-expanded')).toBe('true')
+  expect(document.querySelector('[role="menu"]')).not.toBeNull()
+  expect(writes()).toHaveLength(0)
+  expect(element.textContent).not.toContain('当前修改尚未准备完成')
+  expect(element.textContent).not.toContain('发布失败')
+  expect(textbox.textContent).toBe('')
+})

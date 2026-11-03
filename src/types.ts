@@ -1563,6 +1563,7 @@ arkoImagesV1?:true
     speakerPresence?: true
     recordingWorkflowV2?: true
     recordingStrategiesV1?: true
+    recordingFileStorageV1?: true
     recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
@@ -4441,6 +4442,11 @@ export type ArkmePluginOperation =
   | 'chat.private.open-from-contact'
   | 'group.create'
   | 'group.private.context'
+  | 'identity.person.read'
+  | 'identity.share.link'
+  | 'identity.share.read'
+  | 'identity.share.open'
+  | 'identity.share.join'
   | 'group.private.people'
   | 'group.private.matches'
   | 'group.private.create'
@@ -4564,6 +4570,17 @@ export type ArkmePluginOperation =
   | 'arrangements.deleted.detail'
   | 'arrangements.recording-day'
   | 'arrangements.detail'
+  | 'arrangements.occurrences.events'
+  | 'arrangements.occurrences.reviews.summary'
+  | 'arrangements.occurrences.reviews.list'
+  | 'arrangements.occurrences.reviews.decide'
+  | 'arrangements.occurrences.history.preview'
+  | 'arrangements.occurrences.history.apply'
+  | 'arrangements.recognition.settings.get'
+  | 'arrangements.recognition.settings.set'
+  | 'arrangements.recognition.trace'
+  | 'arrangements.recognition.preview'
+  | 'arrangements.recognition.apply'
   | 'arrangements.source.open'
   | 'arrangements.source.read'
   | 'arrangements.mutate'
@@ -4753,6 +4770,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
 
+  | 'recordings.files.storage'
   | 'recordings.import.file'
   | 'recordings.import.status'
   | 'recordings.import.retry'

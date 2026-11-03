@@ -196,9 +196,10 @@ describe('chat member action menu placement', () => {
       onSend: () => undefined,
     }))
     expect(card).toContain('小林')
-    expect(card).toContain('发送消息')
+    expect(card).toContain('发消息')
+    expect(card).toContain('进入 TA 的世界')
+    expect(card).toContain('data-arkme-person-profile="unified"')
     expect(card).toContain('data-arkme-profile-send-state="idle"')
-    expect(card).toContain('background:var(--dsw-alias-button-elevated-fill')
   })
 
   it('shows only the matching owner-record action with its count in private chats', () => {
@@ -278,7 +279,7 @@ describe('chat member action menu placement', () => {
       onClose: () => undefined,
       onSend: () => undefined,
     }))
-    expect(card).toContain('aria-label="芝士小狗 的用户卡片"')
+    expect(card).toContain('芝士小狗 的用户卡片</h2>')
     expect(card).toContain('>芝士小狗</h3>')
     expect(card).toContain('主题内昵称：')
     expect(card).toContain('即我用户3038</p>')

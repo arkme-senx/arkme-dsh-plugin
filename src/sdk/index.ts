@@ -1,5 +1,7 @@
 import type { PublicSocialReadInput, PublicSocialWriteInput, PublicSocialReadResult, PublicSocialWriteResult } from '../public-social-contract.js'
 export type * from '../public-social-contract.js'
+import { recordingStorageSessionRefs, type RecordingFileStoragePage } from '../recording-file-storage.js'
+export type { RecordingFileStorage, RecordingFileStoragePage } from '../recording-file-storage.js'
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
 export type * from '../data-management.js'
 export type { ArkmeRecordingPlayback } from '../types.js'
@@ -608,16 +610,16 @@ export class ArkmeSdk {
     await this.requireArkoLifecycle(signal)
     return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
   }
-  private readonly exportLifetime = new AbortController()
-  /** Releases exports started by this SDK instance. Other subscriptions return their own disposers. */
-  dispose(): void { this.exportLifetime.abort() }
+  private readonly requestLifetime = new AbortController()
+  /** Cancels managed exports and storage observations. Other subscriptions return their own disposers. */
+  dispose(): void { this.requestLifetime.abort() }
   async recordExportPreflight(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
-    signal = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
     if ((await this.capabilities(signal)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
     return this.call('data.export.preflight', { expectedAccountScope }, signal)
   }
   async exportRecords(options: ArkmeRecordExportOptions, signal?: AbortSignal, onProgress?: (value: ArkmeRecordExportProgress) => void): Promise<ArkmeRecordExport> {
-    const scoped = AbortSignal.any([this.exportLifetime.signal, ...(signal ? [signal] : [])])
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
     if ((await this.capabilities(scoped)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
     const result = await this.exportWithProgress<ArkmeRecordExport>('data.export', { ...options }, scoped, onProgress)
     if (result.accountScope !== options.expectedAccountScope || typeof result.quotaFinalized !== 'boolean') throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应无效', retryable: false })
@@ -759,6 +761,17 @@ export class ArkmeSdk {
     } else if (features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
     return this.call(input.action === 'start' ? 'recordings.strategies.start' : input.action === 'preference-set' ? 'recordings.strategies.preference.set' : 'recordings.strategies', { ...input }, signal)
   }
+  async recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<RecordingFileStoragePage> {
+    const sessionRefs = recordingStorageSessionRefs(input.sessionRefs)
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordingFileStorageV1 !== true) throw new Error('当前服务不支持录音存储统计')
+    scoped.throwIfAborted()
+    const page = await this.call<RecordingFileStoragePage>('recordings.files.storage', { sessionRefs }, scoped)
+    scoped.throwIfAborted()
+    return page
+  }
+
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
     return this.call('recordings.workflow', { operation: 'capabilities' }, signal)

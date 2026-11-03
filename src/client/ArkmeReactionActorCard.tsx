@@ -38,11 +38,11 @@ export function ArkmeReactionActorCard({ scope, actor, onClose }: {
     }
   }
   const card = <div onClick={event => event.stopPropagation()}>
-    <ArkmeMemberProfileCard member={{ displayName: actor.displayName,
+    <ArkmeMemberProfileCard copyLinkTarget={{ kind: 'person', userId: actor.userId }} error={error} member={{ displayName: actor.displayName,
       ...(actor.avatarRef ? { avatarRef: actor.avatarRef } : {}),
       ...(actor.groupNickname ? { memberName: actor.groupNickname } : {}),
     }} showTopicNickname busy={busy} onClose={onClose} onSend={() => { void send() }} />
-    {error && <div role="alert" style={{ position: 'fixed', zIndex: 20000, bottom: 24, left: '50%', transform: 'translateX(-50%)' }}>{error}</div>}
+
   </div>
   return typeof document === 'undefined' ? card : createPortal(card, document.body)
 }

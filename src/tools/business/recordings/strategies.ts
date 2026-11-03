@@ -9,10 +9,11 @@ const read = defineArkmeCoreToolModule({
     parameters: {
       action: { type: 'string', enum: ['catalog', 'preference', 'recordings', 'sources', 'options', 'page'], required: true },
       start_at_millis: { type: 'number', description: 'Inclusive start of the selected local day, epoch milliseconds.' }, end_at_millis: { type: 'number', description: 'Exclusive next local midnight, including daylight-saving changes.' },
+      include_availability: { type: 'boolean', description: 'For sources, include read-only comparison/input availability within start_at_millis/end_at_millis. Does not start processing.' },
       session_ref: { type: 'string' }, import_ref: { type: 'string', description: 'Alternative to session_ref: import_ref returned by the recording import tool.' }, source_ref: { type: 'string' }, cursor: { type: 'string' },
       strategy: { type: 'string', enum: ['system-sd-asr/v1', 'baseline-sd-asr/20261026'] },
     }, output: TEXT_OUTPUT, isConcurrencySafe: () => true,
-    execute: async (args, exec) => taggedJSON('录音策略结果', await ports.recordingStrategies({ action: args.action, startAtMillis: args.start_at_millis, endAtMillis: args.end_at_millis, sessionRef: args.session_ref, importRef: args.import_ref, sourceRef: args.source_ref, cursor: args.cursor, strategy: args.strategy }, exec.signal)),
+    execute: async (args, exec) => taggedJSON('录音策略结果', await ports.recordingStrategies({ action: args.action, includeAvailability: args.include_availability, startAtMillis: args.start_at_millis, endAtMillis: args.end_at_millis, sessionRef: args.session_ref, importRef: args.import_ref, sourceRef: args.source_ref, cursor: args.cursor, strategy: args.strategy }, exec.signal)),
   }),
 })
 const start = defineArkmeCoreToolModule({

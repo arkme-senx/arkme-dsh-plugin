@@ -1,4 +1,5 @@
 import { validConversationWindowBootstrap } from './conversation-window-bootstrap.js'
+import { IdentityShareHost } from './IdentityShareHost.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
@@ -80,6 +81,7 @@ export function ArkmeConversationWindow() {
   })
  },[target])
  return <section data-arkme-owned="conversation-window" data-arkme-workspace style={{position:'fixed',inset:0,display:'flex',flexDirection:'column',background:arkmeTheme.base}}>
+  <IdentityShareHost />
   {target && syncError && <div role="alert" style={{padding:'8px 16px',fontSize:12}}>
    {tr('同步失败，已有内容仍可阅读')} <button type="button" onClick={() => retryAuth.current()}>{tr('重试')}</button>
   </div>}

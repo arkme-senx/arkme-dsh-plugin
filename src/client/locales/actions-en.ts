@@ -1,5 +1,10 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '云端 {size}': 'Cloud {size}',
+  '读取录音存储失败，请重试': 'Could not read audio storage. Please retry.',
+  '重试读取存储': 'Retry storage read',
+  '服务端已保存的音频大小，包含正式播放音频及增强补充音频；不包含原件、处理临时文件和算法对比产物。': 'Audio saved on the server, including playback and supplemental enhancement audio. Excludes originals, temporary processing files, and algorithm comparison results.',
+
   "选择{v0}分析模型：{v1}": "Choose {v0} analysis model: {v1}",
   "选择{v0}分析模型": "Choose {v0} analysis model",
   "当前分析模型": "Current analysis model",
@@ -167,6 +172,9 @@ export const actionEnglish: Record<string,string> = {
   "使用 Arkme 积分": "Uses Arkme credits",
   "即我官方": "Arkme official",
   "用户自提供": "User-provided",
+  "当前": "Current",
+  "百炼": "Bailian",
+  "火山引擎": "Volcengine",
   "使用已绑定账户": "Uses your linked account",
   "此场景计费待确认": "Billing for this context is unconfirmed",
   "此场景使用 Arkme 积分，充值增加的是 Arkme 积分账户余额。": "This context uses Arkme credits. Top-ups add to your Arkme credits balance.",

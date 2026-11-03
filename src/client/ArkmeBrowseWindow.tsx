@@ -7,7 +7,7 @@ import { longArticleWindowBridge, type LongArticleWindowTarget } from './long-ar
 export function ArkmeBrowseWindow({ target, invalidated }: { target: LongArticleWindowTarget; invalidated: boolean }) {
   const bridge = longArticleWindowBridge()
   const close = () => { void bridge?.close() }
-  useEffect(() => bridge?.onClose(close), [bridge])
+  useEffect(() => { if (target.surface !== 'library') return bridge?.onClose(close) }, [bridge, target.surface])
   useEffect(() => { if (invalidated) close() }, [invalidated])
   if (invalidated) return null
   return <>{target.surface === 'library'
