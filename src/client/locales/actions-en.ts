@@ -1,5 +1,15 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '恢复安排': 'Restore arrangement',
+  '恢复后状态：{status}': 'Status after restoration: {status}',
+  '安排时间保持不变：{time}': 'Scheduled time stays unchanged: {time}',
+  '提醒默认关闭，不会补发过期提醒。': 'Reminders stay off. Past reminders will not be resent.',
+  '历史记录未保存删除前状态，将恢复为跟进中。': 'The previous status was not saved. This arrangement will be restored as following.',
+  '当前服务暂不支持恢复，请稍后重试。': 'Restoration is not supported by the current service. Please try again later.',
+  '安排状态已变化，请刷新查看': 'The arrangement has changed. Refresh to view its current state.',
+  '恢复结果尚未确认，请查询结果；不要重复恢复。': 'Restoration is not yet confirmed. Check its result before trying again.',
+  '查询恢复结果': 'Check restoration result',
+
   '云端 {size}': 'Cloud {size}',
   '读取录音存储失败，请重试': 'Could not read audio storage. Please retry.',
   '重试读取存储': 'Retry storage read',

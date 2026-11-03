@@ -72,7 +72,7 @@ describe('saved arrangement source owner protocol', () => {
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-missing' })
     expect(host.recovery.cached).not.toHaveBeenCalled()
   })
-  it.each([{ uid: 'different' }, { status: 4 }])('rejects changed arrangement ownership/status %j', async fields => {
+  it.each([{ uid: 'different' }, { status: 5 }, { status: 0 }])('rejects changed arrangement ownership/status %j', async fields => {
     const { detail, read, host } = fixture(); Object.assign(detail, fields)
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-mismatch' })
     expect(host.runtime.authenticatedIntelligentPost).toHaveBeenCalledTimes(1)
@@ -126,4 +126,12 @@ describe('G02 call access and location', () => {
     Object.assign(response, {contract_version:2,access_state:'readable',quote_state:'unlocated',content:''},invalid)
     await expect(read()).rejects.toMatchObject({code:'arrangement-source-contract-invalid'})
   })
+})
+
+it('reads a deleted arrangement source without restoring it and preserves owner denial',async()=>{
+ const {detail,response,read,host}=fixture();detail.status=4
+ expect(await read()).toMatchObject({id:'evidence-a',persisted:true})
+ response.state='unavailable';response.reason='原通话已删除'
+ await expect(read()).rejects.toMatchObject({code:'arrangement-source-unavailable',message:'原通话已删除'})
+ expect(host.runtime.authenticatedIntelligentPost.mock.calls.every(([path])=>path.endsWith('/detail')||path.endsWith('/source/read'))).toBe(true)
 })
