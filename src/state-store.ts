@@ -25,7 +25,7 @@ import {
 } from './recording-import-contract.js'
 import { recordingImportFileNameKey } from './recording-import-shared.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
-import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditMentions, parseArkmeRecordReeditAttachments } from './record-reedit-contract.js'
+import { ArkmeRecordReeditDraftConflict, parseArkmeRecordReeditMentions, parseArkmeRecordReeditAttachments, parseArkmeRecordReeditCapture } from './record-reedit-contract.js'
 import type { ArkmeRecordReeditSubmission } from './record-reedit-contract.js'
 
 export interface ArkmeCancellationCompletion {
@@ -210,9 +210,11 @@ function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | u
     || !/^[a-f0-9]{64}$/.test(fingerprint)) return undefined
   let mentions: ArkmeRecordReeditDraft['mentions']
   let attachments: ArkmeRecordReeditDraft['attachments']
+  let capture: ArkmeRecordReeditDraft['capture']
   try {
     if (source.mentions !== undefined) mentions = parseArkmeRecordReeditMentions(source.mentions)
     if (source.attachments !== undefined) attachments = parseArkmeRecordReeditAttachments(source.attachments)
+    if (source.capture !== undefined) capture = parseArkmeRecordReeditCapture(source.capture)
   } catch { return undefined }
   return {
     schemaVersion: 1,
@@ -230,6 +232,7 @@ function normalizedRecordReeditDraft(value: unknown): ArkmeRecordReeditDraft | u
     textContent: source.textContent.slice(0, 40000),
     ...(mentions === undefined ? {} : { mentions }),
     ...(attachments === undefined ? {} : { attachments }),
+    ...(capture === undefined ? {} : { capture }),
     baseVersion: source.baseVersion as number,
     baseContentFingerprint: fingerprint,
     editDurationMillis: typeof source.editDurationMillis === 'number' && Number.isFinite(source.editDurationMillis)
@@ -714,7 +717,8 @@ export class ArkmeStateStore {
   async recordReeditFileRefs(userId: number): Promise<string[]> {
     return await this.read(state => [...Object.values(recordReeditDraftEntries(state, userId)),
       ...Object.values(recordReeditSubmissionEntries(state, userId)).map(job => job.draft)]
-      .flatMap(draft => draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []).concat(Object.values(state.longArticleDraftsByUser[String(userId)] ?? {}).flatMap(draft => draft.images?.flatMap(image => image.fileRef ? [image.fileRef] : []) ?? [])))
+      .flatMap(draft => [...(draft.attachments?.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef]) ?? []),
+        ...(draft.capture?.backgroundSound?.fileRefs ?? [])]).concat(Object.values(state.longArticleDraftsByUser[String(userId)] ?? {}).flatMap(draft => draft.images?.flatMap(image => image.fileRef ? [image.fileRef] : []) ?? [])))
   }
 
   async listRecordReeditSubmissions(userId: number): Promise<ArkmeRecordReeditSubmission[]> {

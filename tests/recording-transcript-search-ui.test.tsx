@@ -36,6 +36,17 @@ it('starts compact, focuses on expansion, and collapses only when an empty searc
   expect(input()).toBeNull()
 })
 
+it('distinguishes provisional search counts from complete results and interrupted reads', () => {
+  const view = (pending: boolean, incomplete: boolean) => <RecordingTranscriptSearch query="后半天" position={0} count={0} pending={pending} incomplete={incomplete}
+    onChange={() => {}} onFind={find} onPrevious={previous} onNext={next} />
+  act(() => root.render(view(true, false)))
+  expect(host.querySelector('[aria-label="搜索命中数"]')?.textContent).toContain('搜索中')
+  act(() => root.render(view(false, true)))
+  expect(host.querySelector('[aria-label="搜索命中数"]')?.textContent).toContain('未完成')
+  act(() => root.render(view(false, false)))
+  expect(host.querySelector('[aria-label="搜索命中数"]')?.textContent).toBe('0/0')
+})
+
 it('retains a nonempty query across blur, keeps navigation working, and Escape clears and restores focus', () => {
   render('测试'); expect(input()?.value).toBe('测试')
   act(() => outside().focus())

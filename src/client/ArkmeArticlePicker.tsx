@@ -29,11 +29,19 @@ export function isOwnArticle(item: ArkmeSearchRecordItem, userId: number): boole
     && (item.recordCreatorUserId === undefined || String(item.recordCreatorUserId) === String(userId))
 }
 
-export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCreate }: {
+export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCreate, draftScope }: {
+  draftScope?: string
   onCreate?: () => Promise<boolean>
-  sourceRef: string; userId: number; onClose: () => void; onSelect: (article: ComposerArticle) => void
+  sourceRef?: string; userId: number; onClose: () => void; onSelect: (article: ComposerArticle) => void
 }) {
   useArkmeLocale()
+  const [ownSourceRef, setOwnSourceRef] = useState(sourceRef)
+  useEffect(() => {
+    if (sourceRef) { setOwnSourceRef(sourceRef); return }
+    const controller = new AbortController()
+    void callArkme<{ sourceRef: string }>('sources.self-target', {}, controller.signal).then(value => { if (!controller.signal.aborted) setOwnSourceRef(value.sourceRef) }).catch(() => {})
+    return () => controller.abort()
+  }, [sourceRef, userId])
   const [query, setQuery] = useState('')
   const [page, setPage] = useState<ArkmeRecordSearchResult>()
   const [selected, setSelected] = useState('')
@@ -73,7 +81,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
       ].map(item => [item.recordUid, item])).values()].sort((a, b) => b.sendAtMillis - a.sendAtMillis) }))
       if (result.hasMore && !hasMore) setError('后续分页暂不可用，请重新搜索后重试')
     } catch (caught) {
-      if (epoch === generation.current && mounted.current) setError(request.signal.aborted ? '加载超时，请重试' : caught instanceof Error ? caught.message : '长文加载失败')
+      if (epoch === generation.current && mounted.current) setError(request.signal.aborted ? '加载超时，请重试' : caught instanceof Error ? caught.message : '文档加载失败')
     } finally {
       clearTimeout(timeout)
       if (epoch === generation.current && mounted.current) { busy.current = false; setLoading(false) }
@@ -110,7 +118,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
   const close = () => { detailController.current?.abort(); onClose() }
   return <>
     <div style={styles.overlay} onMouseDown={event => { if (event.target === event.currentTarget) close() }}>
-      <div ref={root} role="dialog" aria-modal="true" aria-label={tr("添加长文")} style={styles.dialog} onKeyDown={event => {
+      <div ref={root} role="dialog" aria-modal="true" aria-label={tr("即我文档")} style={styles.dialog} onKeyDown={event => {
         if (creating || preview) return
         if (event.key === 'Escape') { event.stopPropagation(); close() }
         if (event.key === 'Tab') {
@@ -120,27 +128,27 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
         }
       }}>
-        <header style={styles.header}><h2 style={{ margin: 0, flex: 1, fontSize: 19 }}>{tr("添加长文")}</h2>
-          <button type="button" style={styles.button} disabled={opening} onClick={() => {
+        <header style={styles.header}><h2 style={{ margin: 0, flex: 1, fontSize: 19 }}>{tr("即我文档")}</h2>
+          <button type="button" style={styles.button} disabled={opening || !ownSourceRef} onClick={() => {
             if (!onCreate) { setCreating(true); return }
             setOpening(true); setOpenError('')
             void onCreate().then(opened => { if (!mounted.current) return; if (opened) close(); else setCreating(true) })
-              .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开长文窗口') })
+              .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开文档编辑器') })
               .finally(() => { if (mounted.current) setOpening(false) })
-          }}>{tr("＋新建长文")}</button>
-          <button type="button" style={styles.button} aria-label={tr("关闭添加长文")} onClick={close}>×</button></header>
-        <input ref={search} style={styles.search} value={query} aria-label={tr("搜索自己的长文")} placeholder={tr("搜索自己的长文")} onChange={event => setQuery(event.target.value)} />
+          }}>{tr("＋新建文档")}</button>
+          <button type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close}>×</button></header>
+        <input ref={search} style={styles.search} value={query} aria-label={tr("搜索我的文档")} placeholder={tr("搜索我的文档")} onChange={event => setQuery(event.target.value)} />
         <div style={styles.list}>
           {page?.items.map(item => <div key={item.recordUid} data-arkme-article-choice={item.recordUid} style={{ ...styles.row, background: selected === item.recordUid ? theme.accentSoft : theme.base }}>
-            <button type="button" style={styles.select} role="radio" aria-checked={selected === item.recordUid} aria-label={item.title || '无标题长文'} disabled={opening} onClick={() => setSelected(item.recordUid)}>
+            <button type="button" style={styles.select} role="radio" aria-checked={selected === item.recordUid} aria-label={item.title || '无标题文档'} disabled={opening} onClick={() => setSelected(item.recordUid)}>
               <span aria-hidden="true" style={{ color: selected === item.recordUid ? theme.accent : theme.secondary }}>{selected === item.recordUid ? '◉' : '○'}</span>
-              <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}><ArkmeRichText text={item.title || '无标题长文'} presentation="preview" /></span>
+              <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}><ArkmeRichText text={item.title || '无标题文档'} presentation="preview" /></span>
                 <span style={styles.summary}><ArkmeRichText text={arkmeMarkdownPlainText(item.snippet || item.textContent)} presentation="preview" /></span>
                 <span style={styles.meta}>{item.sendAtMillis > 0 ? new Date(item.sendAtMillis).toLocaleDateString(arkmeIntlLocale()) : ''}</span></span>
             </button>
-            <button type="button" style={styles.button} aria-label={tr("预览{v0}", { v0: item.title || tr("长文") })} disabled={opening} onClick={() => { void resolveArticle(item.recordUid, false) }}>{tr("预览")}</button>
+            <button type="button" style={styles.button} aria-label={tr("预览{v0}", { v0: item.title || tr("文档") })} disabled={opening} onClick={() => { void resolveArticle(item.recordUid, false) }}>{tr("预览")}</button>
           </div>)}
-          {!loading && !error && page?.items.length === 0 && <div style={styles.state}>{page.hasMore ? '本页暂无自己的长文，可继续加载' : query.trim() ? '没有找到匹配的长文' : '还没有自己的长文，点击上方新建'}</div>}
+          {!loading && !error && page?.items.length === 0 && <div style={styles.state}>{page.hasMore ? '本页暂无自己的文档，可继续加载' : query.trim() ? '没有找到匹配的文档' : '还没有自己的文档，点击上方新建'}</div>}
           <div style={styles.state}>{loading ? <span role="status">{tr("正在加载…")}</span> : error ? <span role="alert">{error}<button style={styles.button} onClick={() => { void load(page?.hasMore ? page.nextCursor : undefined) }}>{tr("重试")}</button></span>
             : page?.hasMore && <button style={styles.button} onClick={() => { void load(page.nextCursor) }}>{tr("加载更多")}</button>}</div>
         </div>
@@ -150,7 +158,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
           <button style={{ ...styles.button, background: theme.primaryAction, color: theme.onPrimaryAction, opacity: !selected || opening ? .5 : 1 }} disabled={!selected || opening} onClick={() => { void resolveArticle(selected, true) }}>{opening ? tr("正在读取…") : '添加所选'}</button></footer>
       </div>
     </div>
-    {creating && <ArkmeLongArticleDialog sourceRef={sourceRef} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
+    {creating && ownSourceRef && <ArkmeLongArticleDialog sourceRef={ownSourceRef} {...(draftScope ? { draftScope } : {})} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
       if (!draft.recordUid || !draft.relationUid) return
       onSelect({ kind: 'new', draft: { ...draft, recordUid: draft.recordUid, relationUid: draft.relationUid } }); onClose()
     }} />}

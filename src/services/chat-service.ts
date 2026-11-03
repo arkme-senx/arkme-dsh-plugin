@@ -918,6 +918,10 @@ function chatExtensionTreeItemFromData(
     payload.structured_content ?? payload.structuredContent ?? record.structured_content ?? record.structuredContent,
   )
   return {
+    ...projectedMessageQuote(edge.quote_reply ?? objectValue(item.extension_edge).quote_reply ?? item.quote_reply,
+      edge.quote_reply_state ?? objectValue(item.extension_edge).quote_reply_state ?? item.quote_reply_state),
+    ...(stringValue(relation.rel_uid) ? { relationUid: stringValue(relation.rel_uid) } : {}),
+    ...(numberValue(relation.seq) > 0 ? { sequence: numberValue(relation.seq) } : {}),
     recordUid,
     ...(parentRecordUid === '' ? {} : { parentRecordUid }),
     ...(recordOwnerUserId === 0 ? {} : { recordOwnerUserId }),
@@ -3418,11 +3422,20 @@ export class ChatService {
       return undefined
     }
 
+  private chatExtensionPageCursor(value: unknown): Record<string, unknown> {
+    const raw = objectValue(value), createdAt = Number(raw.created_at), owner = recordOwnerId(raw.child_record_owner_user_id), uid = stringValue(raw.child_record_uid).trim()
+    if (!Number.isSafeInteger(createdAt) || createdAt <= 0 || owner === 0 || !uid || uid.length > 256) {
+      throw new ArkmePluginError('extension-pagination-invalid', '延展分页响应不完整，请重试', true, 502)
+    }
+    return { created_at: createdAt, child_record_owner_user_id: owner, child_record_uid: uid }
+  }
+
   private async loadChatMessageExtensions(
     reference: ArkmeMessageActionRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-  ): Promise<ArkmeMessageCopyLinkRecordContext | undefined> {
+    options: { paginated?: boolean; pageCursor?: string } = {},
+  ): Promise<(ArkmeMessageCopyLinkRecordContext & { nextCursor?: string }) | undefined> {
     const chatSessionUid = reference.chatSessionUid.trim()
     const parentRecordUid = reference.recordUid.trim()
     const parentRecordOwnerUserId = recordOwnerId(reference.recordOwnerUserId)
@@ -3434,19 +3447,47 @@ export class ChatService {
         409,
       )
     }
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/extensions/tree/page',
-      {
-        chat_session_uid: chatSessionUid,
-        parent_record_owner_user_id: parentRecordOwnerUserId,
-        parent_record_uid: parentRecordUid,
-        limit: 100,
-      },
-      session,
-      signal,
-    )
+    const scope = JSON.stringify([session.userId, chatSessionUid, String(parentRecordOwnerUserId), parentRecordUid, reference.relationUid, reference.sourceSequence])
+    let after: Record<string, unknown> | undefined
+    if (options.pageCursor) {
+      if (!options.paginated) throw new ArkmePluginError('extension-cursor-invalid', '延展分页参数无效', false, 400)
+      const parsed = await this.openSignedOpaquePayload(options.pageCursor, 'arkme-extension-page-v1', 'extension-cursor-invalid', '延展分页游标已失效，请重新打开详情')
+      if (parsed.scope !== scope) throw new ArkmePluginError('extension-cursor-invalid', '延展分页游标与当前账号或消息不匹配', false, 403)
+      after = this.chatExtensionPageCursor(parsed.after)
+    }
+    const seen = new Set<string>(after ? [JSON.stringify(after)] : [])
+    const children = new Map<string, unknown>()
+    let total = 0, nextCursor: string | undefined
+    do {
+      signal?.throwIfAborted()
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/extensions/tree/page',
+        { chat_session_uid: chatSessionUid, parent_record_owner_user_id: parentRecordOwnerUserId,
+          parent_record_uid: parentRecordUid, limit: 100, ...(after ? { after_cursor: after } : {}) },
+        session, signal,
+      )
+      signal?.throwIfAborted()
+      total = Math.max(total, integerLikeValue(data.total))
+      for (const child of listValue(data.children)) {
+        const projected = chatExtensionTreeItemFromData(child, parentRecordUid)
+        if (!projected) continue
+        children.set(JSON.stringify([String(projected.recordOwnerUserId ?? ''), projected.recordUid, projected.sequence ?? '', projected.parentRecordUid]), child)
+      }
+      if (data.has_more !== true) break
+      const next = this.chatExtensionPageCursor(data.next_after_cursor), key = JSON.stringify(next)
+      if (seen.has(key)) throw new ArkmePluginError('extension-pagination-invalid', '延展分页未前进，请重试', true, 502)
+      seen.add(key)
+      if (options.paginated) {
+        const encoded = encodeOpaqueJson({ scope, after: next })
+        const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
+        nextCursor = `arkme-extension-page-v1.${encoded}.${signature}`
+        break
+      }
+      after = next
+    } while (true)
     const projections: ArkmeExtensionMediaProjection[] = []
-    for (const child of listValue(data.children)) {
+    for (const child of children.values()) {
+      signal?.throwIfAborted()
       const extension = chatExtensionTreeItemFromData(child, parentRecordUid)
       if (extension === undefined) continue
       const childItem = objectValue(objectValue(child).item)
@@ -3473,8 +3514,8 @@ export class ChatService {
     }
     const extensions = (await this.hydrateExtensionMedia(projections, session, signal))
       .sort((left, right) => right.sendAtMillis - left.sendAtMillis)
-    const extensionCount = Math.max(integerLikeValue(data.total), extensions.length)
-    return extensionCount <= 0 ? undefined : { extensionCount, extensions }
+    const extensionCount = Math.max(total, extensions.length)
+    return extensionCount <= 0 && !nextCursor ? undefined : { extensionCount, extensions, ...(nextCursor ? { nextCursor } : {}) }
   }
 
   /** Personal and topic notes share the record-owned tree, including replies outside the original topic. */
@@ -3829,18 +3870,19 @@ export class ChatService {
   async sourceMessageExtensionContext(
     sourceRef: string,
     messageActionRef: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; paginated?: boolean; pageCursor?: string } = {},
   ): Promise<ArkmeSourceMessageExtensionContext> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
     const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const recordContext = source.kind === 'private_chat' || source.kind === 'group_chat'
-      ? await this.loadChatMessageExtensions(reference, session, options.signal)
+      ? await this.loadChatMessageExtensions(reference, session, options.signal, options)
       : await this.loadOwnedRecordExtensions(reference.recordUid, session, options.signal)
     return {
       parentRecordUid: reference.recordUid,
       extensionCount: recordContext?.extensionCount ?? 0,
       extensions: recordContext?.extensions ?? [],
+      ...(recordContext && 'nextCursor' in recordContext && recordContext.nextCursor ? { nextCursor: String(recordContext.nextCursor) } : {}),
       ...(recordContext !== undefined && 'extensionParent' in recordContext
         ? { extensionParent: recordContext.extensionParent as ArkmeTimelineExtensionParent } : {}),
     }
@@ -4015,6 +4057,10 @@ export class ChatService {
           })),
         }),
       }
+      if (contentPayload !== undefined && (options.humanMentions?.length || options.botMentions?.length)) {
+        const evidence = await this.mentionContentPayload(source, textContent, normalizedText, options.humanMentions ?? [], options.botMentions ?? [], session, options.signal, options.textFormat)
+        Object.assign(contentPayload, { mention_metadata: evidence.mention_metadata })
+      }
       const data = await this.record.createPersonalRecord<Record<string, unknown>>(
         '/api/v1/topics/records/extensions/create',
         {
@@ -4083,6 +4129,7 @@ export class ChatService {
       const profile = profileSnapshot.profile
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       const sendAtMillis = Date.now()
+      const evidence = options.botMentions?.length ? await this.mentionContentPayload(source, textContent, normalizedText, [], options.botMentions, session, options.signal, options.textFormat) : undefined
       const recordResult = await this.record.createExtensionForConversation(
         reference.recordUid,
         normalizedUid,
@@ -4090,6 +4137,7 @@ export class ChatService {
         assets,
         options.textFormat,
         options.quote,
+        ...(evidence === undefined ? [] : [objectValue(evidence.mention_metadata)]),
       )
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({
@@ -4811,8 +4859,9 @@ export class ChatService {
     textFormat: 'plain' | 'markdown' = 'plain',
   ): Promise<Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }>> {
     if (inputs.length === 0) return []
-    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
-      throw new ArkmePluginError('mention-chat-required', 'Bot mention 只能发送到聊天', false)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat'
+      && (!['send_to_self', 'default_category', 'topic'].includes(source.kind) || inputs.some(input => input.botRef.trim().toLowerCase() !== RESERVED_ASEN_BOT_UID))) {
+      throw new ArkmePluginError('mention-chat-required', '当前会话仅支持 @阿森', false)
     }
     const leadingTrim = textFormat === 'markdown' ? 0 : rawText.length - rawText.trimStart().length
     const uniqueRefs = [...new Set(inputs.map(input => input.botRef.trim()))]
@@ -5097,7 +5146,7 @@ export class ChatService {
         if ((input.humanMentions?.length ?? 0) > 0 && source.kind !== 'group_chat') {
           throw new ArkmePluginError('mention-group-required', '真人 mention 只能发送到群聊', false)
         }
-        if ((input.botMentions?.length ?? 0) > 0 && source.kind !== 'group_chat' && source.kind !== 'private_chat') {
+        if ((input.botMentions?.length ?? 0) > 0 && source.kind !== 'group_chat' && source.kind !== 'private_chat' && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) {
           throw new ArkmePluginError('mention-chat-required', 'Bot mention 只能发送到聊天', false)
         }
         if (longArticle) throw new ArkmePluginError('mention-rich-invalid', '长文暂不支持 mention', false)
@@ -6302,6 +6351,86 @@ export class ChatService {
     return this.hydratedMessageSnapshotDetail(reference, session, options, chatRaw)
   }
 
+  async projectRecordRevisionSnapshot(snapshot: Record<string, unknown>, target: import('./record-edit-history-service.js').RecordEditHistoryTarget, signal?: AbortSignal, previous?: Record<string, unknown>): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== target.viewerUserId || snapshot.record_uid !== target.recordUid) {
+      throw new ArkmePluginError('record-edit-history-invalid', '记忆快照与当前消息不一致', false, 403)
+    }
+    const context = objectValue(snapshot.edit_capture_context ?? snapshot.capture_context)
+    const raw = { ...snapshot, record_uid: target.recordUid, capture_context: context,
+      send_at: snapshot.edit_at, update_at: snapshot.edit_at, status: 1,
+      extra: objectValue(snapshot.template_extra ?? snapshot.extra),
+      location: context.automatic_location ?? listValue(snapshot.edit_locations)[0] ?? snapshot.location }
+    let detail = snapshotDetailFromChatRaw(raw, {
+      itemUid: target.recordUid, textContent: stringValue(snapshot.text_content), sendAtMillis: numberValue(snapshot.edit_at),
+    })
+    // Missing historical metadata never falls back to the current Record.
+    const duration = nonNegativeNumberValue(snapshot.record_duration_millis, snapshot.cost_mill_sec)
+    const editDuration = nonNegativeNumberValue(snapshot.edit_duration_millis, snapshot.incr_cost_mill_sec)
+    const original = snapshot.revision_type === 5 || snapshot.version === 1
+    const priorEditDuration = nonNegativeNumberValue(previous?.edit_duration_millis, previous?.incr_cost_mill_sec)
+    const comparable = previous && Number(previous.edit_at) < Number(snapshot.edit_at)
+    const perEditDuration = !original && comparable && editDuration !== undefined && priorEditDuration !== undefined && editDuration >= priorEditDuration
+      ? editDuration - priorEditDuration : undefined
+    const { recordDurationMillis: _recordDuration, editDurationMillis: _editDuration, ...metadata } = detail
+    detail = { ...metadata, durationState: original ? duration === undefined ? 'not-recorded' : 'complete'
+      : perEditDuration !== undefined ? 'complete' : editDuration === undefined ? 'not-recorded' : 'partial',
+      ...(original && duration !== undefined ? { recordDurationMillis: duration } : {}),
+      ...(perEditDuration === undefined ? {} : { editDurationMillis: perEditDuration }),
+      ...(Object.keys(context).length ? {} : { captureUnavailable: '该版本未记录设备等环境信息' }) }
+    const revisionUid = stringValue(snapshot.revision_uid)
+    const locationContext = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/location/context/get', {
+      record_uid: target.recordUid, revision_uid: revisionUid,
+    }, session, signal, { lane: 'interactive-read' }).catch(error => { if (signal?.aborted) throw error; return undefined })
+    if (locationContext) {
+      const identities = [locationContext, objectValue(locationContext.data), snapshotLocationContext(locationContext)]
+      for (const identity of identities) {
+        if (identity.record_uid !== undefined && identity.record_uid !== target.recordUid
+          || identity.revision_uid !== undefined && identity.revision_uid !== revisionUid) throw new ArkmePluginError('record-edit-history-invalid', '历史位置与当前版本不一致', false, 502)
+      }
+      // Older deployments may ignore revision_uid and return today's context.
+      // Only an explicitly revision-bound response may enrich historical facts.
+      if (identities.some(identity => identity.record_uid === target.recordUid && identity.revision_uid === revisionUid)) {
+        const enriched = snapshotDetailFromChatRaw(mergeSnapshotLocationContext(raw, snapshotLocationContext(locationContext)), {
+          itemUid: target.recordUid, textContent: stringValue(snapshot.text_content), sendAtMillis: numberValue(snapshot.edit_at),
+        })
+        const { recordDurationMillis: _record, editDurationMillis: _edit, ...environment } = enriched
+        detail = { ...detail, ...environment }
+      }
+    }
+    const revisionAtMillis = nonNegativeNumberValue(snapshot.edit_at)
+    const captureAtMillis = nonNegativeNumberValue(context.captured_at)
+    const completeAtMillis = captureAtMillis && revisionAtMillis && captureAtMillis <= revisionAtMillis ? captureAtMillis : revisionAtMillis
+    const versionDuration = original ? duration : perEditDuration
+    const recordedStart = original ? nonNegativeNumberValue(snapshot.record_started_at) : undefined
+    // An edit timestamp establishes completion, not when typing began.
+    const startAtMillis = recordedStart && recordedStart > 0 && completeAtMillis && recordedStart <= completeAtMillis ? recordedStart
+      : completeAtMillis && versionDuration !== undefined && completeAtMillis > versionDuration ? completeAtMillis - versionDuration : undefined
+    const { startAtMillis: _start, ...versionDetail } = detail
+    detail = { ...versionDetail, ...(startAtMillis === undefined ? {} : { startAtMillis }),
+      ...(completeAtMillis && completeAtMillis > 0 ? { completeAtMillis } : {}) }
+    const nativeRefs = this.media.recordBackgroundSoundRefs(raw)
+    const refs = snapshotBackgroundMediaAssets(snapshotBackgroundValuesFromChatRaw(raw)).map(asset => ({
+      ...nativeRefs.find(ref => ref.file_asset_uid === asset.fileAssetUid),
+      file_asset_uid: asset.fileAssetUid, content_file_role: 4, sort_order: asset.sortOrder,
+    }))
+    if (refs.length > 0) {
+      // Content hydration normally omits ambient tracks. Project only these
+      // revision-bound assets as audio for this dedicated playback request.
+      const playbackRefs = refs.map(ref => ({ ...ref, content_file_role: 1 }))
+      const [displays] = await this.media.hydrateRecordSnapshotMediaPage([{ record_uid: target.recordUid,
+        media_display_items: snapshot.media_display_items, content_payload: { media_refs: playbackRefs } }], session, target.kind === 'chat' ? target : undefined, signal)
+      const playable = this.media.richContentBlocks({ content_payload: { media_refs: playbackRefs } }, session.userId, displays)
+      if (playable.length === refs.length) detail.backgroundSoundPlayback = {
+        mediaRefs: playable.map(block => block.mediaRef), amplitudes: snapshotBackgroundAmplitudes(snapshotBackgroundValuesFromChatRaw(raw)),
+        ...((detail.editDurationMillis ?? detail.recordDurationMillis ?? 0) > 0 ? { durationSeconds: (detail.editDurationMillis ?? detail.recordDurationMillis)! / 1000 } : {}),
+      }
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== target.viewerUserId) throw new ArkmePluginError('record-account-changed', '登录账号已变化，请重新打开', false, 409)
+    return { ...detail, revisionUid }
+  }
+
   private async recordCreationSnapshot(recordUid: string, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
     let cursor = 0
     for (;;) {
@@ -6319,10 +6448,19 @@ export class ChatService {
     }
   }
 
+  /** Same creation snapshot as the message dialog, without media decoration. */
+  async ownedRecordLocationSnapshot(recordUid: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const detail = await this.hydratedMessageSnapshotDetail({ recordUid, recordOwnerUserId: session.userId,
+      sourceKind: 'record', chatSessionUid: '', relationUid: '', sendAtMillis: 0, textContent: '', title: '' }, session,
+    { ...(signal ? { signal } : {}), locationOnly: true })
+    return { ...(detail.locationCapture ? { locationCapture: detail.locationCapture } : {}), ...(detail.locationLabel ? { locationLabel: detail.locationLabel } : {}) }
+  }
+
   private async hydratedMessageSnapshotDetail(
-    reference: ArkmeMessageActionRefPayload,
+    reference: Pick<ArkmeMessageActionRefPayload, 'recordUid' | 'recordOwnerUserId' | 'sourceKind' | 'chatSessionUid' | 'relationUid' | 'sendAtMillis' | 'textContent' | 'title'>,
     session: ArkmeSessionCredentials,
-    options: { signal?: AbortSignal; includeAttachments?: boolean },
+    options: { signal?: AbortSignal; includeAttachments?: boolean; locationOnly?: boolean },
     chatRaw: Record<string, unknown> = {},
   ): Promise<ArkmeMessageSnapshotDetail> {
     // Flutter follows a verified chat-detail lookup with the owner's record
@@ -6347,6 +6485,10 @@ export class ChatService {
     // not wrap it in record_core. Keep that compatibility before hydrating the
     // snapshot projection.
     const recordCore = objectValue(recordRaw.record_core ?? recordRaw.recordCore ?? recordRaw.record ?? recordRaw)
+    if (options.locationOnly && (recordOwnerId(recordCore.owner_user_id) !== session.userId || recordCore.status !== 1
+      || recordCore.content_access_state !== 1 || arkmePrivacyLockedRecord(recordRaw))) {
+      throw new ArkmePluginError('location-record-restricted', '当前记录位置不可访问', false, 403)
+    }
     const detailRecordUid = firstSnapshotText(
       recordCore.record_uid, recordCore.recordUid, recordCore.uid,
       recordRaw.record_uid, recordRaw.recordUid, recordRaw.uid,
@@ -6428,7 +6570,10 @@ export class ChatService {
         key: `message-snapshot-location-context:${reference.recordUid}:${environmentRevisionUid ?? 'current'}`,
         failureCooldownMs: 10_000,
       },
-    ).catch(() => undefined)
+    ).catch(error => {
+      if (options.signal?.aborted || options.locationOnly && !(error instanceof ArkmePluginError && (error.upstreamStatus ?? error.httpStatus) === 404)) throw error
+      return undefined
+    })
     if (locationContext !== undefined) {
       const context = snapshotLocationContext(locationContext)
       const contextEnvelope = objectValue(locationContext)
@@ -6468,6 +6613,7 @@ export class ChatService {
       detail.title = stringValue(objectValue(raw.record).title) || reference.title
       return detail
     }
+    if (options.locationOnly) return detail
     const backgroundValues = snapshotBackgroundValuesFromChatRaw(raw)
     const backgroundAssets = snapshotBackgroundMediaAssets(backgroundValues)
     if (backgroundAssets.length === 0) return detail

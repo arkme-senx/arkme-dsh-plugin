@@ -1225,6 +1225,21 @@ export interface ArkmeSearchAssetItem {
 }
 
 /** Browser-safe image projection used by the desktop search image library. */
+/** Current-account owned resources selectable by a composer. */
+export interface ArkmeComposerResource {
+  key: string
+  recordUid: string
+  asset: ArkmeUploadedAsset
+  mediaRef?: string
+  thumbnailRef?: string
+  sendAtMillis: number
+}
+export interface ArkmeComposerResourcePage {
+  items: ArkmeComposerResource[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
 export interface ArkmeImageSearchItem {
   itemKey: string
   mediaRef: string
@@ -2598,6 +2613,7 @@ export interface ArkmeRecordReeditDraft {
   baseContentFingerprint: string
   editDurationMillis: number
   updatedAtMillis: number
+  capture?: import('./record-reedit-contract.js').ArkmeRecordReeditCapture
 }
 
 export type ArkmeMessageReportType = 1 | 2 | 3 | 4
@@ -2631,6 +2647,8 @@ export interface ArkmeMessageCopyLinkExtendResult {
 
 /** Extension state for a message authorized by its source-scoped action reference. */
 export interface ArkmeSourceMessageExtensionContext extends ArkmeMessageCopyLinkRecordContext {
+  /** Account, conversation and original-message scoped cursor; absent when complete. */
+  nextCursor?: string
   parentRecordUid: string
   /** Immediate source of the opened note, independent of its current topic. */
   extensionParent?: ArkmeTimelineExtensionParent
@@ -2701,6 +2719,11 @@ export interface ArkmeMessageCopyLinkSourceAnchor {
 }
 
 export interface ArkmeMessageCopyLinkExtensionItem extends ArkmeMessageCopyLinkSnapshotItem {
+  /** Server-validated partial quotation on this comment's own parent edge. */
+  quote?: import('./message-quote.js').ArkmeMessageQuote
+  quoteState?: 'available' | 'edited' | 'unavailable'
+  relationUid?: string
+  sequence?: number
   /** Protected shells must never receive locally cached presentation metadata. */
   protectedContent?: true
   recordUid: string
@@ -3609,6 +3632,17 @@ export interface ArkmeRecordingTranscriptPageOptions {
   signal?: AbortSignal | undefined
 }
 
+export type ArkmeRecordingOverviewItem = Pick<ArkmeRecordingWorkbenchItem,
+  'itemId' | 'itemRef' | 'startAtMillis' | 'endAtMillis' | 'speakerKey' | 'speakerLabel' | 'speakerColorIndex' | 'speakerAvatarRef' | 'isBackground' | 'recordingBelongsToViewer'> & {
+    textPreview?: string
+    textCount?: number
+  }
+export interface ArkmeRecordingDayOverview {
+  viewRef: string
+  items: ArkmeRecordingOverviewItem[]
+  metrics?: ArkmeRecordingDailyMetrics & { speakerTextCounts: Readonly<Record<string, number>> }
+}
+
 /** Recording coverage is independent of ASR: silence and pending ASR still have audio. */
 export interface ArkmeRecordingCoverageInterval {
   startAtMillis: number
@@ -4134,6 +4168,14 @@ export type ArkmeChatClientEvent = {
   source: Pick<ArkmeSourceItem, 'sourceRef' | 'sourceKey' | 'latestSequence'>
   items: ArkmeTimelineItem[]
 } | {
+  type: 'thought-invalidated'
+  revision: number
+  accountScope: string
+  sourceKey?: string
+  timelineItemKey?: string
+  clear?: boolean
+  stream?: import('./record-thought-contract.js').ArkmeThoughtStreamUpdate
+} | {
   type: 'timeline-changed'
   revision: number
   sourceKey: string
@@ -4232,6 +4274,10 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'record.thoughts.query'
+  | 'chat.thoughts.query'
+  | 'composer.resources.list'
+  | 'composer.document.prepare'
   | 'team.app.outbound.open'
   | 'team.app.group.context'
   | 'team.app.public-card'
@@ -4364,6 +4410,7 @@ export type ArkmePluginOperation =
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'
+  | 'models.directory'
   | 'billing.products'
   | 'membership.current'
   | 'membership.catalog'
@@ -4393,6 +4440,21 @@ export type ArkmePluginOperation =
   | 'contacts.team-join'
   | 'chat.private.open-from-contact'
   | 'group.create'
+  | 'group.private.context'
+  | 'group.private.people'
+  | 'group.private.matches'
+  | 'group.private.create'
+  | 'social.groups.query'
+  | 'social.groups.read'
+  | 'social.groups.join'
+  | 'social.groups.open'
+  | 'social.groups.settings'
+  | 'social.groups.settings.set'
+  | 'social.groups.showcase.set'
+  | 'social.people.query'
+  | 'social.people.read'
+  | 'social.people.listing.set'
+  | 'social.people.chat'
   | 'bots.list'
   | 'bots.create'
   | 'bots.manage.profile'
@@ -4737,6 +4799,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.day.review'
+  | 'recordings.day.overview'
   | 'recordings.day'
   | 'recordings.compare'
   | 'recordings.compare.start'
@@ -4776,6 +4840,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'
+  | 'search.conversation-locations'
   | 'search.scene'
   | 'search.recordings'
   | 'search.history'
@@ -4834,6 +4899,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
   | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

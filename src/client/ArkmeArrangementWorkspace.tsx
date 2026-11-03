@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Square } from '@phosphor-icons/react/dist/icons/Square'
 import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -6,6 +6,7 @@ import { X } from '@phosphor-icons/react/dist/icons/X'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpeakerSlash } from '@phosphor-icons/react/dist/icons/SpeakerSlash'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
+import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import type { ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeUi } from './ui-controller.js'
@@ -14,6 +15,7 @@ import { withArkmeReadDeadline } from './read-deadline.js'
 import { moveArrangement } from './arrangement-board-model.js'
 import { ArkmeArrangementContent } from './ArkmeArrangementContent.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeArrangementRecognition } from './ArkmeArrangementRecognition.js'
 import { useArrangementWorkspace } from './use-arrangement-workspace.js'
 import { prepareArrangementCompletionSound } from './arrangement-completion-sound.js'
@@ -182,8 +184,27 @@ function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onRe
 }) {
   const [detail, setDetail] = useState<ArrangementWorkspaceItem>()
   const [loading, setLoading] = useState(true), [error, setError] = useState(false), [attempt, setAttempt] = useState(0)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuTrigger = useRef<HTMLButtonElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
+  const titleId = useId()
+  const [titleExpanded, setTitleExpanded] = useState(false), [titleOverflows, setTitleOverflows] = useState(false)
   const current = detail && detail.updatedAtMillis >= item.updatedAtMillis ? detail : item
   const lifetime = useRef<AbortController>()
+  useLayoutEffect(() => {
+    const heading = titleRef.current
+    if (!heading) return
+    heading.scrollTop = 0
+    setTitleExpanded(false)
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(heading).lineHeight)
+      setTitleOverflows(Number.isFinite(lineHeight) && lineHeight > 0 && heading.scrollHeight > lineHeight * 2 + 1)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(heading)
+    return () => observer?.disconnect()
+  }, [current.title])
   useEffect(() => {
     const controller = new AbortController(); lifetime.current = controller; setLoading(true); setError(false)
     void withArkmeReadDeadline(signal => callArkme<ArrangementWorkspaceItem>(item.status === 'deleted' ? 'arrangements.deleted.detail' : 'arrangements.detail', { arrangementRef: item.arrangementRef }, signal), controller.signal)
@@ -192,10 +213,40 @@ function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onRe
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [item.arrangementRef, item.status, item.updatedAtMillis, attempt])
+  useEffect(() => {
+    if (busy || current.status === 'deleted' || current.status === 'unknown') setMenuOpen(false)
+  }, [busy, current.status])
+  const actionDisabled = busy || current.status === 'unknown'
+  const selectAction = (action: () => void) => {
+    setMenuOpen(false)
+    menuTrigger.current?.focus({ preventScroll: true })
+    action()
+  }
   return <aside className="arkme-arrangement-detail" aria-label={tr('安排详情')}>
-    <header><span>{tr('安排详情')}</span><button type="button" aria-label={tr('关闭安排详情')} onClick={onClose}><X size={20} /></button></header>
+    <header>
+      <div className="arkme-arrangement-detail-heading">
+        <h2 ref={titleRef} id={titleId} data-expanded={titleExpanded} tabIndex={titleExpanded ? 0 : undefined}>{current.title || tr('未命名安排')}</h2>
+        {(titleOverflows || titleExpanded) && <button type="button" className="arkme-arrangement-title-toggle" aria-expanded={titleExpanded} aria-controls={titleId}
+          onClick={() => { if (titleRef.current) titleRef.current.scrollTop = 0; setTitleExpanded(expanded => !expanded) }}>{tr(titleExpanded ? '收起标题' : '展开完整标题')}</button>}
+      </div>
+      <div className="arkme-arrangement-detail-header-actions">
+        {current.status !== 'deleted' && <ArkmeActionMenu label={tr('安排操作')} open={menuOpen} autoFocus align="end"
+          onClose={() => setMenuOpen(false)}
+          anchor={<button ref={menuTrigger} type="button" aria-label={tr('安排操作')} aria-haspopup="menu" aria-expanded={menuOpen} disabled={actionDisabled}
+            onClick={() => setMenuOpen(open => !open)}
+            onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setMenuOpen(true) } }}>
+            <DotsThree size={20} aria-hidden />
+          </button>}
+          actions={[
+            { id: 'complete', label: tr(current.status === 'completed' ? '恢复为未完成' : '完成安排'), disabled: actionDisabled,
+              onSelect: () => selectAction(() => { void onComplete(current) }) },
+            { id: 'delete', label: tr('删除'), danger: true, disabled: actionDisabled,
+              onSelect: () => selectAction(() => onDelete(current)) },
+          ]} />}
+        <button type="button" aria-label={tr('关闭安排详情')} onClick={onClose}><X size={20} /></button>
+      </div>
+    </header>
     <div className="arkme-arrangement-detail-scroll">
-      <h2>{current.title || tr('未命名安排')}</h2>
       {current.description.trim() && <p className="arkme-arrangement-detail-description">{current.description}</p>}
       <dl><div><dt>{tr('状态')}</dt><dd>{tr(statusLabels[current.status])}</dd></div>
         <div><dt>{tr('安排时间')}</dt><dd>{fullTime(current.dueAtMillis)}</dd></div>
@@ -203,7 +254,6 @@ function ArrangementDetailPane({ item, busy, onClose, onComplete, onDelete, onRe
         <div><dt>{tr('提醒')}</dt><dd>{current.status === 'deleted' ? tr(current.reminderEnabled ? '已开启' : '已关闭') : <button type="button" role="switch" aria-checked={current.reminderEnabled} aria-label={tr('安排提醒')} disabled={busy} onClick={() => { void onReminder(current) }}>{tr(current.reminderEnabled ? '已开启' : '已关闭')}</button>}</dd></div>
         <div><dt>{tr('创建时间')}</dt><dd>{fullTime(current.createdAtMillis)}</dd></div>
         <div><dt>{tr('更新时间')}</dt><dd>{fullTime(current.updatedAtMillis)}</dd></div></dl>
-      {current.status !== 'deleted' && <div className="arkme-arrangement-detail-actions"><button type="button" disabled={busy || current.status === 'unknown'} onClick={() => { void onComplete(current) }}>{tr(busy ? '正在保存…' : current.status === 'completed' ? '恢复为未完成' : '完成安排')}</button><button type="button" disabled={busy || current.status === 'unknown'} onClick={() => onDelete(current)}>{tr('删除')}</button></div>}
       {loading && <p role="status" className="arkme-arrangement-detail-progress">{tr('正在补充详情…')}</p>}
       {error && <div role="alert" className="arkme-arrangement-list-error">{tr('详情加载失败，已保留当前信息')} <button type="button" onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></div>}
       <section className="arkme-arrangement-detail-sources" aria-label={tr('安排来源')}>

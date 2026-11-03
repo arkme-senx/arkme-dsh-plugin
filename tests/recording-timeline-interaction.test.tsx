@@ -352,7 +352,7 @@ describe('recording timeline math', () => {
       onTogglePlayback={() => {}}
     />)
 
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="播放录音"/)
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")(?=[^>]*aria-label="播放录音")/)
   })
 
   it('keeps the reusable timeline detail hidden when there are no recordings', () => {
@@ -738,7 +738,7 @@ describe('compact timeline focus and reading sync', () => {
     expect(detail().props['aria-valuenow']).toBe(day)
     hover(1440)
     expect(detail().props['aria-valuenow']).toBe(day + 23.5 * 3600000)
-    act(() => renderer.root.findByProps({ 'aria-label': '关闭片段详情' }).props.onClick())
+    act(() => renderer.root.findByProps({ 'data-timeline-layer': 'overview' }).props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
     act(() => overview().props.onFocus())
     expect(overview().props['aria-valuenow']).toBe(focus)
     expect(detail().findAllByType('button')[0]!.props['data-recording-segment-index']).toBe(0)
@@ -753,7 +753,7 @@ describe('compact timeline focus and reading sync', () => {
     expect(detail().props['aria-valuenow']).toBe(day + 13.875 * 3600000)
     act(() => renderer.update(view(18)))
     expect(detail().props['aria-valuenow']).toBe(day + 13.875 * 3600000)
-    act(() => renderer.root.findByProps({ 'aria-label': '关闭片段详情' }).props.onClick())
+    act(() => renderer.root.findByProps({ 'data-timeline-layer': 'overview' }).props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() }))
     act(() => overview().props.onFocus())
     expect(overview().props['aria-valuenow']).toBe(day + 17.75 * 3600000)
     expect(detail().props['aria-valuetext']).toBe('30分钟')

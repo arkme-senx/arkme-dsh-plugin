@@ -23,9 +23,8 @@ describe('Arkme conversation composer presentation', () => {
   it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
     const menu = sidebarSource.slice(sidebarSource.indexOf('{addMenuOpen &&'), sidebarSource.indexOf('<input ref={fileInputRef}'))
     expect(menu).toContain('<ArkmeActionMenu')
-    expect(menu.match(/id: '/gu)).toHaveLength(2)
-    expect(menu).toContain('添加附件')
-    expect(menu).toContain('写长文')
+    expect(menu.match(/id: '/gu)).toHaveLength(4)
+    expect([...menu.matchAll(/label: '([^']+)'/gu)].map(match => match[1])).toEqual(['本地文件', '云端文件', '即我文档', '视图库'])
     expect(menu).not.toContain('采集本次位置')
     expect(sidebarSource).not.toContain('开启位置记录')
     expect(menu).not.toContain('本地附件')
@@ -77,7 +76,8 @@ describe('Arkme conversation composer presentation', () => {
     await expect(locationCapture.captureArkmeRecordLocationForSend({ permissionState })).resolves.toEqual({
       state: 'permission-required', permission: 'denied',
     })
-    expect(sidebarSource).toContain('captureArkmeRecordLocationForSend(')
+    expect(sidebarSource).not.toContain('captureArkmeRecordLocationForSend(')
+    expect(sidebarSource).toContain('location: finishedCapture.location')
     expect(sidebarSource).not.toContain('⌖ 自动记录位置')
   })
 

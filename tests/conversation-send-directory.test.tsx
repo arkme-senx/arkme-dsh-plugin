@@ -1,3 +1,5 @@
+import { ArkmeComposerResourcePicker } from '../src/client/ArkmeComposerResourcePicker.js'
+import { detailExtensionSends } from '../src/client/detail-extension-send.js'
 import { openLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
 import { selectedTextForwardContent } from '../src/client/selected-text-forward.js'
 import { followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
@@ -1649,10 +1651,11 @@ describe('conversation send directory projection', () => {
         await Promise.resolve(); await Promise.resolve()
       })
 
-      expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', {
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({
         sourceRef: 'source-harness', itemUid: 'record-reedit-commit', newText: nextText, expectedVersion: 3,
         attachments: [], expectedDraftRevision: 1,
-      })
+        capture: expect.objectContaining({ completedAtMillis: expect.any(Number), captureContext: expect.any(Object) }),
+      }))
       expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
       expect(renderer!.root.findAllByProps({ 'aria-label': '发送消息' })).toHaveLength(topicKind === 3 ? 0 : 1)
       expect(renderer!.root.findAll(node => node.children.some(child => typeof child === 'string' && child.includes('更新后的正文'))).length).toBeGreaterThan(0)
@@ -1797,6 +1800,11 @@ describe('conversation send directory projection', () => {
       await Promise.resolve(); await Promise.resolve()
     })
 
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
+    await act(async () => { for (let index = 0; index < 15; index++) await Promise.resolve() })
+    const restore = renderer!.root.findAllByType('button').find(button => button.children.includes('恢复编辑'))!
+    expect(restore).toBeDefined()
+    await act(async () => { restore.props.onClick({ stopPropagation() {} }); await Promise.resolve() })
     expect(renderer!.root.findByProps({ 'data-arkme-composer-reedit-target': 'true' })).toBeDefined()
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('冲突草稿')
     expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('快记已在其他位置更新，草稿已保留')
@@ -1901,6 +1909,7 @@ describe('conversation send directory projection', () => {
   })
 
   beforeEach(() => {
+    detailExtensionSends.clear()
     mentionBotCache.clear()
     mocks.mutationOwners.clear()
     resetSelfTopicDirectories()
@@ -2122,7 +2131,7 @@ describe('conversation send directory projection', () => {
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
     const add = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.find((action: { id: string }) => action.id === 'article')
-    expect(add.label).toBe('添加长文')
+    expect(add.label).toBe('即我文档')
     act(() => add.onSelect())
     const picker = renderer!.root.findByType(ArkmeArticlePicker)
     act(() => { picker.props.onSelect({ kind: 'existing', detail: { sourceRef: 'self', itemUid: 'mine', title: '我的长文', textContent: '全文' }, messageActionRef: 'signed' }); picker.props.onClose() })
@@ -4708,7 +4717,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
   })
 
-  it('requests microphone permission from the first text input instead of focus or settings load', async () => {
+  it('does not request microphone permission during focus or typing', async () => {
     const stopTrack = vi.fn()
     const getUserMedia = vi.fn(async () => ({
       getTracks: () => [{ stop: stopTrack }],
@@ -4755,14 +4764,14 @@ describe('conversation send directory projection', () => {
       composer.props.onTextChange('首')
       await new Promise(resolve => { setTimeout(resolve, 5) })
     })
-    expect(getUserMedia).toHaveBeenCalledOnce()
-    expect(stopTrack).toHaveBeenCalledOnce()
+    expect(getUserMedia).not.toHaveBeenCalled()
+    expect(stopTrack).not.toHaveBeenCalled()
 
     await act(async () => {
       composer.props.onTextChange('首次输入')
       await Promise.resolve()
     })
-    expect(getUserMedia).toHaveBeenCalledOnce()
+    expect(getUserMedia).not.toHaveBeenCalled()
   })
 
   it.each(['report', 'cancel'] as const)('keeps real composer sends and the next draft independent of a pending preparing %s', async blocked => {
@@ -4984,7 +4993,7 @@ describe('conversation send directory projection', () => {
     expect(renderedText(list)).not.toContain('加载更多')
   })
 
-  it('requests location permission on the first supported send and records that message', async () => {
+  it('does not request missing location permission while typing or sending', async () => {
     const permissionQuery = vi.fn(async () => ({ state: 'prompt' as PermissionState }))
     const getCurrentPosition = vi.fn((success: PositionCallback) => { success({
       coords: {
@@ -5025,19 +5034,16 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
 
-    expect(permissionQuery).toHaveBeenCalledTimes(2)
-    expect(getCurrentPosition).toHaveBeenCalledOnce()
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-location.set', {
-      sourceRef: target.sourceRef,
-      itemUid: 'record-new',
-      location: { latitude: 30.52, longitude: 114.31, accuracyMeters: 18, capturedAtMillis: 100 },
-    })
+    expect(permissionQuery.mock.calls.length).toBeLessThanOrEqual(1)
+    expect(getCurrentPosition).not.toHaveBeenCalled()
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.message-location.set')).toBe(false)
   })
 
   it.each([
     ['私聊', target],
     ['发给自己', sendToSelf],
-  ])('automatically records an already-authorized location after a %s send without prompting during input', async (_label, selectedSource) => {
+  ])('samples an authorized location during %s input and reuses it when sending', async (_label, selectedSource) => {
+    vi.mocked(Date.now).mockReturnValue(1000)
     const getCurrentPosition = vi.fn((success: PositionCallback) => { success({
       coords: {
         latitude: 30.52, longitude: 114.31, accuracy: 18, altitude: null,
@@ -5078,9 +5084,9 @@ describe('conversation send directory projection', () => {
     const composer = renderer!.root.findByType(ArkmeRichComposerInput)
     await act(async () => {
       composer.props.onTextChange('自动位置')
-      await Promise.resolve()
+      await new Promise(resolve => { setTimeout(resolve, 0) })
     })
-    expect(getCurrentPosition).not.toHaveBeenCalled()
+    expect(getCurrentPosition).toHaveBeenCalledOnce()
 
     await act(async () => {
       renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
@@ -9139,6 +9145,68 @@ describe('conversation send directory projection', () => {
     await act(async () => { badge.props.onClick({ stopPropagation: vi.fn() }) })
     expect(renderer!.root.findAllByProps({ 'data-arkme-note-detail': 'true' })).toHaveLength(0)
     expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(conversation.sourceRef)
+  })
+
+  it('shows a detail extension in both lists before the write finishes and preserves the next draft', async () => {
+    timeline = [{ itemUid: 'parent-record', messageActionRef: 'opaque-detail-extension-action', senderName: '小林', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '详情中的原快记', status: 1 }]
+    const defaultCall = mocks.callArkme.getMockImplementation()!
+    let finish!: (result: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'source.message-extension.extend') return new Promise(resolve => { finish = resolve })
+      return defaultCall(operation, params)
+    })
+    vi.stubGlobal('HTMLElement', class {})
+    vi.stubGlobal('document', { activeElement: null, body: { style: { overflow: '' } }, addEventListener: vi.fn(), removeEventListener: vi.fn(), querySelector: vi.fn(() => null) })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, { createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+        ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) } : null })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' }), trigger = {}
+    await act(async () => { bubble.props.onKeyDown({ key: 'Enter', target: trigger, currentTarget: trigger, preventDefault: vi.fn() }); await Promise.resolve() })
+    const composer = () => renderer!.root.findAllByType(ArkmeRichComposerInput).find(node => node.props.ariaLabel === '延展此快记')!
+    act(() => composer().props.onTextChange('立即可见的延展'))
+    await act(async () => { const send = renderer!.root.findByProps({ 'aria-label': '发送延展' }); send.props.onClick(); send.props.onClick(); await Promise.resolve() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-note-extension-item': 'record-new' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-extension-send-state': 'sending' })).toHaveLength(2)
+    expect(composer().props.value).toBe('')
+    expect(composer().props.disabled).toBe(false)
+    act(() => composer().props.onTextChange('下一条延展草稿'))
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.extend')).toHaveLength(1)
+    await act(async () => {
+      finish({ recordUid: 'record-new', parentRecordUid: 'parent-record', status: 1, localState: 'synced', extension: {
+        recordUid: 'record-new', parentRecordUid: 'parent-record', level: 2, senderDisplayName: '我', title: '', textContent: '立即可见的延展',
+        sendAtMillis: 48, templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] } })
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(composer().props.value).toBe('下一条延展草稿')
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'record-new' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-note-extension-item': 'record-new' })).toHaveLength(1)
+  })
+
+  it.each([target, group, sendToSelf])('offers the same four composer sources and retains the draft for $kind', async selectedSource => {
+    activeSource = selectedSource; arkmeUi.selectSource(selectedSource)
+    const draftKey = arkmeSourceComposerDraftKey(42, selectedSource)!
+    arkmeComposerDraftStore.setText(draftKey, '保留原有文字')
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (op: string, params?: Record<string, unknown>, signal?: AbortSignal) => {
+      if (op === 'composer.resources.list' || op === 'search.scene') return { items: [], hasMore: false }
+      return base(op, params, signal)
+    })
+    vi.stubGlobal('document', { body: {}, activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
+    const actions = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.filter(Boolean)
+    expect(actions.map((action: { label: string }) => action.label)).toEqual(['本地文件', '云端文件', '即我文档', '视图库'])
+    act(() => actions.find((action: { id: string }) => action.id === 'cloud').onSelect())
+    const picker = renderer!.root.findByType(ArkmeComposerResourcePicker)
+    act(() => { picker.props.onSelect([{ key: 'asset', recordUid: 'record', sendAtMillis: 1, asset: { fileAssetUid: 'cloud-asset', fileName: '云端文件.pdf', mimeType: 'application/pdf', size: 1, fileKind: 4 } }]); picker.props.onClose() })
+    expect(arkmeComposerDraftStore.get(draftKey)).toMatchObject({ text: '保留原有文字', attachments: [{ asset: { fileAssetUid: 'cloud-asset' } }] })
+    expect(mocks.callArkme.mock.calls.some(([op]) => ['source.send-rich', 'source.send-text', 'files.send'].includes(op))).toBe(false)
+    act(() => actions.find((action: { id: string }) => action.id === 'article').onSelect())
+    expect(renderer!.root.findByType(ArkmeArticlePicker).props.onCreate).toBeUndefined()
   })
 
   it('projects a detail-drawer extension into the current conversation and retains it through the immediate refresh', async () => {

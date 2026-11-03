@@ -2,7 +2,7 @@ import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -477,6 +477,7 @@ export function RelatedRecordingsPanel(props: RelatedRecordingsPanelProps) {
 }
 
 export interface RelatedRecordingDetailProps {
+  thoughts?: ReactNode
   item: ArkmeRelatedRecordingItem
   loadDetail?: (item: ArkmeRelatedRecordingItem, signal?: AbortSignal) => Promise<ArkmeRelatedRecordingItem>
   showReadOnlyLabel?: boolean
@@ -575,6 +576,7 @@ export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
           </div>
           {!detailItem.isSharedByOther && props.onShare && <p style={styles.detailMeta}>{tr('共享文字可供对方的 Agent 和日历使用，不包含原始音频。')}</p>}
           {showTranscript && hasTranscript && <div style={styles.transcript}>{transcript}</div>}
+          {props.thoughts}
         </div>
       </section>
     </div>

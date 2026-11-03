@@ -959,3 +959,20 @@ it('identifies the exact long article image when upload or fixed-limit validatio
   const restarted=new FileTransfers(f.directory,f.ports,1000)
   await expect(restarted.uploadLongArticleImages([file.fileRef])).rejects.toMatchObject({imageFailures:[{fileRef:file.fileRef,fileName:'failed.png',phase:'validation'}]})
 })
+
+it('preserves cloud and local attachment order through the durable file owner', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme mixed composer ')); directories.push(directory)
+  const sendSourceRich = vi.fn(async (_ref: string, _content: unknown, options: { recordUid: string }) => ({ sourceRef: 'source', itemUid: options.recordUid, status: 1, localState: 'synced' as const }))
+  const owner = createArkmeFileTransfers({ directory, maxUploadBytes: 1000,
+    runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
+    source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
+    media: { uploadLocalFile: async (_path: string, metadata: object) => ({ ...metadata, fileAssetUid: 'uploaded-local' }) } as never,
+    chat: { sendSourceRich, readSource: async () => ({ items: [] }) } as never,
+  })!
+  const file = await owner.stageBytes(Buffer.from('file').toString('base64'), { fileName: '本地.pdf', mimeType: 'application/pdf' })
+  const cloud = { fileAssetUid: 'cloud-asset', fileName: '云端.pdf', mimeType: 'application/pdf', size: 10, fileKind: 4 as const }
+  const command = { ...input([file.fileRef]), content: { textContent: '一起发送', assets: [cloud] }, attachmentOrder: [file.fileRef, cloud.fileAssetUid] }
+  await owner.enqueue(command); await owner.settled()
+  expect(sendSourceRich).toHaveBeenCalledWith('source', expect.objectContaining({ assets: [expect.objectContaining({ fileAssetUid: 'uploaded-local' }), cloud] }), expect.anything())
+  await expect(owner.enqueue({ ...command, attachmentOrder: [...command.attachmentOrder].reverse() })).rejects.toMatchObject({ code: 'file-send-conflict' })
+})

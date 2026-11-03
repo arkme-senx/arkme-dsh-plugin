@@ -74,7 +74,7 @@ describe('notification activation quick-add cleanup', () => {
     let resolveCreate: ((source: ArkmeSourceItem) => void) | undefined
     mocks.callArkme.mockImplementation(async () => await new Promise<ArkmeSourceItem>(resolve => { resolveCreate = resolve }))
     await openGroup()
-    const input = renderer.root.findByType('input')
+    const input = renderer.root.findAllByType('input').find(input => input.props.type !== 'checkbox')!
     await act(async () => { input.props.onChange({ target: { value: '通知期间创建群聊' } }) })
     const confirm = renderer.root.findAllByType('button')
       .find(button => button.children.includes('确认'))

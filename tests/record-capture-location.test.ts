@@ -6,6 +6,7 @@ import {
   arkmeLocationSettingsAvailable,
   arkmeOpenLocationSettings,
   captureArkmeRecordLocation,
+  captureArkmeRecordInputLocation,
   captureArkmeRecordLocationForSend,
   type ArkmeDesktopLocationBridge,
   type ArkmeLocationPermissionState,
@@ -15,6 +16,19 @@ import {
 function permissionSnapshot(state: ArkmeLocationPermissionState) {
   return { schemaVersion: 1 as const, state }
 }
+
+it('samples input location without a prompt and asks for a fresh low-power single fix', async () => {
+  const denied = locationScope({ state: 'prompt' })
+  await expect(captureArkmeRecordInputLocation(new AbortController().signal, denied.scope)).resolves.toBeUndefined()
+  expect(denied.requestPermission).not.toHaveBeenCalled()
+  expect(denied.getCurrentPosition).not.toHaveBeenCalled()
+  const granted = locationScope({ state: 'granted' })
+  await expect(captureArkmeRecordInputLocation(new AbortController().signal, granted.scope)).resolves.toMatchObject({ latitude: 30.52, longitude: 114.31 })
+  expect(granted.requestPermission).not.toHaveBeenCalled()
+  expect(granted.getCurrentPosition).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), {
+    enableHighAccuracy: false, maximumAge: 0, timeout: 5000,
+  })
+})
 
 function position(): GeolocationPosition {
   return {
