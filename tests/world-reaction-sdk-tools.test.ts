@@ -40,3 +40,21 @@ it('separates reads, archive and explicit writes without importing local reactio
   await invoke(write, input)
   expect(ports.worldReactions).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal))
 })
+
+it('preserves separate notification navigation and command references through public SDK and Tools', async () => {
+  const notification = { id: 'a'.repeat(64), revision: 2, actorUserId: 8, unread: true, recordRef: 'public-content', target: { id: 'version', worldRecordRef: 'reaction-version' }, selections: [] }
+  const page = { items: [notification], has_more: false, after_id: '' }
+  const sdk = createArkmeSdk({ fetchImpl: async (_, init) => {
+    const call = JSON.parse(String(init?.body))
+    return new Response(JSON.stringify({ ok: true, value: call.operation === 'provider.capabilities' ? { contractVersion: ARKME_PROVIDER_CONTRACT_VERSION, features: { worldReactionsV1: true } } : page }), { headers: { 'content-type': 'application/json' } })
+  } })
+  const input = { action: 'notifications' as const, accountKey: 'test:7', limit: 50, include_read: true }
+  const result = await sdk.worldReactions(input)
+  expect(result.items[0]?.recordRef).toBe('public-content')
+  expect(result.items[0]?.target.worldRecordRef).toBe('reaction-version')
+  const ports = { worldReactions: vi.fn(async () => page) }
+  const read = createArkmeCoreToolDefinitions(ports as never).find(tool => tool.name === 'arkme_world_reactions_read')!
+  const output = await read.execute({ request_json: JSON.stringify(input) }, { signal: new AbortController().signal } as never)
+  expect(JSON.stringify(output)).toContain('public-content')
+  expect(ports.worldReactions).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal))
+})

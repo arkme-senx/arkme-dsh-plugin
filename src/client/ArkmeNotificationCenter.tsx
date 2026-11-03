@@ -6,7 +6,7 @@ import { ArkmeNotificationMessage } from './ArkmeNotificationMessage.js'
 import { useNotificationScroll, useNotificationVisibleRead } from './use-notification-viewport.js'
 import { CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
 import conversationCss from './notification-conversation.css?inline'
-import { readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
+import { readWorldReactionNotifications, readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
 import { officialNotifications, useOfficialNotifications } from './official-notification-store.js'
 import type { OfficialNotificationSnapshot } from './official-notification-store.js'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -18,6 +18,7 @@ import type {
   ArkmeAiLetterUnread,
   ArkmeWorldInteractionSummary,
 } from '../types.js'
+import type { WorldReactionNotificationPage } from '../world-reaction-contract.js'
 import type { ReactionNotification } from '../reaction-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -39,6 +40,7 @@ export interface ArkmeNotificationItem {
   unread: boolean
   arrangement?: ArkmeArrangementReminderEvent
   reaction?: ReactionNotification
+  worldReaction?: WorldReactionNotificationPage['items'][number]
   recording?: RecordingWorkflowNotice
   aiLetter?: ArkmeAiLetterItem
   worldInteractionRef?: string
@@ -52,6 +54,7 @@ interface NotificationSnapshot {
   error: string | undefined
   arrangementItems: ArkmeArrangementReminderEvent[]
   worldItems: ArkmeNotificationItem[]
+  worldReactionItems: ArkmeNotificationItem[]
   worldUnreadCount: number
   worldSeenThroughSequence: number
   worldError: string | undefined
@@ -69,6 +72,7 @@ const EMPTY_SNAPSHOT: NotificationSnapshot = {
   error: undefined,
   arrangementItems: [],
   worldItems: [],
+  worldReactionItems: [],
   worldUnreadCount: 0,
   worldSeenThroughSequence: 0,
   worldError: undefined,
@@ -128,6 +132,14 @@ export function reactionItem(item: ReactionNotification): ArkmeNotificationItem 
   }
 }
 
+export function worldReactionItem(item: WorldReactionNotificationPage['items'][number]): ArkmeNotificationItem {
+  const selected = item.selections.at(-1)
+  return { id: `world-reaction:${item.id}:${item.revision}`, kind: 'reaction',
+    title: `${tr('收到世界表态')} · ${selected ? expressionLabel(selected.expression) : tr('表态')}`,
+    sourceLabel: tr('世界'), preview: tr('点击查看世界内容'), atMillis: selected?.at ?? 0,
+    unread: item.unread !== false, worldReaction: item }
+}
+
 function worldItem(item: WorldNotificationInteraction): ArkmeNotificationItem {
   return {
     id: `world:${item.interactionRef}`, kind: 'world',
@@ -156,6 +168,7 @@ class ArkmeNotificationStore {
   private listeners = new Set<() => void>()
   private controller: AbortController | undefined
   private inflight: Promise<void> | undefined
+  private worldReadRevision = 0
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -183,6 +196,7 @@ class ArkmeNotificationStore {
     this.controller = controller
     // Same-account refreshes keep their last projection; another account starts empty.
     const previous = this.snapshot.scope === scope ? this.snapshot : EMPTY_SNAPSHOT
+    const readRevision = this.worldReadRevision
     const operation = (async () => {
       this.publish({
         ...previous,
@@ -192,12 +206,13 @@ class ArkmeNotificationStore {
         worldError: undefined,
         aiError: undefined,
       })
-      const [arrangementsResult, worldSummaryResult, worldNotificationsResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
+      const [arrangementsResult, worldSummaryResult, worldNotificationsResult, worldReactionsResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
         callArkme<ArkmeArrangementReminderPage>('arrangements.reminders.list', {
           unreadOnly: false, limit: 50, offset: 0,
         }, controller.signal, { priority: 'background' }),
         callArkme<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, controller.signal, { priority: 'background' }),
         readWorldNotifications(controller.signal),
+        readWorldReactionNotifications(scope, controller.signal),
         callArkme<ArkmeAiLetterUnread>('ai-letter.unread', undefined, controller.signal, { priority: 'background' }),
         callArkme<ArkmeAiLetterPage>('ai-letter.list', { periodType: 0, cursorStartAt: 0, limit: 20 }, controller.signal, { priority: 'background' }),
       ])
@@ -226,6 +241,13 @@ class ArkmeNotificationStore {
         worldError ??= worldNotificationsResult.reason instanceof Error ? worldNotificationsResult.reason.message : tr('世界互动暂时无法加载')
       }
 
+      // A pre-ACK response must never restore an already-read revision.
+      const readRows = new Map(this.snapshot.worldReactionItems.filter(row => !row.unread && row.worldReaction).map(row => [row.worldReaction!.id, row.worldReaction!.revision]))
+      const worldReactionItems = worldReactionsResult.status === 'fulfilled'
+        ? worldReactionsResult.value.map(item => worldReactionItem(readRevision !== this.worldReadRevision && (readRows.get(item.id) ?? 0) >= item.revision ? { ...item, unread: false } : item))
+        : this.snapshot.worldReactionItems
+      if (worldReactionsResult.status === 'rejected') worldError ??= tr('世界表态通知暂时无法加载')
+
       let aiUnreadCount = this.snapshot.aiUnreadCount
       let aiLatestUnread = this.snapshot.aiLatestUnread
       let aiError: string | undefined
@@ -251,6 +273,7 @@ class ArkmeNotificationStore {
         error,
         arrangementItems,
         worldItems,
+        worldReactionItems,
         worldUnreadCount,
         worldSeenThroughSequence,
         worldError,
@@ -292,6 +315,15 @@ class ArkmeNotificationStore {
       worldSeenThroughSequence: Math.max(sequence, Math.trunc(result.seenThroughSequence)),
       worldItems: this.snapshot.worldItems.map(item => ({ ...item, unread: false })),
     })
+  }
+
+  async markWorldReactionsRead(items: WorldReactionNotificationPage['items'], scope: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted || accountScope() !== scope || this.snapshot.scope !== scope || !items.length) return
+    await callArkme('world.reactions', { action: 'notifications-read', accountKey: scope, items: items.map(({ id, revision }) => ({ id, revision })) }, signal)
+    if (signal.aborted || accountScope() !== scope || this.snapshot.scope !== scope) return
+    this.worldReadRevision++
+    this.publish({ ...this.snapshot, worldReactionItems: this.snapshot.worldReactionItems.map(row =>
+      row.worldReaction && items.some(item => item.id === row.worldReaction!.id && item.revision >= row.worldReaction!.revision) ? { ...row, unread: false } : row) })
   }
 
   async markAiRead(letterIds: readonly string[], scope = this.snapshot.scope, signal?: AbortSignal): Promise<void> {
@@ -337,9 +369,10 @@ function useNotificationItems(): {
     ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
     ...snapshot.arrangementItems.map(arrangementItem),
     ...snapshot.worldItems,
+    ...snapshot.worldReactionItems,
     ...snapshot.aiItems,
     ...reactionItems.map(reactionItem),
-  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
+  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems, snapshot.worldReactionItems])
   return { scope, snapshot, official, recording, reactionItems, items }
 }
 
@@ -440,6 +473,11 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
         if (reactionNotifications.forHistory(scope).some(row => row.unread !== false && batch.some(item => item.id === row.id && item.revision === row.revision))) throw new Error('Receipt pending')
       })
     }
+    const worldReactions = visible.flatMap(item => item.worldReaction && item.unread ? [item.worldReaction] : [])
+    for (let offset = 0; offset < worldReactions.length; offset += 50) {
+      const batch = worldReactions.slice(offset, offset + 50)
+      submit(batch.map(item => `world-reaction:${item.id}:${item.revision}`), () => arkmeNotificationStore.markWorldReactionsRead(batch, scope, signal))
+    }
     // World exposes a conversation-level watermark, not per-message receipts.
     // Only viewing its newest loaded message may advance that captured server cursor.
     const newestWorld = snapshot.worldItems[0]
@@ -455,7 +493,11 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     if (preview || accountScope() !== scope) return
     setBusyId(item.id); setActionError('')
     try {
-      if (item.kind === 'world' && item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
+      if (item.worldReaction) {
+        if (!item.worldReaction.recordRef) throw new Error(tr('这条世界内容暂时无法打开，请刷新通知'))
+        arkmeUi.showWorldInteraction(item.worldReaction.recordRef)
+      }
+      else if (item.kind === 'world' && item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
       else if (item.reaction && scope) {
         const reaction = item.reaction
         const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === reaction.sourceKey) ?? reaction.source
@@ -500,7 +542,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     {reactionNotifications.historyError && (activeKind === 'all' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr(reactionNotifications.historyError)} <button onClick={() => { void reactionNotifications.refreshHistory() }}>{tr('重试')}</button></div>}
     {official.error && (activeKind === 'all' || activeKind === 'official') && <div role="status" className="arkme-notification-status">{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error && (activeKind === 'all' || activeKind === 'arrangement') && <div role="alert" className="arkme-notification-status">{snapshot.error}</div>}
-    {snapshot.worldError && (activeKind === 'all' || activeKind === 'world') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
+    {snapshot.worldError && (activeKind === 'all' || activeKind === 'world' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
     {snapshot.aiError && (activeKind === 'all' || activeKind === 'ai') && <div role="status" className="arkme-notification-status">{tr('AI 来信暂时无法加载')}</div>}
     {filterLoading && filteredItems.length === 0 && <div role="status" className="arkme-notification-status">{tr('正在加载通知…')}</div>}
     <div className="arkme-notification-body">

@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useReactionHistory } from '../src/client/use-reaction-history.js'
 const remote = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: remote.call }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (op: string, ...args: unknown[]) => op === 'world.reactions' ? Promise.resolve({ items: [], has_more: false }) : remote.call(op, ...args) }))
 let state!: ReturnType<typeof useReactionHistory>
 let view: ReactTestRenderer | undefined
 function Harness({ scope = 'test:7', start = 1, end = 100, refreshVersion = 0 }: { scope?: string; start?: number; end?: number; refreshVersion?: number }) {

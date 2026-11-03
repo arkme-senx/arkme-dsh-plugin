@@ -85,3 +85,14 @@ it('returns sealed history targets and own state without hydrating inaccessible 
   expect(JSON.stringify(result)).not.toMatch(/must not leak|world-only|old-version|record_uid/)
   expect(await owner.resolve(result.items[0]!.target)).toEqual(wire)
 })
+
+it('exposes a separate sealed navigation reference through the common World notification owner', async () => {
+ const {owner,runtime}=setup(), navigation=vi.fn(async()=> 'sealed-public-navigation')
+ const post=vi.fn(async()=>({contract:WORLD_REACTION_CONTRACT,items:[{id:'a'.repeat(64),revision:1,actor_user_id:8,unread:true,target:{record_uid:'record',world_context_uid:'ctx',content_revision:'v1'},selections:[]}],has_more:false,after_id:''}))
+ const service=new ReactionService({...runtime,authenticatedPost:post} as never,t=>owner.resolve(t),navigation,undefined,undefined,undefined,{prefix:WORLD_REACTION_PREFIX,contract:WORLD_REACTION_CONTRACT,reference:t=>owner.reference(t)})
+ const page=await service.request({action:'notifications',accountKey:'test:7',include_read:true,limit:50}) as import('../src/world-reaction-contract.js').WorldReactionNotificationPage
+ expect(page.items[0]?.recordRef).toBe('sealed-public-navigation')
+ expect(navigation).toHaveBeenCalledExactlyOnceWith('record')
+ expect(page.items[0]?.target.worldRecordRef).not.toBe(page.items[0]?.recordRef)
+ expect(JSON.stringify(page)).not.toContain('record_uid')
+})

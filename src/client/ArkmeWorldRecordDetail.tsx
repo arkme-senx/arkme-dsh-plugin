@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import type { ArkmeWorldFeedItem } from '../types.js'
+import type { ArkmeWorldAuthorLabel, ArkmeWorldFeedItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
@@ -26,6 +26,7 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
   const [state, setState] = useState<{ ref: string; item: ArkmeWorldFeedItem; loading: boolean; error?: string }>({ ref: seed.recordRef, item: seed, loading: true })
   useEffect(() => {
     if (account !== owner.current) return
+    let labelsController: AbortController | undefined
     let active: AbortController | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     let currentItem = seed
@@ -35,6 +36,7 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
       if (active || disposed) return
       const controller = new AbortController()
       active = controller
+      labelsController?.abort()
       const fail = (message: string) => {
         invalidateWorldImages([...seed.imageRefs, ...currentItem.imageRefs])
         // Reuse the shared authority owner so mounted feed cards also discard
@@ -54,6 +56,15 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
           // Keep the selected capability and composer mounted while refreshing.
           currentItem = { ...item, recordRef: seed.recordRef, authorName: item.teamAuthor ? item.authorName : seed.authorName }
           setState({ ref: seed.recordRef, item: currentItem, loading: false })
+          if (!item.teamAuthor) {
+            const labels = new AbortController(); labelsController = labels
+            void callArkme<ArkmeWorldAuthorLabel[]>('world.author-labels', { authorRefs: [item.authorRef ?? item.recordRef] }, labels.signal)
+              .then(values => {
+                const label = values.find(value => value.authorRef === (item.authorRef ?? item.recordRef))
+                if (labels.signal.aborted || disposed || !label) return
+                setState(current => ({ ...current, item: { ...current.item, authorName: label.authorName, memberType: label.memberType } }))
+              }).catch(() => {})
+          }
         })
         .catch(error => {
           if (!controller.signal.aborted) fail(error instanceof Error ? error.message : tr('暂时无法读取这条公开内容'))
@@ -72,11 +83,16 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
       window.removeEventListener('arkme-reaction-policy-changed', revalidate)
       clearTimeout(timer)
       active?.abort()
+      labelsController?.abort()
     }
   }, [seed.recordRef, account, attempt])
+  useEffect(() => {
+    if (seed.memberType === undefined || seed.teamAuthor) return
+    setState(current => current.ref === seed.recordRef ? { ...current, item: { ...current.item, memberType: seed.memberType } } : current)
+  }, [seed.recordRef, seed.memberType])
   if (account !== owner.current) return null
   const view = state.ref === seed.recordRef ? state : { item: seed, loading: true, error: undefined }
-  const item = { ...view.item, authorName: view.item.teamAuthor ? view.item.authorName : seed.authorName, memberType: view.item.teamAuthor ? undefined : seed.memberType ?? view.item.memberType }
+  const item = { ...view.item, memberType: view.item.teamAuthor ? undefined : view.item.memberType }
   const authorAction = (item.authorRef || item.teamAuthor) && onOpenAuthor ? () => onOpenAuthor(item) : undefined
   const authorButton = { padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left' as const, cursor: 'pointer' }
   const avatar = renderAvatar(item)

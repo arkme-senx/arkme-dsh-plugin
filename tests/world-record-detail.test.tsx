@@ -143,7 +143,7 @@ describe('World public detail interactions', () => {
     await click(detail()!.querySelector('[role="alert"] button')!)
     await act(async () => pending.get(first.recordRef)!.resolve(first))
     expect(detail()!.textContent).toContain(first.textContent)
-    expect(read.mock.calls.map(([operation]) => operation).filter(operation => !['world.record.read', 'world.replies', 'world.reactions.prepare', 'team.world', 'team.app.teams'].includes(operation))).toEqual([])
+    expect(read.mock.calls.map(([operation]) => operation).filter(operation => !['world.record.read', 'world.author-labels', 'world.replies', 'world.reactions.prepare', 'team.world', 'team.app.teams'].includes(operation))).toEqual([])
   })
 
   it('aborts and hides the old detail immediately when the signed-in account changes', async () => {
@@ -174,4 +174,33 @@ describe('World public detail interactions', () => {
     await render([{ ...first, memberType: 'free' }])
     expect(detail()!.querySelector('[data-arkme-membership]')).toBeNull()
   })
+})
+
+it('updates the existing detail star from current membership instead of a stale feed badge, including expiry', async () => {
+  let memberType = 'svip'
+  const original = read.getMockImplementation()!
+  read.mockImplementation(async (op, params, signal) => op === 'world.author-labels'
+    ? [{ authorRef: 'author-a', authorName: '我的备注', memberType }] : original(op, params, signal))
+  await render([{ ...first, memberType: 'vip' }]); await click(card(first.recordRef))
+  await act(async () => pending.get(first.recordRef)!.resolve(first))
+  expect(detail()!.querySelector('[data-arkme-membership="svip"]')).not.toBeNull()
+  for (const next of ['free', 'unknown', 'vip']) {
+    memberType = next
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await act(async () => pending.get(first.recordRef)!.resolve(first))
+    expect(detail()!.querySelector('[data-arkme-membership]')?.getAttribute('data-arkme-membership')).toBe(next === 'vip' ? 'vip' : undefined)
+  }
+})
+it('aborts delayed membership hydration when the detail closes', async () => {
+  let resolve!: (value: unknown) => void, signal!: AbortSignal
+  const original = read.getMockImplementation()!
+  read.mockImplementation(async (op, params, s) => op === 'world.author-labels'
+    ? new Promise(done => { resolve = done; signal = s! }) : original(op, params, s))
+  await render(); await click(card(first.recordRef))
+  await act(async () => pending.get(first.recordRef)!.resolve(first))
+  expect(detail()!.textContent).toContain(first.textContent)
+  await click(detail()!.querySelector('[aria-label="关闭动态详情"]')!)
+  expect(signal.aborted).toBe(true)
+  await act(async () => resolve([{ authorRef: 'author-a', memberType: 'svip' }]))
+  expect(detail()).toBeNull()
 })
