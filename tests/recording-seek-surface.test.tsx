@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/api.js')>(), callArkme: mocks.callArkme,
 }))
+import { recordingDayCache } from '../src/client/recordings/recording-day-cache.js'
 import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { ArkmeRecordingSpeakerEditor } from '../src/client/recordings/ArkmeRecordingSpeakerEditor.js'
@@ -31,6 +32,7 @@ describe('recording surface selection and real playback controller', () => {
   const audios: FakeAudio[] = []
   const timeline = () => renderer.root.findByType(ArkmeRecordingTimeline)
   beforeEach(async () => {
+    recordingDayCache.clear()
     // Keep another past day selectable in the current month, even when run on the 1st.
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 15, 12))
@@ -87,7 +89,8 @@ describe('recording surface selection and real playback controller', () => {
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42001 }); await tick() })
     expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(1)
     expect(timeline().props.loading).toBe(true)
-    expect(timeline().props.dailyMetrics).toBeUndefined()
+    expect(timeline().props.dailyMetrics).toMatchObject({ archiveBytes: 123 })
+    expect(timeline().props.textCountLoading).toBe(true)
     await act(async () => { remaining.resolve({viewRef:first.viewRef,items:[...first.items,...last.items].map(({text,...item}:any)=>item),metrics:{...last.dailyMetrics,textCount:9,speakerTextCounts:{'person-0':3,'person-1':3,'person-2':3}}}); await tick() })
     expect(renderer.root.findAllByType(ArkmeRecordingTranscriptRow)).toHaveLength(1)
     expect(timeline().props.items.map((item: any) => item.speakerKey)).toEqual(['person-0', 'person-1', 'person-2'])

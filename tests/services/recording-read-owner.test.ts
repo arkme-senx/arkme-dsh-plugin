@@ -58,7 +58,75 @@ function fixture(rows: Row[][]) {
 
 const rows = (count: number, phase = 0): Row[] => Array.from({ length: count }, (_, i) => ({ body: `原文-${phase}-${i}`, offset: 2 * i + phase, child: phase + 100, ordinal: i }))
 
+function enableMetadata(f: ReturnType<typeof fixture>, stagger = false) {
+  const post = vi.mocked(f.runtime.authenticatedAudioPost), original = post.getMockImplementation()!
+  const adjust = (value: unknown, body: Record<string, unknown>) => {
+    const raw = value as Record<string, unknown>
+    if (stagger && body.recording_uid) raw.start_at = start + (parseInt(String(body.recording_uid), 16) - 1) * 10_000
+    return raw
+  }
+  post.mockImplementation(async (path, body, ...rest) => {
+    if (path.endsWith('/transcript/metadata')) {
+      const items = await Promise.all((body.recording_uids as string[]).map(async recording_uid => {
+        const raw = adjust(await original('/api/v1/audio/recordings/transcript/query', { ...body, recording_uid, limit: 1 }, ...rest), { recording_uid })
+        delete raw.next_page_cursor
+        return { ...raw, speakers: [], utterances: [], has_more: false }
+      }))
+      return { items }
+    }
+    const raw = adjust(await original(path, body, ...rest), body)
+    if (path.endsWith('/recordings/query')) {
+      raw.transcript_metadata_batch = true
+      if (stagger) for (const [index, item] of (raw.items as Record<string, unknown>[]).entries()) {
+        item.start_at = start + index * 10_000; item.end_at = start + (index + 1) * 10_000
+      }
+    }
+    return raw
+  })
+  return post
+}
+
 describe('RecordingReadOwner', () => {
+  it('reads metrics without any text-page request when supported, and does not scan bodies on an older owner', async () => {
+    const f = fixture([rows(300), rows(300, 1)]), post = enableMetadata(f)
+    expect(await f.owner.dayMetrics(window, session)).toMatchObject({ textCount: 0 })
+    expect(post.mock.calls.map(([path]) => path.split('/').at(-1))).toEqual(['query', 'metadata'])
+    const old = fixture([rows(300)])
+    expect(await old.owner.dayMetrics(window, session)).toBeUndefined()
+    expect(old.requests).toHaveLength(1)
+  })
+  it('uses three upstream reads for a 17-recording first page and two for continuation when batch metadata is supported', async () => {
+    const f = fixture(Array.from({ length: 17 }, (_, i) => rows(300, i))), post = enableMetadata(f, true)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    expect(first.items).toHaveLength(100)
+    expect(post.mock.calls.map(([path]) => path.split('/').at(-1))).toEqual(['query', 'metadata', 'query'])
+    post.mockClear()
+    const second = await f.owner.dayPage(window, 'primary', session, first.next)
+    expect(second.items).toHaveLength(100)
+    expect(second.items[0]!.index).toBe(100)
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[1]![1]).toMatchObject({ page_cursor: '100' })
+  })
+
+  it('keeps overlapping recordings in exact order with batch metadata and rejects an unloaded recording revision change', async () => {
+    const f = fixture([rows(250), rows(250, 1)])
+    enableMetadata(f)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    expect(vi.mocked(f.runtime.authenticatedAudioPost).mock.calls.filter(([path]) => path.endsWith('/transcript/query')).slice(0, 2).map(([, body]) => body.limit)).toEqual([1, 1])
+    const all = [...first.items]
+    let cursor = first.next
+    while (cursor) { const next = await f.owner.dayPage(window, 'primary', session, cursor); all.push(...next.items); cursor = next.next }
+    expect(all.map(item => item.startAt)).toEqual(Array.from({ length: 500 }, (_, i) => start + i))
+    f.versions[1] = 'b'.repeat(64)
+    await expect(f.owner.dayPage(window, 'primary', session, first.next)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('preserves long Unicode fragments and whitespace on the batch metadata path', async () => {
+    const body = `  ${'汉🎙'.repeat(15000)} 尾部\n`, f = fixture([[{ body, offset: 1, child: 100, ordinal: 7 }]])
+    enableMetadata(f)
+    const complete = await f.owner.completeDay(window, 'primary', session)
+    expect(complete.items).toHaveLength(1); expect(complete.items[0]!.text).toBe(body)
+  })
   it('builds a compact complete overview in linear reads instead of rechecking all recordings on every merged page', async () => {
     const f = fixture([rows(250), rows(250, 1)])
     const first = await f.owner.dayPage(window, 'primary', session)

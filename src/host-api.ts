@@ -1678,15 +1678,20 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.entities.feedback.undo': return await service.undoRecordingEntityFeedback({
       undoRef: stringParam(params, 'undoRef'), requestId: stringParam(params, 'requestId'),
     }, requestSignal)
-    case 'recordings.day': return params.window === undefined ? await service.recordingDay(numberParam(params, 'dateStamp', Number.NaN), requestSignal) : await service.recordingDay(
-      numberParam(params, 'dateStamp', Number.NaN), requestSignal,
-      params.window === undefined ? undefined : {
+    case 'recordings.day': {
+      const window = params.window === undefined ? undefined : {
         dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
         endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
         timeZone: stringParam(objectValue(params.window), 'timeZone'),
         date: stringParam(objectValue(params.window), 'date'),
-      },
-    )
+      }
+      const dateStamp = numberParam(params, 'dateStamp', Number.NaN)
+      if (params.part !== undefined) {
+        if (typeof params.part !== 'string' || !['transcript', 'coverage', 'metrics', 'summary', 'timeline'].includes(params.part)) throw new ArkmePluginError('recording-day-part-invalid', '录音读取分区无效', false, 400)
+        return await service.recordingDayPart(dateStamp, params.part as import('./types.js').ArkmeRecordingDayPart, requestSignal, window)
+      }
+      return window === undefined ? await service.recordingDay(dateStamp, requestSignal) : await service.recordingDay(dateStamp, requestSignal, window)
+    }
     case 'recordings.strategies': {
       if (params.action === 'start' || params.action === 'preference-set') throw new ArkmePluginError('recording-strategy-write-required', '请使用策略处理入口', false, 400)
       return service.recordingStrategies(params, requestSignal)

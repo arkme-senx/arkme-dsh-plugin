@@ -34,7 +34,7 @@ export function useRecordingDayOverview(page: ArkmeRecordingTranscriptPage | und
     setResult(undefined)
     const pending = first.nextCursor ? callArkme<RecordingDayOverview & { viewRef: string }>('recordings.day.overview', {
       dateStamp: first.dateStamp, viewRef: first.viewRef, cursor: first.nextCursor,
-    }, controller.signal).then(value => {
+    }, controller.signal, { priority: 'background' }).then(value => {
       if (value.viewRef !== first.viewRef || !Array.isArray(value.items)) throw new Error('全天概览版本不匹配，请重新读取')
       return value
     }) : readRecordingDayOverview(first, async () => { throw new Error('完整转写不应继续翻页') }, controller.signal)

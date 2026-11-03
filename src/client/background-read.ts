@@ -13,6 +13,7 @@ export const backgroundUiReads = new ArkmeRequestCoordinator({
 const backgroundReadOperations = new Set([
   'record.thoughts.query', 'chat.thoughts.query',
   'recordings.totals.index', 'recordings.totals.bucket',
+  'recordings.day.overview',
   'arrangements.reminders.list', 'world.interactions.summary', 'world.mine', 'world.notification-sources',
   'world.interactions.list', 'ai-letter.unread', 'ai-letter.list',
   'official-notifications.summary', 'official-notifications.list',
