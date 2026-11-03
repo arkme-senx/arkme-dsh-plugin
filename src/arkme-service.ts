@@ -434,7 +434,8 @@ export class ArkmeService {
   }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
-      arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal) }).read(expectedScope, signal)
+      arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
+      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal)
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService
@@ -614,7 +615,7 @@ export class ArkmeService {
   }
   async statisticsRead(kind: 'detail' | 'active' | 'long', input: unknown, signal?: AbortSignal) { return this.statistics.read(kind, input, signal) }
 
-  async exploreSettings(module: unknown, signal?: AbortSignal) { return this.explore.settings(module, signal) }
+  async exploreSettings(module: unknown, signal?: AbortSignal, options?: {part?: unknown; expectedAccountScope?: unknown}) { return this.explore.settings(module, signal, options) }
   async saveExploreSettings(input: Record<string, unknown>, signal?: AbortSignal) { return this.explore.saveSettings(input, signal) }
   async explorePage(query: ExploreQuery, signal?: AbortSignal) { return this.explore.page(query, signal) }
   async exploreDetail(ref: string, cursor?: string, signal?: AbortSignal, part?: import('./explore-contract.js').ExploreDetailPart) { return this.explore.detail(ref, cursor, signal, part) }
