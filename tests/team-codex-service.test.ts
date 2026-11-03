@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
+import { responseAnnotationPrompt } from './fixtures/codex-prompt.js'
+import { codexPromptDisplayText } from '../src/team-codex-prompt-text.js'
+import { codexSelectionSnapshot, codexEventKey } from '../src/client/redesign/contacts/codex-message-actions.js'
 
 const teamRef = `team_v1_${'a'.repeat(32)}`
 const member: ArkmeTeamMember = { userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1 }
@@ -58,6 +61,18 @@ function fixture() {
 }
 
 describe('local Codex team journal and real bridge helper', () => {
+  it('keeps collected annotation data intact and verifies exports against its display projection',async()=>{
+    const f=fixture(),invite=await f.service.invite(teamRef),raw=responseAnnotationPrompt()
+    f.run(['connect',invite.id]);f.record('UserPromptSubmit',{prompt:raw});await f.service.tick()
+    const task=(await f.service.state(teamRef)).tasks[0]!
+    const page=await f.service.events(teamRef,invite.id),input=page.items.find(e=>e.kind==='UserPromptSubmit')!
+    expect(input.text).toBe(raw)
+    const snapshot=codexSelectionSnapshot(teamRef,task,[input],new Set([codexEventKey(input)]))
+    expect(snapshot.messages[0]!.text).toBe(codexPromptDisplayText(raw))
+    expect((await f.service.prepareExport(teamRef,invite.id,undefined,snapshot)).messages).toEqual(snapshot.messages)
+    await expect(f.service.prepareExport(teamRef,invite.id,undefined,{...snapshot,messages:snapshot.messages.map(message=>({...message,text:'伪造正文'}))})).rejects.toThrow()
+    expect((await f.service.events(teamRef,invite.id)).items[0]!.text).toBe(raw)
+  })
   it('a new question recovers the previous missing final without changing the new turn or trusted Hook commands',async()=>{
     const f=fixture(),invite=await f.service.invite(teamRef)
     f.run(['connect',invite.id]);f.record();await f.service.tick()
@@ -222,10 +237,23 @@ describe('local Codex team journal and real bridge helper', () => {
     expect((await f.service.state(teamRef)).tasks[0]).toMatchObject({eventCount:56,state:'finished'})
     const newest=await f.service.events(teamRef,invitation.id)
     expect(newest.items.map(e=>e.text)).toEqual(Array.from({length:50},(_,i)=>`text_${i+6}`))
-    const older=await f.service.events(teamRef,invitation.id,newest.nextBefore)
+    const older=await f.service.events(teamRef,invitation.id,undefined,undefined,newest.nextCursor)
     expect(older.items.map(e=>e.text)).toEqual(Array.from({length:6},(_,i)=>`text_${i}`))
-    expect(older.nextBefore).toBeUndefined()
+    expect(older.nextCursor).toBeUndefined()
     expect(readdirSync(join(folder,'inbox'))).toEqual([])
     await expect(f.service.events(teamRef,invitation.id,0)).rejects.toMatchObject({httpStatus:400})
   })
+})
+
+it('retains captured local commentary as a first-class message while collection is paused',async()=>{
+ const f=fixture(),invite=await f.service.invite(teamRef)
+ f.run(['connect',invite.id]);f.record();await f.service.tick()
+ const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+ const event=db.prepare('SELECT at FROM events WHERE connection_id=? LIMIT 1').get(invite.id)!
+ db.prepare('INSERT INTO codex_live_messages(scope,turn,id,kind,text,at,truncated,source_order) VALUES(?,?,?,?,?,?,0,?)').run(JSON.stringify([11,'','task_current_123']),'turn_123','saved-commentary','commentary','已经保存的过程回复',Number(event.at)+1,10)
+ db.close()
+ await f.service.change(teamRef,invite.id,'pause')
+ const page=await f.service.events(teamRef,invite.id)
+ expect(page.items.some(item=>item.kind==='Progress'&&item.eventId==='saved-commentary'&&item.text==='已经保存的过程回复')).toBe(true)
+ expect(page.items.every(item=>!item.localProgress)).toBe(true)
 })

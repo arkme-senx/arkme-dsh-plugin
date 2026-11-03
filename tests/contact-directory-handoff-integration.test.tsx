@@ -55,7 +55,7 @@ function productionSeats(): Map<string, ComponentType<Record<string, unknown>>> 
     layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
     locale: createClientLocaleStub(),
     effect: (factory: () => unknown, label: string) => {
-      if (label.includes('official settings sidebar') || label.includes('conversation seats')) factory()
+      if (label.includes('permanent Arkme sidebar') || label.includes('conversation seats')) factory()
       return () => undefined
     },
   } as never)

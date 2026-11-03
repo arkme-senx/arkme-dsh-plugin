@@ -1,5 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+原句待定位，可查看原通话|Quote not located. You can open the original call.
+原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
+通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
+通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
+即我设置|Arkme settings
+即我设置分类|Arkme settings categories
+语言|Language
+外观|Appearance
+浅色|Light
+深色|Dark
+跟随系统|System
 长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
@@ -2049,6 +2060,7 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 查看录音|View recordings
 查看总结|View summary
 查看时间轴|View timeline
+图片暂不可读，请稍后重试|Images are temporarily unavailable. Please try again later.
 暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
 表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
 通知操作失败，请重试|Notification action failed. Try again.

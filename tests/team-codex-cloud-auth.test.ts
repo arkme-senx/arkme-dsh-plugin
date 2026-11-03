@@ -36,8 +36,9 @@ describe('team cloud JWT transport',()=>{
     const f=fixture();await f.call(11,path)
     expect(f.runtime.postDirect).toHaveBeenCalledWith('https://team.jotmo.cc',path,{},'test-jwt',[200],expect.any(AbortSignal),true)
     f.target.config.environment='test'
-    await expect(f.call(11,path)).rejects.toThrow('当前环境未配置')
-    expect(f.runtime.postDirect).toHaveBeenCalledTimes(1)
+    await f.call(11,path)
+    expect(f.runtime.postDirect).toHaveBeenLastCalledWith('https://jotmo-team.senguo.me',path,{},'test-jwt',[200],expect.any(AbortSignal),true)
+    expect(f.runtime.postDirect).toHaveBeenCalledTimes(2)
   })
   it('uses the login JWT only on the exact team service allowlist',async()=>{
     const f=fixture();await f.call()
@@ -45,7 +46,7 @@ describe('team cloud JWT transport',()=>{
     await expect(f.call(11,'https://elsewhere.invalid')).rejects.toThrow('当前环境未配置')
     expect(f.runtime.postDirect).toHaveBeenCalledTimes(1)
     f.target.config.environment='test'
-    await expect(f.call()).rejects.toThrow('当前环境未配置')
+    await f.call();expect(f.runtime.postDirect.mock.calls.at(-1)?.[0]).toBe('https://jotmo-team.senguo.me')
   })
   it('refreshes an expired JWT through the existing owner runtime and retries once',async()=>{
     const f=fixture()

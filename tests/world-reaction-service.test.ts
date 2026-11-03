@@ -35,7 +35,7 @@ describe('isolated World reaction owner adapter', () => {
   })
   it('rejects missing markers, mixed identities and content without an authoritative version', async () => {
     for (const reply of [{ ...prepared, contract: undefined }, { ...prepared, items: [{ ...prepared.items[0], record_uid: 'other' }] }, { ...prepared, items: [{ ...prepared.items[0], content_revision: '' }] }]) {
-      await expect(setup(reply).owner.prepare('test:7', ['opaque-world'])).rejects.toThrow('尚未完成对接')
+      await expect(setup(reply).owner.prepare('test:7', ['opaque-world'])).rejects.toMatchObject({ code: 'world-reactions-contract-invalid' })
     }
     const { owner, resolve } = setup()
     await expect(owner.prepare('test:8', ['opaque-world'])).rejects.toThrow('账号')
@@ -72,4 +72,27 @@ describe('isolated World reaction owner adapter', () => {
     post.mockResolvedValue({ items: [] } as never)
     await expect(service.request({ action: 'query', accountKey: 'test:7', targets: [target] })).rejects.toMatchObject({ code: 'world-reactions-contract-invalid' })
   })
+})
+
+it('returns sealed history targets and own state without hydrating inaccessible original content', async () => {
+  const { owner, runtime } = setup()
+  const wire = { record_uid: 'record', world_context_uid: 'world-only', content_revision: 'old-version' }
+  const hydrate = vi.fn(), post = vi.fn(async () => ({ contract: WORLD_REACTION_CONTRACT, items: [{ event_uid: 'a'.repeat(64), target: wire, expression: { text: '赞' }, active: true, at: 10, restricted: true, text: 'must not leak', state: { revision: 4, selections: [] } }], has_more: false }))
+  const service = new ReactionService({ ...runtime, authenticatedPost: post } as never, t => owner.resolve(t), undefined, undefined, hydrate, undefined, { prefix: WORLD_REACTION_PREFIX, contract: WORLD_REACTION_CONTRACT, reference: t => owner.reference(t) })
+  const result = await service.request({ accountKey: 'test:7', action: 'history', start_at: 1, end_at: 20, limit: 50 }) as import('../src/world-reaction-contract.js').WorldReactionHistoryPage
+  expect(hydrate).not.toHaveBeenCalled()
+  expect(result.items[0]).toMatchObject({ restricted: true, state: { revision: 4 } })
+  expect(JSON.stringify(result)).not.toMatch(/must not leak|world-only|old-version|record_uid/)
+  expect(await owner.resolve(result.items[0]!.target)).toEqual(wire)
+})
+
+it('exposes a separate sealed navigation reference through the common World notification owner', async () => {
+ const {owner,runtime}=setup(), navigation=vi.fn(async()=> 'sealed-public-navigation')
+ const post=vi.fn(async()=>({contract:WORLD_REACTION_CONTRACT,items:[{id:'a'.repeat(64),revision:1,actor_user_id:8,unread:true,target:{record_uid:'record',world_context_uid:'ctx',content_revision:'v1'},selections:[]}],has_more:false,after_id:''}))
+ const service=new ReactionService({...runtime,authenticatedPost:post} as never,t=>owner.resolve(t),navigation,undefined,undefined,undefined,{prefix:WORLD_REACTION_PREFIX,contract:WORLD_REACTION_CONTRACT,reference:t=>owner.reference(t)})
+ const page=await service.request({action:'notifications',accountKey:'test:7',include_read:true,limit:50}) as import('../src/world-reaction-contract.js').WorldReactionNotificationPage
+ expect(page.items[0]?.recordRef).toBe('sealed-public-navigation')
+ expect(navigation).toHaveBeenCalledExactlyOnceWith('record')
+ expect(page.items[0]?.target.worldRecordRef).not.toBe(page.items[0]?.recordRef)
+ expect(JSON.stringify(page)).not.toContain('record_uid')
 })

@@ -23,7 +23,7 @@ export function recordingInputDurationLabel(millis: number): string {
   return tr('{hours}小时{minutes}分{seconds}秒', { hours: Math.floor(minutes / 60), minutes: minutes % 60, seconds: seconds % 60 })
 }
 
-export function RecordingDailyMetrics({metrics,loading=false,localPending=false,children}:{metrics?:ArkmeRecordingDailyMetrics | undefined;loading?:boolean;localPending?:boolean;children?:ReactNode}) {
+export function RecordingDailyMetrics({metrics,loading=false,textCountLoading=false,localPending=false,children}:{metrics?:ArkmeRecordingDailyMetrics | undefined;loading?:boolean;textCountLoading?:boolean;localPending?:boolean;children?:ReactNode}) {
   useArkmeLocale()
   const storage = metrics?.storage
   const incomplete = storage?.state !== 'ready' || localPending
@@ -39,7 +39,7 @@ export function RecordingDailyMetrics({metrics,loading=false,localPending=false,
   return <div aria-label={tr('当天录音统计')} style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'4px 12px',fontSize:11,lineHeight:'18px',color:arkmeTheme.secondary}}
     >
     <span tabIndex={0} title={loading ? undefined : recordingStorageDetails(storage)}>{tr('云端录音存储 {size}',{size:loading ? '—' : bytes})}</span>
-    <span>{tr('转写 {count} 字',{count:loading || !metrics ? '—' : new Intl.NumberFormat(arkmeIntlLocale()).format(metrics.textCount)})}</span>
+    <span>{textCountLoading ? tr('全天字数统计中…') : tr('转写 {count} 字',{count:loading || !metrics ? '—' : new Intl.NumberFormat(arkmeIntlLocale()).format(metrics.textCount)})}</span>
     <span tabIndex={0} title={tr('统计你上传的录音实际送入系统转写模型的音频，包含输入窗口中的静音和已记录重试，不包含豆包。历史计量缺失表示转写可能已完成，但当时没有留下可用的输入时长记录；需要云端补齐，不按文字或录音总时长冒充实测值。')} style={{whiteSpace:'nowrap'}}>{tr('转写输入时长 {duration}',{duration:loading ? '—' : duration})}</span>
     {children}
     {!loading && ((storage?.pendingCount ?? 0) > 0 || (metrics?.asrInputPendingCount ?? 0) > 0 || localPending) && <span>{tr('处理中，统计待更新')}</span>}

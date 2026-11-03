@@ -49,6 +49,7 @@ export function ArkmeMemberProfileCard(props: {
   hideSend?: boolean
   showTopicNickname?: boolean
   busy: boolean
+  closeWhileBusy?: boolean
   loading?: boolean
   pending?: boolean
   accountName?: string
@@ -118,7 +119,7 @@ export function ArkmeMemberProfileCard(props: {
     accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef} avatarFallback={props.member.avatarFallback}
     imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
     refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
-    busy={props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
+    busy={props.busy} closeWhileBusy={props.closeWhileBusy === true} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
     onContactAsTeam={team} onWorld={() => { void world() }} browserUrl={props.browserUrl}
     onRefresh={props.onRefresh ?? (target ? () => { if (profileReadBusy.current) return; profileReadBusy.current = true; setProfileRefreshing(true); setError(''); setRevision(value => value + 1) } : undefined)} />

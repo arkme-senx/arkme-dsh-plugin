@@ -6,6 +6,7 @@ import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
 import { recordingSourceLocalDate } from '../arrangement-recording-source.js'
+import conversationCss from './conversation-arrangements.css?inline'
 import { tr } from './locale.js'
 import { useArrangementSourceQuotes } from './arrangement-source-quotes.js'
 
@@ -28,13 +29,15 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
   const sourceScope=JSON.stringify(sources.map(e=>[e.id,e.kind,e.role,e.canOpen]))
   useEffect(()=>{setTarget(undefined);setPending('');setError('');setFailedRequest(undefined);setPreferredId('');setUnavailableCount(0);setOriginal(false);return ()=>{request.current?.abort()}},[arrangementRef,sourceScope])
   useEffect(()=>{
-    if(target?.kind!=='call') return
-    const candidates=target.detail.transcriptSegments.filter(s=>target.startMillis!==undefined ? s.startMillis===target.startMillis : target.quote.trim()!=='' && s.text.includes(target.quote.trim()))
+    if(target?.kind!=='call' || (target.quoteState && target.quoteState !== 'exact')) return
+    const candidates=target.detail.transcriptSegments.filter(s=>target.quote.trim()!=='' && s.text.includes(target.quote.trim()) && (target.startMillis===undefined || s.startMillis===target.startMillis))
     if(candidates.length!==1) return
     const node=[...(callContainer.current?.querySelectorAll<HTMLElement>('[data-arkme-call-utterance]')??[])].find(el=>el.dataset.arkmeCallUtterance===candidates[0]!.segmentId)
     node?.scrollIntoView({block:'center'}); if(node) {node.style.outline='2px solid var(--dsw-alias-border-l2, #b3cdbd)';node.style.borderRadius='8px'}
   },[target])
   const initial=sources.filter(e=>e.role==='initial'), supplementary=sources.filter(e=>e.role==='supplement'), related=sources.filter(e=>e.role==='related')
+  const relatedConversations = related.filter(e => { const q=quotes.quote(e.id); return q.state==='ready' && q.conversation })
+  const otherRelated = related.filter(e => !relatedConversations.includes(e))
   const primary=initial.find(e=>e.id===preferredId&&e.canOpen)??initial.find(e=>e.canOpen)??initial[0]
   async function open(e:ArkmeArrangementEvidence,alternatives=false) {
     request.current?.abort(); const controller=new AbortController(); request.current=controller; setPending(e.id); setError(''); setFailedRequest(undefined); setUnavailableCount(0)
@@ -56,7 +59,7 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
         if(controller.signal.aborted) return
         setPreferredId(candidate.id);setUnavailableCount(unavailable)
         if(value.kind==='audio_summary') {onNavigate?.(); arkmeUi.showRecordingSummaryTarget(recordingSourceLocalDate({kind:'daily-summary',state:'ready',dateStamp:value.dateStamp,tzOffsetMillis:value.tzOffsetMillis}).getTime(),value.summaryId)}
-        else if(value.kind==='conversation') {onNavigate?.(); arkmeUi.showConversationTarget(value.source,value.itemUid,value.sendAtMillis,undefined,undefined,true)}
+        else if(value.kind==='conversation') {onNavigate?.(); arkmeUi.showConversationTarget(value.source,value.itemUid,value.sendAtMillis,value.recordOwnerUserId,undefined,true)}
         else setTarget(value)
         return
       }
@@ -66,11 +69,17 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
   }
   const row=(e:ArkmeArrangementEvidence,showText:boolean)=>{
     const quote=showText&&e.readOnExpand?quotes.quote(e.id):undefined
+    const conversation=quote?.state==='ready'?quote.conversation:undefined
     return <div className="arkme-arrangement-source-item" key={e.id}>
-    {e.canOpen && quote?.state!=='unavailable' ? <button className="arkme-arrangement-recording-source" type="button" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e,!showText)}}>{tr(labels[e.kind])}{e.sourceDate?` · ${Number(e.sourceDate.slice(5,7))}月${Number(e.sourceDate.slice(8,10))}日`:''} · {pending?tr('正在打开…'):tr('查看原文')} ↗</button>
-      : <div className="arkme-arrangement-recording-unavailable">{tr(labels[e.kind])}{e.unavailableReason?` · ${tr(e.unavailableReason)}`:''}</div>}
+    {conversation && <div className="arkme-arrangement-source-conversation">
+      <strong>{tr(conversation.source.kind==='group_chat'?'群聊':'私聊')} · {conversation.source.displayName}</strong>
+      <button type="button" className="arkme-arrangement-recording-source" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e)}}>{tr('定位原消息')} ↗</button>
+      {conversation.sendAtMillis>0&&<small>{new Date(conversation.sendAtMillis).toLocaleString()}</small>}
+    </div>}
+    {!conversation && (e.canOpen && quote?.state!=='unavailable' ? <button className="arkme-arrangement-recording-source" type="button" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e,!showText)}}>{tr(labels[e.kind])}{e.sourceDate?` · ${Number(e.sourceDate.slice(5,7))}月${Number(e.sourceDate.slice(8,10))}日`:''} · {pending?tr('正在打开…'):tr('查看原文')} ↗</button>
+      : <div className="arkme-arrangement-recording-unavailable">{tr(labels[e.kind])}{e.unavailableReason?` · ${tr(e.unavailableReason)}`:''}</div>)}
     {quote?.state==='loading'&&<div role="status" className="arkme-arrangement-content-empty">{tr('正在读取来源…')}</div>}
-    {quote?.state==='ready'&&<div className="arkme-arrangement-content-text">{quote.text||tr('原文没有文字内容')}</div>}
+    {quote?.state==='ready'&&<div className="arkme-arrangement-content-text">{quote.quoteState && quote.quoteState !== 'exact' ? tr(quote.quoteState === 'pending' ? '通话转写处理中，可查看原通话' : '原句待定位，可查看原通话') : quote.text||tr('原文没有文字内容')}</div>}
     {quote?.state==='unavailable'&&<div className="arkme-arrangement-content-empty">{tr(sourceReadReason(e,quote.reason))}{e.kind==='call'&&<>{' '}<button type="button" className="arkme-arrangement-recording-source" aria-label={tr('重新核验通话来源')} onClick={event=>{event.stopPropagation();quotes.retry(e.id)}}>{tr('重新核验')}</button></>}</div>}
     {quote?.state==='error'&&<div role="alert" className="arkme-arrangement-content-empty">{quote.message} <button type="button" className="arkme-arrangement-recording-source" aria-label={tr(`重试读取${labels[e.kind]}来源`)} onClick={event=>{event.stopPropagation();quotes.retry(e.id)}}>{tr('重试')}</button></div>}
     {showText&&!e.readOnExpand&&e.text&&<div className="arkme-arrangement-content-text">{e.text}</div>}
@@ -79,14 +88,16 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
   let history:ArkmeCallHistoryItem|undefined
   if(target?.kind==='call') {const d=target.detail; history={...d,peerDisplayName:d.title,canOpenDetail:true,canRedial:false,stableId:d.stableId??d.callRef}}
   return <>
+    {expanded && <style>{conversationCss}</style>}
     {expanded?<>{!!initial.length&&!hideHeadings&&<strong>{tr('识别依据')}</strong>}{initial.map(e=>row(e,true))}
       {!!supplementary.length&&<>{!hideHeadings&&<strong>{tr('后续补充依据')}</strong>}{supplementary.map(e=>row(e,true))}</>}
-      {!!related.length&&<details onClick={event=>event.stopPropagation()}><summary>{tr('关联资料')} ({related.length})</summary>{related.map(e=>row(e,true))}</details>}</>
+      {!!relatedConversations.length&&<><strong>{tr('关联对话')}</strong>{relatedConversations.map(e=>row(e,true))}</>}
+      {!!otherRelated.length&&<details onClick={event=>event.stopPropagation()}><summary>{tr('关联资料')} ({otherRelated.length})</summary>{otherRelated.map(e=>row(e,true))}</details>}</>
       : primary&&row(primary,false)}
     {!expanded&&unavailableCount>0&&<div className="arkme-arrangement-content-empty">{unavailableCount} {tr('条依据暂未通过核验，可展开核对')}</div>}
     {error&&<div role="alert" className="arkme-arrangement-content-empty">{error} {failedRequest&&<button type="button" className="arkme-arrangement-recording-source" onClick={event=>{event.stopPropagation();void open(failedRequest.evidence,failedRequest.alternatives)}}>{tr('重试')}</button>}</div>}
     {target?.kind==='document'&&<ArkmeDetailShell title={target.title} label={target.title} onClose={()=>setTarget(undefined)}><div style={{whiteSpace:'pre-wrap'}}>{target.text}</div></ArkmeDetailShell>}
     {target?.kind==='record'&&<ArkmeTimelineDetailDrawer item={target.item} canExtend={false} showOriginal={original} onToggleOriginal={()=>setOriginal(v=>!v)} onClose={()=>setTarget(undefined)}/>}
-    {target?.kind==='call'&&history&&<ArkmeDetailShell title={tr('来源通话')} label={tr('来源通话')} onClose={()=>setTarget(undefined)}><div ref={callContainer}><ArkmeCallDetailContent selectedItem={history} detail={target.detail} detailState="ready" compact/></div></ArkmeDetailShell>}
+    {target?.kind==='call'&&history&&<ArkmeDetailShell title={tr('来源通话')} label={tr('来源通话')} onClose={()=>setTarget(undefined)}>{target.quoteState && target.quoteState !== 'exact' && <div role="status" className="arkme-arrangement-content-empty">{tr(target.quoteState === 'pending' ? '通话转写处理中，暂不高亮语句' : '原句待定位，暂不高亮任何语句')}</div>}<div ref={callContainer}><ArkmeCallDetailContent selectedItem={history} detail={target.detail} detailState="ready" compact/></div></ArkmeDetailShell>}
   </>
 }

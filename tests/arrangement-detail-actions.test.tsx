@@ -122,3 +122,31 @@ it('keeps deleted detail read-only without an action menu', async () => {
   expect(aside().querySelector('[aria-label="安排操作"]')).toBeNull()
   expect(mutations()).toHaveLength(0)
 })
+
+it('follows an attested merge, refreshes the list and sends commands to the master', async () => {
+  const master = makeItem('master', { title: '归并后的主安排', updatedAtMillis: 1 })
+  const original = api.getMockImplementation()!
+  api.mockImplementation(async (operation, params, signal) => {
+    if (operation === 'arrangements.detail' && params.arrangementRef === 'one') {
+      records = [master]
+      return { ...master, resolvedFromRef: 'one' }
+    }
+    return original(operation, params, signal)
+  })
+  await mount(); await select()
+  expect(aside().querySelector('header h2')?.textContent).toBe(master.title)
+  expect(aside().textContent).not.toContain('详情加载失败')
+  expect(host.querySelector('[data-arrangement-task="one"]')).toBeNull()
+  await click(trigger()); await click(menuItem('完成安排'))
+  expect(mutations().map(([, params]) => params)).toEqual([{ arrangementRef: 'master', intent: 'complete' }])
+})
+
+it.each([undefined, 'another-request'])('rejects an unrelated detail response with redirect marker %s', async resolvedFromRef => {
+  const original = api.getMockImplementation()!
+  api.mockImplementation(async (operation, params, signal) => operation === 'arrangements.detail'
+    ? { ...makeItem('other', { title: '不应展示的其他安排' }), resolvedFromRef } : original(operation, params, signal))
+  await mount(); await select()
+  expect(aside().textContent).toContain('详情加载失败')
+  expect(aside().textContent).not.toContain('不应展示的其他安排')
+  expect(aside().querySelector('header h2')?.textContent).toBe(records[0]!.title)
+})

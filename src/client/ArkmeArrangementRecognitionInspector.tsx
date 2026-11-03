@@ -127,15 +127,7 @@ export function ArkmeArrangementRecognitionSettings({
               <p className="arkme-recognition-muted">
                 {tr('选择仅影响后续安排提取；转写和录音总结使用各自的模型配置。')}
               </p>
-              {source === 'default' ? (
-                <ArkmeAutomaticAiSettings
-                  key={accountScope}
-                  accountScope={accountScope}
-                  only={['arrangement_recognition']}
-                  compact
-                  title="自动识别与额度授权"
-                />
-              ) : (
+              {source !== 'default' && (
                 <Rules rules={config.rules} pipeline={config.pipeline} />
               )}
               {!!config.prompts.length && (
@@ -160,6 +152,15 @@ export function ArkmeArrangementRecognitionSettings({
                 {tr('配置摘要')}：<code>{settings?.revision}</code>
               </footer>
             </>
+          )}
+          {source === 'default' && (
+            <ArkmeAutomaticAiSettings
+              key={accountScope}
+              accountScope={accountScope}
+              only={['arrangement_recognition']}
+              compact
+              title="自动识别与额度授权"
+            />
           )}
         </main>
       </div>

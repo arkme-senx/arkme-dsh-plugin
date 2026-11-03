@@ -16,12 +16,12 @@ export function TeamMemberCodexEntry({ sync, name, identityAvailable, busy, onOp
   let label = ''
   if (retry === 'checking') label = '正在获取同步状态…'
   else if (retry === 'failed') label = '状态获取失败'
-  else if (state.state === 'unavailable') label = state.reason === 'unsupported' ? '同步状态暂不可用' : '状态获取失败'
+  else if (state.state === 'unavailable') label = state.reason === 'unsupported' ? '同步状态暂不可用' : state.reason==='settings_unknown'?'同步设置尚未确认':'状态获取失败'
   else if (state.state === 'not_connected') label = '未开通同步'
   else if (state.state === 'paused') label = '已暂停同步'
   else if (state.state === 'disabled') label = '已关闭同步'
   else if (!state.hasConversations) label = '已开通·暂无对话'
-  const canOpen = !retry && state.state !== 'unavailable' && state.canViewConversations
+  const canOpen = !retry && 'canViewConversations' in state && state.canViewConversations
   if (!identityAvailable && canOpen) label = '身份信息暂不可用'
   else if (!label && !canOpen) label = '暂无对话查看权限'
   return <span className="arkme-team-member-sync" data-codex-sync={retry ?? state.state}>

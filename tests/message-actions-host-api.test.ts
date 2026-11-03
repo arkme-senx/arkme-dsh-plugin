@@ -24,17 +24,17 @@ it('never silently publishes a team intent through a personal World route', asyn
 it('revalidates Codex task access before forwarding and never delivers after revocation', async () => {
   const forwardCodexChat = vi.fn(async () => ({ itemUid: 'sent' }))
   const service = { forwardCodexChat } as unknown as ArkmeService
-  const events = vi.fn(async () => ({ items: [] }))
-  const codex = { events } as unknown as TeamCodexService
+  const prepareExport = vi.fn(async (_team:string,_id:string,_source:string|undefined,snapshot:unknown) => snapshot)
+  const codex = { prepareExport } as unknown as TeamCodexService
   const signal = new AbortController().signal
   const params = { teamRef: 'team', id: 'task', sourceId: 'remote', snapshot: { taskTitle: 'task' }, expectedUserId: 42,
     targetSourceRef: 'target', requestId: 'request', recordUid: 'record', sendAtMillis: 100 }
   const send = () => dispatchArkmeHostOperation(service, 'codex.forward', params,
     undefined, undefined, undefined, undefined, signal, undefined, undefined, undefined, undefined, undefined, undefined, codex)
   await send()
-  expect(events).toHaveBeenCalledWith('team', 'task', undefined, 'remote')
+  expect(prepareExport).toHaveBeenCalledWith('team', 'task', 'remote',params.snapshot)
   expect(forwardCodexChat).toHaveBeenCalledWith(params.snapshot, 42, expect.objectContaining({ targetSourceRef: 'target', signal }))
-  events.mockRejectedValueOnce(new Error('任务访问权已撤销'))
+  prepareExport.mockRejectedValueOnce(new Error('任务访问权已撤销'))
   await expect(send()).rejects.toThrow('任务访问权已撤销')
   expect(forwardCodexChat).toHaveBeenCalledTimes(1)
 })

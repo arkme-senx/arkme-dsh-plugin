@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { recordExcerptPresentation, type RecordExcerpt } from '../../src/record-excerpt.js'
 import { LocalSelfNoteQuotes } from '../../src/local-self-note-quotes.js'
 import { selectedTextNoteWireText, type SelectedTextNoteQuote } from '../../src/selected-text-note.js'
 import { sendSelectedTextSelfNote } from '../../src/services/selected-text-self-note.js'
@@ -21,19 +22,18 @@ function fixture(path = ':memory:') {
   const runtime = { config: { environment: 'prod', maxTextLength: 20000 }, stateStore: { selfNoteQuotes: store }, requireSession: vi.fn(async () => session), accountScopedSession: vi.fn(async () => session) } as unknown as ServiceRuntime
   return { store, runtime, close }
 }
-it('persists the exact quotation before sending and restores it after process restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'self-quote-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'quotes.sqlite'), first = fixture(path)
-  const send = vi.fn(async (text: string) => {
-    expect(first.store.project('prod:11', uid, text)?.quote).toEqual(quote)
-    return { sourceRef: 'self', itemUid: uid, status: 1, localState: 'synced' as const }
+it('sends the exact frozen excerpt through Record and renders it on a second device without local quote rows', async () => {
+  const first=fixture(),next=fixture()
+  let frozen:RecordExcerpt|undefined,wire=''
+  const send=vi.fn(async(text:string,_user:number,excerpt:RecordExcerpt)=>{
+    frozen=structuredClone(excerpt);wire=text
+    expect(first.store.project('prod:11',uid,text)).toBeUndefined()
+    return {sourceRef:'self',itemUid:uid,status:1,localState:'synced' as const}
   })
-  await sendSelectedTextSelfNote(first.runtime, input, send)
-  first.close()
-  const next = fixture(path), wire = selectedTextNoteWireText(input.noteText, quote)
-  expect(next.store.project('prod:11', uid, wire)).toMatchObject({ quote, noteText: input.noteText, storage: 'local' })
-  expect(next.store.project('prod:12', uid, wire)).toBeUndefined()
-  expect(next.store.project('dev:11', uid, wire)).toBeUndefined()
+  await sendSelectedTextSelfNote(first.runtime,input,send)
+  const presentation=recordExcerptPresentation(frozen,wire)
+  expect(presentation).toMatchObject({quote:{text:quote.text},noteText:input.noteText,storage:'cloud'})
+  expect(next.store.project('prod:11',uid,wire)).toBeUndefined()
   expect(send).toHaveBeenCalledOnce()
 })
 it('retains the quote after editing only the thought, but never guesses a changed quote', () => {
@@ -42,16 +42,13 @@ it('retains the quote after editing only the thought, but never guesses a change
   expect(store.project('prod:11', uid, selectedTextNoteWireText(input.noteText, { ...quote, text: '原文被改了' }))).toBeUndefined()
   expect(store.project('prod:11', 'unrelated', selectedTextNoteWireText(input.noteText, quote))).toBeUndefined()
 })
-it('freezes retry identity/content and refuses login swaps, invalid input and storage failure before any send', async () => {
-  const { runtime, store } = fixture(), send = vi.fn(async () => { throw new Error('timeout') })
-  await expect(sendSelectedTextSelfNote(runtime, input, send)).rejects.toThrow('timeout')
-  await expect(sendSelectedTextSelfNote(runtime, { ...input, noteText: '不同内容' }, send)).rejects.toThrow('冻结')
-  await expect(sendSelectedTextSelfNote(runtime, { ...input, expectedAccountKey: 'prod:12' }, send)).rejects.toMatchObject({ code: 'self-note-account-changed' })
-  await expect(sendSelectedTextSelfNote(runtime, { ...input, quote: { ...quote, text: 'x'.repeat(2001) } }, send)).rejects.toMatchObject({ code: 'self-note-invalid' })
+it('checks account and quote boundaries before delegating to the Record outbox', async () => {
+  const {runtime}=fixture(),send=vi.fn(async()=>{throw Error('timeout')})
+  await expect(sendSelectedTextSelfNote(runtime,input,send)).rejects.toThrow('timeout')
+  await expect(sendSelectedTextSelfNote(runtime,{...input,expectedAccountKey:'prod:12'},send)).rejects.toMatchObject({code:'self-note-account-changed'})
+  await expect(sendSelectedTextSelfNote(runtime,{...input,quote:{...quote,text:'x'.repeat(2001)}},send)).rejects.toMatchObject({code:'self-note-invalid'})
   vi.mocked(runtime.accountScopedSession).mockResolvedValueOnce(undefined)
-  await expect(sendSelectedTextSelfNote(runtime, input, send)).rejects.toMatchObject({ code: 'self-note-account-changed' })
-  vi.spyOn(store, 'prepare').mockImplementationOnce(() => { throw new Error('disk full') })
-  await expect(sendSelectedTextSelfNote(runtime, input, send)).rejects.toThrow('disk full')
+  await expect(sendSelectedTextSelfNote(runtime,input,send)).rejects.toMatchObject({code:'self-note-account-changed'})
   expect(send).toHaveBeenCalledTimes(1)
 })
 it('does not acknowledge a mismatched or pending receipt', async () => {
@@ -68,4 +65,12 @@ it('projects only owned, available records without changing the authoritative te
   expect(result.textContent).toBe(raw.text_content); expect(result.localSelfQuote?.quote).toEqual(quote)
   expect(record.recordTimelineItemFromRaw({ ...raw, owner_user_id: 12 }, 11).localSelfQuote).toBeUndefined()
   expect(record.recordTimelineItemFromRaw({ ...raw, status: 2 }, 11).localSelfQuote).toBeUndefined()
+})
+
+it('saves a quote-only forward to self without inventing a note, while the note action still requires one',async()=>{
+ const {runtime}=fixture();let saved:RecordExcerpt|undefined,text=''
+ const send=vi.fn(async(value:string,_user:number,excerpt:RecordExcerpt)=>{text=value;saved=excerpt;return {sourceRef:'self',itemUid:uid,status:1,localState:'synced' as const}})
+ await expect(sendSelectedTextSelfNote(runtime,{...input,noteText:''},send)).rejects.toMatchObject({code:'self-note-invalid'})
+ await sendSelectedTextSelfNote(runtime,{...input,noteText:''},send,undefined,true)
+ expect(recordExcerptPresentation(saved,text)).toMatchObject({quote:{text:quote.text},noteText:''})
 })

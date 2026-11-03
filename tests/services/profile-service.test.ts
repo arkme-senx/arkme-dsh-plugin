@@ -14,6 +14,44 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ProfileService', () => {
+  it.each(['userIds', 'arkmeIds'] as const)('bounds cached public avatars read through %s without crossing viewer scope', async kind => {
+    const avatarUrl='https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=test'
+    const read=vi.fn(async(_path:string,body:Record<string,unknown>)=>({items:
+      ((body.user_ids??body.jotmo_ids) as (number|string)[]).map(value=>{
+        const userId=Number(String(value).replace('user',''))
+        return {user_id:userId,jotmo_id:`user${userId}`,head_img:avatarUrl}
+      })}))
+    const service=new ProfileService({config,requireSession:async()=>({userId:42}),
+      authenticatedAuthPost:read,accountScopedPublicAuthReadPost:read} as unknown as ServiceRuntime)
+    vi.spyOn(service,'sealProfileImageRef').mockImplementation(async(viewer,user)=>`avatar:${viewer}:${user}`)
+    const ids=Array.from({length:4097},(_,i)=>i+1)
+    if(kind==='userIds') await service.publicAvatarPresentationsByUserIds(ids)
+    else await service.publicAvatarPresentationsByArkmeIds(ids.map(id=>`user${id}`))
+    expect(service.cachedPublicProfileAvatar(42,1)).toBeUndefined()
+    expect(service.cachedPublicProfileAvatar(42,4097)).toBe(avatarUrl)
+    expect(service.cachedPublicProfileAvatar(43,4097)).toBeUndefined()
+    service.invalidate(42)
+    expect(service.cachedPublicProfileAvatar(42,4097)).toBeUndefined()
+  })
+  it('projects public user avatars as viewer-scoped references and preserves default avatars',async()=>{
+    const requireSession=vi.fn(async()=>({userId:42,accessToken:'a',refreshToken:'r'}))
+    const target=new ProfileService({requireSession} as unknown as ServiceRuntime)
+    const fallback={kind:'phone_default' as const,label:'访',colorIndex:2}
+    vi.spyOn(target,'publicProfileSummariesByUserIds').mockResolvedValue(new Map([
+      [7,{userId:7,displayName:'A',nickname:'A',avatarUrl:'https://private-signed-avatar.invalid/path?secret=not-for-ui'}],
+      [8,{userId:8,displayName:'B',nickname:'B',avatarFallback:fallback}],
+      [9,{userId:9,displayName:'C',nickname:'C'}],
+    ]))
+    const seal=vi.spyOn(target,'sealProfileImageRef').mockImplementation(async(viewer,user)=>`avatar:${viewer}:${user}`)
+    const result=await target.publicAvatarPresentationsByUserIds([7,8,9])
+    expect(result.get(7)).toEqual({avatarRef:'avatar:42:7'})
+    expect(result.get(8)).toEqual({avatarFallback:fallback})
+    expect(result.get(9)).toEqual({})
+    expect(seal).toHaveBeenCalledExactlyOnceWith(42,7)
+    expect(JSON.stringify([...result])).not.toMatch(/https:|secret/)
+    requireSession.mockResolvedValue({userId:43,accessToken:'b',refreshToken:'s'})
+    expect((await target.publicAvatarPresentationsByUserIds([7])).get(7)?.avatarRef).toBe('avatar:43:7')
+  })
   it('rejects malformed public-profile collections without negative-caching them as absent users', async () => {
     const request = vi.fn().mockResolvedValueOnce({ items: 'invalid' }).mockResolvedValueOnce({ items: [{ user_id: 7, nick_name: '正常姓名' }] })
     const service = new ProfileService({ config, authenticatedAuthPost: request } as unknown as ServiceRuntime)

@@ -27,7 +27,7 @@ it('renders the mobile publication entry and opens the shared World content and 
   expect(mocks.read).toHaveBeenCalledWith('opaque-timeline-ref', expect.any(AbortSignal))
   expect(document.querySelector('[data-world-record-ref="world-ref"]')).not.toBeNull()
   expect(document.body.textContent).toContain('世界中的完整正文')
-  expect(callArkme).toHaveBeenCalledWith('world.interactions.list', expect.objectContaining({ recordRef: 'world-ref' }), expect.any(AbortSignal))
+  expect(callArkme).toHaveBeenCalledWith('world.replies', expect.objectContaining({ recordRef: 'world-ref' }), expect.any(AbortSignal))
   await click('关闭公开快记详情')
   expect(document.querySelector('[aria-label="公开快记详情"]')).toBeNull()
   expect(document.activeElement).toBe(opener)

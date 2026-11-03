@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeWorldContent, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import * as api from '../src/client/api.js'
+import { worldReactionContexts } from '../src/client/world-reactions.js'
 import type { ArkmeWorldFeedItem } from '../src/types.js'
 
 const first: ArkmeWorldFeedItem = { recordRef: 'post-a', authorRef: 'author-a', authorName: '我的备注', headline: '公开标题', textContent: '第一条公开正文', textFormat: 'plain', tags: [], templateKind: 0,
@@ -20,8 +21,9 @@ beforeEach(() => {
   pending = new Map(); openAuthor.mockClear()
   read = vi.spyOn(api, 'callArkme').mockImplementation(async (operation, params, signal) => {
     if (operation === 'world.record.read') return new Promise((resolve, reject) => pending.set(String(params?.recordRef), { resolve, reject, signal: signal! }))
-    if (operation === 'world.interactions.list') return { items: [], hasMore: false }
+    if (operation === 'world.replies') return { items: [], hasMore: false }
     if (operation === 'world.author-labels') return []
+    if (operation === 'team.app.teams') return []
     if (operation === 'world.image.read') return { mediaType: 'image/png', bytes: 1, dataBase64: 'aQ==' }
     throw new Error(`Unexpected operation: ${operation}`)
   })
@@ -70,6 +72,37 @@ describe('World public detail interactions', () => {
     expect(detail()).toBeNull(); expect(scroll.scrollTop).toBe(123)
   })
 
+  it('refreshes open comments on focus without losing drafts, coalesces reads and clears revoked content', async () => {
+    await render(); await click(card(first.recordRef))
+    await act(async () => pending.get(first.recordRef)!.resolve(first))
+    const input = detail()!.querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '跨端刷新时保留草稿')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const commentReads = () => read.mock.calls.filter(([operation]) => operation === 'world.replies').length
+    const before = commentReads()
+    await act(async () => { for (let i = 0; i < 10; i++) window.dispatchEvent(new Event('focus')) })
+    expect(read.mock.calls.filter(([operation]) => operation === 'world.record.read')).toHaveLength(2)
+    expect(detail()!.textContent).not.toContain('正在读取最新内容')
+    expect(detail()!.querySelector('textarea')).toBe(input)
+    await act(async () => pending.get(first.recordRef)!.resolve({ ...first, textContent: '另一端更新后的正文' }))
+    expect(commentReads()).toBe(before + 1)
+    expect(detail()!.textContent).toContain('另一端更新后的正文')
+    expect(input.value).toBe('跨端刷新时保留草稿')
+    const retryAuthority = vi.spyOn(worldReactionContexts, 'retry')
+    await act(async () => window.dispatchEvent(new Event('arkme-reaction-policy-changed')))
+    await act(async () => pending.get(first.recordRef)!.reject(new Error('这条公开快记已不可用')))
+    expect(retryAuthority).toHaveBeenCalledWith('test:42', first.recordRef)
+    retryAuthority.mockRestore()
+    expect(detail()!.textContent).not.toContain('另一端更新后的正文')
+    expect(detail()!.querySelector('textarea')).toBeNull()
+    await click(detail()!.querySelector('[aria-label="关闭动态详情"]')!)
+    const count = read.mock.calls.length
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    expect(read.mock.calls).toHaveLength(count)
+  })
+
   it('keeps selections, nested actions and portaled clicks separate from card activation', async () => {
     await render()
     const post = card(first.recordRef), text = post.querySelector('p')!
@@ -110,7 +143,7 @@ describe('World public detail interactions', () => {
     await click(detail()!.querySelector('[role="alert"] button')!)
     await act(async () => pending.get(first.recordRef)!.resolve(first))
     expect(detail()!.textContent).toContain(first.textContent)
-    expect(read.mock.calls.every(([operation]) => operation === 'world.record.read' || operation === 'world.interactions.list')).toBe(true)
+    expect(read.mock.calls.map(([operation]) => operation).filter(operation => !['world.record.read', 'world.author-labels', 'world.replies', 'world.reactions.prepare', 'team.world', 'team.app.teams'].includes(operation))).toEqual([])
   })
 
   it('aborts and hides the old detail immediately when the signed-in account changes', async () => {
@@ -141,4 +174,33 @@ describe('World public detail interactions', () => {
     await render([{ ...first, memberType: 'free' }])
     expect(detail()!.querySelector('[data-arkme-membership]')).toBeNull()
   })
+})
+
+it('updates the existing detail star from current membership instead of a stale feed badge, including expiry', async () => {
+  let memberType = 'svip'
+  const original = read.getMockImplementation()!
+  read.mockImplementation(async (op, params, signal) => op === 'world.author-labels'
+    ? [{ authorRef: 'author-a', authorName: '我的备注', memberType }] : original(op, params, signal))
+  await render([{ ...first, memberType: 'vip' }]); await click(card(first.recordRef))
+  await act(async () => pending.get(first.recordRef)!.resolve(first))
+  expect(detail()!.querySelector('[data-arkme-membership="svip"]')).not.toBeNull()
+  for (const next of ['free', 'unknown', 'vip']) {
+    memberType = next
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await act(async () => pending.get(first.recordRef)!.resolve(first))
+    expect(detail()!.querySelector('[data-arkme-membership]')?.getAttribute('data-arkme-membership')).toBe(next === 'vip' ? 'vip' : undefined)
+  }
+})
+it('aborts delayed membership hydration when the detail closes', async () => {
+  let resolve!: (value: unknown) => void, signal!: AbortSignal
+  const original = read.getMockImplementation()!
+  read.mockImplementation(async (op, params, s) => op === 'world.author-labels'
+    ? new Promise(done => { resolve = done; signal = s! }) : original(op, params, s))
+  await render(); await click(card(first.recordRef))
+  await act(async () => pending.get(first.recordRef)!.resolve(first))
+  expect(detail()!.textContent).toContain(first.textContent)
+  await click(detail()!.querySelector('[aria-label="关闭动态详情"]')!)
+  expect(signal.aborted).toBe(true)
+  await act(async () => resolve([{ authorRef: 'author-a', memberType: 'svip' }]))
+  expect(detail()).toBeNull()
 })

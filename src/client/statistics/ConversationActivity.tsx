@@ -20,10 +20,10 @@ export const conversationActivityStyles = `
 .conversation-words .ca-bar[aria-pressed=true]{outline:2px solid ${arkmeTheme.accent};outline-offset:1px}
 .ca-axis{display:flex;justify-content:space-between;font-size:10px;color:${arkmeTheme.secondary};margin:7px 0}
 .ca-week{display:grid;grid-template-columns:25px repeat(24,minmax(0,1fr));gap:3px;align-items:center;margin-top:12px}
-.ca-week>span{font-size:11px;color:${arkmeTheme.secondary}}
-.conversation-words .ca-cell{height:20px;border:0;border-radius:3px;padding:0;min-width:0;position:relative;background:color-mix(in srgb,${arkmeTheme.accent} var(--ca-density),${arkmeTheme.subtle})}
+.ca-week>div>span{font-size:11px;white-space:nowrap;color:${arkmeTheme.secondary}}
+.conversation-words .ca-week .ca-cell{height:20px;border:0;border-radius:3px;padding:0;min-width:0;position:relative;background:color-mix(in srgb,${arkmeTheme.accent} var(--ca-density),${arkmeTheme.subtle})}
 .ca-cell i{display:block;position:absolute;bottom:0;left:0;right:0;background:${arkmeTheme.tertiary};border-radius:0 0 3px 3px}
-.conversation-words .ca-cell:disabled{opacity:1;background:${arkmeTheme.subtle}}
+.conversation-words .ca-week .ca-cell:disabled{opacity:1;background:${arkmeTheme.subtle}}
 .ca-hint{min-height:42px;margin:10px 0;font-size:12px;color:${arkmeTheme.secondary}}
 .ca-legend{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;color:${arkmeTheme.secondary};margin-top:10px}
 .ca-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}

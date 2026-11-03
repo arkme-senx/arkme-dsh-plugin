@@ -22,6 +22,7 @@ export function ArkmePersonProfileDialog(props: {
   copyUrl?: string | undefined; refreshing?: boolean; refreshError?: string
   accountScope: string; copyLinkTarget?: IdentityShareTarget | undefined
   busy: boolean; worldBusy?: boolean; worldDisabled?: boolean; loading?: boolean; pending?: boolean
+  closeWhileBusy?: boolean
   error?: string | undefined
   onClose(): void; onSend(): void; onWorld(): void
   onContactAsTeam?: (() => void) | undefined
@@ -31,11 +32,11 @@ export function ArkmePersonProfileDialog(props: {
   const titleId = useId(), [more, setMore] = useState(false)
   const [sendState, setSendState] = useState('idle')
   return <ArkmeConfirmDialog layout="picker" titleId={titleId}
-    title={tr('{v0} 的用户卡片', { v0: props.displayName })} busy={props.busy || Boolean(props.worldBusy)}
+    title={tr('{v0} 的用户卡片', { v0: props.displayName })} busy={props.busy || Boolean(props.worldBusy)} closeWhileBusy={props.closeWhileBusy === true}
     onClose={props.onClose} dialogStyle={{ width: 'min(390px, 100%)', borderRadius: 18 }}>
     <div className="arkme-person-card" data-arkme-member-profile data-arkme-person-profile="unified" data-arkme-person-profile-ready={props.pending ? undefined : "true"} aria-busy={props.pending || undefined}>
       <button type="button" className="arkme-person-icon arkme-person-close" aria-label={tr('关闭')}
-        disabled={props.busy || props.worldBusy} onClick={props.onClose}><XIcon size={18} aria-hidden /></button>
+        disabled={(props.busy || props.worldBusy) && !props.closeWhileBusy} onClick={props.onClose}><XIcon size={18} aria-hidden /></button>
       <header className="arkme-person-identity">
         <ArkmeUserAvatar avatarRef={props.avatarRef} {...(props.avatarFallback ? { fallback: props.avatarFallback } : {})}
           {...(props.imagePort ? { imagePort: props.imagePort } : {})} imageKey={props.imageKey}
