@@ -50,6 +50,25 @@ it('announces a missing source version and offers the available day content', as
   expect(JSON.stringify(renderer!.toJSON())).toContain('来源总结版本暂不可用')
 })
 
+it('waits for the independent summary before deciding whether its source version is missing', async () => {
+  const previous = mock.call.getMockImplementation()!
+  const pending = Promise.withResolvers<unknown>()
+  mock.call.mockImplementation(async (op, params) => {
+    if (op === 'recordings.day' && params.part === 'summary') return pending.promise
+    const value = await previous(op, params)
+    if (op !== 'recordings.day') return value
+    return { dateStamp: value.dateStamp, ...(params.part === 'transcript'
+      ? { transcript: value.transcript, totalDurationMillis: value.totalDurationMillis }
+      : params.part === 'coverage' ? { coverage: value.coverage } : {}) }
+  })
+  await open('original')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('来源总结版本暂不可用')
+  const value = await previous('recordings.day', { dateStamp })
+  await act(async () => pending.resolve({ dateStamp, summary: value.summary }))
+  expect(version()).toBe('original')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('来源总结版本暂不可用')
+})
+
 it('reopens the same source after the user manually switches back to transcript', async () => {
   await open('original')
   const transcript = renderer!.root.findAllByType('button').find(node => node.children.includes('转写'))!

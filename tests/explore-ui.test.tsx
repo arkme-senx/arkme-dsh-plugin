@@ -37,7 +37,7 @@ describe('Explore interactions',()=>{
     const trigger=host.querySelector('button')!
     await act(async()=>trigger.click())
     const panel=document.querySelector('#arkme-explore-menu')!
-    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','位置','世界'])
+    expect([...panel.querySelectorAll('button')].map(x=>x.textContent)).toEqual(['统计与分析','个人档案','关系','事件','目标','纪念日','位置'])
     await click('统计与分析');expect(arkmeUi.getViewSnapshot().mode).toBe('statistics')
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await act(async()=>trigger.click())
@@ -50,7 +50,6 @@ describe('Explore interactions',()=>{
     expect(arkmeUi.getViewSnapshot()).toMatchObject({...beforeLocation,locationOpen:true})
     expect(document.querySelector('#arkme-explore-menu')).toBeNull()
     await click('关闭位置');expect(arkmeUi.getViewSnapshot()).toEqual(beforeLocation)
-    await act(async()=>trigger.click());await click('世界');expect(arkmeUi.getViewSnapshot().mode).toBe('world')
     await act(async()=>trigger.click());await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
     expect(document.querySelector('#arkme-explore-menu')).toBeNull();expect(document.activeElement).toBe(trigger)
   })

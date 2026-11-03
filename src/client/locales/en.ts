@@ -4,6 +4,13 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
 通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
 通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
+即我设置|Arkme settings
+即我设置分类|Arkme settings categories
+语言|Language
+外观|Appearance
+浅色|Light
+深色|Dark
+跟随系统|System
 长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech

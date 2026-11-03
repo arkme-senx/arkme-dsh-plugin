@@ -77,7 +77,7 @@ describe('ArkmeSettingsSurface', () => {
   })
 
   it('inherits the native DSH settings canvas without a standalone compatibility mode', () => {
-    expect(adapterSource).toContain('<ArkmeSettingsSurface />')
+    expect(readUiSource(new URL('../src/client/ArkmeSettingsDialog.tsx', import.meta.url), 'utf8')).toContain('<ArkmeSettingsSurface />')
     expect(source).not.toContain('ArkmeSettingsHost')
     expect(source).not.toContain('data-arkme-settings-host')
     expect(redesignCss).toMatch(/\.arkme-redesign-settings-surface \{[^}]*background: transparent;/)
@@ -127,16 +127,10 @@ describe('ArkmeSettingsSurface', () => {
     expect(shellSource).toContain("authState.auth.status !== 'authenticated'")
     expect(shellSource).toContain("ui.calendarOpen !== true")
     expect(shellSource).not.toContain("renderSlot('sidebar.settings'")
-    expect(adapterSource).toContain('arkmeUi.bindSettingsOpener(openOfficialSettings)')
-    expect(adapterSource).toContain("ctx.slots.inject('settings.section'")
-    expect(adapterSource).toContain("id: 'arkme-account'")
-    expect(adapterSource).toContain("label: '我的账户'")
-    expect(adapterSource).toContain('[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]')
-    expect(adapterSource).toContain('[data-arkme-owned="persistent-sidebar"]')
-    expect(adapterSource).toContain('const unsubscribeLogoutRestore = arkmeUi.subscribe')
-    expect(adapterSource).toContain("if (arkmeUi.getSnapshot().mode === 'login') restoreArkmeSidebar()")
-    expect(adapterSource).toContain('unsubscribeLogoutRestore()')
-    expect(adapterSource).not.toContain("document.querySelector<HTMLButtonElement>('button[aria-haspopup=\"dialog\"]')")
+    expect(adapterSource).toContain('installArkmeSettingsDialog(ctx)')
+    expect(adapterSource).not.toContain('disposeSidebar')
+    expect(adapterSource).not.toContain('settingsTimer')
+    expect(adapterSource).not.toContain("ctx.slots.inject('settings.section'")
   })
 
   it('scopes the settings-group heading rule away from nested dialog headings', () => {

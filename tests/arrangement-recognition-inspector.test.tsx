@@ -30,7 +30,15 @@ it('does not invent a model or prompt when the real backend is unavailable',asyn
  await act(async () => root.render(<ArkmeArrangementRecognitionSettings accountScope="test:42" onClose={() => {}} />))
  expect(document.querySelector('[role="alert"]')?.textContent).toContain('当前后端尚未提供')
  expect(document.querySelector('.arkme-recognition-model')).toBeNull();expect(button('切换模型')).toBeUndefined()
+ expect(document.body.textContent).toContain('自动识别与额度授权')
  await click('群聊');expect(document.querySelector('[role="alert"]')).not.toBeNull()
+})
+it('keeps authorization available while model configuration is still loading',async () => {
+ api.mockImplementation(() => new Promise(() => {}))
+ await act(async () => root.render(<ArkmeArrangementRecognitionSettings accountScope="test:42" onClose={() => {}} />))
+ expect(document.body.textContent).toContain('正在读取后端配置')
+ expect(document.body.textContent).toContain('自动识别与额度授权')
+ expect(button('切换模型')).toBeUndefined()
 })
 it('keeps the saved model if a write fails',async () => {
  api.mockImplementation(async (op:string) => {if(op.endsWith('settings.set')) throw new Error('设置保存失败');return structuredClone(settings)})

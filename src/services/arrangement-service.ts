@@ -597,7 +597,8 @@ export class ArrangementService {
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     const session = await this.runtime.requireSession()
     const reference = this.openArrangementRef(arrangementRef, session.userId)
-    return await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    const item = await this.arrangementOwnerDetail(reference.arrangementUid, session, signal)
+    return item.arrangementRef === arrangementRef ? item : { ...item, resolvedFromRef: arrangementRef }
   }
 
   async listArrangementReminders(
@@ -953,6 +954,12 @@ export class ArrangementService {
       ...(dueAtMillis > 0 ? { dueAtMillis } : {}),
       ...(remindAtMillis > 0 ? { remindAtMillis } : {}),
     }
+  }
+
+  async ownedArrangementReference(arrangementUid: string, viewerUserId: number): Promise<string> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('arrangement-account-changed', '账号已变化，请重新打开', false, 409)
+    return this.arrangementRef(viewerUserId, arrangementUid)
   }
 
   private async arrangementRef(viewerUserId: number, arrangementUid: string): Promise<string> {

@@ -233,3 +233,22 @@ it('opens the call with a location notice and never highlights an unlocated quot
   expect(node.scrollIntoView).not.toHaveBeenCalled()
   await act(async()=>view.unmount())
 })
+
+it.each(['initial', 'related'] as const)('shows the actual conversation and locates its message without changing %s provenance', async role => {
+  const source = { sourceRef: 'chat-source', kind: 'group_chat', displayName: '硬件项目组' } as import('../src/types.js').ArkmeSourceItem
+  mock.call.mockImplementation(async (op: string) => op === 'arrangements.source.read'
+    ? { evidenceId: 'chat-evidence', state: 'ready', text: '周五下午三点确认样机', conversation: { source, itemUid: 'record-chat', recordOwnerUserId: 11, sendAtMillis: 1000 } }
+    : { kind: 'conversation', source, itemUid: 'record-chat', recordOwnerUserId: 11, sendAtMillis: 1000 })
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" expanded sources={[
+    { id: 'chat-evidence', kind: 'record', role, text: '不能回退展示的缓存原文', canOpen: true, readOnExpand: true },
+  ]} />) })
+  const rendered = JSON.stringify(view.toJSON())
+  expect(rendered).toContain('硬件项目组')
+  expect(rendered).toContain(role === 'related' ? '关联对话' : '识别依据')
+  expect(rendered).not.toContain('不能回退展示的缓存原文')
+  expect(rendered).not.toContain('快记或聊天')
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(arkmeUi.getSnapshot().conversationTarget).toMatchObject({ itemUid: 'record-chat', recordOwnerUserId: 11 })
+  await act(async () => view.unmount())
+})

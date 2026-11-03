@@ -57,7 +57,7 @@ export function useTeamVisitorActions({ conversation, accountKey, onRecords, onO
         label={tr('{v0} 的成员操作', { v0: name })} point={menu} autoFocus onClose={() => setMenu(undefined)}
         actions={[...(visitor?.personRef && !visitor.isMe && onMention ? [{id:'mention',label:`@${name}`,onSelect:()=>{setMenu(undefined);onMention(visitor)}}] : []), ...(visitor?.personRef ? [{id:'mentioned-records',label:tr(visitor.isMe ? '@我的快记' : '@TA的快记'),onSelect:()=>{setMenu(undefined);onRecords(visitor,'mentioned')}}] : []), { id: 'owner-records', label: tr(visitor?.isMe ? '看我的快记' : '看TA的快记'), onSelect: () => { setMenu(undefined); onRecords(selected?.visitor === false ? visitor : undefined) } }]} /></div>}
       {profile && <ArkmeMemberProfileCard copyLinkTarget={{ kind: 'team-person', conversationRef: conversation.ref, ...(selected?.visitor === false && visitor?.personRef ? { personRef: visitor.personRef } : {}) }} member={{ displayName: name, ...(visitor?.imageRef ? { avatarRef: visitor.imageRef } : {}) }}
-        imagePort={teamAvatarImages} imageKey={visitor?.imageKey} hideSend={visitor?.isMe === true} busy={busy} error={error} onClose={close} onSend={() => { void openPrivate() }} />}
+        imagePort={teamAvatarImages} imageKey={visitor?.imageKey} hideSend={visitor?.isMe === true} busy={busy} closeWhileBusy error={error} onClose={close} onSend={() => { void openPrivate() }} />}
     </>,
   }
 }

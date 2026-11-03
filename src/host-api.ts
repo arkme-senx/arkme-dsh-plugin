@@ -1295,6 +1295,8 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.metadata-freeze':return await service.freezeTeamMetadata(stringParam(params,'conversationRef'),stringParam(params,'operationUid'),params.metadata as import('./team-snapshot-contract.js').TeamRecordMetadata,requestSignal)
     case 'team.messages.snapshot':return await service.readTeamMessageSnapshot(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),requestSignal)
     case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
+    case 'team.history':return await service.teamHistory(stringParam(params,'conversationRef'),params.action as import('./team-history-contract.js').TeamHistoryAction,(params.options ?? {}) as import('./team-history-contract.js').TeamHistoryOptions,requestSignal)
+    case 'team.history.export-chunk':return await service.readTeamHistoryExportChunk(stringParam(params,'resultRef'),typeof params.cursor==='string'?params.cursor:undefined,requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
@@ -1593,6 +1595,10 @@ export async function dispatchArkmeHostOperation(
     case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
     case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
     case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
+    case 'social.read': return await service.publicSocialRead(params as unknown as import('./public-social-contract.js').PublicSocialReadInput, requestSignal)
+    case 'social.write': return await service.publicSocialWrite(params as unknown as import('./public-social-contract.js').PublicSocialWriteInput, requestSignal)
+    case 'social.groups.requests': return await service.publicGroupJoinRequests(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'social.groups.requests.resolve': return await service.resolvePublicGroupJoinRequest(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'requestRef'), requiredBooleanParam(params, 'approved'), requestSignal)
     case 'social.groups.query': {
       const userId = optionalPositiveIntegerParam(params, 'userId')
       const relation = params.relation
@@ -1652,6 +1658,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.totals.index': return await service.recordingTotalsIndex(stringParam(params, 'account'), numberParam(params, 'toMillis', Number.NaN), numberParam(params, 'offset', Number.NaN), requestSignal)
     case 'recordings.totals.bucket': return await service.recordingTotalsBucket(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
@@ -1696,15 +1703,20 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.entities.feedback.undo': return await service.undoRecordingEntityFeedback({
       undoRef: stringParam(params, 'undoRef'), requestId: stringParam(params, 'requestId'),
     }, requestSignal)
-    case 'recordings.day': return params.window === undefined ? await service.recordingDay(numberParam(params, 'dateStamp', Number.NaN), requestSignal) : await service.recordingDay(
-      numberParam(params, 'dateStamp', Number.NaN), requestSignal,
-      params.window === undefined ? undefined : {
+    case 'recordings.day': {
+      const window = params.window === undefined ? undefined : {
         dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
         endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
         timeZone: stringParam(objectValue(params.window), 'timeZone'),
         date: stringParam(objectValue(params.window), 'date'),
-      },
-    )
+      }
+      const dateStamp = numberParam(params, 'dateStamp', Number.NaN)
+      if (params.part !== undefined) {
+        if (typeof params.part !== 'string' || !['transcript', 'coverage', 'metrics', 'summary', 'timeline'].includes(params.part)) throw new ArkmePluginError('recording-day-part-invalid', '录音读取分区无效', false, 400)
+        return await service.recordingDayPart(dateStamp, params.part as import('./types.js').ArkmeRecordingDayPart, requestSignal, window)
+      }
+      return window === undefined ? await service.recordingDay(dateStamp, requestSignal) : await service.recordingDay(dateStamp, requestSignal, window)
+    }
     case 'recordings.strategies': {
       if (params.action === 'start' || params.action === 'preference-set') throw new ArkmePluginError('recording-strategy-write-required', '请使用策略处理入口', false, 400)
       return service.recordingStrategies(params, requestSignal)
@@ -2218,6 +2230,8 @@ export async function dispatchArkmeHostOperation(
         boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
       })
     }
+    case 'arrangements.conversation.list': return service.conversationArrangements(stringParam(params, 'sourceRef'), stringParam(params, 'cursor'), requestSignal)
+    case 'arrangements.conversation.detail': return service.conversationArrangementDetail(stringParam(params, 'sourceRef'), stringParam(params, 'relatedRef'), requestSignal)
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))

@@ -2,6 +2,7 @@ import { harnessNativeTransportScript } from './harness-native-transport-script.
 import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
 import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
 import { HARNESS_THEME_BOOTSTRAP } from './harness-theme-bootstrap.js'
+import { HARNESS_DOCUMENT_BOOTSTRAP } from './harness-document-bootstrap.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -312,7 +313,14 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
       }
       if (options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
-      html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script>`)
+      // These are required by the native boot barrier. Discover them before the
+      // outer conversation's background reads compete for HTTP/1.1 connections.
+      const adapters = [options.modelClient, options.trajectoryClient, options.sidebarClient, options.onboardingClient,
+        options.sessionClient ? { url: HARNESS_SESSION_CLIENT_PATH } : undefined]
+      const escapeAttribute = (value: string) => value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
+      const preloads = [...new Set(adapters.flatMap(entry => entry && projectedGraph.entries.some(item => item.url === entry.url) ? [entry.url] : []))]
+        .map(url => `<link rel="preload" as="script" fetchpriority="high" href="${escapeAttribute(url)}">`).join('')
+      html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script><script data-arkme-document-started>${HARNESS_DOCUMENT_BOOTSTRAP}</script>${preloads}`)
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
@@ -323,7 +331,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
       response.end(method === 'HEAD' ? undefined : body)
     } catch (error) {
       options.onError?.(error)
-      const body = Buffer.from(`<!doctype html><html><head><script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script></head><body><p role="alert">DeepSeek Harness unavailable</p></body></html>`)
+      const body = Buffer.from(`<!doctype html><html><head><script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script><script data-arkme-document-started>${HARNESS_DOCUMENT_BOOTSTRAP}</script></head><body><p role="alert">DeepSeek Harness unavailable</p></body></html>`)
       response.writeHead(503, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': body.byteLength,

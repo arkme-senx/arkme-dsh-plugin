@@ -1021,12 +1021,35 @@ export interface ArkmeArrangementEvidence {
 }
 export type ArrangementQuoteState = 'exact' | 'unlocated' | 'ambiguous' | 'version_changed' | 'pending'
 export type ArkmeArrangementSourceRead =
-  | { evidenceId: string; state: 'ready'; text: string; quoteState?: ArrangementQuoteState }
+  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; quoteState?: ArrangementQuoteState }
   | { evidenceId: string; state: 'unavailable'; reason: string }
+export interface ArkmeArrangementSourceConversation {
+  source: ArkmeSourceItem
+  itemUid: string
+  recordOwnerUserId: number
+  sendAtMillis: number
+  sender?: string
+}
+export interface ArkmeConversationArrangement {
+  id: string
+  relatedRef: string
+  title: string
+  description: string
+  status: ArkmeArrangementStatus
+  dueAtMillis?: number
+  /** Present only for the signed-in owner's existing management path. */
+  arrangementRef?: string
+  sources: { itemUid: string; recordOwnerUserId: number; sender: string; sendAtMillis: number; text: string }[]
+}
+export interface ArkmeConversationArrangementPage {
+  items: ArkmeConversationArrangement[]
+  hasMore: boolean
+  nextCursor: string
+}
 export type ArkmeArrangementSourceTarget =
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
-  | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number }
+  | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
   | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string; quoteState?: ArrangementQuoteState }
   | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
 
@@ -1077,7 +1100,10 @@ export interface ArkmeArrangementPage {
   nextOffset?: number
 }
 
-export type ArkmeArrangementDetail = ArkmeArrangementItem
+export type ArkmeArrangementDetail = ArkmeArrangementItem & {
+  /** Requested opaque reference, set only after the Host verifies a merge redirect. */
+  resolvedFromRef?: string
+}
 
 /** Read-only deleted owner projection; deliberately excluded from live mutations. */
 export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }
@@ -1541,6 +1567,7 @@ arkoImagesV1?:true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
+    teamHistoryV1?: true
     teamMessageInteractions?: 1
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
@@ -1586,6 +1613,7 @@ arkoImagesV1?:true
     imageCacheRead?: true
     selfRoles?: true
     directMessageAdmission?: true
+    publicSocialV1?: true
     messageTextAnchorsV1?: true
     reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
@@ -3663,10 +3691,16 @@ export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
   coverage?: ArkmeRecordingCoverage
+  /** Independently loaded storage/input metrics; textCount is not a day total. */
+  metrics?: ArkmeRecordingDailyMetrics
   transcript: ArkmeRecordingTranscriptPage
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
+
+/** Independent workbench reads. Omitted sections have not been requested. */
+export type ArkmeRecordingDayPart = 'transcript' | 'coverage' | 'metrics' | 'summary' | 'timeline'
+export type ArkmeRecordingDayPartial = Pick<ArkmeRecordingDay, 'dateStamp'> & Partial<Omit<ArkmeRecordingDay, 'dateStamp'>>
 
 export interface ArkmeRecordingComparison {
   dateStamp: number
@@ -4386,6 +4420,7 @@ export type ArkmePluginOperation =
   | 'team.messages.marks-read' | 'team.messages.marks-change'
   | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
+  | 'team.history' | 'team.history.export-chunk'
   | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
@@ -4452,6 +4487,10 @@ export type ArkmePluginOperation =
   | 'group.private.people'
   | 'group.private.matches'
   | 'group.private.create'
+  | 'social.read'
+  | 'social.write'
+  | 'social.groups.requests'
+  | 'social.groups.requests.resolve'
   | 'social.groups.query'
   | 'social.groups.read'
   | 'social.groups.join'
@@ -4581,6 +4620,8 @@ export type ArkmePluginOperation =
   | 'arrangements.recognition.apply'
   | 'arrangements.source.open'
   | 'arrangements.source.read'
+  | 'arrangements.conversation.list'
+  | 'arrangements.conversation.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'
@@ -4818,6 +4859,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.totals.day'
   | 'recordings.day.review'
   | 'recordings.day.overview'
   | 'recordings.day'

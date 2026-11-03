@@ -1,3 +1,5 @@
+import type { PublicSocialReadInput, PublicSocialWriteInput, PublicSocialReadResult, PublicSocialWriteResult } from '../public-social-contract.js'
+export type * from '../public-social-contract.js'
 import { recordingStorageSessionRefs, type RecordingFileStoragePage } from '../recording-file-storage.js'
 export type { RecordingFileStorage, RecordingFileStoragePage } from '../recording-file-storage.js'
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
@@ -6,6 +8,7 @@ export type { ArkmeRecordingPlayback } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 export type { TeamRecallResult } from '../team-message-contract.js'
 export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
+export type { TeamHistoryAction, TeamHistoryOptions, TeamHistoryResponse, TeamHistoryExportChunk, TeamHistoryPort, TeamHistoryWord, TeamHistoryDay } from '../team-history-contract.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 import type { TeamEntryReference, TeamEntryPreferencePage, TeamEntryPreferenceCommand } from '../team-entry-preference-contract.js'
 export type * from '../team-entry-preference-contract.js'
@@ -910,6 +913,9 @@ export class ArkmeSdk {
     if((await this.capabilities(signal)).features.teamMessageExtensions!==1)throw new Error('当前 Provider 不支持团队延展浏览，请升级')
     return await this.call('team.messages.extensions',{conversationRef,messageRef,options},signal)
   }
+  private async requireTeamHistory(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamHistoryV1!==true)throw new Error('当前 Provider 不支持团队历史检索，请升级')}
+  async teamHistory(conversationRef:string,action:import('../team-history-contract.js').TeamHistoryAction,options:import('../team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryResponse>{await this.requireTeamHistory(signal);return await this.call('team.history',{conversationRef,action,options},signal)}
+  async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryExportChunk>{await this.requireTeamHistory(signal);return await this.call('team.history.export-chunk',{resultRef,...(cursor?{cursor}:{})},signal)}
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline>{await this.requireTeamMessages(signal);if(options.personRef)await this.requireTeamMentions(signal);return await this.call('team.messages.read',{conversationRef,options},signal)}
   async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);if(command.content.mentions?.length)await this.requireTeamMentions(signal);return await this.call('team.messages.send',{command},signal)}
   async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
@@ -1869,6 +1875,16 @@ export class ArkmeSdk {
     return await this.call<ArkmeArrangementReorderResult>('arrangements.reorder', { ...input }, signal)
   }
 
+  async conversationArrangements(sourceRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeConversationArrangementPage> {
+    if (!sourceRef.trim()) throw new TypeError('Conversation source reference is required')
+    return this.call('arrangements.conversation.list', { sourceRef, cursor: options.cursor ?? '' }, options.signal)
+  }
+
+  async conversationArrangementDetail(sourceRef: string, relatedRef: string, signal?: AbortSignal): Promise<import('../types.js').ArkmeConversationArrangement> {
+    if (!sourceRef.trim() || !relatedRef.trim()) throw new TypeError('Conversation and arrangement references are required')
+    return this.call('arrangements.conversation.detail', { sourceRef, relatedRef }, signal)
+  }
+
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
     return await this.call<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal)
@@ -2039,6 +2055,9 @@ export class ArkmeSdk {
     if ((await this.capabilities(signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
     return await this.call('group.common.sync', { sourceRef }, signal)
   }
+
+  async publicSocialRead(input: PublicSocialReadInput, signal?: AbortSignal): Promise<PublicSocialReadResult> { if ((await this.capabilities(signal)).features.publicSocialV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持公开社交，请升级',retryable:false}); return await this.call('social.read', { ...input }, signal) }
+  async publicSocialWrite(input: PublicSocialWriteInput, signal?: AbortSignal): Promise<PublicSocialWriteResult> { if ((await this.capabilities(signal)).features.publicSocialV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持公开社交，请升级',retryable:false}); return await this.call('social.write', { ...input }, signal) }
 
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')

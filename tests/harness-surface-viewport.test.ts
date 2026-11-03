@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { watchHarnessSurfaceViewport } from '../src/client/harness-surface-viewport.js'
 import { conversationMenuLayer, conversationMenuPosition } from '../src/client/conversation-menu-layer.js'
 import { HARNESS_MENU_POSITION } from '../src/client/harness-session-menu-bridge.js'
+import { HARNESS_DOCUMENT_STARTED } from '../src/harness-embed-contract.js'
+import { JSDOM } from 'jsdom'
 
 let stop: (() => void) | undefined
 afterEach(() => { stop?.(); stop = undefined; document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
@@ -225,4 +227,35 @@ it('keeps an empty document or root clipped until native loading or error UI has
   native.querySelector('#root')!.innerHTML = '<p role="alert">Connection failed</p>'
   await flush()
   expect(surface.style.visibility).toBe('visible')
+})
+
+it('keeps host feedback visible while the native document is empty, then positions early content before load', async () => {
+  const { frame, surface, native } = fixture()
+  surface.setAttribute('data-arkme-boot-feedback', 'loading')
+  native.body.replaceChildren()
+  await flush()
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.getPropertyValue('--arkme-harness-content-left')).toBe('356px')
+  const next = new JSDOM('<main data-arkme-session-frame><textarea>draft</textarea></main>', { url: `${location.origin}/arkme-self/harness-frame` })
+  vi.spyOn(frame, 'contentDocument', 'get').mockReturnValue(next.window.document)
+  window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, origin: location.origin, data: { type: HARNESS_DOCUMENT_STARTED } }))
+  expect(next.window.document.documentElement.style.getPropertyValue('--arkme-harness-content-width')).toBe('1044px')
+  expect(next.window.document.querySelector('main')?.hasAttribute('data-arkme-harness-content-frame')).toBe(true)
+  stop?.(); stop = undefined
+  next.window.close()
+})
+
+it('positions visible feedback even before the iframe has a document', () => {
+  const { frame, surface, seat } = fixture()
+  stop?.()
+  surface.setAttribute('data-arkme-boot-feedback', 'loading')
+  surface.style.clipPath = 'inset(100%)'
+  vi.spyOn(frame, 'contentDocument', 'get').mockReturnValue(null)
+  stop = watchHarnessSurfaceViewport(surface, frame, seat)
+  expect(surface.style.visibility).toBe('visible')
+  expect(surface.style.clipPath).toContain('M 356 0 H 1400 V 1000')
+  expect(surface.style.getPropertyValue('--arkme-harness-content-left')).toBe('356px')
+  surface.setAttribute('data-arkme-visible', 'false')
+  window.dispatchEvent(new Event('resize'))
+  expect(surface.style.visibility).toBe('hidden')
 })

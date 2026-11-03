@@ -9387,8 +9387,10 @@ describe('conversation send directory projection', () => {
     expect(infoComponent.parent).toBe(card.parent)
     expect(infoComponent.parent!.children.indexOf(infoComponent)).toBeLessThan(infoComponent.parent!.children.indexOf(card))
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
-    const reservedHeight = selected.kind === 'private_chat' ? 30 : 20
+    const reservedHeight = selected.kind === 'private_chat' || selected.kind === 'group_chat' ? 32 : 20
     expect(info().props.style.minHeight).toBe(reservedHeight)
+    const shortcuts = () => info().findAllByProps({ 'data-arkme-composer-shortcuts': 'true' })[0]
+    if (shortcuts()) expect(shortcuts()!.props.hidden).toBe(false)
     const tools = card.findByProps({ 'data-arkme-composer-footer': 'tools' })
     const send = tools.findByType(ArkmeComposerSendButton)
     const sendArea = send.parent!
@@ -9402,6 +9404,7 @@ describe('conversation send directory projection', () => {
 
     act(() => composer.props.onFocus())
     expect(info().props.style.minHeight).toBe(reservedHeight)
+    if (shortcuts()) expect(shortcuts()!.props.hidden).toBe(true)
     expect(tools.findAllByProps({ 'data-arkme-composer-footer': 'hint' })).toHaveLength(0)
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
     expect(card.findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(0)
@@ -9421,6 +9424,7 @@ describe('conversation send directory projection', () => {
     act(() => composer.props.onBlur())
     expect(tools.findAllByProps({ 'data-arkme-composer-footer': 'hint' })).toHaveLength(0)
     expect(info().props.style.minHeight).toBe(reservedHeight)
+    if (shortcuts()) expect(shortcuts()!.props.hidden).toBe(false)
     expect(info().findAllByProps({ 'data-arkme-composer-stats': 'true' })).toHaveLength(1)
     act(() => composer.props.onFocus())
     expect(tools.findAllByProps({ 'data-arkme-composer-footer': 'hint' })).toHaveLength(0)
