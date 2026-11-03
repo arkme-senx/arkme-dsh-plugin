@@ -65,7 +65,7 @@ it('captures the existing voice UI and confirms uncertain text once on its card'
     server.listen(0, '127.0.0.1'); await once(server, 'listening')
     const origin = `https://127.0.0.1:${server.address().port}`
     const config = { environment: 'test', stateDirectory: join(root, 'state'), fileStateDirectory: join(root, 'files'), keychainServicePrefix: `com.senqisi.voice-review-${randomUUID()}`, allowProduction: false, updateCheckEnabled: false, openApiMcpEnabled: false, dshRemoteFeatureEnabled: false, extensionShareDiscoveryEnabled: false, toolProfile: 'business' }
-    for (const key of ['memoryCore', 'auth', 'subject', 'record', 'data', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
+    for (const key of ['memoryCore', 'auth', 'subject', 'record', 'data', 'team', 'chat', 'bot', 'im', 'webrtc', 'world', 'relation', 'intelligent', 'audio', 'openApi', 'extensionPublish', 'updateService']) config[`${key}BaseUrl`] = origin
     config.shareWebsite = origin
     const overlay = join(root, 'overlay.json'); await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'arkme-voice-ui-review', name: '@senguoyun/dsh-arkme', config }] }]))
     scaffold = await launchWebScaffold({ extraOverlayPath: overlay, extraInstallAnchors: [join(profile, 'node_modules/@senguoyun/dsh-arkme/package.json')] })
