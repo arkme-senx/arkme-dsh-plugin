@@ -1,3 +1,4 @@
+import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 import { RecordingFileStorageLabel, recordingMegabytesLabel, useRecordingFileStorage } from './recording-file-storage.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -83,6 +84,8 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   const [start, setStart] = useState('')
   const [ownership, setOwnership] = useState<'self' | 'other'>('self')
   const [menu, setMenu] = useState<{ file: RecordingFile; anchor: HTMLButtonElement; left: number; top: number }>()
+  const comparisonSession = menu && 'sessionRef' in menu.file ? menu.file.sessionRef : undefined
+  const comparisonAvailability = useRecordingComparisonAvailability(dateStamp, active && !!comparisonSession, refreshRevision, comparisonSession)
   const menuRef = useRef<HTMLDivElement>(null)
   const request = useRef<FileRead>()
   const deleted = useRef(new Set<string>())
@@ -354,7 +357,9 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
-      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
+      {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
+      {comparisonSession && comparisonAvailability.loading && <button role="menuitem" type="button" disabled style={button}>正在检查策略对比…</button>}
+      {comparisonSession && !comparisonAvailability.loading && comparisonAvailability.availability.strategy === 'unknown' && <button role="menuitem" type="button" style={button} onClick={comparisonAvailability.retry}>重试检查策略对比</button>}
       {(['start', 'ownership', 'delete'] as const).filter(kind => !('importRef' in menu.file) || kind === 'delete').map(kind => <button key={kind} role="menuitem" type="button" style={{ ...button, display: 'block', width: '100%', textAlign: 'left', border: 0, background: 'transparent', color: kind === 'delete' ? theme.danger : theme.text }} onClick={() => openAction(menu.file, kind)}>{tr(kind === 'start' ? '修改录音时间' : kind === 'ownership' ? '修改数据归属' : '删除文件')}</button>)}
     </div>, document.body)}
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}
