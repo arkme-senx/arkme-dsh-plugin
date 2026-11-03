@@ -9,7 +9,7 @@ import { subscribeMessageQuoteInvalidations } from './message-quote-invalidation
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
-import { RecordThoughtContent } from './RecordThoughts.js'
+import { RecordThoughtContent, useRecordThoughtReplySummary } from './RecordThoughts.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
@@ -684,6 +684,7 @@ function DetailExtensionContext({
   onSelect: (item: ArkmeMessageCopyLinkExtensionItem) => void
 }) {
   const quoteThreads = useMessageQuoteThreads()
+  const thoughtReplies = useRecordThoughtReplySummary(rootItem)
   const context = state.kind === 'success' ? state.context : undefined
   const byUid = new Map<string, ArkmeMessageCopyLinkExtensionItem>()
   for (const item of optimistic) byUid.set(item.recordUid, item)
@@ -693,17 +694,14 @@ function DetailExtensionContext({
       ? { ...item, selfRole: pending.selfRole } : item)
   }
   const extensions = [...byUid.values()]
-  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length)
-  if ((state.kind === 'idle' || state.kind === 'loading') && extensions.length === 0) return null
-  if (state.kind === 'error' && extensions.length === 0) {
-    return <div style={styles.extensionContext}><div role="alert" style={styles.extensionContextStatus}>
-      <span>{state.message}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr("重试")}</button>
-    </div></div>
-  }
-  if (extensionCount === 0 && !(state.kind === 'success' && state.pageError)) return null
+  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length) + thoughtReplies.count
+  const contextError = state.kind === 'error' ? state.message : state.kind === 'success' ? state.pageError : undefined
+  if (extensionCount === 0 && !thoughtReplies.hasContent && !contextError) return null
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
-    <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>
-    <div style={styles.extensionContextList}>{orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
+    {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>}
+    <div style={styles.extensionContextList}>
+      <RecordThoughtContent item={rootItem} embedded/>
+      {orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
       const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)
       const timelineItem = detailExtensionTimelineItem(extension, author)
       const missingMedia = extension.mediaUnavailable === true && extension.mediaItems.length > 0
@@ -751,8 +749,8 @@ function DetailExtensionContext({
         </div>
       </div>
     })}</div>
-    {state.kind === 'success' && state.pageError && <div role="alert" style={styles.extensionContextStatus}>
-      <span>{state.pageError}</span><button type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr('重试')}</button>
+    {contextError && <div role="alert" style={styles.extensionContextStatus}>
+      <span>{contextError}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr('重试')}</button>
     </div>}
     {state.kind === 'success' && state.context.nextCursor && !state.pageError && <div role="status" style={styles.extensionContextStatus}>{tr('正在加载更多延展…')}</div>}
   </section>
@@ -1106,7 +1104,6 @@ export function ArkmeTimelineDetailDrawer({
         if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop
         setEditHistoryTarget(historyTarget)
       }}>{tr("已编辑")}<CaretRight size={12} style={{ flex: 'none' }} aria-hidden /></button>}
-    <RecordThoughtContent item={item} />
     {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
       onOpen={() => { navigateRelated('related-list') }}
@@ -1131,6 +1128,7 @@ export function ArkmeTimelineDetailDrawer({
       onRetry={() => loadExtensionContext(extensionState.kind === 'success' && extensionState.context.nextCursor ? extensionState.context : undefined)}
       onSelect={extension => { setSelectedExtensionRecordUid(extension.recordUid) }}
     />}
+    {!quickNoteDetailsSupported && <RecordThoughtContent item={item}/>}
     {memberProfile !== undefined && <ArkmeMemberProfileCard
       copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : sourceRef ? { kind: 'member', sourceRef, memberRef: memberProfile.memberRef } : undefined}
       member={memberProfile}

@@ -60,6 +60,35 @@ it('allows a failed detail read to retry without changing the original message',
   expect(host.textContent).not.toContain('暂时无法读取')
 })
 
+it('presents a thought as an Arko reply without a second heading or invented message time', async () => {
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item}/>
+  </RecordThoughtsProvider>)); await load()
+  const reply = host.querySelector('[data-arkme-thought-reply="one"]')!
+  expect(reply.querySelector('[data-arkme-avatar]')).not.toBeNull()
+  expect(reply.querySelector('[data-arkme-thought-author]')?.textContent).toBe('Arko')
+  expect(reply.querySelector('strong')?.textContent).toBe('建议内容')
+  expect(reply.textContent).not.toContain('Arko有想法')
+  expect(reply.querySelector('time')).toBeNull()
+  expect(host.querySelector('[data-arkme-thought-reply-count]')?.textContent).toBe('共1条延展')
+})
+
+it.each(['generating', 'failed'] as const)('retains the Arko author and %s state in embedded replies', async status => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
+    { id: 'state', recordUid: 'note', content: '', biz: 2, status, visibility: 'user' },
+    { id: 'old', recordUid: 'note', content: '旧回复', biz: 1, status: 'invalidated' },
+  ] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item} embedded/>
+  </RecordThoughtsProvider>)); await load()
+  expect(host.querySelectorAll('[data-arkme-thought-reply]')).toHaveLength(1)
+  expect(host.querySelector('[data-arkme-thought-author]')?.textContent).toBe('Arko')
+  expect(host.textContent).toContain(status === 'generating' ? 'Arko 正在思考' : 'Arko 暂时没能完成回应')
+  expect(host.textContent).toContain('仅你可见')
+  expect(host.textContent).not.toContain('旧回复')
+  expect(host.querySelector('[data-arkme-thought-reply-count]')).toBeNull()
+})
+
 it('shows private chat suggestions beneath received messages and cycles candidates locally without sending', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'suggestion', recordUid: 'note', content: '建议一', biz: 1, scene: 5, visibility: 'user', status: 'ready', generation: 1,
     display: { headline: '确认时间', context: '正在约定见面', warnings: [], suggestions: [{ style: '自然', items: ['建议一', '建议二'] }] } }] })

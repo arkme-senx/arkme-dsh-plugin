@@ -10,6 +10,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import { arkoReplyHistory } from './arko-reply-history.js'
 import { subscribeThoughtInvalidation } from './thought-invalidations.js'
+import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
+import { arkmeExtensionDetailListStyles as replyStyles } from './extension-detail-list-styles.js'
 
 const Context = createContext<{ store: RecordThoughtStore; chat: boolean; accountScope: string; source?: ArkmeSourceItem | undefined; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined } | null>(null)
 const empty: RecordThoughtState = Object.freeze({ items: [], loading: false, error: '' })
@@ -58,6 +60,11 @@ function useThought(item: RecordItem) {
 }
 const buttonStyle = { border: 0, background: 'transparent', padding: 0, color: arkmeTheme.accent, font: 'inherit', fontSize: 12, cursor: 'pointer' } as const
 const visibleThoughts = (items: readonly ArkmeRecordThought[]) => items.filter(item => item.status !== 'invalidated')
+/** Share the existing account-scoped read when composing human and Arko replies. */
+export function useRecordThoughtReplySummary(item: RecordItem) {
+  const state = useThought(item), count = visibleThoughts(state.items).length
+  return { count, hasContent: count > 0 || !!state.error }
+}
 const suggestions = (thought: ArkmeRecordThought) => {
   const candidates = thought.display?.suggestions.flatMap(group => group.items) ?? []
   return [...new Set(candidates.length ? candidates : thought.content ? [thought.content] : [])]
@@ -130,28 +137,34 @@ function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {
     {display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
 }
-export function RecordThoughtContent({ item }: { item: RecordItem }) {
+export function RecordThoughtContent({ item, embedded = false }: { item: RecordItem; embedded?: boolean }) {
   const state = useThought(item), thoughts = visibleThoughts(state.items)
   const section = useRef<HTMLElement>(null)
   useEffect(() => { if (thoughts.length && state.takeFocus()) section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) }, [item.itemUid, state.items, state.focusRevision])
   if (!thoughts.length && !state.error) return null
-  return <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content style={{ margin: '18px 0 22px', minWidth: 0 }}>
-    {thoughts.map(thought => <div key={thought.id} style={{ marginBottom: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9, color: arkmeTheme.secondary, fontSize: 13, fontWeight: 600 }}>
-        <Sparkle size={16} aria-hidden/>{tr(state.chat ? title(thought) : thought.biz === 2 ? 'Arko 的回应' : 'Arko有想法')}
-        {thought.visibility === 'user' && <span style={{ fontWeight: 400, color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('仅你可见')}</span>}
+  return <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content
+    style={{ ...(embedded ? {} : replyStyles.extensionContext), minWidth: 0 }}>
+    {!embedded && thoughts.length > 0 && <div data-arkme-thought-reply-count style={replyStyles.extensionContextTitle}>{tr('共')}{thoughts.length}{tr('条延展')}</div>}
+    <div style={replyStyles.extensionContextList}>{thoughts.map(thought => <div key={thought.id} data-arkme-thought-reply={thought.id}
+      style={{ ...replyStyles.extensionContextRow, cursor: 'default' }}>
+      <ArkmeArkoAvatar size={32}/>
+      <div style={replyStyles.extensionContextBody}>
+        <div style={replyStyles.extensionContextHead}>
+          <span data-arkme-thought-author style={replyStyles.extensionContextName}>Arko</span>
+          {thought.visibility === 'user' && <span style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('仅你可见')}</span>}
+        </div>
+        <ThoughtState thought={thought} onFill={state.onFill}/>
+        {thought.status !== 'failed' && <>
+          <ThoughtAnalysis thought={thought}/>
+          {thought.display?.suggestions.length ? thought.display.suggestions.map((group, index) => <div key={index} style={{ marginTop: 14 }}>
+            {group.style && <div style={{ fontSize: 12, color: arkmeTheme.tertiary, marginBottom: 5 }}>{group.style}</div>}
+            {group.items.map((text, i) => <div key={i} style={{ marginBottom: 12 }}><ArkmeMarkdownBody text={text} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }}/>
+              {state.onFill && <button type="button" style={{ ...buttonStyle, marginTop: 5 }} onClick={() => state.onFill?.(text)}>{tr('填入输入框')}</button>}
+            </div>)}
+          </div>) : thought.content && <ArkmeMarkdownBody text={thought.content} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }}/>}
+        </>}
       </div>
-      <ThoughtState thought={thought} onFill={state.onFill}/>
-      {thought.status !== 'failed' && <>
-        <ThoughtAnalysis thought={thought}/>
-        {thought.display?.suggestions.length ? thought.display.suggestions.map((group, index) => <div key={index} style={{ marginTop: 14 }}>
-          {group.style && <div style={{ fontSize: 12, color: arkmeTheme.tertiary, marginBottom: 5 }}>{group.style}</div>}
-          {group.items.map((text, i) => <div key={i} style={{ marginBottom: 12 }}><ArkmeMarkdownBody text={text} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }}/>
-            {state.onFill && <button type="button" style={{ ...buttonStyle, marginTop: 5 }} onClick={() => state.onFill?.(text)}>{tr('填入输入框')}</button>}
-          </div>)}
-        </div>) : thought.content && <ArkmeMarkdownBody text={thought.content} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }}/>}
-      </>}
-    </div>)}
+    </div>)}</div>
     {state.error && <div role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr(state.error)}
       <button type="button" disabled={state.loading} onClick={state.retry} style={{ ...buttonStyle, marginLeft: 8 }}>{tr('重试')}</button>
     </div>}

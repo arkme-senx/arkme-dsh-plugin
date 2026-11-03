@@ -65,6 +65,7 @@ import { ArkmeUserAvatar } from '../src/client/ArkmeAvatar.js'
 import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from '../src/client/ArkmeDetailSourceBadgeVisuals.js'
 import { ArkmeClientError } from '../src/client/api.js'
 import { usePersonalNoteDetail } from '../src/client/use-personal-note-detail.js'
+import { RecordThoughtsProvider } from '../src/client/RecordThoughts.js'
 
 const timelineItem: ArkmeTimelineItem = {
   itemUid: 'record-source',
@@ -89,6 +90,62 @@ const relatedList: ArkmeRelatedQuickNoteList = {
 }
 
 describe('normal timeline related quick note drawer', () => {
+  it.each(['send_to_self', 'topic'] as const)('places Arko after related notes in the same %s reply list and count', async sourceKind => {
+    vi.useFakeTimers()
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
+        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '**Arko答复**', biz: 1 },
+      ] }
+      if (operation === 'source.related-quick-notes.from-message') return relatedList
+      if (operation === 'source.message-extension.context') return { parentRecordUid: timelineItem.itemUid, extensionCount: 1,
+        extensions: [{ recordUid: 'human-reply', parentRecordUid: timelineItem.itemUid, level: 2, sourceKind: 'record_extension',
+          senderDisplayName: '小林', title: '', textContent: '其他人的延展', sendAtMillis: 1_710_000_060_000,
+          templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] }] }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<RecordThoughtsProvider accountScope="test:11" enabled>
+        <ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true }} sourceRef="source" sourceKind={sourceKind}
+          showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}}/>
+      </RecordThoughtsProvider>) })
+      await act(async () => vi.advanceTimersByTimeAsync(32))
+      const list = view.root.findByProps({ 'aria-label': '快记延展列表' })
+      expect(list.findByProps({ 'data-arkme-note-extension-count': 'true' }).children.join('')).toBe('共2条延展')
+      expect(list.findByProps({ 'data-arkme-thought-reply': 'arko-reply' }).findByProps({ 'data-arkme-thought-author': true }).children).toEqual(['Arko'])
+      expect(list.findByProps({ 'data-arkme-note-extension-item': 'human-reply' })).toBeDefined()
+      expect(list.findAllByProps({ 'data-arkme-thought-reply-count': true })).toHaveLength(0)
+      const tree = JSON.stringify(view.toJSON())
+      expect(tree.indexOf('data-arkme-related-quick-notes-card')).toBeLessThan(tree.indexOf('data-arkme-record-thought-content'))
+      expect(tree.indexOf('data-arkme-record-thought-content')).toBeLessThan(tree.indexOf('data-arkme-note-extension-item'))
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'record.thoughts.query')).toHaveLength(1)
+    } finally { if (view) act(() => view.unmount()); vi.useRealTimers() }
+  })
+
+  it('keeps the Arko reply visible when the human reply list fails to load', async () => {
+    vi.useFakeTimers()
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
+        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '已完成的回复', biz: 1 },
+      ] }
+      if (operation === 'source.related-quick-notes.from-message') return relatedList
+      if (operation === 'source.message-extension.context') throw new Error('延展暂时无法读取')
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<RecordThoughtsProvider accountScope="test:11" enabled>
+        <ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true }} sourceRef="source" sourceKind="send_to_self"
+          showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}}/>
+      </RecordThoughtsProvider>) })
+      await act(async () => vi.advanceTimersByTimeAsync(32))
+      expect(view.root.findByProps({ 'data-arkme-note-extension-count': 'true' }).children.join('')).toBe('共1条延展')
+      expect(view.root.findByProps({ 'data-arkme-thought-reply': 'arko-reply' })).toBeDefined()
+      expect(JSON.stringify(view.toJSON())).toContain('延展暂时无法读取')
+      expect(view.root.findAll(node => node.type === 'button' && node.children.includes('重试'))).toHaveLength(1)
+    } finally { if (view) act(() => view.unmount()); vi.useRealTimers() }
+  })
+
   it.each(['send_to_self', 'topic', 'default_category'] as const)('loads the same edited detail and history from %s despite incomplete list metadata', async sourceKind => {
     const sourceRef = `${sourceKind}-source`
     const preview = { ...timelineItem, isMe: true, recordVersion: 2, updateAtMillis: 0,
