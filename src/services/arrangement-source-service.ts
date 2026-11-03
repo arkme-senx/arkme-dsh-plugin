@@ -39,7 +39,7 @@ export class ArrangementSourceService {
         const current = await this.runtime.requireSession()
         if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('arrangement-source-account-changed', '账号已变化，请重新打开', false, 409)
       }
-      return { evidenceId, state: 'ready', text: evidence.text }
+      return { evidenceId, state: 'ready', text: evidence.text, ...(evidence.quoteState ? {quoteState:evidence.quoteState} : {}) }
     } catch (error) {
       if (error instanceof ArkmePluginError && error.code === 'arrangement-source-unavailable') {
         return { evidenceId, state: 'unavailable', reason: error.message }
@@ -58,8 +58,16 @@ export class ArrangementSourceService {
       if (!Array.isArray(data.audio_summary_ls) || !data.audio_summary_ls.some(s => objectValue(s).id === e.summary_id)) throw new ArkmePluginError('arrangement-source-deleted', '原录音总结已删除或当前无权查看', false, 404)
       result = { kind:'audio_summary', dateStamp:e.date_stamp, tzOffsetMillis:e.tz_offset, summaryId:e.summary_id }
     } else if (e.kind === 'call' && typeof e.room_id === 'string') {
-      const detail = await this.callHistory.arrangementCallDetail(e.room_id, signal, {quote:e.text,...(typeof e.start_ms === 'number'?{startMillis:e.start_ms}:{})})
-      result = { kind:'call', detail, quote:e.text, ...(typeof e.start_ms === 'number' ? {startMillis:e.start_ms>=100_000_000_000?Math.max(0,e.start_ms-detail.startedAtMillis):e.start_ms}: {}) }
+      const start = e.quoteState ? e.locatedStartMs : typeof e.start_ms === 'number' ? e.start_ms : undefined
+      const detail = await this.callHistory.arrangementCallDetail(e.room_id, signal, {quote:e.text,...(start !== undefined?{startMillis:start}:{})})
+      const relativeStart = start === undefined ? undefined : start >= 100_000_000_000 ? Math.max(0,start-detail.startedAtMillis) : start
+      // The detail is a fresh owner read: an intervening edit invalidates old offsets.
+      const matches = detail.transcriptSegments.filter(segment => e.text.trim() !== '' && (e.quoteState === 'exact' ? segment.text.trim() === e.text.trim() : segment.text.includes(e.text.trim()))
+        && (relativeStart === undefined || segment.startMillis === relativeStart))
+      const exact = (!e.quoteState || e.quoteState === 'exact') && (!detail.sourceQuoteState || detail.sourceQuoteState === 'exact') && matches.length === 1
+      result = { kind:'call', detail, quote:exact ? e.text : '',
+        quoteState:exact ? 'exact' : e.quoteState && e.quoteState !== 'exact' ? e.quoteState : detail.sourceQuoteState === 'ambiguous' ? 'ambiguous' : 'unlocated',
+        ...(exact ? {startMillis:matches[0]!.startMillis} : {}) }
     } else if (e.kind === 'agent') {
       result={kind:'document',title:'来源指令',text:e.text}
     } else if (e.kind === 'record' && typeof e.record_uid === 'string') {

@@ -856,13 +856,13 @@ export class ArrangementService {
     if (!evidence) throw new ArkmePluginError('arrangement-source-missing', '来源信息已变化，请刷新', false, 404)
     if (evidence.persisted) {
       const result = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/source/read', {
-        uid: ref.arrangementUid, evidence_id: evidenceId,
+        uid: ref.arrangementUid, evidence_id: evidenceId, contract_version: 2,
       }, session, signal, { lane: 'interactive-read', bypassCache: true })
       if (result.state === 'unavailable') throw new ArkmePluginError('arrangement-source-unavailable', stringValue(result.reason) || '来源已删除或当前无权查看', false, 404)
       const source = objectValue(result.source)
       // IDs locate evidence; never let a response replace its saved identity or destination.
       const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref',
-        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref',
+        'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref', 'utterance_id', 'transcript_version',
         'input_id', 'request_uid', 'voice_file_id', 'agent_session_id', 'agent_message_id', 'occurred_at']
       if (result.state !== 'ready' || fields.some(key => source[key] !== evidence[key])
         || (source.text !== undefined && typeof source.text !== 'string')
@@ -870,6 +870,22 @@ export class ArrangementService {
         throw new ArkmePluginError('arrangement-source-contract-invalid', '来源响应与当前安排不一致，请重试', true, 502)
       }
       evidence.text = evidence.kind === 'agent' ? stringValue(result.content) : stringValue(source.text)
+      if (evidence.kind === 'call' && result.contract_version !== undefined) {
+        const quote = objectValue(result.quote)
+        const states = ['exact', 'unlocated', 'ambiguous', 'version_changed', 'pending'] as const
+        if (result.contract_version !== 2 || result.access_state !== 'readable' || !states.includes(result.quote_state as typeof states[number])
+          || (result.quote_state === 'exact' && (typeof quote.text !== 'string' || !quote.text.trim() || result.content !== quote.text
+            || (typeof evidence.utterance_id === 'string' && quote.utterance_id !== evidence.utterance_id)
+            || !Number.isSafeInteger(quote.start_ms) || Number(quote.start_ms) < 0 || !Number.isSafeInteger(quote.end_ms) || Number(quote.end_ms) < Number(quote.start_ms)))
+          || (result.quote_state !== 'exact' && (result.quote !== undefined || !!result.content || !!source.text))) {
+          throw new ArkmePluginError('arrangement-source-contract-invalid', '通话来源定位响应无效，请重试', true, 502)
+        }
+        evidence.quoteState = result.quote_state as typeof states[number]
+        evidence.text = result.quote_state === 'exact' ? String(quote.text) : ''
+        if (result.quote_state === 'exact') evidence.locatedStartMs = Number(quote.start_ms)
+        else delete evidence.locatedStartMs
+      }
+
     }
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()

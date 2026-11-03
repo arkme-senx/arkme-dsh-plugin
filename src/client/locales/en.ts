@@ -1,5 +1,9 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+原句待定位，可查看原通话|Quote not located. You can open the original call.
+原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
+通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
+通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
 即我设置|Arkme settings
 即我设置分类|Arkme settings categories
 语言|Language

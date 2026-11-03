@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
-import type { ArkmeArrangementEvidence } from './types.js'
+import type { ArkmeArrangementEvidence, ArrangementQuoteState } from './types.js'
 import { objectValue, stringValue } from './services/service.js'
 import { validRecordingSourceDay } from './arrangement-recording-source.js'
 
 export interface ArrangementEvidenceData {
   id: string; kind: string; role: string; text: string
+  quoteState?: ArrangementQuoteState
+  locatedStartMs?: number
   persisted?: boolean
   [key: string]: unknown
 }

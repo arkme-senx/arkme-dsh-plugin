@@ -1019,8 +1019,9 @@ export interface ArkmeArrangementEvidence {
   createdAtMillis?: number
   unavailableReason?: string
 }
+export type ArrangementQuoteState = 'exact' | 'unlocated' | 'ambiguous' | 'version_changed' | 'pending'
 export type ArkmeArrangementSourceRead =
-  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation }
+  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; quoteState?: ArrangementQuoteState }
   | { evidenceId: string; state: 'unavailable'; reason: string }
 export interface ArkmeArrangementSourceConversation {
   source: ArkmeSourceItem
@@ -1049,7 +1050,7 @@ export type ArkmeArrangementSourceTarget =
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
   | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
-  | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string }
+  | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string; quoteState?: ArrangementQuoteState }
   | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
 
 export interface ArkmeArrangementItem {
@@ -1495,6 +1496,8 @@ export interface ArkmeCallShareViewer { viewId: string; userId: number; displayN
 export interface ArkmeCallShareViewers { items: ArkmeCallShareViewer[]; nextCursor: string }
 
 export interface ArkmeCallDetail {
+  /** Source match over the full transcript, before the bounded detail projection. */
+  sourceQuoteState?: 'exact' | 'unlocated' | 'ambiguous'
   /** Stable occurrence identity; callRef is renewable and must not be used for equality. */
   stableId?: string
   callRef: string
