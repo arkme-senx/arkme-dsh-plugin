@@ -56,6 +56,12 @@ try{
  await ctx.sessions.flush(agent.session)
  browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'});page=await browser.newPage({locale:'zh-CN',viewport:{width:1200,height:850},permissions:['geolocation'],geolocation:{latitude:0,longitude:0}})
  const url=ctx.get('webServer').getOrigin();await page.goto(ctx.get('connection').authenticatedUrl(url))
+ // A fresh official Profile may present DSH's own first-run introduction over
+ // the plugin. Complete that public UI before exercising the original menus.
+ const introduction=page.frameLocator('iframe[title="DeepSeek Harness"]').getByText('预览版说明',{exact:true})
+ try { await introduction.waitFor({state:'visible',timeout:10000}) }
+ catch(error) { if(error.name!=='TimeoutError')throw error }
+ if(await introduction.isVisible())await page.frameLocator('iframe[title="DeepSeek Harness"]').getByRole('button',{name:'继续',exact:true}).click()
  const channel=await ownerPost('team','/api/v1/team/message-channel/get',{team_id:7},11);await ownerPost('team','/api/v1/team/message-channel/configure',{team_id:7,expected_revision:channel.revision,enabled:false},11)
  const consumer=join(profile,'group identity consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}))
  await copyFile(join(repo,'tests/consumers/team-group-identity/consumer.ts'),join(consumer,'consumer.ts'))
