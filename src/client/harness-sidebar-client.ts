@@ -6,6 +6,7 @@ import { installHarnessSessionDropdown } from './harness-session-dropdown.js'
 import { installHarnessSessionSummary } from './harness-session-summary.js'
 import { installProjectedConversation } from './harness-projected-conversation.js'
 import { installHarnessActivityReporter } from './harness-activity-reporter.js'
+import { installHarnessSettings } from './harness-settings.js'
 
 export const inject = ['slots', 'locale', 'sessions']
 
@@ -25,9 +26,7 @@ export function apply(ctx: ClientContext): void {
       const accountId = Number(surface.getAttribute('data-arkme-account-id'))
       const authenticated = Number.isSafeInteger(accountId) && accountId > 0
       if (authenticated && restoreSettings === undefined) {
-        restoreSettings = ctx.slots.inject('sidebar.settings', () => ctx.slots.register({
-          name: 'sidebar.settings', priority: -100,
-        }, () => null))
+        restoreSettings = installHarnessSettings(ctx)
         restoreDefault = installHarnessSessionListDefault(ctx)
         restoreAccountSessions = installHarnessAccountSessions(ctx, surface)
         restoreSummary = installHarnessSessionSummary(ctx, surface)

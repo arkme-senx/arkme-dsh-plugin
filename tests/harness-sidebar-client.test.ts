@@ -32,27 +32,26 @@ function install() {
   return { inject, register, restore }
 }
 
-it('removes only the native settings slot while the authenticated avatar entry exists, then restores it on logout', async () => {
+it('keeps the native settings shell and adds the DSH launcher for an authenticated account', async () => {
   const surface = mount('42')
   const { inject, register, restore } = install()
-  expect(inject).toHaveBeenCalledOnce()
-  expect(inject.mock.calls[0]?.[0]).toBe('sidebar.settings')
-  expect(register.mock.calls[0]?.[0]).toEqual({ name: 'sidebar.settings', priority: -100 })
-  expect((register.mock.calls[0]?.[1] as () => unknown)()).toBeNull()
+  expect(inject).toHaveBeenCalledTimes(4)
+  expect(inject.mock.calls[0]?.[0]).toBe('settings.launcher')
+  expect(register.mock.calls[0]?.[0]).toEqual({ name: 'settings.launcher', priority: -100 })
   surface.dataset.arkmeAccountId = '43'
   await Promise.resolve()
-  expect(inject).toHaveBeenCalledOnce()
+  expect(inject).toHaveBeenCalledTimes(4)
   surface.removeAttribute('data-arkme-account-id')
   await Promise.resolve()
-  expect(restore).toHaveBeenCalledOnce()
+  expect(restore).toHaveBeenCalledTimes(4)
   surface.dataset.arkmeAccountId = '42'
   await Promise.resolve()
-  expect(inject).toHaveBeenCalledTimes(2)
+  expect(inject).toHaveBeenCalledTimes(8)
   cleanups.pop()?.()
-  expect(restore).toHaveBeenCalledTimes(2)
+  expect(restore).toHaveBeenCalledTimes(8)
   surface.removeAttribute('data-arkme-account-id')
   await Promise.resolve()
-  expect(restore).toHaveBeenCalledTimes(2)
+  expect(restore).toHaveBeenCalledTimes(8)
 })
 
 it.each([undefined, '', '0', 'invalid'])('preserves the original settings for unauthenticated or unresolved account %s', accountId => {
@@ -66,7 +65,7 @@ it('reacts when login becomes available after the native sidebar mounts', async 
   const { inject } = install()
   surface.dataset.arkmeAccountId = '42'
   await Promise.resolve()
-  expect(inject).toHaveBeenCalledOnce()
+  expect(inject).toHaveBeenCalledTimes(4)
 })
 
 it('leaves standalone Harness and unrelated embedded pages untouched', () => {
