@@ -47,11 +47,12 @@ export class GeneratedArtifacts {
       if (this.sourceRevision && sourceRevision !== await this.sourceRevision(signal)) throw invalid()
       const expiresAtMillis = Date.now() + TTL
       await rename(partial, path)
-      const fileRef = await this.codec.seal(this.format.prefix, { id, userId, size, fileName, expiresAtMillis, sha256: hash.digest('hex'), ...(sourceRevision === undefined ? {} : { sourceRevision }) })
+      const sha256 = hash.digest('hex')
+      const fileRef = await this.codec.seal(this.format.prefix, { id, userId, size, fileName, expiresAtMillis, sha256, ...(sourceRevision === undefined ? {} : { sourceRevision }) })
       signal?.throwIfAborted()
       if (await this.currentUser() !== userId) throw invalid()
       published = true
-      return { file: { fileRef, fileName, size, expiresAtMillis }, result }
+      return { file: { fileRef, fileName, size, expiresAtMillis }, result, sha256 }
     } finally {
       this.active = false
       await unlink(partial).catch(() => undefined)

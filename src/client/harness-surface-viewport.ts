@@ -93,8 +93,13 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
         : node.nodeType === 1 && !['SCRIPT', 'STYLE', 'LINK', 'META'].includes((node as Element).tagName)
           && (Boolean(node.textContent?.trim()) || (node as Element).children.length > 0)))
     const layers = ready ? harnessMenuLayers(native) : []
+    // A native modal owns its full-window mask and outside-click handling.
+    // Cropping it to the conversation and card bounds cuts that mask into blocks.
+    // Non-modal session selectors also use role=dialog, so check aria-modal.
+    const modalOpen = layers.some(layer => layer.getAttribute('aria-modal') === 'true')
     let menuRect: PaintRect | undefined
-    const painted: PaintRect[] = visible && (ready || surface.hasAttribute('data-arkme-boot-feedback')) ? [rect] : []
+    const painted: PaintRect[] = modalOpen ? [{ left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight }]
+      : visible && (ready || surface.hasAttribute('data-arkme-boot-feedback')) ? [rect] : []
     for (const layer of layers) {
       const r = layer.getBoundingClientRect()
       const isMenu = layer.hasAttribute('data-arkme-session-column')
@@ -155,7 +160,7 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     native.head.append(viewportStyle)
     nativeObserver = new win.MutationObserver(schedule)
     nativeObserver.observe(native.documentElement, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'data-arkme-session-open', 'data-arkme-session-frame'] })
+      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'aria-modal', 'role', 'data-arkme-session-open', 'data-arkme-session-frame'] })
     sync()
   }
   const position = () => {

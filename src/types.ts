@@ -4525,6 +4525,8 @@ export type ArkmePluginOperation =
   | 'account.usage.token.calls'
   | 'data.deleted'
   | 'data.export.preflight'
+  | 'data.export.range.preview'
+  | 'data.export.saved'
   | 'data.export'
   | 'data.recover'
   | 'billing.order.create'
