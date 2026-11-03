@@ -1,3 +1,4 @@
+import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { worldPublishSourceLabel } from '../world-publish-source.js'
 import { WorldPublishGuide } from './WorldPublishGuide.js'
 import { PublicSocialDirectory, PublicWorldGroups } from './PublicSocialDirectory.js'
@@ -2171,6 +2172,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
 
   const profileUserId = target?.userId ?? (scope === 'mine' ? currentUserId : undefined)
   return <WorldNotificationFocus.Provider value={notificationTarget}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
+    {accountScope && profileUserId && !profileGroupView && !publicTab && <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 20px 0' }}><IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: profileUserId }} label={profileUserId === currentUserId ? '复制我的链接' : '复制个人链接'} /></div>}
     {accountScope && (profileGroupView || publicTab && target === undefined) ? <PublicSocialDirectory
       key={`${accountScope}:${profileGroupView ? profileUserId : 'all'}:${publicTab ?? 'groups'}`}
       accountScope={accountScope} currentUserId={currentUserId} mode={profileGroupView ? 'groups' : publicTab ?? 'groups'}
@@ -2200,6 +2202,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     {composerOpen && <WorldPublishGuide onClose={() => { setComposerOpen(false) }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
     {authorCardItem !== undefined && <ArkmeMemberProfileCard
+      copyLinkTarget={authorCardItem.authorRef ? { kind: 'author', authorRef: authorCardItem.authorRef } : undefined}
       member={worldAuthorCardMember(authorCardItem)} busy={authorCardBusy}
       onClose={() => { if (!authorCardBusy) setAuthorCardItem(undefined) }}
       onSend={() => { void openPrivateChatForAuthor(authorCardItem) }}

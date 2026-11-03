@@ -1,3 +1,4 @@
+import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
@@ -356,6 +357,7 @@ export type ArkmeMemberProfileIdentity = Pick<
 > & { avatarFallback?: ArkmeGroupAvatarFallback }
 
 export function ArkmeMemberProfileCard(props: {
+  copyLinkTarget?: import('../identity-share-contract.js').IdentityShareTarget | undefined
   member: ArkmeMemberProfileIdentity
   imagePort?: ArkmeAvatarImagePort
   imageKey?: string | undefined
@@ -396,6 +398,7 @@ export function ArkmeMemberProfileCard(props: {
           size={100} label={tr("{v0} 的头像", { v0: names.displayName })} />
         <h3 style={styles.cardName}>{names.displayName}</h3>
         {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>{tr("主题内昵称：")}{names.topicNickname}</p>}
+        {props.copyLinkTarget && <IdentityCopyLinkButton target={props.copyLinkTarget} label="复制个人链接" />}
         {props.error && <p role="alert" style={{ color: arkmeTheme.danger, fontSize: 12, margin: '6px 0' }}>{props.error}</p>}
         {!props.hideSend && <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 'auto' }}><button data-arkme-feedback="neutral"
           type="button"

@@ -1,3 +1,4 @@
+import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
@@ -1212,6 +1213,7 @@ function GroupSettingsMenu(props: {
   onRename: (target: ArkmeGroupActionTarget) => void
   onSelfNickname: () => void
   onPublicSettingsOpen?: () => void
+  onCopyLink?: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
@@ -1368,6 +1370,7 @@ function GroupSettingsMenu(props: {
     { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
   if (props.onPublicSettingsOpen) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
+  if (props.onCopyLink) entries.push({ id: 'copy-group-link', label: '复制群聊链接', icon: <ClientIcon src={icons.members} size={16} /> })
   entries.push({
     id: 'message-dnd',
     label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1441,6 +1444,7 @@ function GroupSettingsMenu(props: {
       if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'public-settings') { close(); props.onPublicSettingsOpen?.(); return }
+      if (id === 'copy-group-link') { close(); props.onCopyLink?.(); return }
       if (id === 'message-dnd') {
         close()
         changeMessageDnd(!messageDnd)
@@ -1806,6 +1810,7 @@ export function ArkmeGroupChatControls(props: {
         onRename={setRenameSource}
         onSelfNickname={() => { setSelfNicknameOpen(true) }}
         {...(props.accountScope ? { onPublicSettingsOpen: () => setPublicSettingsOpen(true) } : {})}
+        {...(props.accountScope ? { onCopyLink: () => { void copyIdentityShareLink(props.accountScope!, { kind: 'source', sourceRef: props.source.sourceRef }).then(() => props.onStatus?.(tr('链接已复制'))).catch(error => reportError(errorMessage(error))) } } : {})}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
         {...(props.accountScope ? { onInternalGroupOpen: () => setInternalGroupOpen(true) } : {})}
