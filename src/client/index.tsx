@@ -2,7 +2,7 @@ import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
-import { screenshotWindowRequested } from './native-screenshot.js'
+import { screenshotWindowRequested, nativeScreenshotBridge } from './native-screenshot.js'
 import { registerConversationWindowRoot } from './conversation-window-root.js'
 import { conversationWindowRequested } from './conversation-window.js'
 import { bindConversationWindows } from './conversation-window-sync.js'
@@ -112,6 +112,8 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  // Only the main top frame is authorized by the desktop to register this capability.
+  void nativeScreenshotBridge()?.enableStandaloneEditor?.('reset-v1').catch(() => {})
   // Explicit loopback-only review surface; never inject synthetic events into a real chat.
   if (typeof window !== 'undefined' && offlineContextPreviewRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: offline context preview language')
