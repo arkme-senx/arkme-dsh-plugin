@@ -43,9 +43,10 @@ describe('profile/settings navigation', () => {
   })
   it('keeps data and usage next to account without a second profile usage modal', () => {
     const index = readFileSync(`${process.cwd()}/src/client/index.tsx`, 'utf8')
-    expect(index).toMatch(/id: 'arkme-account',\s+order: -3/)
-    expect(index).toContain("id: 'arkme-usage', order: -2")
-    expect(index).toContain("id: 'arkme-data', order: -2.5")
+    expect(index).toContain('installArkmeSettingsDialog(ctx)')
+    const settings = readFileSync(`${process.cwd()}/src/client/ArkmeSettingsDialog.tsx`, 'utf8')
+    expect(settings.indexOf("id: 'arkme-usage'")).toBeGreaterThan(settings.indexOf("id: 'arkme-account'"))
+    expect(settings.indexOf("id: 'arkme-data'")).toBeGreaterThan(settings.indexOf("id: 'arkme-usage'"))
     const nav = readFileSync(`${process.cwd()}/src/client/ArkmeProductNavigation.tsx`, 'utf8')
     expect(nav.indexOf('className="arkme-member-entry"')).toBeGreaterThan(nav.indexOf('className="arkme-profile-identity-row"'))
     const trigger = nav.slice(nav.indexOf('<button ref={profileTriggerRef}'))
