@@ -15,3 +15,17 @@ export async function verifyInstalledGroupIdentity(fetchImpl:typeof fetch,source
  assert(sent.representation?.name===candidate.name&&sent.representation.jotmoId===candidate.jotmoId,'accepted attribution in SDK receipt');
  return {context,card,selection,sent};
 }
+
+export async function verifyInstalledReadProjection(fetchImpl:typeof fetch,sourceRef:string,actionRef:string,selection:TeamRepresentationSelection,complete:(relationUids:string[])=>Promise<void>){
+ const sdk=new ArkmeSdk({fetchImpl});
+ const child=await sdk.extendSourceMessage(sourceRef,actionRef,'SDK 团队延展读取闭环',{representation:selection,sendAtMillis:Date.now()});
+ assert(child.extension.representation?.jotmoId==='stack_team_7','accepted extension display');
+ const personal=await sdk.extendSourceMessage(sourceRef,actionRef,'SDK 个人延展不能继承父身份');
+ assert(personal.extension.representation===undefined,'personal extension cannot inherit parent Team');
+ await complete([child.relationUid!,personal.relationUid!]);
+ const tree=await sdk.sourceMessageExtensionContext(sourceRef,actionRef);
+ assert(tree.extensions.find(item=>item.recordUid===child.recordUid)?.representation?.jotmoId==='stack_team_7','tree retains Team display');
+ assert(tree.extensions.find(item=>item.recordUid===personal.recordUid)?.representation===undefined,'tree personal identity');
+ const link=await sdk.copyMessageLink(sourceRef,[actionRef]);
+ return {child,personal,tree,link};
+}

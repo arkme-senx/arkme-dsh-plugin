@@ -22,7 +22,7 @@ const actor=4,group='11111111-1111-4111-8111-111111111111',calls=[],streams=new 
 const owners=Object.fromEntries(['team','record','chat'].map(name=>[name,process.env[`TEAM_INTERACTION_STACK_${name.toUpperCase()}`]]))
 for(const endpoint of Object.values(owners)){const url=new URL(endpoint);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.protocol,'http:')}
 const token=user=>{const parts=[{alg:'HS256',typ:'JWT'},{user_id:user,client_id:1,iss:'jotmo',exp:Math.floor(Date.now()/1000)+3600}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url'));const text=parts.join('.');return text+'.'+createHmac('sha256','team-interaction-isolated-stack').update(text).digest('base64url')}
-const ownerPost=async(owner,path,input,user=actor)=>{const response=await fetch(owners[owner]+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token(user)}`},body:JSON.stringify(input)});const result=await response.json();assert.equal(result.code,200,JSON.stringify(result));return result.data}
+const ownerPost=async(owner,path,input,user=actor)=>{const response=await fetch(owners[owner]+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token(user)}`},body:JSON.stringify(input)});const result=await response.json();if(path.startsWith('/fixture/')){assert.equal(result.ok,true,JSON.stringify(result));return result}assert.equal(result.code,200,JSON.stringify(result));return result.data}
 let ctx,shutdown,browser,page
 const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:await readFile(process.env.NODE_EXTRA_CA_CERTS)},async(req,res)=>{
  try{
@@ -60,7 +60,7 @@ try{
  const consumer=join(profile,'group identity consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}))
  await copyFile(join(repo,'tests/consumers/team-group-identity/consumer.ts'),join(consumer,'consumer.ts'))
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
- const {verifyInstalledGroupIdentity}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
+ const {verifyInstalledGroupIdentity,verifyInstalledReadProjection}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  const verified=await verifyInstalledGroupIdentity(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef)
  const toolSent=await invoke('arkme_text_send',{source_ref:source.sourceRef,text:`本地团队回执验收 ${randomUUID()}`,representation:verified.selection,send_at_millis:Date.now()})
  assert.equal(toolSent.isError,false);assert.match(JSON.stringify(toolSent),/representation/);assert.match(JSON.stringify(toolSent),/接待团队7/)
@@ -109,6 +109,36 @@ try{
  const articleDetail=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:articleCall.input.record_uid,rel_uid:articleCall.input.rel_uid,record_owner_user_id:actor})
  assert.equal(articleDetail.item.relation.representation.team_id,'7');assert.equal(articleDetail.item.relation.sender_user_id,actor)
  await page.screenshot({path:join(capture,'original-article-accepted.png')})
+ await ownerPost('chat','/fixture/audit-pass',{rel_uid:uiCall.input.rel_uid,version:1})
+ const latest=await host.readSource(source.sourceRef,{limit:100})
+ const selected=latest.items.find(item=>item.itemUid===uiCall.input.record_uid);assert(selected?.messageActionRef)
+ const readFlow=await verifyInstalledReadProjection(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef,selected.messageActionRef,verified.selection,async(relationUids)=>{for(let i=0;i<3;i++)await ownerPost('record','/fixture/complete',{});await new Promise(resolve=>setTimeout(resolve,300));for(const rel_uid of [uiCall.input.rel_uid,...relationUids])await ownerPost('chat','/fixture/audit-pass',{rel_uid,version:1})})
+ const quoted=await invoke('arkme_message_quote_reply',{source_ref:source.sourceRef,message_action_ref:selected.messageActionRef,start:0,end:2,text:'Tool 团队引用延展闭环',representation:verified.selection,send_at_millis:Date.now()})
+ assert.equal(quoted.isError,false);assert.match(JSON.stringify(quoted),/stack_team_7/)
+ await ownerPost('chat','/fixture/copy-link/audit',{})
+ const resolved=await host.resolveMessageCopyLink(readFlow.link.sid)
+ assert.deepEqual(resolved.items[0].representation,{name:'接待团队7',jotmoId:'stack_team_7'})
+ const publicSnapshot=await ownerPost('chat','/api/public/v1/chats/messages/copy-link/detail',{sid:readFlow.link.sid},2)
+ assert.deepEqual(publicSnapshot.items[0].representation,{name:'接待团队7',jotmo_id:'stack_team_7'})
+ assert(!JSON.stringify(publicSnapshot).match(/membership_revision|group_join_at|chat_session_uid/))
+ await page.reload();await page.getByText('隔离转发目标',{exact:true}).first().click()
+ const detailRow=page.locator(`[data-arkme-message-item-uid="${uiCall.input.record_uid}"]`)
+ await detailRow.getByRole('button',{name:'打开快记详情',exact:true}).click()
+ const treeItem=page.locator(`[data-arkme-note-extension-item="${readFlow.child.recordUid}"]`)
+ await treeItem.locator('[data-arkme-team-representation="marker"]').waitFor()
+ assert.equal(await page.locator(`[data-arkme-note-extension-item="${readFlow.personal.recordUid}"] [data-arkme-team-representation]`).count(),0)
+ await page.screenshot({path:join(capture,'real-owner-extension-detail.png')})
+ await writeFile(join(capture,'read-projection-proof.json'),JSON.stringify({readFlow,resolved,publicSnapshot,toolQuote:'accepted'},null,2))
+ const localLink=new URL(`/s/${readFlow.link.sid}`,origin).href
+ const linkMessage=await host.sendSourceText(source.sourceRef,localLink,{recordUid:randomUUID(),relationUid:randomUUID()})
+ await page.reload();await page.getByText('隔离转发目标',{exact:true}).first().click()
+ await page.locator(`[data-arkme-message-item-uid="${linkMessage.itemUid}"] [data-arkme-inline-link="message-copy-link"]`).click()
+ const sharedDetail=page.locator('[data-arkme-copy-link-detail="true"]')
+ await sharedDetail.locator('[data-arkme-team-representation="marker"]').waitFor()
+ assert.equal(await sharedDetail.locator('[data-arkme-team-representation="label"]').count(),0)
+ await page.screenshot({path:join(capture,'real-owner-copy-link-detail.png')})
+
+
  await page.reload();await page.getByText('隔离转发目标',{exact:true}).first().click()
  await page.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).first().waitFor()
  const beforeCard=calls.length;await page.getByRole('button',{name:'查看接待团队7团队资料',exact:true}).first().click()
@@ -116,8 +146,8 @@ try{
  assert(!calls.slice(beforeCard).some(c=>/conversations\/open|message-channel/.test(c.path)),'opening card is read only')
  await page.screenshot({path:join(capture,'real-owner-team-card.png')})
  await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2))
- await writeFile(join(capture,'result.json'),JSON.stringify({acceptance:'team-group-identity-real-stack',dsh:'official 0.2.1-rc.2',artifact:'immutable tgz',tools:'real-session read and forgery rejection',sdk:'compiled external consumer represented send',ui:'original compact picker, represented text send, original browser article picker/editor/pending send, refresh, badge, pure card',backend:'real Team/Chat/Record HTTP owners + Mongo/Redis/RabbitMQ',uiRecord:uiCall.input.record_uid,articleRecord:articleCall.input.record_uid},null,2))
+ await writeFile(join(capture,'result.json'),JSON.stringify({acceptance:'team-group-identity-real-stack',dsh:'official 0.2.1-rc.2',artifact:'immutable tgz',tools:'real-session read and forgery rejection',sdk:'compiled external consumer represented send',ui:'extension detail retains independent Team marker, audited copy link minimal display, original compact picker, represented text send, original browser article picker/editor/pending send, refresh, badge, pure card',backend:'real Team/Chat/Record HTTP owners + Mongo/Redis/RabbitMQ',uiRecord:uiCall.input.record_uid,articleRecord:articleCall.input.record_uid},null,2))
  console.log('Installed UI, external SDK Consumer and official Tools passed against real business owners.')
 
-}catch(error){console.error(error);if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
+}catch(error){console.error(error);await writeFile(join(capture,'failure-calls.json'),JSON.stringify(calls,null,2));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
 finally{await browser?.close();if(ctx?.get('arkmeData'))await ctx.get('arkmeData').logout();await shutdown?.shutdown(process.exitCode||0);api.closeAllConnections();await new Promise(r=>api.close(r))}

@@ -6,7 +6,7 @@ import { ArkmeComposerResourcePicker } from './ArkmeComposerResourcePicker.js'
 import { detailExtensionSends, useDetailExtensionSends, publicTimelineExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
-import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
+import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
 import type {TeamGroupIdentity,TeamRepresentationSelection} from '../team-group-contract.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
 import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
@@ -1719,7 +1719,7 @@ function CopyLinkDetailDrawer({
   const renderSingleRecord = (item: ArkmeMessageCopyLinkSnapshotItem) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, 0)
     return <div style={styles.copyLinkDetailRecord}>
-      <CopyLinkRecordAvatar item={item} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} /></TeamRepresentationAvatar>
       <div style={styles.copyLinkDetailRecordMeta}>
         <span style={styles.copyLinkDetailRecordSender}>{copyLinkSnapshotSenderName(item)}</span>
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
@@ -1732,7 +1732,7 @@ function CopyLinkDetailDrawer({
   const renderMultiRecord = (item: ArkmeMessageCopyLinkSnapshotItem, index: number) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, index)
     return <div key={`${String(index)}:${String(item.sendAtMillis)}:${copyLinkSnapshotSenderName(item)}`} style={styles.copyLinkDetailMultiRow}>
-      <CopyLinkRecordAvatar item={item} size={36} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} size={36} /></TeamRepresentationAvatar>
       <div style={styles.copyLinkDetailMultiContent}>
         <span style={styles.copyLinkDetailRecordSender}>{copyLinkSnapshotSenderName(item)}</span>
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
@@ -1746,7 +1746,7 @@ function CopyLinkDetailDrawer({
   const renderExtensionItem = (item: ArkmeMessageCopyLinkExtensionItem) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, 0)
     return <div key={item.recordUid} style={styles.copyLinkDetailExtensionItem}>
-      <CopyLinkRecordAvatar item={item} size={36} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} size={36} /></TeamRepresentationAvatar>
       <div style={{ minWidth: 0 }}>
         <div style={styles.copyLinkDetailExtensionHead}>
           <span style={styles.copyLinkDetailExtensionSender}>{copyLinkSnapshotSenderName(item)}</span>

@@ -2657,7 +2657,7 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     if (options.thoughtReplyRef || options.privateThoughtReplyRef) await this.requireThoughtReplyProvider(options.signal)
     if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
@@ -2668,6 +2668,8 @@ export class ArkmeSdk {
     if (fileRefs.length > 9) throw new TypeError('Arkme source message extension accepts at most 9 attachments')
     return await this.call<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
       sourceRef, messageActionRef, textContent,
+      ...(options.representation === undefined ? {} : { representation: options.representation }),
+      ...(options.sendAtMillis === undefined ? {} : { sendAtMillis: options.sendAtMillis }),
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
@@ -3351,7 +3353,7 @@ export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contr
 
 export type {TeamMention} from '../team-app-contract.js'
 
-export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
+export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot,TeamRepresentationDisplay} from '../team-group-contract.js'
 
 export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
 export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'

@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
-import { TeamRepresentationBadge } from '../src/client/TeamRepresentationBadge.js'
+import { TeamRepresentationBadge, TeamRepresentationAvatar } from '../src/client/TeamRepresentationBadge.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem, ArkmeTeam } from '../src/types.js'
@@ -182,4 +182,24 @@ it('preserves the explicit retry action without clearing a frozen selected ident
   expect(onSelect).not.toHaveBeenCalled()
   expect(document.querySelector('[role="status"]')).toBeNull()
   expect(document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.textContent).toBe('我')
+})
+
+it('decorates the existing avatar with one corner marker and keeps personal avatars unchanged', async () => {
+  await mount(<TeamRepresentationAvatar value={{name:'团队',jotmoId:'team'}}><span data-personal-avatar>作者</span></TeamRepresentationAvatar>)
+  expect(host.querySelector('[data-personal-avatar]')?.textContent).toBe('作者')
+  expect(host.querySelectorAll('[data-arkme-team-representation="marker"]')).toHaveLength(1)
+  expect(host.querySelector('[data-arkme-team-representation="label"]')).toBeNull()
+  await mount(<TeamRepresentationAvatar><span data-personal-avatar>作者</span></TeamRepresentationAvatar>)
+  expect(host.querySelector('[data-personal-avatar]')?.textContent).toBe('作者')
+  expect(host.querySelector('[data-arkme-team-representation]')).toBeNull()
+})
+
+it('Team marker keyboard activation does not also select its enclosing extension row', async () => {
+  const onRowKeyDown = vi.fn()
+  await mount(<div onKeyDown={onRowKeyDown}><TeamRepresentationBadge value={{name:'团队',jotmoId:'team'}} compact /></div>)
+  const marker = host.querySelector('button')!
+  for (const key of ['Enter',' ']) await act(async () => marker.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true})))
+  expect(onRowKeyDown).not.toHaveBeenCalled()
+  await act(async () => marker.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+  expect(onRowKeyDown).toHaveBeenCalledTimes(1)
 })

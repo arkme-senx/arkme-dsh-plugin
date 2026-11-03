@@ -2763,6 +2763,8 @@ export interface ArkmeMessageCopyLinkStructuredContent {
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {
+  /** Accepted publication display only; never a Team membership or send selection. */
+  representation?: import('./team-group-contract.js').TeamRepresentationDisplay
   recordUid?: string
   sourceKind?: string
   senderDisplayName: string
@@ -2787,6 +2789,7 @@ export type ArkmeMessageCopyLinkPresentationNode =
   | { kind: 'item'; itemIndex: number }
   | {
     kind: 'forward_bundle'
+    representation?: import('./team-group-contract.js').TeamRepresentationDisplay
     title: string
     commentText: string
     createdAtMillis: number

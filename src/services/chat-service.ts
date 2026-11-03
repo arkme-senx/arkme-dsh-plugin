@@ -2,7 +2,7 @@ import { thoughtReplyFromWire } from '../thought-reply.js'
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
 import {requireFrozenTeamSendTime} from './group-representation.js'
-import {GroupRepresentationCodec} from './group-representation.js'
+import {GroupRepresentationCodec, readTeamRepresentationDisplay} from './group-representation.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 
 import { commonGroupChanges } from './common-group-service.js'
@@ -771,6 +771,7 @@ function messageCopyLinkSnapshotItemFromData(value: unknown): ArkmeMessageCopyLi
   const recordUid = stringValue(data.record_uid ?? data.recordUid ?? data.uid).trim()
   const item = {
     ...(recordUid === '' ? {} : { recordUid }),
+    ...(data.representation == null ? {} : { representation: readTeamRepresentationDisplay(data.representation)! }),
     sourceKind: stringValue(data.source_kind),
     senderDisplayName: stringValue(data.sender_display_name),
     senderAvatarUrl: stringValue(data.sender_avatar_url),
@@ -816,6 +817,7 @@ function messageCopyLinkPresentationNodesFromData(
     if (kind === 'forward_bundle') {
       return {
         kind: 'forward_bundle',
+        ...(data.representation == null ? {} : { representation: readTeamRepresentationDisplay(data.representation)! }),
         title: stringValue(data.title),
         commentText: stringValue(data.comment_text),
         createdAtMillis: integerLikeValue(data.created_at),
@@ -932,6 +934,7 @@ function chatExtensionTreeItemFromData(
     ...(recordOwnerUserId === 0 ? {} : { recordOwnerUserId }),
     level: 2,
     sourceKind: 'record_extension',
+    ...(relation.representation == null ? {} : { representation: readTeamRepresentationDisplay(relation.representation)! }),
     senderDisplayName,
     senderAvatarUrl: firstTextValue(relation, ['sender_avatar_url', 'senderAvatarUrl', 'avatar_ref', 'avatarRef'])
       || firstTextValue(payload, ['sender_avatar_url', 'senderAvatarUrl', 'avatar_ref', 'avatarRef']),
@@ -4074,10 +4077,12 @@ nextPublic = next
       if ((options.quote !== undefined || options.representation !== undefined || options.thoughtReplyRef || options.privateThoughtReplyRef) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
+      const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation, session.userId)
       const extension = await this.hydrateUploadedExtension({
         ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
  ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
- recordUid: createdRecordUid,
+        recordUid: createdRecordUid,
+        ...(representation === undefined ? {} : { representation: { name: representation.name, jotmoId: representation.jotmoId } }),
         parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         recordOwnerUserId: session.userId,
         level: extensionLevel,
@@ -4093,7 +4098,6 @@ nextPublic = next
         officialMark: 0,
         mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
       }, assets, session, options.signal)
-      const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation, session.userId)
       return {
         ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
  ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
