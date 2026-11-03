@@ -12,6 +12,7 @@ const expectedPublicMethods = [
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
+  'publicGroupJoinRequests', 'resolvePublicGroupJoinRequest', 'publicSocialRead', 'publicSocialWrite',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.

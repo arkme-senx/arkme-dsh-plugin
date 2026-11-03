@@ -1,3 +1,5 @@
+import type { PublicSocialReadInput, PublicSocialWriteInput, PublicSocialReadResult, PublicSocialWriteResult } from '../public-social-contract.js'
+export type * from '../public-social-contract.js'
 import { recordingStorageSessionRefs, type RecordingFileStoragePage } from '../recording-file-storage.js'
 export type { RecordingFileStorage, RecordingFileStoragePage } from '../recording-file-storage.js'
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight } from '../data-management.js'
@@ -2043,6 +2045,9 @@ export class ArkmeSdk {
     if ((await this.capabilities(signal)).features.commonGroups !== true) throw new Error('当前 Provider 不支持共同群聊')
     return await this.call('group.common.sync', { sourceRef }, signal)
   }
+
+  async publicSocialRead(input: PublicSocialReadInput, signal?: AbortSignal): Promise<PublicSocialReadResult> { if ((await this.capabilities(signal)).features.publicSocialV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持公开社交，请升级',retryable:false}); return await this.call('social.read', { ...input }, signal) }
+  async publicSocialWrite(input: PublicSocialWriteInput, signal?: AbortSignal): Promise<PublicSocialWriteResult> { if ((await this.capabilities(signal)).features.publicSocialV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持公开社交，请升级',retryable:false}); return await this.call('social.write', { ...input }, signal) }
 
   async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')

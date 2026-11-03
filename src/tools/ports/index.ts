@@ -1,3 +1,4 @@
+import type { PublicSocialPort } from '../../public-social-contract.js'
 import type { ArkmeRecordExportPort } from '../../data-management.js'
 import type {TeamMemberManagementPort} from '../../team-member-add-contract.js'
 import type { TeamHistoryPort } from '../../team-history-contract.js'
@@ -34,6 +35,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  PublicSocialPort,
   ArkmeRecordExportPort,
   TeamMemberManagementPort,
   TeamHistoryPort,

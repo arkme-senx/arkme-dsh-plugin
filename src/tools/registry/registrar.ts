@@ -52,6 +52,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_member_remove',
   'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
+  'arkme_social_write',
   'arkme_message_withdraw',
   'arkme_contact_add',
   'arkme_team_join',
@@ -220,6 +221,16 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   }
   if (name === 'arkme_bot_openclaw_connect') {
     return '是否确认连接这个 Bot 到本机 OpenClaw？这会读取该 Bot 凭据、安装固定版本 Channel、创建独立 Agent；如有待应用配置，还会重启指定 profile 的 Gateway 并短暂影响其中全部 Agent。同一 Bot 已在别处在线时可能发生接管。'
+  }
+  if (name === 'arkme_social_write') {
+    switch (args.operation) {
+      case 'join': return '是否确认加入刚才选定的公开群聊？'
+      case 'chat': return '是否确认打开与刚才选定公开用户的私聊？不会自动发送消息。'
+      case 'listing': return args.enabled === true ? '是否确认将你的介绍展示到找人聊聊？其他用户将可以发现你并发起私聊。' : '是否确认下架你的公开展示？已有私聊会保留。'
+      case 'group': return args.enabled === true ? '是否确认公开这个群聊？其他用户将可以发现并按群规则申请加入。' : '是否确认关闭这个群聊的公开展示？已有成员会保留。'
+      case 'showcase': return args.enabled === true ? '是否确认在你的世界展示这个公开群的参群关系？' : '是否确认从你的世界移除这个群的参群展示？'
+      case 'resolve': return args.enabled === true ? '是否确认同意刚才选定的入群申请？申请人之后可完成入群。' : '是否确认拒绝刚才选定的入群申请？'
+    }
   }
   if (name === 'arkme_id_set') {
     const display = cleanArgument(args.arkme_id, 64)

@@ -1584,6 +1584,7 @@ arkoImagesV1?:true
     imageCacheRead?: true
     selfRoles?: true
     directMessageAdmission?: true
+    publicSocialV1?: true
     messageTextAnchorsV1?: true
     reactionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
@@ -4451,6 +4452,10 @@ export type ArkmePluginOperation =
   | 'group.private.people'
   | 'group.private.matches'
   | 'group.private.create'
+  | 'social.read'
+  | 'social.write'
+  | 'social.groups.requests'
+  | 'social.groups.requests.resolve'
   | 'social.groups.query'
   | 'social.groups.read'
   | 'social.groups.join'

@@ -8,6 +8,7 @@ import { PublicPersonListingDialog, PublicGroupSettingsDialog } from '../src/cli
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeGroupCreateDialog } from '../src/client/ArkmeQuickAdd.js'
 import { ArkmeWorldSurface } from '../src/client/ArkmeWorldSurface.js'
+import { PublicGroupJoinRequests } from '../src/client/PublicGroupJoinRequests.js'
 
 const group: PublicGroup = { chatSessionUid: 'group-a', title: '产品交流', introduction: '一起聊产品', ownerUserId: 1002, hasJoined: false, joinMode: 1 }
 const person: PublicPerson = { userId: 1001, isListed: true, displayName: '公开昵称', avatarUrl: '', introduction: '原介绍' }
@@ -125,4 +126,44 @@ describe('desktop public social interactions', () => {
     await act(async () => button('确认').props.onClick())
     expect(mocks.call).toHaveBeenCalledWith('group.create', expect.objectContaining({ title: '硬件交流', introduction: '聊聊硬件', isPublic: false, accountScope: 'test:1001', clientMutationId: expect.any(String) }))
   })
+})
+
+
+it('uses a fresh admission identity after a completed membership is removed', async()=>{
+ let member=false, removed=false
+ mocks.call.mockImplementation(async(op:string)=>{
+  if(op==='social.groups.query')return {items:[{...group,joinMode:2,hasJoined:member,joinRequest:removed?undefined:{requestUid:'old-approved-request',status:2}}],hasMore:false}
+  member=true;return {status:'joined',group:{...group,hasJoined:true},source}
+ })
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ await act(async()=>button('进入群聊').props.onClick())
+ member=false;removed=true
+ await act(async()=>button('刷新').props.onClick())
+ await act(async()=>button('申请加入').props.onClick())
+ const calls=mocks.call.mock.calls.filter(c=>c[0]==='social.groups.join')
+ expect(calls[0]![1].requestUid).toBe('old-approved-request')
+ expect(calls[1]![1].requestUid).not.toBe('old-approved-request')
+})
+it('allows direct admission when a former pending request remains in a stale UI snapshot', async()=>{
+ mocks.call.mockImplementation(async(op:string)=>op==='social.groups.query'?{items:[{...group,joinRequest:{requestUid:'pending',status:1}}],hasMore:false}:{status:'joined',group:{...group,hasJoined:true},source})
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ expect(button('加入群聊').props.disabled).toBe(false)
+ await act(async()=>button('加入群聊').props.onClick())
+ expect(mocks.call.mock.calls.some(c=>c[0]==='social.groups.join')).toBe(true)
+})
+
+it('finishes a pending refresh before allowing approval so a stale list cannot restore the processed row', async () => {
+  const page = { items: [{ requestRef: 'opaque-request', displayName: '公开昵称', status: 1, requestAt: 1 }], hasMore: false }
+  let finishRefresh!: (value: typeof page) => void
+  mocks.call.mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve })).mockResolvedValue({ status: 2 })
+  await act(async () => { renderer = create(<PublicGroupJoinRequests accountScope="test:1001" sourceRef="group-source" disabled={false} onBusyChange={() => {}} />) })
+  await act(async () => button('刷新申请').props.onClick())
+  expect(button('同意').props.disabled).toBe(true)
+  await act(async () => button('同意').props.onClick())
+  expect(mocks.call.mock.calls.some(c => c[0] === 'social.groups.requests.resolve')).toBe(false)
+  await act(async () => finishRefresh(page))
+  expect(button('同意').props.disabled).toBe(false)
+  await act(async () => button('同意').props.onClick())
+  expect(renderer!.root.findAllByType('article')).toHaveLength(0)
+  expect(mocks.call).toHaveBeenCalledWith('social.groups.requests.resolve', expect.objectContaining({ requestRef: 'opaque-request', approved: true }), expect.any(AbortSignal))
 })
