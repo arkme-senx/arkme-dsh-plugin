@@ -12,6 +12,7 @@ const expectedPublicMethods = [
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.
+  'sourceMessageThoughtContinuations', 'retrySourceMessageThoughtContinuation',
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
   'publicGroupJoinRequests', 'resolvePublicGroupJoinRequest', 'publicSocialRead', 'publicSocialWrite',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
@@ -153,7 +154,7 @@ const expectedServiceFiles = [
   'arrangement-occurrence-contract.ts', 'service-error.ts',
   'recording-file-storage-service.ts',
   'private-group-create-service.ts',
-  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
+  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts', 'thought-continuation-service.ts',
   'public-social-service.ts',
   'model-directory-service.ts',
   'composer-document.ts',

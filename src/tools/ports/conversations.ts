@@ -23,6 +23,8 @@ export interface ArkmeConversationToolPort {
   captureSourceMessageAnchor(sourceRef: string, actionRef: string, start: number, end: number): Promise<import('../../message-quote.js').ArkmeMessageQuote>
   extendSourceMessage(sourceRef: string, actionRef: string, text: string, recordUid: string, fileRefs?: readonly string[], options?: { relationUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../../message-quote.js').ArkmeMessageQuote; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSourceMessageExtendResult>
   sourceMessageThoughts(sourceRef: string, actionRef: string, signal?: AbortSignal): Promise<import('../../record-thought-contract.js').ArkmeRecordThoughts>
+  sourceMessageThoughtContinuations(sourceRef: string, actionRef: string, options?: { cursor?: string; signal?: AbortSignal }): Promise<import('../../thought-continuation.js').ArkmeThoughtContinuationPage>
+  retrySourceMessageThoughtContinuation(sourceRef: string, actionRef: string, id: string, signal?: AbortSignal): Promise<import('../../thought-continuation.js').ArkmeThoughtContinuationPage>
   sourceMessageExtensionContext(sourceRef: string, actionRef: string, options?: { paginated?: boolean; pageCursor?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSourceMessageExtensionContext>
 
   analyticsRead(input: import('../../analytics-contract.js').AnalyticsReadInput, signal?: AbortSignal): Promise<unknown>

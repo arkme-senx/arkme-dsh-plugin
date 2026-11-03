@@ -10,6 +10,7 @@ import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
 import { RecordThoughtContent, useRecordThoughtReplySummary } from './RecordThoughts.js'
+import { useThoughtContinuations } from './thought-continuations.js'
 import type { ArkmeRecordThought } from '../record-thought-contract.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { activateDetailReplyKey, detailReplyClickAllowed } from './detail-reply-interaction.js'
@@ -20,7 +21,7 @@ import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
@@ -718,6 +719,7 @@ function DetailExtensionContext({
 }) {
   const quoteThreads = useMessageQuoteThreads()
   const thoughtReplies = useRecordThoughtReplySummary(rootItem)
+  const continuations = useThoughtContinuations(sourceRef, rootItem.messageActionRef, sendTasks)
   const context = state.kind === 'success' ? state.context : undefined
   const byUid = new Map<string, ArkmeMessageCopyLinkExtensionItem>()
   for (const item of optimistic) byUid.set(item.recordUid, item)
@@ -727,11 +729,11 @@ function DetailExtensionContext({
       ? { ...item, selfRole: pending.selfRole } : item)
   }
   const extensions = [...byUid.values()]
-  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length) + thoughtReplies.count
+  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length) + thoughtReplies.count + continuations.items.length
   const contextError = state.kind === 'error' ? state.message : state.kind === 'success' ? state.pageError : undefined
   if (extensionCount === 0 && !thoughtReplies.hasContent && !contextError) return null
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
-    {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>}
+    {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{continuations.nextCursor ? '+' : ''}{tr("条延展")}</div>}
     <div style={styles.extensionContextList}>
       <RecordThoughtContent item={rootItem} embedded selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
       {orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
@@ -741,7 +743,7 @@ function DetailExtensionContext({
         && (extension.title.trim() !== '' || extension.textContent.trim() !== '' || (extension.contentBlocks?.length ?? 0) > 0)
       const selected = extension.recordUid === selectedRecordUid
       const pendingSend = sendTasks.some(task => task.recordUid === extension.recordUid && task.state !== 'sent')
-      return <div key={extension.recordUid} style={{
+      return <Fragment key={extension.recordUid}><div style={{
         ...styles.extensionContextRow,
         ...(selected ? styles.extensionContextRowSelected : {}),
         ...(nested ? { marginLeft: 30 } : {}),
@@ -786,7 +788,20 @@ function DetailExtensionContext({
           </span>}
         </div>
       </div>
+      {continuations.items.filter(reply => reply.replyRecordUid === extension.recordUid).map(reply => <RecordThoughtContent key={reply.id} item={rootItem} embedded
+        items={[reply]}
+        onReply={canReply ? onReplyThought : undefined} selectedThoughtId={selectedThoughtId}
+        onRetry={reply.canRetry ? thought => continuations.retry(thought.id) : undefined}
+        retryingId={continuations.retryingId}/>)}
+      {continuations.supported && !continuations.items.some(reply => reply.replyRecordUid === extension.recordUid)
+        && sendTasks.some(task => task.recordUid === extension.recordUid && task.thoughtReplyRef && task.state !== 'failed')
+        && <RecordThoughtContent item={rootItem} embedded items={[{ id: `pending:${extension.recordUid}`, recordUid: rootItem.itemUid,
+          biz: 2, status: 'generating', content: '', visibility: extension.privateThoughtReply ? 'user' : personalSource ? 'user' : 'members' }]}/>}
+      </Fragment>
     })}</div>
+    {continuations.error && <div role="status" style={styles.extensionContextStatus}><span>{continuations.error}</span>
+      <button type="button" style={styles.extensionContextRetry} onClick={continuations.refresh}>{tr('重试')}</button></div>}
+    {continuations.nextCursor && <button type="button" style={styles.extensionContextRetry} onClick={continuations.loadMore}>{tr('查看更多回复')}</button>}
     {contextError && <div role="alert" style={styles.extensionContextStatus}>
       <span>{contextError}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr('重试')}</button>
     </div>}

@@ -1652,6 +1652,7 @@ arkoImagesV1?:true
     publicSocialV1?: true
     messageTextAnchorsV1?: true
     arkoThoughtRepliesV1?: true
+    arkoThoughtContinuationsV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     teamWorldV1?: true
@@ -4430,6 +4431,8 @@ export type ArkmePluginOperation =
   | 'provider.capabilities'
   | 'source.message-extension.capabilities'
   | 'source.message-thoughts.query'
+  | 'source.message-thought-continuations.query'
+  | 'source.message-thought-continuations.retry'
   | 'transcript.local.read'
   | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'
