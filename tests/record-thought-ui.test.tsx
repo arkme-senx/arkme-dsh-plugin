@@ -25,7 +25,7 @@ function App({ enabled = true, scope = 'production:42', own = true }: { enabled?
 }
 it('opens the full Markdown thought from a quiet message entry without a second read', async () => {
   await act(async () => root.render(<App/>)); await load()
-  expect(host.textContent).toContain('Arko · 快记想法')
+  expect(host.textContent).toContain('Arko有想法')
   expect(host.textContent).not.toContain('建议内容')
   await act(async () => host.querySelector<HTMLButtonElement>('[data-arkme-record-thought-entry]')!.click())
   expect(host.querySelector('[data-arkme-record-thought-content] strong')?.textContent).toBe('建议内容')
@@ -44,10 +44,10 @@ it('never queries another author and clears old account content immediately on a
   await act(async () => root.render(<App own={false}/>)); await load()
   expect(mocks.callArkme).not.toHaveBeenCalled()
   await act(async () => root.render(<App/>)); await load()
-  expect(host.textContent).toContain('Arko · 快记想法')
+  expect(host.textContent).toContain('Arko有想法')
   await act(async () => root.render(<App scope="production:7"/>))
-  expect(host.textContent).not.toContain('Arko · 快记想法')
-  await load(); expect(host.textContent).not.toContain('Arko · 快记想法')
+  expect(host.textContent).not.toContain('Arko有想法')
+  await load(); expect(host.textContent).not.toContain('Arko有想法')
 })
 it('allows a failed detail read to retry without changing the original message', async () => {
   mocks.callArkme.mockRejectedValueOnce(Error('offline'))
