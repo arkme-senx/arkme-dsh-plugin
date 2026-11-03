@@ -1,5 +1,17 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "选择{v0}分析模型：{v1}": "Choose {v0} analysis model: {v1}",
+  "选择{v0}分析模型": "Choose {v0} analysis model",
+  "当前分析模型": "Current analysis model",
+  "当前板块暂无可选模型": "No selectable models are available for this section",
+  "应用并重新分析": "Apply and reanalyze",
+  "切换模型可能启动后台分析并产生 AI 用量，已有结果会保留。": "Switching models may start background analysis and incur AI usage. Existing results will be retained.",
+  "重新读取模型": "Reload models",
+  "模型切换状态待确认，请重新读取后核对": "The model change is unconfirmed. Reload to check the active model.",
+  "模型已切换，分析状态将在后台更新": "Model switched. Analysis status will update in the background.",
+  "模型切换已提交，暂时无法确认生效状态，请刷新后核对": "The model change was submitted, but its effective state is unconfirmed. Reload to check.",
+  "当前已在使用该模型": "This model is already active",
+  "分析模型": "Analysis models",
   "查看 Arko 的想法": "View Arko’s thoughts",
   "查看 Arko 的回应": "View Arko’s response",
   "Arko · 快记想法": "Arko · Note insight",

@@ -1,7 +1,7 @@
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from './types.js'
 import type { DshRemoteModelCatalog } from './dsh-remote/types.js'
 
-export type ModelScene = 'dsh' | 'arko' | 'recording'
+export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore'
 export interface ModelChoice {
   id: string
   name: string
@@ -18,6 +18,10 @@ export interface ModelChoice {
   dsh?: { provider: string; model: string }
   arko?: string
   recording?: string
+  /** Account- and module-bound activation reference from the Explore owner. */
+  explore?: string
+  /** Public Intelligent route identity, used only for exact catalog reconciliation. */
+  exploreRouteKey?: string
 }
 export interface UnifiedModelCatalog {
   accountScope: string
@@ -46,6 +50,14 @@ export function recordingModelChoices(catalog: ArkmeRecordingSummaryModelConfig)
 /** Only stable source identities deduplicate entries. Similar names are not route mappings. */
 export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[]): ModelChoice[] {
   const result = new Map<string, ModelChoice>()
-  for (const models of lists) for (const model of models) result.set(model.id, { ...result.get(model.id), ...model })
+  for (const models of lists) for (const model of models) {
+    const route = model.exploreRouteKey
+    const owner = route ? [...result.values()].find(existing => existing.arko === route || existing.recording === route || existing.exploreRouteKey === route) : undefined
+    if (owner && route) result.set(owner.id, { ...owner,
+      ...(owner.channel === '分析模型' ? { channel: model.channel } : {}),
+      ...(!owner.billing && model.billing ? { billing: model.billing } : {}),
+      ...(model.explore ? { explore: model.explore } : {}), exploreRouteKey: route })
+    else result.set(model.id, { ...result.get(model.id), ...model })
+  }
   return [...result.values()]
 }

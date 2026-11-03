@@ -14,9 +14,10 @@ import { tr, useArkmeLocale } from './locale.js'
 import css from './unified-model-picker.css?inline'
 import usageCss from './account-usage.css?inline'
 
-export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, error = '', confirmLabel = '确认并生成', initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
+export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, error = '', confirmLabel = '确认并生成', confirmationDescription, initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
   scene: ModelScene; scopeLabel: string; models: readonly ModelChoice[]; currentId: string; currentEffort?: string | undefined
   anchor?: HTMLButtonElement | undefined; busy?: boolean; error?: string; confirmLabel?: string; initialView?: 'models' | 'usage'
+  confirmationDescription?: string | undefined
   onApply(model: ModelChoice, effort?: string): Promise<boolean>
   onRefresh?: (() => Promise<void>) | undefined
   ariaLabel?: string | undefined
@@ -31,9 +32,13 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   latestScope.current = data.scope
   const [position, setPosition] = useState<CSSProperties>({ visibility: anchor ? 'hidden' : 'visible' })
   const choices = mergeModelChoices(data.catalog?.models ?? [], localModels)
-  const selected = choices.find(model => model.id === selectedId)
-  const requiresConfirmation = scene === 'recording'
-  const checkedId = requiresConfirmation ? selectedId : currentId
+  const resolveId = (id: string) => {
+    const local = localModels.find(model => model.id === id)
+    return choices.find(model => model.id === id || !!local?.explore && model.explore === local.explore)?.id ?? id
+  }
+  const selected = choices.find(model => model.id === resolveId(selectedId))
+  const requiresConfirmation = scene === 'recording' || scene === 'explore'
+  const checkedId = resolveId(requiresConfirmation ? selectedId : currentId)
   const groups = [...choices.reduce((groups, model) => {
     const group = groups.get(model.channel) ?? []
     group.push(model); groups.set(model.channel, group); return groups
@@ -63,7 +68,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
     const option = view === 'models' ? panel.current?.querySelector<HTMLElement>('[aria-selected="true"]') ?? panel.current?.querySelector<HTMLElement>('[role="option"]') : undefined
     option?.scrollIntoView?.({ block: 'nearest' })
     ;(option ?? panel.current)?.focus({ preventScroll: true })
-  }, [view])
+  }, [view, selected?.id])
   const apply = async (model: ModelChoice, nextEffort?: string, closeOnSuccess = true) => {
     if (busy || applyingRef.current) return
     if (!model[scene]) { setNotice('此模型在当前场景的支持情况待确认'); return }
@@ -151,6 +156,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
             {!choices.length && <p className="arkme-unified-model-empty" role="status">{tr(data.loading ? '正在读取模型…' : '模型暂不可用')}</p>}
           </div>
           <footer className="arkme-unified-model-footer">
+            {confirmationDescription && <p className="arkme-unified-model-muted">{tr(confirmationDescription)}</p>}
             {selected?.reasoning && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
               disabled={busy || applying || !selected[scene]} onPreview={setEffort} onCommit={value => {
                 setNotice('')
@@ -160,8 +166,9 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
               <span>{billingHint}</span><span className="arkme-unified-model-info-link">{tr('详情')}<CaretRight size={14}/></span>
             </button>}
             {(notice || error) && <p className="arkme-unified-model-notice" role="alert">{notice || error}</p>}
+            {error && onRefresh && !hasReadError && <div className="arkme-unified-model-read-error"><button type="button" disabled={busy || applying} onClick={retry}>{tr('重新读取模型')}</button></div>}
             {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr(data.catalogError || data.catalog?.failures.length ? '部分模型信息暂不可用' : '积分暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr(data.loading ? '重试中…' : '重试')}</button></div>}
-            {requiresConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected?.[scene] || busy || applying}
+            {requiresConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected?.[scene] || busy || applying || scene === 'explore' && resolveId(selectedId) === resolveId(currentId)}
               onClick={() => { if (selected) void apply(selected, effort) }}>{tr(applying || busy ? '正在提交…' : confirmLabel)}</button>}
           </footer>
         </> : <div className="arkme-unified-model-content">

@@ -37,6 +37,14 @@ describe('unified read-only model directory', () => {
     const full = dshModelChoices({ items: [{ provider: 'arkme-managed', providerName: 'Arkme', model: 'one', displayName: 'One', supportsImages: true }], failedProviders: [], truncated: false })
     expect(mergeModelChoices(full, [{ ...full[0]!, name: 'Updated' }])[0]).toMatchObject({ name: 'Updated', images: true })
   })
+  it('includes Explore-only models across selectors and retains partial Explore read failures',async()=>{
+    const f=fixture(),explore=vi.fn(async()=>({models:[{id:'explore-only',name:'Explore only',identifier:'route-c',channel:'分析模型',exploreRouteKey:'governed/route-c'}],failures:[{source:'目标',message:'暂时无法读取'}]}))
+    const service=new ModelDirectoryService(f.runtime as never,{dsh:f.dsh,arko:f.arko,recording:f.recording,explore})
+    const value=await service.read('production:42')
+    expect(value.models.find(model=>model.id==='explore-only')).toMatchObject({exploreRouteKey:'governed/route-c'})
+    expect(value.models.find(model=>model.id==='explore-only')?.explore).toBeUndefined()
+    expect(value.failures).toEqual([{source:'目标',message:'暂时无法读取'}])
+  })
 })
 
 it('projects existing managed catalog revisions and supplier identity without exposing private metadata or calling them model versions', async () => {
