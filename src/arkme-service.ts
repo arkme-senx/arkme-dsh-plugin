@@ -2,6 +2,7 @@ import { ConversationArrangementService } from "./services/conversation-arrangem
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
 import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
 import type {TeamRepresentationSelection} from './team-group-contract.js'
+import { TeamWorldService } from './services/team-world-service.js'
 import type { ArkmeRecordingTranscriptPageOptions } from './types.js'
 import { RealtimeDictationService } from './services/realtime-dictation-service.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
@@ -489,6 +490,7 @@ export class ArkmeService {
   private readonly realtime: ChatRealtimeService
   private readonly teamNotifications: TeamMessageNotificationService
   private readonly teamDelivery: TeamSendQueue
+  private readonly teamWorldOwner: TeamWorldService
   private readonly teamApp: TeamAppService
   private readonly teamForward:TeamMessageForwardService
   async externalChats(operation: import('./team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -594,8 +596,17 @@ export class ArkmeService {
     return await this.executeTeamApp(action==='retry'?'team.app.send.retry-task':'team.app.send.cancel-task',{conversationRef,taskRef},signal) as TeamSendTask
   }
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
+  async teamWorld(input: import('./team-world-contract.js').TeamWorldRequest, signal?: AbortSignal) { return this.teamWorldOwner.execute(input, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-    if (['team.app.send.enqueue', 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
+    if (operation === 'team.app.world.view') {
+      await this.teamApp.assertViewer(params.expectedAccountKey)
+      const context = await this.teamWorld({ action: 'context', accountKey: String(params.expectedAccountKey), jotmoId: String(params.jotmoId) }, signal) as import('./team-world-contract.js').TeamWorldContext
+      const session = await this.runtime.requireSession(), teamID = await this.teamApp.worldTeamID(context.teamRef, session.userId)
+      const teams = await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      const memberTeam = context.capabilities.publish ? teams.find(t => t.jotmoId === context.jotmoId) : undefined
+      return { state: 'ready', context, team: { name: context.name, jotmoId: context.jotmoId, ...(memberTeam ? { avatar: memberTeam.avatar } : {}) }, ...(memberTeam ? { memberTeam } : {}), feed: await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) }) } satisfies import('./team-world-contract.js').TeamWorldView
+    }
+    if (['team.app.send.enqueue' , 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
       await this.teamApp.assertViewer(params.expectedAccountKey)
     }
     if (operation === 'team.app.send.enqueue') return await this.teamDelivery.enqueue(params as unknown as TeamSendInput)
@@ -808,6 +819,32 @@ export class ArkmeService {
       this.source,
     )
     this.recordExport = new RecordExportService(this.runtime)
+    this.teamWorldOwner = new TeamWorldService(this.runtime, {
+      publicPreviews: (refs, signal) => this.world.readPublicPreviews(refs, signal),
+      actorNames: async (ids, signal) => {
+        const profiles = await this.profile.publicProfileSummariesByUserIds(ids, await this.runtime.requireSession(), signal, 5_000)
+        return new Map([...profiles].map(([id, profile]) => [id, profile.displayName ?? '']))
+      },
+      reactionTarget: wire => new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).reference(wire),
+      feed: (teamID, cursor, limit, signal) => this.world.listMixedFeed({ teamID, ...(cursor ? { cursor } : {}), ...(limit ? { limit } : {}), ...(signal ? { signal } : {}) }),
+      teamID: (ref, actor) => this.teamApp.worldTeamID(ref, actor), teamRef: (id, actor) => this.teamApp.worldTeamRef(id, actor),
+      recordRef: uid => this.world.publicationReference(uid), recordUID: async ref => (await this.world.reactionTarget(ref)).record_uid!,
+      source: async (origin, version, signal) => {
+        if (origin.kind === 'local') return { kind: 'local', label: origin.sourceLabel, at: origin.sendAtMillis }
+        if (origin.kind === 'arko') {
+          await this.worldArkoPublishSource(origin.sessionId, origin.messageId, signal)
+          return { kind: 'arko', session_uid: String(origin.sessionId), message_uid: String(origin.messageId) }
+        }
+        if (origin.kind === 'action') {
+          const identity = await this.messageActions.worldSourceIdentity(origin.sourceRef, origin.actionRef, signal)
+          if (identity.ownerKind === 'agent') return { kind: 'arko', session_uid: String(identity.agentSessionId), message_uid: String(identity.agentMessageId) }
+          return this.bot.teamWorldSource(origin.sourceRef, identity, signal)
+        }
+        const source = await this.record.worldPublishSource(origin.sourceRef, origin.itemUid, signal)
+        if (source.version !== version) throw new ArkmePluginError('world-source-changed', '原内容已变化，请重新打开发布窗口', false, 409)
+        return { kind: 'record', record_uid: source.itemUid, version: source.version }
+      },
+    })
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
       read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
 withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
@@ -1379,6 +1416,8 @@ arkoImagesV1:true,
         publicSocialV1: true,
         messageTextAnchorsV1: true,
         reactionsV1: true,
+        worldReactionsV1: true,
+        teamWorldV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -2776,15 +2815,28 @@ arkoImagesV1:true,
   async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal) {
     return await new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).prepare(accountKey, recordRefs, signal)
   }
+  async prepareNoteWorldReactions(accountKey: string, sourceRef: string, messageActionRef: string, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    if (accountKey !== `${this.config.environment}:${session.userId}`) throw new ArkmePluginError('reaction-account-changed', '账号已变化，请重新打开表态', false, 409)
+    const identity = await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef)
+    if (identity.kind !== 'owned') return { items: [], unavailableRecordRefs: [] }
+    const recordRef = await this.world.reactionReference(identity.recordUid)
+    return this.prepareWorldReactions(accountKey, [recordRef], signal)
+  }
   async localWorldReactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal) {
     return await new WorldLocalReactionService(this.runtime).request(input, signal)
   }
   async worldReactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown> {
-    if (!['query', 'set', 'actors', 'groups'].includes(input?.action)) throw new ArkmePluginError('world-reactions-operation-invalid', '不支持的世界表态操作', false)
+    if (!['query', 'set', 'actors', 'groups', 'history', 'received', 'notifications', 'notifications-read'].includes(input?.action)) throw new ArkmePluginError('world-reactions-operation-invalid', '不支持的世界表态操作', false)
     try { return await this.reactions(input, signal, new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref))) }
     catch (error) { return worldReactionFailure(error) }
   }
-  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService): Promise<unknown> {
+  async worldReactionArchive(input: import('./world-reaction-contract.js').WorldReactionArchiveRequest, signal?: AbortSignal): Promise<unknown> {
+    if (!['query', 'actors', 'groups'].includes(input?.action)) throw new ArkmePluginError('world-reactions-operation-invalid', '世界归档只读', false)
+    return await this.reactions(input, signal, new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)), true)
+  }
+  async reactions(input: import('./reaction-contract.js').ReactionRequest, signal?: AbortSignal, worldOwner?: WorldReactionService, archive = false): Promise<unknown> {
     return await withReactionTrace(input, async () => {
     const result = await new ReactionService(this.runtime, target => worldOwner ? worldOwner.resolve(target) : target.teamConversationRef!==undefined ? this.teamApp.reactionTarget(target.teamConversationRef,target.teamMessageRef) : target.worldRecordRef !== undefined ? this.world.reactionTarget(target.worldRecordRef) : this.chat.reactionTarget(target.sourceRef, target.messageActionRef), uid => this.world.reactionReference(uid), (viewer, uid) => this.source.chatDirectorySourceKey(viewer, uid), async (items, signal) => {
       const session = await this.runtime.requireSession()
@@ -2814,7 +2866,7 @@ arkoImagesV1:true,
           ...(source ? { avatar: { ...(source.avatarRef ? { avatarRef: source.avatarRef } : {}), ...(source.avatarRefs ? { avatarRefs: source.avatarRefs } : {}), ...(source.groupAvatar ? { groupAvatar: source.groupAvatar } : {}) } } : {}),
         }
       })
-    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal), worldOwner ? { prefix: WORLD_REACTION_PREFIX, contract: WORLD_REACTION_CONTRACT } : undefined).request(input, signal)
+    }, (items, signal) => readReactionNotificationContext({ runtime: this.runtime, source: this.source, profile: this.profile, chat: this.chat }, items, signal), worldOwner ? { prefix: WORLD_REACTION_PREFIX + (archive ? 'archive/' : ''), contract: WORLD_REACTION_CONTRACT, reference: target => worldOwner.reference(target) } : undefined).request(input, signal)
     if (`${this.config.environment}:${(await this.runtime.requireSession()).userId}` !== input.accountKey || signal?.aborted) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     const actorLabels = async (sourceRef: string | undefined, ids: number[]) => {
       if (!sourceRef || !ids.length) return new Map<number, { remark: string; groupNickname: string }>()
@@ -3154,6 +3206,7 @@ arkoImagesV1:true,
     imageRef: string,
     options: { maxBytes?: number; signal?: AbortSignal; cacheOnly?: boolean } = {},
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('team-world-image.')) return await this.teamWorldOwner.readImage(imageRef, options)
     return await this.media.readImage(imageRef, options)
   }
 
@@ -3476,7 +3529,7 @@ arkoImagesV1:true,
 
   /** Build the authenticated browser projection without exposing World IDs or signed media URLs. */
   async listWorldFeed(
-    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; offset?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldFeedPage> {
     return await this.world.listWorldFeed(options)
   }
@@ -3574,6 +3627,10 @@ arkoImagesV1:true,
   async bindVoiceprintEnrollment() { return await this.voiceprint.bindEnrollment() }
 
   /** Read the authenticated comment/reply tree behind one account-bound World reference. */
+  async listWorldReplies(recordRef: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}) {
+    return this.world.listWorldReplies(recordRef, options)
+  }
+
   async listWorldInteractions(
     recordRef: string,
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
@@ -3586,6 +3643,7 @@ arkoImagesV1:true,
   }
 
   async worldNotificationSources(offset: number, signal?: AbortSignal) { return this.world.worldNotificationSources(offset, signal) }
+  async worldCommentNotifications(options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}) { return this.world.worldCommentNotifications(options) }
   async worldNotificationTarget(interactionRef: string, signal?: AbortSignal) { return this.world.worldNotificationTarget(interactionRef, signal) }
 
   async markWorldInteractionsViewed(seenThroughSequence: number, signal?: AbortSignal): Promise<ArkmeWorldInteractionSummary> {

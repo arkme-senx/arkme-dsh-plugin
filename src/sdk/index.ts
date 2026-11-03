@@ -220,6 +220,8 @@ import type {
   ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
+  ArkmeWorldRepliesPage,
+  ArkmeWorldCommentNotificationPage,
   ArkmeWorldInteractionSummary,
   ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishResult,
@@ -417,6 +419,8 @@ export type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
+  ArkmeWorldRepliesPage,
+  ArkmeWorldCommentNotificationPage,
   ArkmeWorldInteractionSummary,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
@@ -1640,11 +1644,11 @@ export class ArkmeSdk {
 
   /** Read the public World feed through the authenticated Provider boundary. */
   async worldFeed(
-    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeWorldFeedPage> {
     return await this.call<ArkmeWorldFeedPage>('world.feed', {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
-      ...(options.offset === undefined ? {} : { offset: options.offset }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
   }
 
@@ -1738,6 +1742,16 @@ export class ArkmeSdk {
   }
 
   /** Read comments and replies for one Provider-issued World record reference. */
+  async worldReplies(recordRef: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeWorldRepliesPage> {
+    if ((await this.capabilities(options.signal)).features.teamWorldV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持世界回复分页，请升级', retryable: false })
+    return await this.call('world.replies', { recordRef, ...(options.limit === undefined ? {} : { limit: options.limit }), ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+  }
+
+  async worldCommentNotifications(options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeWorldCommentNotificationPage> {
+    if ((await this.capabilities(options.signal)).features.teamWorldV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持世界通知分页，请升级', retryable: false })
+    return this.call('world.comment-notifications', { ...(options.limit === undefined ? {} : { limit: options.limit }), ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+  }
+
   async worldInteractions(
     recordRef: string,
     options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
@@ -2727,6 +2741,35 @@ export class ArkmeSdk {
     return await this.call('reactions', input, signal)
   }
 
+  async teamWorld<R extends import('../team-world-contract.js').TeamWorldRequest>(input: R, signal?: AbortSignal): Promise<import('../team-world-contract.js').TeamWorldResponse<R>> {
+    if ((await this.capabilities(signal)).features.teamWorldV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持团队世界，请升级', retryable: false })
+    return this.call('team.world', input, signal)
+  }
+
+  async prepareNoteWorldReactions(accountKey: string, sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionContextPage> {
+    await this.requireWorldReactions(signal)
+    return this.call('world.reactions.from-note', { accountKey, sourceRef, messageActionRef }, signal)
+  }
+
+  async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionContextPage> {
+    await this.requireWorldReactions(signal)
+    return await this.call('world.reactions.prepare', { accountKey, recordRefs }, signal)
+  }
+
+  async worldReactions<R extends import('../world-reaction-contract.js').WorldReactionRequest>(input: R, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionResponse<R>> {
+    await this.requireWorldReactions(signal)
+    return await this.call('world.reactions', input, signal)
+  }
+
+  async worldReactionArchive<R extends import('../world-reaction-contract.js').WorldReactionArchiveRequest>(input: R, signal?: AbortSignal): Promise<import('../reaction-contract.js').ReactionResponse<R>> {
+    await this.requireWorldReactions(signal)
+    return await this.call('world.reactions.archive', input, signal)
+  }
+
+  private async requireWorldReactions(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.worldReactionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持世界表态，请升级', retryable: false })
+  }
+
   async addFavoriteSticker(
     item: ArkmeFavoriteStickerAddInput,
     signal?: AbortSignal,
@@ -3249,3 +3292,6 @@ export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentatio
 
 export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
 export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'
+export type { WorldReactionRequest, WorldReactionResponse, WorldReactionArchiveRequest, WorldReactionContext, WorldReactionContextPage, WorldReactionHistoryEvent, WorldReactionHistoryPage, WorldReactionNotificationPage } from '../world-reaction-contract.js'
+
+export type { TeamWorldRequest, TeamWorldResponse, TeamWorldContext, TeamWorldCapabilities, TeamWorldOriginal, TeamWorldReceipt, TeamWorldFeedback, TeamWorldFeedbackTarget, TeamWorldActivity, TeamWorldPreview } from '../team-world-contract.js'

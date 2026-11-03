@@ -7,9 +7,71 @@ const path = recordingPlaybackPath({ child_id: '123456789012345678901234', sourc
 function fixture(fetcher: typeof fetch) {
   let session = { userId: 42, accessToken: 'private-fixture', refreshToken: 'refresh-fixture' }
   const store: ArkmeSessionStore = { read: async () => session, write: async value => { session = value }, delete: async () => {} }
-  const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.test', audioBaseUrl: 'https://audio.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
+  const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.test', audioBaseUrl: 'https://audio.test', recordBaseUrl: 'https://record.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
   return { runtime, changeUser: () => { session = { ...session, userId: 43 } } }
 }
+
+describe('private team original image delivery', () => {
+  it('keeps credentials in Host, sends exact original identity and exposes only bounded bytes', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('png', { headers: { 'content-length': '3', 'content-type': 'image/png', 'location': 'https://storage.test/secret' } }))
+    const { runtime } = fixture(fetcher)
+    try {
+      const identity = { team_id: '9223372036854775800', content_uid: 'original', revision: 2, file_asset_uid: 'held' }
+      const response = await runtime.authenticatedRecordImage('/api/v1/team-world/images/read', identity, { expectedUserId: 42, maxBytes: 3 })
+      expect(String(fetcher.mock.calls[0]?.[0])).toBe('https://record.test/api/v1/team-world/images/read')
+      expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST', redirect: 'error', body: JSON.stringify(identity), headers: { Authorization: 'Bearer private-fixture' } })
+      expect(response.headers.get('cache-control')).toBe('private, no-store')
+      expect(response.headers.get('location')).toBeNull()
+      expect(await response.text()).toBe('png')
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it.each([{ type: 'image/svg+xml', size: '3', bytes: 'svg' }, { type: 'image/png', size: '4', bytes: 'large' }, { type: 'application/json', size: '3', bytes: '{}' }])('rejects invalid media before consuming it: $type/$size', async ({ type, size, bytes }) => {
+    const { runtime } = fixture(async () => new Response(bytes, { headers: { 'content-length': size, 'content-type': type } }))
+    try {
+      await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 })).rejects.toMatchObject({ code: 'media-response-invalid' })
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it('stops an opened image when the account changes', async () => {
+    const { runtime, changeUser } = fixture(async () => new Response('png', { headers: { 'content-length': '3', 'content-type': 'image/png' } }))
+    try {
+      const response = await runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 })
+      changeUser()
+      await expect(response.arrayBuffer()).rejects.toMatchObject({ code: 'media-account-changed' })
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it('preserves an HTTP 200 JSON permission denial for the business owner', async () => {
+    const { runtime } = fixture(async () => Response.json({ code: 40001, message: 'team_world_not_accessible', data: { reason: 'not_accessible' } }))
+    try {
+      await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
+        .rejects.toMatchObject({ code: 'arkme-code-40001', message: 'team_world_not_accessible', responseData: { reason: 'not_accessible' } })
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it('bounds a JSON error body and cancels the unread stream', async () => {
+    const cancelled = vi.fn()
+    const { runtime } = fixture(async () => new Response(new ReadableStream({
+      pull(controller) { controller.enqueue(new Uint8Array(16 * 1024 + 1)) }, cancel: cancelled,
+    }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/json' } }))
+    try {
+      await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
+        .rejects.toMatchObject({ code: 'media-response-invalid' })
+      expect(cancelled).toHaveBeenCalledOnce()
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+
+  it('does not expose a JSON error after switching accounts during its read', async () => {
+    const { runtime, changeUser } = fixture(async () => new Response(new ReadableStream({
+      pull(controller) { changeUser(); controller.enqueue(new TextEncoder().encode('{"code":40001}')); controller.close() },
+    }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/json' } }))
+    try {
+      await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
+        .rejects.toMatchObject({ code: 'media-account-changed' })
+    } finally { runtime.requestCoordinator.dispose() }
+  })
+})
 
 describe('private audio byte delivery', () => {
   it('streams a complete recording larger than 64 MiB without accumulating its body', async () => {

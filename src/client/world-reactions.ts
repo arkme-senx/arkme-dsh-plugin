@@ -35,7 +35,7 @@ export class WorldReactionContexts {
     if (!entry) {
       entry = { refs: 0, state: this.unsupported ? { status: 'unsupported', message: WORLD_REACTION_PENDING } : { status: 'loading' }, preparedAt: 0 }
       this.entries.set(ref, entry)
-    } else if ((!entry.refs && ['unavailable', 'error'].includes(entry.state.status)) || (entry.state.status === 'ready' && Date.now() - entry.preparedAt > 5 * 60_000)) entry.state = { status: 'loading' }
+    } else if ((!entry.refs && (['unavailable', 'error'].includes(entry.state.status) || entry.state.context?.visibility === 'unpublished')) || (entry.state.status === 'ready' && Date.now() - entry.preparedAt > 5 * 60_000)) entry.state = { status: 'loading' }
     entry.refs++; this.schedule(); this.publish()
     return () => {
       if (scope !== this.scope || this.entries.get(ref) !== entry) return

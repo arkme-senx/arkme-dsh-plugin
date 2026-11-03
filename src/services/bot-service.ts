@@ -809,6 +809,17 @@ export class BotService {
     return await this.openBotRef(current.botRef, userId)
   }
 
+  async teamWorldSource(botRef: string, identity: import('../message-action-contract.js').ChatBotMessageActionReference | import('../message-action-contract.js').SubjectBotMessageActionReference, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const session = await this.runtime.requireSession(), bot = await this.openBotRef(botRef, session.userId)
+    if (identity.senderUserId !== session.userId || identity.role !== 'user') throw new ArkmePluginError('world-source-not-owned', '只能公开自己发出的内容', false, 403)
+    if (identity.ownerKind === 'bot_subject') return { kind: 'bot', channel: 'subject', bot_uid: bot.botId, session_uid: identity.subjectUid, message_uid: identity.recordUid }
+    const data = objectValue(await this.runtime.authenticatedPost('/api/v1/records/detail', { record_uid: identity.recordUid }, session, signal)), core = objectValue(data.record_core)
+    if (core.record_uid !== identity.recordUid || core.owner_user_id !== session.userId || core.creator_user_id !== session.userId || core.status !== 1 || !Number.isSafeInteger(core.version) || Number(core.version) <= 0) throw new ArkmePluginError('world-source-not-owned', '原消息不可用，请刷新', false, 403)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-source-account-changed', '账号已变化，请重新选择', false, 409)
+    return { kind: 'bot', channel: 'chat', bot_uid: bot.botId, session_uid: identity.chatSessionUid, message_uid: String(identity.sequence), record_uid: identity.recordUid, version: core.version }
+  }
+
   async openBotRef(botRef: string, expectedUserId: number): Promise<ArkmeBotRefPayload> {
     const normalized = botRef.trim()
     if (normalized.startsWith('arkme-bot-directory-entry-v1.')) return await this.openDirectoryBotRef(normalized, expectedUserId)
