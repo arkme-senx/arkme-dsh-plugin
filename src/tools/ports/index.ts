@@ -1,3 +1,4 @@
+import type { LoginDevicePort } from '../../login-devices-contract.js'
 import type { ArkmeRecordExportPort } from '../../data-management.js'
 import type {TeamMemberManagementPort} from '../../team-member-add-contract.js'
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
@@ -32,7 +33,7 @@ import type { ArkmeFileToolPort } from './files.js'
 import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
-export interface ArkmeCoreToolPorts extends
+export interface ArkmeCoreToolPorts extends LoginDevicePort,
   ArkmeRecordExportPort,
   TeamMemberManagementPort,
   TeamMessagePort,

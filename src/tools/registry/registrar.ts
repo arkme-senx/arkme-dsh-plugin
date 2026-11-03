@@ -20,6 +20,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_strategy_preference',
   'arkme_arko_change_lifecycle',
   'arkme_device_lock', 'arkme_device_unlock_request',
+  'arkme_login_device_change', 'arkme_login_device_notifications',
   'arkme_day_review_generate',
   'arkme_conversation_words_generate',
   'arkme_message_sync_retry',

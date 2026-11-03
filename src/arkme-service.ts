@@ -1,3 +1,5 @@
+import { LoginDevicesService } from './services/login-devices-service.js'
+import type { LoginDeviceRequest } from './login-devices-contract.js'
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
 import { RecordExportService, RECORD_EXPORT_PREFIX } from './services/record-export-service.js'
 import type {TeamRepresentationSelection} from './team-group-contract.js'
@@ -453,6 +455,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly loginDeviceService: LoginDevicesService
   private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
@@ -941,6 +944,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.loginDeviceService = new LoginDevicesService(this.runtime)
     this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
@@ -1224,6 +1228,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async loginDevices(request: LoginDeviceRequest, signal?: AbortSignal) { return this.loginDeviceService.execute(request, signal) }
+
   async deviceLockStatus() { return await this.deviceLock.refresh() }
   async lockDevice() { return await this.deviceLock.lock() }
   async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
@@ -1318,6 +1324,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
+        loginDevicesV1: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,

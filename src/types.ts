@@ -1521,6 +1521,7 @@ export interface ArkmeProviderCapabilities {
     analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
+    loginDevicesV1?: true
     automaticCapabilitiesV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
@@ -4368,6 +4369,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.preview'
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
+  | 'account.devices'
   | 'device.lock.status' | 'device.lock.lock' | 'device.lock.unlock'
   | 'auth.logout'
   | 'auth.logout.feedback'

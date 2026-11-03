@@ -1,3 +1,4 @@
+import { ArkmeLoginDevices, LoginDeviceEntry } from './ArkmeLoginDevices.js'
 import { currentClientVersionCode, formatProductVersion } from './product-version.js'
 import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { ArkmeDeviceLockIcon } from './ArkmeDeviceLockIcon.js'
@@ -168,6 +169,7 @@ export function ArkmeProductNavigation({
     finally { setLockBusy(false) }
   }
   const navigationHint = useArkmeNavigationTooltip(!compact && !hidden)
+  const [devicesOpenScope, setDevicesOpenScope] = useState<string>()
   const [membershipOpenScope, setMembershipOpenScope] = useState<string>()
   const memberUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
   const memberScope = authState.auth?.status === 'authenticated' ? `${authState.auth.environment}:${memberUserId}` : undefined
@@ -408,6 +410,7 @@ export function ArkmeProductNavigation({
           {memberScope && <ArkmeAccountUsage key={memberScope} accountScope={memberScope} onOpenDetails={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-usage') }} />}
           <div className="arkme-redesign-profile-menu">
             <IdentityCopyLinkButton target={{ kind: 'self' }} label="复制我的链接" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', border: 0, background: 'transparent', padding: '10px 12px', color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 13 }} />
+            {memberScope && <LoginDeviceEntry key={memberScope} accountScope={memberScope} onOpen={() => { setProfileOpen(false); setDevicesOpenScope(memberScope) }} />}
             {lockAvailable && <button data-arkme-feedback="neutral" type="button" disabled={lockBusy} onClick={() => { void lockCurrentDevice() }}><ArkmeDeviceLockIcon size={19} /><span><strong>{tr('锁定')}</strong></span><CaretRight size={15} /></button>}
             {lockError && <p role="alert" style={{ color: theme.danger, fontSize: 12, margin: '4px 12px' }}>{lockError}</p>}
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings('arkme-data') }}><Database size={19} /><span><strong>{tr("数据管理")}</strong></span><CaretRight size={15} /></button>
@@ -425,6 +428,7 @@ export function ArkmeProductNavigation({
           <span className="arkme-member-label" data-tier={membership.state.status === 'ready' ? membership.state.value.memberType : undefined}>{membershipLabel(membership.state)}</span>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={ARKME_PROFILE_AVATAR_SIZE} label={tr("当前用户头像")} />
         </button>
+        {memberScope && devicesOpenScope === memberScope && <ArkmeLoginDevices key={memberScope} accountScope={memberScope} returnFocusRef={profileTriggerRef} onClose={() => setDevicesOpenScope(undefined)} />}
         {memberScope && memberUserId !== undefined && membershipOpenScope === memberScope && <ArkmeMembershipDialog key={memberScope} userId={memberUserId} state={membership.state} onRefresh={membership.refresh} returnFocusRef={profileTriggerRef} onClose={() => { setMembershipOpenScope(undefined) }} />}
         </>}
       </div>}
