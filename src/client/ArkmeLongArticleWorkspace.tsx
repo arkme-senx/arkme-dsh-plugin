@@ -44,7 +44,8 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const account = `${auth.auth?.environment}:${auth.auth?.userId}`, initialAccount = useRef(account)
   const sameAccount = account === initialAccount.current
-  const showLeft = compact ? mobile === 'directory' : left
+  const directoryEnabled = !props.returnToLibrary
+  const showLeft = directoryEnabled && (compact ? mobile === 'directory' : left)
   const showRight = entries.length > 0 && (compact ? mobile === 'outline' : right)
   const initialKey = `${initial.sourceRef}:${initial.item?.itemUid ?? 'new'}`, previousInitial = useRef(initialKey)
   useEffect(() => { if (previousInitial.current !== initialKey) { previousInitial.current = initialKey; pending.current = undefined; setSelection(initial) } }, [initialKey])
@@ -103,7 +104,7 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
   </div>
   const frame: ArticleWorkspaceFrame = {
     bodyRef, registerClose, onLeaveFailed, closeTransient,
-    leading: <button type="button" className="arkme-article-workspace-control" aria-label={tr(showLeft ? '收起长文列表' : '展开长文列表')} title={tr(showLeft ? '收起长文列表' : '展开长文列表')}
+    leading: directoryEnabled && <button type="button" className="arkme-article-workspace-control" aria-label={tr(showLeft ? '收起长文列表' : '展开长文列表')} title={tr(showLeft ? '收起长文列表' : '展开长文列表')}
       aria-expanded={showLeft} onClick={() => compact ? setMobile(showLeft ? undefined : 'directory') : setLeft(value => !value)}><SidebarSimple size={20} /></button>,
     trailing: renderTrailing(), renderTrailing,
   }
@@ -121,7 +122,7 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
         if (event.shiftKey && (document.activeElement === first || document.activeElement === root.current)) { event.preventDefault(); last?.focus() }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }}>
-      <aside className="arkme-article-workspace-side arkme-article-workspace-directory" aria-label={tr('所有长文')} hidden={!showLeft}>
+      {directoryEnabled && <aside className="arkme-article-workspace-side arkme-article-workspace-directory" aria-label={tr('所有长文')} hidden={!showLeft}>
         <header><h3>{tr('长文')}</h3><button type="button" aria-label={tr('收起长文列表')} onClick={() => compact ? setMobile(undefined) : setLeft(false)}><SidebarSimple size={18} /></button></header>
         <div className="arkme-article-workspace-scroll" ref={directory}>
           {sameAccount ? <ArkmeLongArticleQuickView titleOnly active={hydrated && showLeft} initialPage={props.initialDirectoryPage} scrollRoot={directory}
@@ -130,7 +131,7 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
               title: updatedArticle?.sourceRef === selection.sourceRef && updatedArticle.detail.itemUid === selectedItem.itemUid ? updatedArticle.detail.title : selectedItem.title ?? '' } : undefined}
             onChooseArticle={choose} updatedArticle={updatedArticle} /> : <p role="status">{tr('账号已切换')}</p>}
         </div>
-      </aside>
+      </aside>}
       <div className="arkme-article-workspace-main">{renderArticle(selection, frame, finish, onUpdated, mode)}</div>
       <aside className="arkme-article-workspace-side arkme-article-workspace-outline" aria-label={tr('文章大纲')} hidden={!showRight}>
         <header><h3>{tr('大纲')}</h3><button type="button" aria-label={tr('收起大纲')} onClick={() => compact ? setMobile(undefined) : setRight(false)}><X size={16} /></button></header>
