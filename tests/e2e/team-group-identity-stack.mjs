@@ -22,7 +22,7 @@ const actor=4,group='11111111-1111-4111-8111-111111111111',calls=[],streams=new 
 const owners=Object.fromEntries(['team','record','chat'].map(name=>[name,process.env[`TEAM_INTERACTION_STACK_${name.toUpperCase()}`]]))
 for(const endpoint of Object.values(owners)){const url=new URL(endpoint);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.protocol,'http:')}
 const token=user=>{const parts=[{alg:'HS256',typ:'JWT'},{user_id:user,client_id:1,iss:'jotmo',exp:Math.floor(Date.now()/1000)+3600}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url'));const text=parts.join('.');return text+'.'+createHmac('sha256','team-interaction-isolated-stack').update(text).digest('base64url')}
-const ownerPost=async(owner,path,input,user=actor)=>{const response=await fetch(owners[owner]+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token(user)}`},body:JSON.stringify(input)});const result=await response.json();if(path.startsWith('/fixture/')){assert.equal(result.ok,true,JSON.stringify(result));return result}assert.equal(result.code,200,JSON.stringify(result));return result.data}
+const ownerPost=async(owner,path,input,user=actor)=>{const response=await fetch(owners[owner]+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token(user)}`},body:JSON.stringify(input)});const result=await response.json();if(path.startsWith('/fixture/')){assert.equal(result.ok,true,JSON.stringify(result));return result}assert([0,200].includes(result.code),JSON.stringify(result));return result.data}
 let ctx,shutdown,browser,page
 const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:await readFile(process.env.NODE_EXTRA_CA_CERTS)},async(req,res)=>{
  try{
@@ -30,7 +30,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
   if(path==='/api/v1/sse/chat/noty'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated\n\n');streams.add(res);res.on('close',()=>streams.delete(res));return}
   const chunks=[];for await(const chunk of req)chunks.push(chunk)
   const bytes=Buffer.concat(chunks),input=JSON.parse(bytes.toString()||'{}');calls.push({path,input})
-  const owner=path.startsWith('/api/v1/team/')?'team':path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')?'chat':path.startsWith('/api/v1/records/')||path.startsWith('/api/v1/topics/')?'record':undefined
+  const owner=path.startsWith('/api/v1/team/')?'team':path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')?'chat':path.startsWith('/api/v1/records/')||path.startsWith('/api/v1/topics/')||path.startsWith('/api/v1/home/')?'record':undefined
   if(owner){const response=await fetch(owners[owner]+path,{method:req.method,headers:{'Content-Type':'application/json',Authorization:req.headers.authorization??`Bearer ${token(actor)}`},body:bytes});res.writeHead(response.status,{'content-type':'application/json'});res.end(await response.text());return}
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing'))data={access_token:token(actor),refresh_token:'isolated-stack'}
@@ -60,7 +60,7 @@ try{
  const consumer=join(profile,'group identity consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}))
  await copyFile(join(repo,'tests/consumers/team-group-identity/consumer.ts'),join(consumer,'consumer.ts'))
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
- const {verifyInstalledGroupIdentity,verifyInstalledReadProjection}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
+ const {verifyInstalledGroupIdentity,verifyInstalledReadProjection,verifyInstalledSourceForward}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  const verified=await verifyInstalledGroupIdentity(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef)
  const toolSent=await invoke('arkme_text_send',{source_ref:source.sourceRef,text:`本地团队回执验收 ${randomUUID()}`,representation:verified.selection,send_at_millis:Date.now()})
  assert.equal(toolSent.isError,false);assert.match(JSON.stringify(toolSent),/representation/);assert.match(JSON.stringify(toolSent),/接待团队7/)
@@ -112,6 +112,23 @@ try{
  await ownerPost('chat','/fixture/audit-pass',{rel_uid:uiCall.input.rel_uid,version:1})
  const latest=await host.readSource(source.sourceRef,{limit:100})
  const selected=latest.items.find(item=>item.itemUid===uiCall.input.record_uid);assert(selected?.messageActionRef)
+ const selfSource=(await host.listSources('send_to_self')).items.find(v=>v.kind==='send_to_self');assert(selfSource)
+ const copyFlow=await verifyInstalledSourceForward(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef,selected.messageActionRef,selfSource.sourceRef)
+ // The colleague's existing message menu and target picker drive the same Host owner.
+ await page.reload();await page.getByText('隔离转发目标',{exact:true}).first().click()
+ const forwardRow=page.locator(`[data-arkme-message-item-uid="${uiCall.input.record_uid}"]`)
+ await forwardRow.click({button:'right'});await page.getByRole('menuitem',{name:'转发',exact:true}).click()
+ const forwardPicker=page.getByRole('dialog',{name:'转发给',exact:true})
+ await forwardPicker.getByRole('button',{name:/发给自己/}).click()
+ const beforeForward=calls.length
+ await forwardPicker.getByRole('button',{name:'发送转发',exact:true}).click()
+ await forwardPicker.waitFor({state:'hidden'})
+ const copiedCall=calls.slice(beforeForward).find(c=>c.path==='/api/v1/records/source-forward/create');assert(copiedCall)
+ assert(!('content_payload' in copiedCall.input),'UI sends selectors, never cached Team labels')
+ const copied=await ownerPost('record','/api/v1/records/detail',{record_uid:copiedCall.input.record_uid})
+ assert.deepEqual(copied.record_core.content_payload.forward_records.items[0].source_representation,{name:'接待团队7',jotmo_id:'stack_team_7'})
+ await page.screenshot({path:join(capture,'original-forward-picker-accepted.png')})
+ await writeFile(join(capture,'personal-forward-proof.json'),JSON.stringify({copyFlow,uiCopy:copiedCall.input.record_uid},null,2))
  const readFlow=await verifyInstalledReadProjection(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},source.sourceRef,selected.messageActionRef,verified.selection,async(relationUids)=>{for(let i=0;i<3;i++)await ownerPost('record','/fixture/complete',{});await new Promise(resolve=>setTimeout(resolve,300));for(const rel_uid of [uiCall.input.rel_uid,...relationUids])await ownerPost('chat','/fixture/audit-pass',{rel_uid,version:1})})
  const quoted=await invoke('arkme_message_quote_reply',{source_ref:source.sourceRef,message_action_ref:selected.messageActionRef,start:0,end:2,text:'Tool 团队引用延展闭环',representation:verified.selection,send_at_millis:Date.now()})
  assert.equal(quoted.isError,false);assert.match(JSON.stringify(quoted),/stack_team_7/)

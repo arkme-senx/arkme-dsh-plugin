@@ -29,3 +29,19 @@ export async function verifyInstalledReadProjection(fetchImpl:typeof fetch,sourc
  const link=await sdk.copyMessageLink(sourceRef,[actionRef]);
  return {child,personal,tree,link};
 }
+
+export async function verifyInstalledSourceForward(fetchImpl:typeof fetch,sourceRef:string,actionRef:string,targetSourceRef:string){
+ const sdk=new ArkmeSdk({fetchImpl});
+ const recordUid=crypto.randomUUID();
+ const commentText=`独立副本附言 ${recordUid}`;
+ const request={targetSourceRef,recordUid,sendAtMillis:Date.now(),commentText};
+ const copy=await sdk.forwardMessages(sourceRef,[actionRef],request);
+ assert(copy.localState==='synced'&&copy.representation===undefined,'personal copy is not a new Team expression');
+ const replay=await sdk.forwardMessages(sourceRef,[actionRef],request);
+ assert(replay.itemUid===copy.itemUid,'copy replay identity');
+ const timeline=await sdk.readSource(targetSourceRef,{limit:100});
+ assert(timeline.items.filter(item=>item.textContent===commentText).length===1,`exact retry cannot duplicate the personal forward comment: ${JSON.stringify({copy,replay,comments:timeline.items.filter(item=>item.textContent===commentText),texts:timeline.items.map(item=>item.textContent)})}`);
+ const row=timeline.items.find(item=>item.itemUid===copy.itemUid);
+ assert(row?.forwardRecords?.items[0]?.sourceTeam?.jotmoId==='stack_team_7','personal Record read retains accepted source Team');
+ return {copy,sourceTeam:row.forwardRecords.items[0].sourceTeam};
+}

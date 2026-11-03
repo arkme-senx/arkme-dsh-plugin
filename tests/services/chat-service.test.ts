@@ -14,7 +14,6 @@ import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateSt
 import { SourceService } from '../../src/services/source-service.js'
 import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
-import { assertRecordForwardInput } from '../fixtures/record-forward-input.js'
 import { createArkmeCoreToolDefinitions } from '../../src/tools/index.js'
 
 const config: ArkmeServiceConfig = {
@@ -295,15 +294,15 @@ describe('ChatService', () => {
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]?.conversationPreview).toBe(answered)
   })
 
-  it.each(['send_to_self', 'default_category', 'topic'] as const)('uses the strict Record write contract and preserves Markdown when forwarding to %s', async targetKind => {
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('submits only authoritative source selectors when forwarding to %s', async targetKind => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = {
       config: { maxTextLength: 20_000 },
       requireSession: vi.fn(async () => session),
       stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
       authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => {
-        assertRecordForwardInput(body)
-        return { record_uid: 'forwarded', status: 1 }
+        expect(body).not.toHaveProperty('content_payload')
+        return { accepted:true,record_uid:body.record_uid,status:1 }
       }),
     }
     const source = { openSourceRef: vi.fn(async (ref: string) => ({
@@ -316,12 +315,25 @@ describe('ChatService', () => {
     const actionRef = snapshotActionRef({ textContent: '    code\n', textFormat: 'markdown' })
     await chat.forwardSourceMessages('source', [actionRef], { targetSourceRef: 'target' })
     expect(runtime.authenticatedPost).toHaveBeenCalledWith(
-      targetKind === 'topic' ? '/api/v1/topics/records/create' : '/api/v1/records/create',
-      expect.objectContaining({ content_payload: expect.objectContaining({
-        forward_records: expect.objectContaining({ items: [expect.objectContaining({ text: '    code\n', text_format: 'markdown' })] }),
-      }) }), session, undefined,
+      targetKind === 'topic' ? '/api/v1/topics/records/source-forward/create' : '/api/v1/records/source-forward/create',
+      expect.objectContaining({sources:[{record_uid:'record-snapshot-1',chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}), session, undefined,
     )
   })
+
+  it('retries a personal forward comment with the original identity and account',async()=>{
+    const session={userId:42};
+    const runtime={config:{maxTextLength:20000},requireSession:async()=>session,stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'}};
+    const source={openSourceRef:async(ref:string)=>({kind:ref==='source'?'private_chat':'send_to_self',ownerRef:ref==='source'?'chat-1':'self'})};
+    const record={createPersonalRecord:vi.fn(async()=>({accepted:true,record_uid:'stable-copy',status:1}))};
+    const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,record as never,{} as never,{} as never,{} as never,{invalidateRecordProjection:async()=>{}} as never);
+    const comment=vi.spyOn(chat,'sendSourceText').mockResolvedValue({sourceRef:'target',itemUid:'comment',status:1,localState:'synced'});
+    const options={targetSourceRef:'target',recordUid:'stable-copy',commentText:'固定附言'};
+    await chat.forwardSourceMessages('source',[snapshotActionRef()],options);
+    await chat.forwardSourceMessages('source',[snapshotActionRef()],options);
+    expect(comment.mock.calls[0]?.[2]?.recordUid).toBe(comment.mock.calls[1]?.[2]?.recordUid);
+    expect(comment.mock.calls[0]?.[2]?.recordUid).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-8[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    expect(comment.mock.calls[0]?.[2]?.expectedUserId).toBe(42);
+  });
 
   it('does not open a departed member private chat under an account changed after event authorization', async () => {
     const runtime = {
@@ -3910,7 +3922,7 @@ it.each(['send_to_self','default_category','topic'] as const)('forwards articles
  const action=snapshotActionRef({displayKind:1,templateKind:2,textContent:'old truncated preview',imageCount:1})
  const result=await service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'article-copy',sendAtMillis:123})
  expect(result.itemUid).toBe('article-copy')
- expect(createPersonalRecord).toHaveBeenCalledWith(kind==='topic'?'/api/v1/topics/records/article-forward/create':'/api/v1/records/article-forward/create',expect.objectContaining({record_uid:'article-copy',send_at:123,sources:[{record_uid:'record-snapshot-1',record_owner_user_id:42,chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}),session,undefined)
+ expect(createPersonalRecord).toHaveBeenCalledWith(kind==='topic'?'/api/v1/topics/records/article-forward/create':'/api/v1/records/article-forward/create',expect.objectContaining({record_uid:'article-copy',send_at:123,sources:[{record_uid:'record-snapshot-1',chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}),session,undefined)
  expect(JSON.stringify(createPersonalRecord.mock.calls)).not.toContain('old truncated preview')
  authenticatedPost.mockResolvedValueOnce({protocol_version:0} as never)
  await expect(service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'another'})).rejects.toMatchObject({code:'article-forward-unavailable'})
