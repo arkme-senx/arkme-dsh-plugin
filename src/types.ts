@@ -1076,7 +1076,10 @@ export interface ArkmeArrangementPage {
   nextOffset?: number
 }
 
-export type ArkmeArrangementDetail = ArkmeArrangementItem
+export type ArkmeArrangementDetail = ArkmeArrangementItem & {
+  /** Requested opaque reference, set only after the Host verifies a merge redirect. */
+  resolvedFromRef?: string
+}
 
 /** Read-only deleted owner projection; deliberately excluded from live mutations. */
 export type ArkmeDeletedArrangementItem = Omit<ArkmeArrangementItem, 'status'> & { status: 'deleted' }

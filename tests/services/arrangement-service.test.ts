@@ -123,9 +123,28 @@ it('follows archived arrangement references to the same-account master with cycl
  const old=(await service.listArrangements()).items[0]!
  const master=await service.arrangementDetail(old.arrangementRef)
  expect(master.title).toBe('主安排');expect(master.status).toBe('completed');expect(master.arrangementRef).not.toBe(old.arrangementRef)
+ expect(master.resolvedFromRef).toBe(old.arrangementRef)
+ expect(JSON.stringify(master)).not.toContain('old-owner')
+ expect(JSON.stringify(master)).not.toContain('master-owner')
 })
 it('accepts only a server-attested archived reference resolution',async()=>{
  const {service}=deletedService(path=>path.endsWith('/list')?{list:[{uid:'old',status:1}],total:1}:{uid:'master',resolved_from_uid:'old',title:'保留主项',status:3})
  const old=(await service.listArrangements()).items[0]!
- await expect(service.arrangementDetail(old.arrangementRef)).resolves.toMatchObject({title:'保留主项',status:'completed'})
+ await expect(service.arrangementDetail(old.arrangementRef)).resolves.toMatchObject({title:'保留主项',status:'completed',resolvedFromRef:old.arrangementRef})
+})
+
+it.each([undefined, 'unrelated'])('rejects an unattested detail identity change (%s)', async resolvedFrom => {
+ const {service}=deletedService(path=>path.endsWith('/list')?{list:[{uid:'old',status:1}],total:1}:{uid:'master',resolved_from_uid:resolvedFrom,title:'不应显示',status:3})
+ const old=(await service.listArrangements()).items[0]!
+ await expect(service.arrangementDetail(old.arrangementRef)).rejects.toMatchObject({code:'arrangement-contract-invalid'})
+})
+it('does not mark an unchanged detail identity as redirected', async () => {
+ const {service}=deletedService((path,body)=>path.endsWith('/list')?{list:[{uid:'same',status:1}],total:1}:{uid:body.uid,title:'同一安排',status:1})
+ const item=(await service.listArrangements()).items[0]!
+ expect(await service.arrangementDetail(item.arrangementRef)).not.toHaveProperty('resolvedFromRef')
+})
+it('rejects a cyclic merge chain without returning a redirected detail', async () => {
+ const {service}=deletedService((path,body)=>path.endsWith('/list')?{list:[{uid:'old',status:1}],total:1}:{uid:body.uid,status:5,merged_into_uid:body.uid==='old'?'master':'old'})
+ const old=(await service.listArrangements()).items[0]!
+ await expect(service.arrangementDetail(old.arrangementRef)).rejects.toMatchObject({code:'arrangement-contract-invalid'})
 })
