@@ -9,7 +9,7 @@ afterEach(()=>disposers.splice(0).forEach(fn=>fn()))
 function fixture(){
   let user=11,epochCallback=()=>{}
   const writes:Array<{path:string;body:Record<string,unknown>}>=[],calls:Array<{path:string;body:Record<string,unknown>}>=[]
-  const state={analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
+  const state={modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
   const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})
   const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false},{source:'wechat_import',display_name:'微信导入',enabled:true}]})
   const anniversary=()=>({id:'private-anniversary',title:'生日',status:'pending',calendar_type:'solar',date_label:'10月28日',why:'明确提到日期',evidences:[{message_id:'private-message',content:'10月28日',source_type:6,owner_ref:{provider:'audio',container_id:'private-audio'},is_anchor:true}]})
@@ -22,6 +22,7 @@ function fixture(){
     if(path.includes('/override')||path.endsWith('/follow')||path.endsWith('/delete')||path.endsWith('/activate')||path.endsWith('/resume')||path.endsWith('/pause')||path.endsWith('/set')||path.endsWith('/reclassify')){
       if(state.failWrite)throw new Error('服务暂不可用')
       writes.push({path,body})
+      if(path.endsWith('/activate')&&body.route_key&&!state.ignoreModelWrite)state.modelRoute=String(body.route_key)
       if(path.endsWith('/override')){if(body.action==='delete')state.factDeleted=true;else state.factValue=String(body.value)}
       return {}
     }
@@ -38,7 +39,10 @@ function fixture(){
     if(path.endsWith('/anniversary/home'))return {result_version:state.version,saved_anniversaries:[],pending_ai_discoveries:[anniversary()],material_coverage:{audio_unavailable_count:2}}
     if(path.endsWith('/evidence/open'))return {available:state.available,owner_ref:{provider:'audio',container_id:'private-audio',transcript_source:'doubao'}}
     if(path.endsWith('/section-summary'))return {sections:[]}
-    if(path.endsWith('/model/list')||path.endsWith('/event-model/list'))return {effective_route_key:'private-model-a',items:[{route_key:'private-model-a',display_name:'模型 A'},{route_key:'private-model-b',display_name:'模型 B'}]}
+    if(path.endsWith('/model/list')||path.endsWith('/event-model/list')||path.endsWith('/model-panel/get')) {
+      const items=[{route_key:'private-model-a',display_name:'模型 A',provider:'dashscope'},{route_key:'private-model-b',display_name:'模型 B',provider:'managed-ai'}].filter(x=>!state.removeModelB||x.route_key!=='private-model-b')
+      return path.endsWith('/model-panel/get')?{config:{effective_route_key:state.modelRoute,allowed_route_options:items}}:{effective_route_key:state.modelRoute,items}
+    }
     if(path.endsWith('/records/detail'))return {record_core:{record_uid:'private-record',status:1,content_access_state:1,origin_kind:1}}
     return {}
   }
@@ -173,8 +177,8 @@ describe('Explore domain migration',()=>{
     await f.service.mutate({ref,action:'confirm',title:'生日',calendarType:'lunar',year:0,month:6,day:15,leapMonth:true})
     expect(f.writes[0]).toMatchObject({body:{candidate_id:'private-anniversary',calendar_type:'lunar',is_lunar_leap_month:true}})
   })
-  it('keeps fixed-model settings limited to supported profile sources',async()=>{
-    const f=fixture(),a=await f.service.settings('profile')
+  it('keeps source settings independent of model reads and rejects cross-module model refs',async()=>{
+    const f=fixture(),a=await f.service.settings('profile',undefined,{part:'sources'})
     expect(a.models).toEqual([])
     expect(a.sources.map(x=>x.key)).toEqual(['personal_record','native_chat'])
     expect(f.calls.some(x=>x.path.includes('/model/'))).toBe(false)
@@ -184,6 +188,60 @@ describe('Explore domain migration',()=>{
     await expect(f.service.saveSettings({ref:a.ref,sources:['unknown']})).rejects.toThrow()
     await f.service.saveSettings({ref:a.ref,sources:['personal_record','native_chat']})
     expect(f.writes.at(-1)?.body).toEqual({sources:['personal_record','native_chat']})
+  })
+})
+
+describe('Explore model selection',()=>{
+  it('publishes all Explore identities read-only without granting another module activation refs',async()=>{
+    const f=fixture(),directory=await f.service.modelDirectory('prod:11')
+    expect(directory.models).toHaveLength(2);expect(directory.failures).toEqual([])
+    expect(directory.models.every(model=>!model.explore&&!!model.exploreRouteKey)).toBe(true)
+    expect(f.calls.filter(call=>call.path.endsWith('/model/list')||call.path.endsWith('/event-model/list')||call.path.endsWith('/model-panel/get'))).toHaveLength(4)
+    expect(f.writes).toHaveLength(0)
+  })
+  it.each(['profile','events','goals','anniversaries'] as const)('reads %s choices without starting analysis and retains stable identities across refreshes',async module=>{
+    const f=fixture(),a=await f.service.settings(module,undefined,{part:'models',expectedAccountScope:'prod:11'})
+    const b=await f.service.settings(module,undefined,{part:'models'})
+    expect(a.accountScope).toBe('prod:11');expect(a.models.map(x=>x.key)).toEqual(b.models.map(x=>x.key))
+    expect(a.models.map(x=>x.selected)).toEqual([true,false]);expect(a.models[1]?.provider).toBe('managed-ai')
+    expect(a.models.every(model=>!model.ref.includes('private-model'))).toBe(true);expect(f.writes).toEqual([])
+    expect(f.calls.some(x=>x.path.endsWith('/experience/home'))).toBe(false)
+  })
+  it.each([
+    ['profile','/api/v1/personal-profile/v3/model/activate'],['events','/api/v1/event-model/activate'],
+    ['goals','/api/v1/insight/goal/model/activate'],['anniversaries','/api/v1/insight/anniversary/model/activate'],
+  ] as const)('activates %s through its existing owner and confirms the effective selection',async(module,path)=>{
+    const f=fixture(),settings=await f.service.settings(module,undefined,{part:'models'})
+    const result=await f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})
+    expect(f.writes).toEqual([{path,body:{route_key:'private-model-b',...(module==='goals'?{trigger_refresh:true}:{})}}])
+    expect(result).toMatchObject({saved:true,settings:{accountScope:'prod:11',models:[{selected:false},{selected:true}]}})
+    expect(result.message).not.toContain('分析完成')
+  })
+  it('does not submit the already active model again',async()=>{
+    const f=fixture(),settings=await f.service.settings('profile',undefined,{part:'models'})
+    await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[0]!.ref})).resolves.toMatchObject({saved:true})
+    expect(f.writes).toEqual([])
+  })
+  it('rejects stale choices and cross-account settings before any model write',async()=>{
+    const f=fixture(),settings=await f.service.settings('events',undefined,{part:'models'})
+    f.state.removeModelB=true
+    await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).rejects.toThrow()
+    f.switchAccount()
+    await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[0]!.ref})).rejects.toThrow()
+    await expect(f.service.settings('events',undefined,{part:'models',expectedAccountScope:'prod:11'})).rejects.toThrow()
+    expect(f.writes).toEqual([])
+  })
+  it('does not report a model as applied when the owner still returns the previous selection',async()=>{
+    const f=fixture(),settings=await f.service.settings('events',undefined,{part:'models'});f.state.ignoreModelWrite=true
+    await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).rejects.toThrow('暂时无法确认生效状态')
+    expect(f.writes).toHaveLength(1)
+  })
+  it.each(['profile','goals'] as const)('retains %s choices while disabled but does not bypass automatic AI authorization on activation',async module=>{
+    const f=fixture();f.state.analysisEnabled=false
+    const settings=await f.service.settings(module,undefined,{part:'models'})
+    expect(settings.models).toHaveLength(2)
+    await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).rejects.toThrow('自动使用额度')
+    expect(f.writes).toEqual([])
   })
 })
 

@@ -1,3 +1,4 @@
+import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
@@ -45,6 +46,7 @@ import { useConversationMembers } from './use-conversation-members.js'
 import { callArkme } from './api.js'
 import { ArkmeGroupSelfNicknameDialog } from './ArkmeGroupSelfNicknameDialog.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
+import { PublicGroupSettingsDialog } from './PublicSocialDialogs.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
@@ -1210,6 +1212,8 @@ function GroupSettingsMenu(props: {
   onClose: () => void
   onRename: (target: ArkmeGroupActionTarget) => void
   onSelfNickname: () => void
+  onPublicSettingsOpen?: () => void
+  onCopyLink?: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
@@ -1365,6 +1369,8 @@ function GroupSettingsMenu(props: {
     { type: 'label', id: 'personal-label', text: '个人设置' },
     { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
+  if (props.onPublicSettingsOpen) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
+  if (props.onCopyLink) entries.push({ id: 'copy-group-link', label: '复制群聊链接', icon: <ClientIcon src={icons.members} size={16} /> })
   entries.push({
     id: 'message-dnd',
     label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1437,6 +1443,8 @@ function GroupSettingsMenu(props: {
       if (id === 'export') { close(); props.onExport(); return }
       if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
+      if (id === 'public-settings') { close(); props.onPublicSettingsOpen?.(); return }
+      if (id === 'copy-group-link') { close(); props.onCopyLink?.(); return }
       if (id === 'message-dnd') {
         close()
         changeMessageDnd(!messageDnd)
@@ -1729,6 +1737,7 @@ export function ArkmeGroupChatControls(props: {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [publicSettingsOpen, setPublicSettingsOpen] = useState(false)
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
   const [internalGroupOpen, setInternalGroupOpen] = useState(false)
@@ -1743,6 +1752,7 @@ export function ArkmeGroupChatControls(props: {
   useEffect(() => {
     setRestrictionsOpen(false)
     setSelfNicknameOpen(false)
+    setPublicSettingsOpen(false)
     setInternalGroupOpen(false)
   }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
@@ -1799,6 +1809,8 @@ export function ArkmeGroupChatControls(props: {
         onClose={() => { setSettingsOpen(false) }}
         onRename={setRenameSource}
         onSelfNickname={() => { setSelfNicknameOpen(true) }}
+        {...(props.accountScope ? { onPublicSettingsOpen: () => setPublicSettingsOpen(true) } : {})}
+        {...(props.accountScope ? { onCopyLink: () => { void copyIdentityShareLink(props.accountScope!, { kind: 'source', sourceRef: props.source.sourceRef }).then(() => props.onStatus?.(tr('链接已复制'))).catch(error => reportError(errorMessage(error))) } } : {})}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
         {...(props.accountScope ? { onInternalGroupOpen: () => setInternalGroupOpen(true) } : {})}
@@ -1876,6 +1888,7 @@ export function ArkmeGroupChatControls(props: {
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onError={reportError}
       />
+      {publicSettingsOpen && props.accountScope && <PublicGroupSettingsDialog key={`${props.accountScope}:${props.source.sourceRef}`} accountScope={props.accountScope} sourceRef={props.source.sourceRef} onClose={() => { setPublicSettingsOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }} onSaved={() => props.onStatus?.(tr('公开展示设置已保存'))} />}
     </>, overlayHost)}
   </>
 }

@@ -1,4 +1,5 @@
 import { tr, useArkmeLocale } from '../../locale.js'
+import { IdentityCopyLinkButton } from '../../IdentityCopyLinkButton.js'
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { PencilSimple } from '@phosphor-icons/react/PencilSimple'
 import { ChatCircle } from '@phosphor-icons/react/ChatCircle'
@@ -315,6 +316,7 @@ export function ContactProfileContent({
             <div aria-label={tr("昵称：{v0}", { v0: profile.nickname.trim() || '未设置' })}><dt>{tr("昵称")}</dt><dd>{profile.nickname.trim() || '未设置'}</dd></div>
             <div aria-label={tr("即我号：{v0}", { v0: profile.accountName?.trim() || '未设置' })}><dt>{tr("即我号")}</dt><dd>{profile.accountName?.trim() || '未设置'}</dd></div>
           </dl>
+          <div style={{ marginTop: 10 }}><IdentityCopyLinkButton accountScope={state.identity.accountKey} target={{ kind: 'contact', contactRef: state.identity.contactRef }} label="复制个人链接" /></div>
         </div>
       </header>
       <section className="arkme-contact-profile-section">

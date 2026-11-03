@@ -3,6 +3,9 @@ import { arkmeEnglish } from './locales/en.js'
 import { mobileEnglish } from './locales/mobile-en.js'
 import { actionEnglish } from './locales/actions-en.js'
 import { dynamicEnglish } from './locales/dynamic-en.js'
+import { publicSocialEnglish } from './locales/public-social-en.js'
+import { privateGroupEnglish } from './locales/private-group-en.js'
+import { identityShareEnglish } from './locales/identity-share-en.js'
 
 export type ArkmeLocale = 'zh' | 'en'
 interface LocaleSource {
@@ -40,7 +43,7 @@ export function useArkmeLocale(): ArkmeLocale {
 
 /** For application-owned copy only. Never pass messages, names or transcripts. */
 export function tr(source: string, values?: Record<string, string | number>): string {
-  const translated = active === 'en' ? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? source : source
+  const translated = active === 'en' ? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? publicSocialEnglish[source] ?? privateGroupEnglish[source] ?? identityShareEnglish[source] ?? source : source
   return values === undefined ? translated : translated.replace(/\{(\w+)\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
 }

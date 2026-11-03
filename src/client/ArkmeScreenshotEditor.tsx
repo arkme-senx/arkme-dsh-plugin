@@ -9,9 +9,10 @@ const tools:Tool[]=['rectangle','ellipse','arrow','pen','mosaic','text']
 const panel:CSSProperties={background:'#fff',color:'#24262b',border:'1px solid #dfe1e6',borderRadius:10,boxShadow:'0 8px 28px #0003'}
 interface Props {
  frame:ScreenshotFrame; completionDestination?:'attachment'|'clipboard'; desktop?:boolean; windows?:readonly Rect[]; onClose():void; onComplete(blob:Blob):void|Promise<void>;
+ onProfile?:((stage:'image-decoded'|'canvas-painted')=>void)|undefined;
  onAskDsh?:((blob:Blob)=>Promise<void>)|undefined; onSave?(blob:Blob):Promise<boolean>; onReady?():void; onSelect?():Promise<boolean>;
 }
-export function ArkmeScreenshotEditor({frame,completionDestination='attachment',desktop=false,windows=[],onClose,onComplete,onSave,onAskDsh,onReady,onSelect}:Props) {
+export function ArkmeScreenshotEditor({frame,completionDestination='attachment',desktop=false,windows=[],onClose,onComplete,onSave,onAskDsh,onReady,onSelect,onProfile}:Props) {
  const canvas=useRef<HTMLCanvasElement>(null),area=useRef<HTMLDivElement>(null),stage=useRef<HTMLDivElement>(null),root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null)
  const image=useRef<HTMLImageElement>(); const alive=useRef(true); const submitting=useRef(false)
  const [loaded,setLoaded]=useState(false),[error,setError]=useState(''),[status,setStatus]=useState(''),[busy,setBusy]=useState(false)
@@ -25,12 +26,12 @@ export function ArkmeScreenshotEditor({frame,completionDestination='attachment',
  const [color,setColor]=useState('#ef4444'),[line,setLine]=useState(4),[font,setFont]=useState(28),[mosaic,setMosaic]=useState(14)
  const [text,setText]=useState<{point:Point;value:string}>(),[drawing,setDrawing]=useState(false)
  const gesture=useRef<{id:number;start:Point;clientStart:Point;candidate?:Rect|undefined;dragged?:boolean;rect?:Rect;handle?:string;mark?:Annotation}>()
- const latest=useRef({onClose,onReady,onSelect});latest.current={onClose,onReady,onSelect}
+ const latest=useRef({onClose,onReady,onSelect,onProfile});latest.current={onClose,onReady,onSelect,onProfile}
  useEffect(()=> {
   alive.current=true; const url=URL.createObjectURL(frame.blob),img=new Image(); image.current=img
-  img.onload=()=> { if(alive.current){setLoaded(true)} }
+  img.onload=()=> { if(alive.current){latest.current.onProfile?.('image-decoded');setLoaded(true)} }
   img.onerror=()=>{if(alive.current)setError('截图加载失败，请取消后重试')};img.src=url
-  return()=>{alive.current=false;URL.revokeObjectURL(url);img.onload=null;img.onerror=null}
+  return()=>{alive.current=false;URL.revokeObjectURL(url);img.onload=null;img.onerror=null;img.src='';image.current=undefined;if(canvas.current){canvas.current.width=0;canvas.current.height=0}}
  },[frame])
  useLayoutEffect(()=> {
   const element=area.current;if(!element)return
@@ -48,7 +49,7 @@ export function ArkmeScreenshotEditor({frame,completionDestination='attachment',
  },[])
  useEffect(()=>{setBarPosition(undefined);barGesture.current=undefined;setBarDragging(false)},[frame])
  useEffect(()=>{if(!loaded||!image.current||!canvas.current)return
-  try{paintScreenshot(canvas.current,image.current,[...history.done,...(draft?[draft]:[])],selection)}catch(e){setError(String(e))}
+  try{paintScreenshot(canvas.current,image.current,[...history.done,...(draft?[draft]:[])],selection);if(!selection&&history.done.length===0&&!draft)latest.current.onProfile?.('canvas-painted')}catch(e){setError(String(e))}
  },[loaded,history,draft,selection])
  useEffect(()=>{if(!loaded)return;const id=requestAnimationFrame(()=>latest.current.onReady?.());return()=>cancelAnimationFrame(id)},[loaded])
  const commitText=()=> {if(text?.value.trim())dispatch({type:'add',mark:{tool:'text',points:[text.point],color,size:font,text:text.value}});setText(undefined)}

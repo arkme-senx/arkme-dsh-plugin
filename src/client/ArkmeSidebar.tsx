@@ -1,3 +1,4 @@
+import { identityShareUi } from './identity-share-ui.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
@@ -121,6 +122,9 @@ import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName
 import { ArkmeTopicReadOnlyNotice } from './ArkmeTopicReadOnlyNotice.js'
 import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
+import { PrivateGroupCreateDialog } from './PrivateGroupCreateDialog.js'
+import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { arkmeTopicPathNames } from './source-tree.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
@@ -3035,6 +3039,9 @@ export function ArkmeSurface({
   }, [authView, localeId])
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
   const [sharePrivateChatOpen,setSharePrivateChatOpen]=useState(false)
+  const [privateGroupCreateOpen, setPrivateGroupCreateOpen] = useState(false)
+  const identityShareRequest = useSyncExternalStore(identityShareUi.subscribe, identityShareUi.getSnapshot, () => undefined)
+  useEffect(() => { setPrivateGroupCreateOpen(false) }, [authenticatedAccountKey, conversationKey])
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [conversationLocationOpen, setConversationLocationOpen] = useState(false)
   useEffect(() => { setConversationLocationOpen(false) }, [authenticatedAccountKey, conversationKey])
@@ -7831,6 +7838,8 @@ export function ArkmeSurface({
     || drawer !== undefined
     || selectedMoment !== undefined
     || relatedMenuOpen
+    || privateGroupCreateOpen
+    || identityShareRequest?.accountScope === authenticatedAccountKey && identityShareRequest !== undefined
     || selfMenuOpen
     || conversationLocationOpen
     || relatedPanelOpen
@@ -8411,8 +8420,9 @@ export function ArkmeSurface({
     active={active && ui.mode === 'calls'}
   />
 
-  if (!active) return <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={undefined}
-    chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+  // Keep providers and keyed surfaces at one React position across suspension.
+  // Hidden work remains inactive; account changes still reset retained pages.
+  const surfaceContent = !active ? <>
     {forwardDialog}
     <div
       key="conversation-surface"
@@ -8435,13 +8445,7 @@ export function ArkmeSurface({
     {selfTopicMenuOwner}
     {recordingImportOwner}
     {directRecordingNotice}
-  </MessageQuoteThreadsProvider>
-
-  return (
-    <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
-      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
-    <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={activeConversation ? source?.sourceRef : undefined}
-      chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+  </> : <>
     <ArkmeBotIdentityStyles />
     {messageUnderlines.layer}
     {ui.mode !== 'arko' && ui.mode !== 'team' && <ArkmeMessageTextSelectionToolbar key={`${authenticatedAccountKey}:${ui.mode}:${conversationKey}`}
@@ -8688,7 +8692,8 @@ export function ArkmeSurface({
             visibility: relatedPanelOpen ? 'hidden' : 'visible',
           }}>
             {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
-            <ConversationActionsMenu items={[{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            {source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0 && <ArkmeConversationHeaderIconButton label={tr('发起群聊')} hasPopup="dialog" expanded={privateGroupCreateOpen} onClick={() => { setRelatedMenuOpen(false); setPrivateGroupCreateOpen(true) }}><UserPlus size={22} aria-hidden /></ArkmeConversationHeaderIconButton>}
+            <ConversationActionsMenu items={[...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
@@ -8712,6 +8717,7 @@ export function ArkmeSurface({
         </header>}
         {conversationLocationOpen && authenticated && source && <ArkmeLocationDialog key={`conversation-location:${authenticatedAccountKey}:${conversationKey}`}
           initialSource={source} onClose={() => { setConversationLocationOpen(false) }} />}
+        {privateGroupCreateOpen && authenticatedAccountKey && source?.kind === 'private_chat' && <PrivateGroupCreateDialog accountScope={authenticatedAccountKey} source={source} onClose={() => setPrivateGroupCreateOpen(false)} onCreated={activateSource} />}
         {activeConversation && calendarNavigation.status !== undefined && <ArkmeCalendarNavigationStatus
           status={calendarNavigation.status} onCancel={calendarNavigation.cancel} onRetry={calendarNavigation.retry}
         />}
@@ -8790,6 +8796,7 @@ export function ArkmeSurface({
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
             onBack={() => arkmeUi.backFromWorld()} />
           : ui.mode === 'world' ? <ArkmeWorldSurface
+            accountScope={authenticatedAccountKey}
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
@@ -9485,6 +9492,7 @@ export function ArkmeSurface({
           }}
         />}
         {activeConversation && memberProfile !== undefined && <ArkmeMemberProfileCard
+          copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef } : undefined}
           member={memberProfile}
           showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}
@@ -9750,7 +9758,15 @@ export function ArkmeSurface({
     </div>
     {recordingImportOwner}
     {directRecordingNotice}
-    </MessageQuoteThreadsProvider>
+  </>
+
+  return (
+    <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={active && activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
+      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
+      <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={active && activeConversation ? source?.sourceRef : undefined}
+        chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+        {surfaceContent}
+      </MessageQuoteThreadsProvider>
     </RecordThoughtsProvider>
   )
 }

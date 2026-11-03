@@ -83,3 +83,49 @@ it.each([{uid:'other',status:4},{uid:'a',status:2}])('rejects a changed deleted-
   const ref = (await service.deletedArrangements()).items[0]!.arrangementRef
   await expect(service.deletedArrangementDetail(ref)).rejects.toMatchObject({code:'arrangement-contract-invalid'})
 })
+
+it('rejects recognition settings requests for a stale account before cloud IO', async () => {
+  const {service,fetchImpl} = deletedService(() => ({}))
+  await expect(service.recognitionRequest('settings/get','test:99',{})).rejects.toMatchObject({code:'arrangement-account-changed'})
+  expect(fetchImpl).not.toHaveBeenCalled()
+})
+it('discards recognition configuration returned after an account switch', async () => {
+  let runtime:ReturnType<typeof deletedService>
+  runtime=deletedService(() => {runtime.switchAccount();return {contract_version:1,sources:[],models:[],revision:'r'}})
+  await expect(runtime.service.recognitionRequest('settings/get','test:42',{})).rejects.toMatchObject({code:'arrangement-account-changed'})
+})
+it('does not project internal owner IDs from a recognition trace',async () => {
+  const {service}=deletedService(path => path.endsWith('/list') ? {list:[{uid:'secret-owner',status:1}],total:1} : {state:'ready',trace:{id:'trace',route_key:'dashscope/qwen-flash',rules:[],pipeline:[],record_uids:['private-record'],outcomes:[{uid:'secret-owner',title:'title',description:'',due_at:0}]}})
+  const ref=(await service.listArrangements()).items[0]!.arrangementRef
+  const result=await service.recognitionRequest('trace','test:42',{arrangementRef:ref})
+  expect(JSON.stringify(result)).not.toContain('secret-owner');expect(JSON.stringify(result)).not.toContain('private-record')
+})
+
+it('projects occurrence candidates without exposing owner UIDs and binds decisions to opaque references',async()=>{
+ let sent:Record<string,unknown>|undefined
+ const {service}=deletedService((path,body)=>{
+  if(path.endsWith('reviews/list'))return {state:'ready',items:[{id:'pending',kind:'automatic',state:'pending',created_at:100,source:'audio',reason:'需确认',candidate:{title:'接小安',description:'接送',due_at:1000},peers:[{uid:'secret-peer',title:'已有接送',status:3,version:123}],comparisons:[{uid:'secret-peer',relation:'same',confidence:.99,same_event:true,same_people:true,same_occurrence:true,time_conflict:false,place_conflict:false,reason:'同次接送'}]}]}
+  sent=body;return {state:'applied',item:{uid:'secret-peer',title:'已有接送',status:3}}
+ })
+ const page=await service.occurrenceRequest('reviews/list','test:42',{})
+ expect(JSON.stringify(page)).not.toContain('secret-peer')
+ const peer=page.items![0]!.peers[0]!
+ await service.occurrenceRequest('reviews/decide','test:42',{reviewId:'pending',action:'merge',targetRef:peer.arrangementRef,targetVersion:123})
+ expect(sent).toEqual({id:'pending',action:'merge',target_uid:'secret-peer',target_version:123})
+})
+it('rejects occurrence writes from a stale account and duplicate history selections before cloud IO',async()=>{
+ const {service,fetchImpl}=deletedService(()=>({}))
+ await expect(service.occurrenceRequest('reviews/decide','test:99',{reviewId:'r',action:'ignore'})).rejects.toMatchObject({code:'arrangement-account-changed'})
+ expect(fetchImpl).not.toHaveBeenCalled()
+})
+it('follows archived arrangement references to the same-account master with cycle protection',async()=>{
+ const {service}=deletedService((path,body)=>path.endsWith('/list')?{list:[{uid:'old-owner',status:1}],total:1}:body.uid==='old-owner'?{uid:'old-owner',status:5,merged_into_uid:'master-owner'}:{uid:'master-owner',title:'主安排',status:3})
+ const old=(await service.listArrangements()).items[0]!
+ const master=await service.arrangementDetail(old.arrangementRef)
+ expect(master.title).toBe('主安排');expect(master.status).toBe('completed');expect(master.arrangementRef).not.toBe(old.arrangementRef)
+})
+it('accepts only a server-attested archived reference resolution',async()=>{
+ const {service}=deletedService(path=>path.endsWith('/list')?{list:[{uid:'old',status:1}],total:1}:{uid:'master',resolved_from_uid:'old',title:'保留主项',status:3})
+ const old=(await service.listArrangements()).items[0]!
+ await expect(service.arrangementDetail(old.arrangementRef)).resolves.toMatchObject({title:'保留主项',status:'completed'})
+})

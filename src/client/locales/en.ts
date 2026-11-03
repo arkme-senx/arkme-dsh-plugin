@@ -664,6 +664,8 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+录音处理版本：{v0}|Recording processing version: {v0}
+新录音和新导入使用此版本，历史录音保留原处理版本|New recordings and imports use this version. Historical recordings keep their original version.
 音频文件列表|Audio files
 当天暂无音频文件|No audio files for this day
 暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.

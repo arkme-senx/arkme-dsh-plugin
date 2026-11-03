@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { TeamOutboundMount } from './TeamOutboundDialog.js'
+import { IdentityShareHost } from './IdentityShareHost.js'
 import { tr, useArkmeLocale } from './locale.js'
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
@@ -187,6 +188,7 @@ export function ArkmePersistentClientRuntime() {
 
   return <>
     <ArkmeOutgoingCallHost />
+    <IdentityShareHost />
     {avatarScopeKey && <TeamMessagingMount key={avatarScopeKey} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
     {avatarScopeKey && <TeamOutboundMount key={`outbound:${avatarScopeKey}`} accountKey={avatarScopeKey} active={auth?.status === 'authenticated'} />}
     <ArkmeHomeTour auth={auth}
@@ -461,6 +463,7 @@ export function ArkmePersistentSidebar({
         expandedSections={scopedContacts.expandedSections}
         contactProfiles={scopedContacts.contactProfiles}
         toolbarActions={<ArkmeQuickAddButton
+          accountScope={contactsAccountKey}
           notificationActivationRevision={ui.notificationActivationRevision ?? 0}
           onContactAdd={() => { setContactAddSession({ accountKey: contactsAccountKey }) }}
           onSourceCreated={source => {

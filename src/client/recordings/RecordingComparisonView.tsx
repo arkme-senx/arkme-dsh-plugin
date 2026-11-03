@@ -46,12 +46,11 @@ export function RecordingComparisonView({ scope, description, notices, children,
 }
 
 export function RecordingComparisonColumn({ title, kind, actions, children }: {
-  title: string; kind: '正式结果' | '对比结果'; actions?: ReactNode; children: ReactNode
+  title: string; kind?: '正式结果' | '对比结果'; actions?: ReactNode; children: ReactNode
 }) {
-  return <section aria-label={`${title} · ${kind}`} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, borderInlineEnd: `1px solid ${colors.border}` }}>
+  return <section aria-label={kind ? `${title} · ${kind}` : title} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, borderInlineEnd: `1px solid ${colors.border}` }}>
     <header style={{ minHeight: 46, flex: 'none', padding: '6px 20px', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
       <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{title}</h3>
-      <small style={{ color: colors.secondary }}>{kind}</small>
       {actions}
     </header>
     {children}
