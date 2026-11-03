@@ -2677,10 +2677,11 @@ arkoImagesV1:true,
   async changeSourceUnderline(sourceRef: string, actionRef: string, change: import('./message-annotations.js').MessageUnderlineChange, signal?: AbortSignal) { return this.chat.changeSourceUnderline(sourceRef, actionRef, change, signal) }
   async sourceMessageExtensionCapabilities(sourceRef: string, signal?: AbortSignal) { return this.chat.sourceMessageExtensionCapabilities(sourceRef, signal) }
   async extendSourceMessage(sourceRef: string, messageActionRef: string, textContent: string, recordUid: string, fileRefs: readonly string[] = [], options: {
-    relationUid?: string; parentRecordUid?: string; quote?: import('./message-quote.js').ArkmeMessageQuote; signal?: AbortSignal; attachmentOrder?: string[]
+    relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('./message-quote.js').ArkmeMessageQuote; signal?: AbortSignal; attachmentOrder?: string[]
   } & Pick<ArkmeRichSendInput, 'assets' | 'textFormat' | 'humanMentions' | 'botMentions' | 'representation' | 'sendAtMillis'> = {}) {
     if (options.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
     if (fileRefs.length + (options.assets?.length ?? 0) > 9) throw new ArkmePluginError('record-file-assets-invalid', '附件数量超限', false, 400)
+    if (options.thoughtReplyRef || options.privateThoughtReplyRef) await this.chat.requireThoughtReplyCapability(sourceRef,options.signal)
     if (options.quote !== undefined) await this.chat.validateQuoteReply(sourceRef, messageActionRef, options.quote, options.signal)
     const context = await this.chat.sourceMessageExtensionContext(sourceRef, messageActionRef, options)
     const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''

@@ -1,5 +1,6 @@
 /** Existing private-record thoughts. Reading never starts an AI generation. */
 export interface ArkmeRecordThought {
+  replyTargetRef?: string
   id: string
   recordUid: string
   content: string

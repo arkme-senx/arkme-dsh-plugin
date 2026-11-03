@@ -8,6 +8,8 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 
 export interface DetailExtensionSend {
+ thoughtReplyRef?: string | undefined
+ privateThoughtReplyRef?: string | undefined
   accountKey: string
   sourceKey: string
   sourceRef: string
@@ -113,6 +115,8 @@ export class DetailExtensionSendQueue {
         ...(task.humanMentions?.length ? { humanMentions: task.humanMentions } : {}),
         ...(task.botMentions?.length ? { botMentions: task.botMentions } : {}),
         recordUid: task.recordUid, relationUid: task.relationUid,
+ ...(task.thoughtReplyRef ? { thoughtReplyRef:task.thoughtReplyRef } : {}),
+ ...(task.privateThoughtReplyRef ? { privateThoughtReplyRef:task.privateThoughtReplyRef } : {}),
         ...(task.parent.itemUid === task.rootRecordUid ? {} : { parentRecordUid: task.parent.itemUid }),
         fileRefs: task.fileRefs,
       }, signal)
@@ -189,8 +193,8 @@ export function detailExtensionSendTimelineItem(task: DetailExtensionSend): Arkm
     ...(extension.contentBlocks === undefined ? {} : { contentBlocks: extension.contentBlocks }),
     ...(task.result?.sequence === undefined ? {} : { sequence: task.result.sequence }),
     extensionParentRecordUid: task.parent.itemUid,
-    extensionParent: { itemUid: task.parent.itemUid, senderName: task.parent.senderName, title: task.parent.title,
-      textContent: task.parent.textContent, textFormat: task.parent.textFormat ?? 'plain',
+    extensionParent: { itemUid: task.parent.itemUid, senderName: extension.thoughtReply && task.parent.itemUid === task.rootRecordUid ? 'Arko' : task.parent.senderName, title: extension.thoughtReply ? '' : task.parent.title,
+      textContent: extension.thoughtReply && task.parent.itemUid === task.rootRecordUid ? extension.thoughtReply.content : task.parent.textContent, textFormat: task.parent.textFormat ?? 'plain',
       ...(task.parent.contentBlocks === undefined ? {} : { contentBlocks: task.parent.contentBlocks }) },
     awaitingTimelineProjection: true,
   }
@@ -203,4 +207,9 @@ export function DetailExtensionSendStatus({ task }: { task: DetailExtensionSend 
     {(task.state === 'failed' || task.state === 'uncertain') && <button type="button" data-arkme-feedback="neutral" style={{ border: 0, padding: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer' }}
       onClick={() => { if (uncertain) void detailExtensionSends.reconcile(task); else detailExtensionSends.retry(task) }}>{uncertain ? tr('核对发送结果') : tr('重试')}</button>}
   </div>
+}
+
+/** Private Arko threads are detail-only, including interrupted sends without a receipt. */
+export function publicTimelineExtensionSends(tasks: readonly DetailExtensionSend[]) {
+  return tasks.filter(task => task.extension.privateThoughtReply !== true && task.result?.privateThoughtReply !== true)
 }

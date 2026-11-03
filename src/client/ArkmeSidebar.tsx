@@ -3,7 +3,7 @@ import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
 import { ArkmeComposerResourcePicker } from './ArkmeComposerResourcePicker.js'
-import { detailExtensionSends, useDetailExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
+import { detailExtensionSends, useDetailExtensionSends, publicTimelineExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
 import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
@@ -6457,7 +6457,7 @@ export function ArkmeSurface({
       if (projected !== bound) reeditItems.add(projected)
       return projected
     })
-    const extensionItems = extensionSendTasks.filter(task => !remoteIds.has(task.result?.recordUid ?? task.recordUid)).map(detailExtensionSendTimelineItem)
+    const extensionItems = publicTimelineExtensionSends(extensionSendTasks).filter(task => !remoteIds.has(task.result?.recordUid ?? task.recordUid)).map(detailExtensionSendTimelineItem)
     const displayItems = [...remoteItems, ...extensionItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem)]
       .sort(compareTimelineMessages)
     return { displayItems: source ? recordMutations.projectWindow(displayItems, source, selfSources).sort(compareTimelineMessages) : displayItems, reeditItems }

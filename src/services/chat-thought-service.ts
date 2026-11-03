@@ -52,7 +52,7 @@ export async function readChatThoughts(runtime: ServiceRuntime, expectedScope: s
     const display = displayView(row.display)
     items.set(id, { id, recordUid, biz: (scene as number) <= 3 ? 2 : 1, scene: scene as 1 | 2 | 3 | 4 | 5,
       visibility: scene === 2 ? 'members' : 'user', status: (['generating', 'ready', 'failed', 'invalidated'] as const)[(status as number) - 1]!,
-      generation: generation as number, content: text(row.content, 131_072), ...(display ? { display } : {}) })
+      ...(typeof row.reply_target_ref === 'string' && row.reply_target_ref.length <= 4096 && row.reply_target_ref ? { replyTargetRef: row.reply_target_ref } : {}), generation: generation as number, content: text(row.content, 131_072), ...(display ? { display } : {}) })
   }
   return { accountScope: scope, items: [...items.values()] }
 }

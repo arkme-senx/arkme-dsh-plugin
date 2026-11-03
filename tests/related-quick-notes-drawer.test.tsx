@@ -90,6 +90,34 @@ const relatedList: ArkmeRelatedQuickNoteList = {
 }
 
 describe('normal timeline related quick note drawer', () => {
+  it('queues an owner-backed Arko reply immediately with its typed reference and frozen quote', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
+      if (operation === 'record.thoughts.query') return { accountScope:'test:11',items:[{id:'real-thought',recordUid:timelineItem.itemUid,content:'Arko 的原始建议',biz:1,generation:7,replyTargetRef:'owner-signed-target'}] }
+      if (operation === 'source.related-quick-notes.from-message') return relatedList
+      if (operation === 'source.message-extension.context') return { parentRecordUid:timelineItem.itemUid,extensionCount:0,extensions:[] }
+      if (operation === 'source.message-extension.extend') return await new Promise(resolve => { finish=resolve })
+      return {features:{markdownQuickNotes:false}}
+    })
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view=create(<RecordThoughtsProvider accountScope="test:11" enabled><ArkmeTimelineDetailDrawer item={{...timelineItem,isMe:true}} sourceRef="source" sourceKind="send_to_self" showOriginal={false} onClose={()=>{}} onToggleOriginal={()=>{}}/></RecordThoughtsProvider>) })
+      await act(async()=>vi.advanceTimersByTimeAsync(32))
+      act(()=>view.root.findByProps({'data-arkme-thought-reply':'real-thought'}).props.onClick())
+      act(()=>view.root.findByType(ArkmeRichComposerInput).props.onTextChange('我想继续讨论这个建议'))
+      expect(view.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false)
+      await act(async()=>view.root.findByType(ArkmeComposerSendButton).props.onClick())
+      expect(view.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.message-extension.extend',expect.objectContaining({thoughtReplyRef:'owner-signed-target',textContent:'我想继续讨论这个建议'}),expect.any(AbortSignal))
+      expect(view.root.findAllByProps({'data-arkme-comment-quote':true})).toHaveLength(1)
+      expect(view.root.findAllByProps({'data-arkme-extension-send-state':'sending'})).toHaveLength(1)
+      const task=detailExtensionSends.views('test:11','source')[0]!
+      await act(async()=>finish({recordUid:task.recordUid,parentRecordUid:timelineItem.itemUid,status:1,localState:'synced',extension:task.extension}))
+      expect(view.root.findAllByProps({'data-arkme-extension-send-state':'sent'})).toHaveLength(1)
+    } finally {if(view)act(()=>view.unmount());vi.useRealTimers()}
+  })
+
   it('preserves the draft across human and Arko targets, blocks unsupported Arko writes, and sends to the selected human', async () => {
     vi.useFakeTimers()
     const toast = vi.fn()

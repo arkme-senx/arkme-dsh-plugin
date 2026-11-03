@@ -2645,6 +2645,8 @@ export async function dispatchArkmeHostOperation(
         ...(quote === undefined ? {} : { quote }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
+ ...(stringParam(params, 'thoughtReplyRef') === '' ? {} : { thoughtReplyRef: stringParam(params, 'thoughtReplyRef') }),
+ ...(stringParam(params, 'privateThoughtReplyRef') === '' ? {} : { privateThoughtReplyRef: stringParam(params, 'privateThoughtReplyRef') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )

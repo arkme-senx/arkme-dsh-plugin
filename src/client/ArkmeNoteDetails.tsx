@@ -394,7 +394,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
   }
 
   const send = () => {
-    if (replyTarget?.kind === 'thought') { onError(tr('暂时无法回复 Arko，输入内容会保留')); return }
+    if (replyTarget?.kind === 'thought' && !replyTarget.thought.replyTargetRef) { onError(tr('暂时无法回复 Arko，输入内容会保留')); return }
     const pendingAttachments = attachmentsRef.current
     const serializedDraft = serializeArkmeComposerDraft({ text: textRef.current, mentions: mentionsRef.current,
       emojis: emojisRef.current, attachments: pendingAttachments, ...(markdownRef.current === undefined ? {} : { markdown: markdownRef.current }) })
@@ -408,11 +408,16 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     try {
       detailExtensionSends.enqueue({
         accountKey, sourceKey: sourceIdentityKey ?? sourceRef, sourceRef, sourceKind, rootRecordUid,
+        ...(replyTarget?.kind === 'thought' ? { thoughtReplyRef: replyTarget.thought.replyTargetRef } : {}),
+        ...(replyTarget?.kind === 'extension' && replyTarget.item.privateThoughtReplyRef ? { privateThoughtReplyRef: replyTarget.item.privateThoughtReplyRef } : {}),
         parent: parentItem, messageActionRef, recordUid, relationUid, textContent: serializedDraft.text,
         textFormat: serializedDraft.textFormat,
         humanMentions: detailHumanMentionInputs(serializedDraft.mentions), botMentions: detailBotMentionInputs(serializedDraft.mentions), fileRefs,
         ...(role && selfRoleSelection ? { role: { userId: selfRoleSelection.userId, roleId: role.roleId } } : {}),
         extension: { recordUid, parentRecordUid: parentRecordUid ?? rootRecordUid, level: extensionLevel,
+          ...(replyTarget?.kind === 'thought' ? { thoughtReply: { thoughtId:replyTarget.thought.id, recordUid:rootRecordUid,
+            generation:replyTarget.thought.generation ?? 1, visibility:replyTarget.thought.visibility ?? 'user', content:replyTarget.thought.content } } : {}),
+          ...((sourceKind === 'private_chat' || sourceKind === 'group_chat') && ((replyTarget?.kind === 'thought' && replyTarget.thought.visibility !== 'members') || replyTarget?.kind === 'extension' && replyTarget.item.privateThoughtReply === true) ? { privateThoughtReply: true } : {}),
           sourceKind: 'record_extension', senderIsMe: true,
           senderDisplayName: currentSelfProfile?.displayName || currentSelfProfile?.nickname || '我',
           ...(currentSelfProfile?.avatarRef === undefined ? {} : { senderAvatarUrl: currentSelfProfile.avatarRef }),
@@ -433,7 +438,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     } catch (error) { onError(error instanceof Error ? error.message : '延展发送失败，内容已保留') }
   }
   const disabled = messageCreationBlocked
-  const thoughtReplyUnavailable = replyTarget?.kind === 'thought'
+  const thoughtReplyUnavailable = replyTarget?.kind === 'thought' && !replyTarget.thought.replyTargetRef
   const replyName = replyTarget?.kind === 'thought' ? 'Arko' : replyTarget?.item.senderName
   const replyText = replyTarget?.kind === 'thought' ? replyTarget.thought.content : replyTarget?.item.textContent || replyTarget?.item.title || ''
   const canSend = (markdown?.source ?? text).trim() !== '' || attachments.length > 0
@@ -606,6 +611,9 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem, au
   const mediaOnlyUnavailable = item.mediaUnavailable === true && item.mediaItems.length > 0
     && item.title.trim() === '' && item.textContent.trim() === '' && (item.contentBlocks?.length ?? 0) === 0
   return {
+ ...(item.thoughtReply ? { thoughtReply:item.thoughtReply } : {}),
+ ...(item.privateThoughtReplyRef ? { privateThoughtReplyRef:item.privateThoughtReplyRef } : {}),
+ ...(item.privateThoughtReply ? { privateThoughtReply:true } : {}),
     itemUid: item.recordUid,
     ...(item.recordOwnerUserId === undefined ? {} : { recordOwnerUserId: item.recordOwnerUserId }),
     ...(item.sequence === undefined ? {} : { sequence: item.sequence }),
@@ -746,7 +754,7 @@ function DetailExtensionContext({
         <DetailExtensionAvatar author={author} size={nested ? 28 : 32} />
         <div style={styles.extensionContextBody}>
           <div style={styles.extensionContextHead}>
-            <span style={styles.extensionContextName}>{author.name}</span>
+            <span style={styles.extensionContextName}>{author.name}{extension.privateThoughtReply && <span style={{ fontSize:11, fontWeight:400, color:arkmeTheme.tertiary, marginLeft:8 }}>{tr('仅自己可见')}</span>}</span>
             <span style={styles.extensionContextTime}>{[dateLabel(extension.sendAtMillis), timeLabel(extension.sendAtMillis)].filter(Boolean).join(' ')}</span>
           </div>
           {(() => {
@@ -754,7 +762,7 @@ function DetailExtensionContext({
             const replySourceAuthor = replySource ? detailExtensionAuthor(replySource, personalSource, currentSelfProfile, sourceKind, conversationMembers) : undefined
             const wholeReplyParent = replySource ? { itemUid: replySource.recordUid, senderName: replySourceAuthor!.name,
               title: replySource.title, textContent: replySource.textContent, textFormat: replySource.textFormat ?? 'plain' as const } : undefined
-            const parent = quoteThreads.store?.commentParent(rootItem, extension)
+            const parent = extension.thoughtReply && !replySource ? { itemUid: extension.thoughtReply.thoughtId, senderName:'Arko', title:'', textContent:extension.thoughtReply.content, textFormat:'plain' as const } : quoteThreads.store?.commentParent(rootItem, extension)
               ?? (extension.quote || extension.quoteState === 'unavailable' ? { itemUid: extension.parentRecordUid ?? rootItem.itemUid,
                 senderName: replySourceAuthor?.name ?? rootItem.senderName, title: '', textContent: '', ...(extension.quote ? { quote: extension.quote } : {}),
                 ...(extension.quoteState ? { quoteState: extension.quoteState } : {}) } : wholeReplyParent)

@@ -1,3 +1,4 @@
+import { thoughtReplyFromWire } from '../thought-reply.js'
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
 import {requireFrozenTeamSendTime} from './group-representation.js'
@@ -920,6 +921,7 @@ function chatExtensionTreeItemFromData(
     payload.structured_content ?? payload.structuredContent ?? record.structured_content ?? record.structuredContent,
   )
   return {
+    ...(thoughtReplyFromWire(edge.thought_reply) ? { thoughtReply: thoughtReplyFromWire(edge.thought_reply)! } : {}),
     ...projectedMessageQuote(edge.quote_reply ?? objectValue(item.extension_edge).quote_reply ?? item.quote_reply,
       edge.quote_reply_state ?? objectValue(item.extension_edge).quote_reply_state ?? item.quote_reply_state),
     ...(stringValue(relation.rel_uid) ? { relationUid: stringValue(relation.rel_uid) } : {}),
@@ -3451,16 +3453,19 @@ export class ChatService {
     }
     const scope = JSON.stringify([session.userId, chatSessionUid, String(parentRecordOwnerUserId), parentRecordUid, reference.relationUid, reference.sourceSequence])
     let after: Record<string, unknown> | undefined
+ let privateAfter = '', privateVersion = '', privateSupported = false, privateDone = false, savedPrivateTotal = 0, publicDone = false, publicTotal = 0
     if (options.pageCursor) {
       if (!options.paginated) throw new ArkmePluginError('extension-cursor-invalid', '延展分页参数无效', false, 400)
       const parsed = await this.openSignedOpaquePayload(options.pageCursor, 'arkme-extension-page-v1', 'extension-cursor-invalid', '延展分页游标已失效，请重新打开详情')
       if (parsed.scope !== scope) throw new ArkmePluginError('extension-cursor-invalid', '延展分页游标与当前账号或消息不匹配', false, 403)
-      after = this.chatExtensionPageCursor(parsed.after)
+      after = parsed.after ? this.chatExtensionPageCursor(parsed.after) : undefined
+ privateAfter = stringValue(parsed.privateAfter); privateVersion = stringValue(parsed.privateVersion); publicDone = parsed.publicDone === true; publicTotal = numberValue(parsed.publicTotal); privateSupported = parsed.privateSupported === true; privateDone = parsed.privateDone === true; savedPrivateTotal = numberValue(parsed.privateTotal)
     }
     const seen = new Set<string>(after ? [JSON.stringify(after)] : [])
     const children = new Map<string, unknown>()
-    let total = 0, nextCursor: string | undefined
-    do {
+    let total = publicTotal, nextCursor: string | undefined
+ let nextPublic: Record<string, unknown> | undefined
+    if (!publicDone) do {
       signal?.throwIfAborted()
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/extensions/tree/page',
@@ -3469,24 +3474,65 @@ export class ChatService {
         session, signal,
       )
       signal?.throwIfAborted()
+      privateSupported = data.private_thought_reply_protocol === 1
       total = Math.max(total, integerLikeValue(data.total))
       for (const child of listValue(data.children)) {
         const projected = chatExtensionTreeItemFromData(child, parentRecordUid)
         if (!projected) continue
         children.set(JSON.stringify([String(projected.recordOwnerUserId ?? ''), projected.recordUid, projected.sequence ?? '', projected.parentRecordUid]), child)
       }
-      if (data.has_more !== true) break
+      if (data.has_more !== true) { publicDone = true; break }
       const next = this.chatExtensionPageCursor(data.next_after_cursor), key = JSON.stringify(next)
       if (seen.has(key)) throw new ArkmePluginError('extension-pagination-invalid', '延展分页未前进，请重试', true, 502)
       seen.add(key)
       if (options.paginated) {
-        const encoded = encodeOpaqueJson({ scope, after: next })
-        const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
-        nextCursor = `arkme-extension-page-v1.${encoded}.${signature}`
+nextPublic = next
         break
       }
       after = next
     } while (true)
+    if (!privateSupported) privateDone = true
+    let privateTotal = savedPrivateTotal, nextPrivate = ''
+    try {
+      const visitedPrivate = new Set<string>()
+      if (!privateDone) do {
+        const page = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/extensions/private-thought-replies/page', {
+          chat_session_uid: chatSessionUid, source_rel_uid: reference.relationUid,
+          parent_record_owner_user_id: parentRecordOwnerUserId, parent_record_uid: parentRecordUid, limit: 50,
+          ...(privateAfter ? { after: privateAfter, version: privateVersion } : {}),
+        }, session, signal)
+        privateTotal = Math.max(0, integerLikeValue(page.total)); privateVersion = stringValue(page.version)
+        for (const raw of listValue(page.items)) {
+          const row = objectValue(raw), record = objectValue(row.record), payload = objectValue(record.payload)
+          const snapshot = thoughtReplyFromWire(row.thought_reply)
+          if (recordOwnerId(row.record_owner_user_id) !== session.userId || typeof row.record_uid !== 'string'
+            || typeof row.private_reply_ref !== 'string' || row.private_reply_ref.length > 4096) continue
+          const child = { edge: { child_record_uid: row.record_uid, child_record_owner_user_id: session.userId,
+            parent_record_uid: stringValue(row.reply_to_record_uid) || parentRecordUid, thought_reply: row.thought_reply },
+            privateReplyRef: row.private_reply_ref, privateThoughtReply: true,
+            item: { record, relation: { record_uid: row.record_uid, record_owner_user_id: session.userId,
+              sender_user_id: session.userId, attach_at: payload.send_at, rel_uid: row.rel_uid } } }
+          // Missing/protected bodies are retained as shells without exposing the frozen target.
+          if (snapshot || record.status !== 1) children.set(JSON.stringify(['private', row.record_uid]), child)
+        }
+        nextPrivate = stringValue(page.next_after)
+        if (!nextPrivate) { privateDone = true; break }
+        if (visitedPrivate.has(nextPrivate)) throw new ArkmePluginError('extension-pagination-invalid', '私密回复分页未前进，请重试', true, 502)
+        visitedPrivate.add(nextPrivate)
+        if (options.paginated) break
+        privateAfter = nextPrivate
+      } while (true)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus))) throw error
+      privateDone = true
+    }
+    if (nextPublic || nextPrivate) {
+      const encoded = encodeOpaqueJson({ scope, ...(nextPublic ? { after: nextPublic } : {}), publicDone,
+        publicTotal: total, privateAfter: nextPrivate, privateVersion, privateDone, privateTotal, privateSupported })
+      const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(encoded).digest('base64url')
+      nextCursor = `arkme-extension-page-v1.${encoded}.${signature}`
+    }
+    total += privateTotal
     const projections: ArkmeExtensionMediaProjection[] = []
     for (const child of children.values()) {
       signal?.throwIfAborted()
@@ -3506,6 +3552,7 @@ export class ChatService {
       projections.push({
         extension: {
           ...extension,
+          ...(objectValue(child).privateThoughtReply === true ? { privateThoughtReply: true, privateThoughtReplyRef: stringValue(objectValue(child).privateReplyRef) } : {}),
           ...(mentions === undefined ? {} : { mentions }),
           ...(senderMemberRef === undefined ? {} : { senderMemberRef }),
           ...(humanSender ? { senderIsMe: senderUserId === session.userId } : {}),
@@ -3607,6 +3654,7 @@ export class ChatService {
       return {
         recordUid,
         parentRecordUid: node.parentRecordUid,
+ ...(thoughtReplyFromWire(listValue(data.edges).map(objectValue).find(edge => edge.child_record_uid === recordUid)?.thought_reply) ? { thoughtReply: thoughtReplyFromWire(listValue(data.edges).map(objectValue).find(edge => edge.child_record_uid === recordUid)?.thought_reply)! } : {}),
         ...(recordOwnerUserId === 0 ? {} : { recordOwnerUserId }),
         level: node.level,
         sourceKind: 'record_extension',
@@ -3851,6 +3899,18 @@ export class ChatService {
     }
   }
 
+  async requireThoughtReplyCapability(sourceRef: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    const chat = source.kind === 'private_chat' || source.kind === 'group_chat'
+    if (!chat && !['send_to_self', 'default_category', 'topic'].includes(source.kind)) throw new ArkmePluginError('thought-reply-unavailable', '此处暂不支持回复 Arko，内容已保留', false, 409)
+    const data = chat
+      ? await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/extensions/capabilities', { chat_session_uid: source.ownerRef }, session, signal)
+      : await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/extensions/capabilities', source.kind === 'topic' ? { topic_uid: source.ownerRef } : {}, session, signal)
+    const capability = objectValue(data.thought_reply)
+    if (capability.enabled !== true || capability.protocol_version !== 1 || (chat && capability.private_overlay !== true)) throw new ArkmePluginError('thought-reply-unavailable', 'Arko 回复尚待服务端接通，内容已保留', false, 409)
+  }
+
   async validateQuoteReply(sourceRef: string, messageActionRef: string, value: unknown, signal?: AbortSignal) {
     const quote = readMessageQuote(value)
     if (!quote) throw new ArkmePluginError('message-quote-invalid', '引用信息无效，请重新选择原文', false)
@@ -3896,7 +3956,7 @@ export class ChatService {
     textContent: string,
     recordUid: string,
     assets: readonly ArkmeUploadedAsset[] = [],
-    options: { relationUid?: string; parentRecordUid?: string; quote?: ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions' | 'representation' | 'sendAtMillis'> = {},
+    options: { relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: ArkmeMessageQuote; signal?: AbortSignal } & Pick<ArkmeRichSendInput, 'textFormat' | 'humanMentions' | 'botMentions' | 'representation' | 'sendAtMillis'> = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     requireFrozenTeamSendTime(options)
     if (options.textFormat === 'markdown' && this.runtime.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
@@ -3914,11 +3974,16 @@ export class ChatService {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
     const rootReference = await this.openMessageActionRef(messageActionRef, session.userId, source)
+    if (options.privateThoughtReplyRef && source.kind !== 'private_chat' && source.kind !== 'group_chat') throw new ArkmePluginError('thought-reply-target-invalid','私密回复目标与当前对话不匹配',false,400)
     if (options.quote !== undefined) {
       if (options.parentRecordUid && options.parentRecordUid !== rootReference.recordUid) throw new ArkmePluginError('message-quote-target-invalid', '请直接选择要回复的原消息', false)
       await this.validateQuoteReply(sourceRef, messageActionRef, options.quote, options.signal)
     }
-    const requestedParentRecordUid = options.parentRecordUid?.trim() ?? ''
+    if (options.thoughtReplyRef || options.privateThoughtReplyRef) {
+ if (options.quote || (options.thoughtReplyRef && options.privateThoughtReplyRef) || (options.thoughtReplyRef?.length ?? 0)>4096 || (options.privateThoughtReplyRef?.length ?? 0)>4096) throw new ArkmePluginError('thought-reply-target-invalid','回复目标无效，请重新选择',false,400)
+ await this.requireThoughtReplyCapability(sourceRef, options.signal)
+ }
+ const requestedParentRecordUid = options.thoughtReplyRef || options.privateThoughtReplyRef ? '' : options.parentRecordUid?.trim() ?? ''
     let reference = rootReference
     let extensionLevel = 2
     if (requestedParentRecordUid !== '' && requestedParentRecordUid !== rootReference.recordUid) {
@@ -3986,6 +4051,8 @@ export class ChatService {
           chat_session_uid: reference.chatSessionUid,
           parent_record_owner_user_id: reference.recordOwnerUserId,
           parent_record_uid: reference.recordUid,
+ ...(options.thoughtReplyRef ? { thought_reply_ref: options.thoughtReplyRef } : {}),
+ ...(options.privateThoughtReplyRef ? { private_thought_reply_ref: options.privateThoughtReplyRef } : {}),
           ...(options.quote === undefined ? {} : { quote_reply: options.quote, quote_reply_source: { relation_uid: reference.relationUid, sequence: reference.sourceSequence } }),
           ...(options.representation===undefined?{}:{representation:await new GroupRepresentationCodec(this.runtime).selection(options.representation,session.userId)}),
           child_record_uid: normalizedUid,
@@ -3998,17 +4065,19 @@ export class ChatService {
         },
         session,
         options.signal,
-        ...(options.quote === undefined && options.representation === undefined ? [] : [{ trackWriteOutcome: true }]),
+        ...(options.quote === undefined && options.representation === undefined && !options.thoughtReplyRef && !options.privateThoughtReplyRef ? [] : [{ trackWriteOutcome: true }]),
       )
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
       this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
-      if ((options.quote !== undefined || options.representation !== undefined) && data.accepted !== true) {
+      if ((options.quote !== undefined || options.representation !== undefined || options.thoughtReplyRef || options.privateThoughtReplyRef) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const extension = await this.hydrateUploadedExtension({
-        recordUid: createdRecordUid,
-        parentRecordUid: reference.recordUid,
+        ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
+ ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
+ recordUid: createdRecordUid,
+        parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         recordOwnerUserId: session.userId,
         level: extensionLevel,
         sourceKind: 'record_extension',
@@ -4024,8 +4093,10 @@ export class ChatService {
         mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
       }, assets, session, options.signal)
       return {
-        recordUid: createdRecordUid,
-        parentRecordUid: reference.recordUid,
+        ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
+ ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
+ recordUid: createdRecordUid,
+        parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         relationUid,
         ...(sequence > 0 ? { sequence } : {}),
         status: 1,
@@ -4064,11 +4135,13 @@ export class ChatService {
         Object.assign(contentPayload, { mention_metadata: evidence.mention_metadata })
       }
       const data = await this.record.createPersonalRecord<Record<string, unknown>>(
-        '/api/v1/topics/records/extensions/create',
+        options.thoughtReplyRef ? '/api/v1/topics/records/extensions/thought-replies/create' : '/api/v1/topics/records/extensions/create',
         {
           topic_uid: source.ownerRef,
           ...(options.quote === undefined ? {} : { quote_reply: options.quote }),
           parent_record_uid: reference.recordUid,
+ ...(options.thoughtReplyRef ? { thought_reply_ref: options.thoughtReplyRef } : {}),
+ ...(options.privateThoughtReplyRef ? { private_thought_reply_ref: options.privateThoughtReplyRef } : {}),
           record_uid: normalizedUid,
           template_kind: assets.length === 0 ? 1 : 2,
           title: '',
@@ -4079,9 +4152,9 @@ export class ChatService {
         },
         session,
         options.signal,
-        ...(options.quote === undefined && options.representation === undefined ? [] : [{ trackWriteOutcome: true }]),
+        ...(options.quote === undefined && options.representation === undefined && !options.thoughtReplyRef && !options.privateThoughtReplyRef ? [] : [{ trackWriteOutcome: true }]),
       )
-      if ((options.quote !== undefined || options.representation !== undefined) && data.accepted !== true) {
+      if ((options.quote !== undefined || options.representation !== undefined || options.thoughtReplyRef || options.privateThoughtReplyRef) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '延展提交结果需要核对，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
       const createdRecordUid = stringValue(data.record_uid).trim()
@@ -4101,7 +4174,9 @@ export class ChatService {
         projection: 'record',
       })
       const extension = await this.hydrateUploadedExtension({
-        recordUid: createdRecordUid,
+        ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
+ ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
+ recordUid: createdRecordUid,
         parentRecordUid: reference.recordUid,
         recordOwnerUserId: session.userId,
         level: extensionLevel,
@@ -4118,7 +4193,9 @@ export class ChatService {
         mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
       }, assets, session, options.signal)
       return {
-        recordUid: createdRecordUid,
+        ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
+ ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
+ recordUid: createdRecordUid,
         parentRecordUid: createdParentUid,
         ...(relationUid === '' ? {} : { relationUid }),
         status: numberValue(data.record_status ?? data.status),
@@ -4132,15 +4209,12 @@ export class ChatService {
       if (profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
       const sendAtMillis = Date.now()
       const evidence = options.botMentions?.length ? await this.mentionContentPayload(source, textContent, normalizedText, [], options.botMentions, session, options.signal, options.textFormat) : undefined
-      const recordResult = await this.record.createExtensionForConversation(
-        reference.recordUid,
-        normalizedUid,
-        normalizedText,
-        assets,
-        options.textFormat,
-        options.quote,
-        ...(evidence === undefined ? [] : [objectValue(evidence.mention_metadata)]),
-      )
+      const create = this.record.createExtensionForConversation.bind(this.record)
+      const args = [reference.recordUid, normalizedUid, normalizedText, assets, options.textFormat, options.quote] as const
+      const recordResult = options.thoughtReplyRef
+        ? await create(...args, evidence === undefined ? undefined : objectValue(evidence.mention_metadata), options.thoughtReplyRef)
+        : evidence === undefined ? await create(...args) : await create(...args, objectValue(evidence.mention_metadata))
+
       this.source.invalidateSourceListCache(session.userId, 'send_to_self')
       this.realtime.emitChatClientEvent({
         type: 'projection-invalidated',
@@ -4148,7 +4222,8 @@ export class ChatService {
         projection: 'record',
       })
       const extension = await this.hydrateUploadedExtension({
-        recordUid: recordResult.recordUid,
+        ...(recordResult.thoughtReply ? { thoughtReply: recordResult.thoughtReply } : {}),
+ recordUid: recordResult.recordUid,
         parentRecordUid: reference.recordUid,
         recordOwnerUserId: session.userId,
         level: extensionLevel,
@@ -4165,7 +4240,8 @@ export class ChatService {
         mediaItems: assets.map(asset => ({ fileKind: asset.fileKind, fileName: asset.fileName, size: asset.size })),
       }, assets, session, options.signal)
       return {
-        recordUid: recordResult.recordUid,
+        ...(recordResult.thoughtReply ? { thoughtReply: recordResult.thoughtReply } : {}),
+ recordUid: recordResult.recordUid,
         parentRecordUid: reference.recordUid,
         status: recordResult.status,
         localState: recordResult.localState,
@@ -4222,6 +4298,8 @@ export class ChatService {
       avatar: profile.avatarRef,
       template_kind: assets.length === 0 ? 1 : 2,
       parent_record_uid: reference.recordUid,
+ ...(options.thoughtReplyRef ? { thought_reply_ref: options.thoughtReplyRef } : {}),
+ ...(options.privateThoughtReplyRef ? { private_thought_reply_ref: options.privateThoughtReplyRef } : {}),
       ...(assets.length === 0 ? {} : {
         file_assets: assets.map((asset, index) => ({
           file_asset_uid: asset.fileAssetUid,
@@ -7046,6 +7124,11 @@ export class ChatService {
       ?? previewPayload.record_uid ?? previewPayload.recordUid,
     ).trim()
     if (parentRecordUid === '') return undefined
+    const thought = thoughtReplyFromWire(edge.thought_reply)
+    if (thought) return { extensionParentRecordUid: parentRecordUid, extensionParent: {
+      itemUid: parentRecordUid, senderName:'Arko', title:'', textContent:thought.content, textFormat:'plain',
+      ...(recordOwnerId(edge.parent_record_owner_user_id) ? { recordOwnerUserId: recordOwnerId(edge.parent_record_owner_user_id) } : {}),
+    } }
     const previewRecordUid = stringValue(
       previewRelation.record_uid ?? previewRelation.recordUid
       ?? previewPayload.record_uid ?? previewPayload.recordUid,
