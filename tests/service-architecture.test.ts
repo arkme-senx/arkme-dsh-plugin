@@ -12,13 +12,14 @@ const expectedPublicMethods = [
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.
+  'sourceMessageThoughtContinuations', 'retrySourceMessageThoughtContinuation',
   'queryPublicGroups', 'readPublicGroup', 'joinPublicGroup', 'openPublicGroup', 'publicGroupSettings', 'setPublicGroup', 'setPublicGroupShowcase',
   'publicGroupJoinRequests', 'resolvePublicGroupJoinRequest', 'publicSocialRead', 'publicSocialWrite',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
-  'dataExport',
+  'dataExport', 'dataExportRangePreview', 'dataExportSaved',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldCommentNotifications',
@@ -153,13 +154,13 @@ const expectedServiceFiles = [
   'arrangement-occurrence-contract.ts', 'service-error.ts',
   'recording-file-storage-service.ts',
   'private-group-create-service.ts',
-  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
+  'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts', 'thought-continuation-service.ts',
   'public-social-service.ts',
   'model-directory-service.ts',
   'composer-document.ts',
   'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
-  'record-export-service.ts',
+  'record-export-service.ts', 'record-export-range-service.ts',
   'team-world-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'personal-keyword-service.ts',

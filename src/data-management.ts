@@ -23,6 +23,32 @@ export interface ArkmeExportPreflight {
   imageCount: number
   message: string
   latestAtMillis: number
+  rangeExportV2?: { chainVersion: number; savedAtMillis: number }
+}
+
+export interface ArkmeExportSelection {
+  mode: 'all' | 'dates' | 'incremental'
+  startDate?: string
+  endDate?: string
+  timeZone: string
+  includeAttachments: boolean
+}
+export interface ArkmeRangeExportPreview {
+  accountScope: string
+  supported: boolean
+  canExport: boolean
+  baselineRequired: boolean
+  message: string
+  previewUid?: string
+  selectionFingerprint?: string
+  recordCount: number
+  imageCount: number
+  voiceCount: number
+  newCount: number
+  updatedCount: number
+  removedCount: number
+  chainVersion: number
+  savedAtMillis: number
 }
 
 export interface ArkmeRecordExportOptions {
@@ -30,6 +56,8 @@ export interface ArkmeRecordExportOptions {
   orderKind: 1 | 2
   /** Creating an export consumes the server's export allowance. */
   confirmed: true
+  selection?: ArkmeExportSelection
+  previewUid?: string
 }
 export interface ArkmeRecordExportProgress { count: number }
 export interface ArkmeRecordExport {
@@ -41,6 +69,9 @@ export interface ArkmeRecordExport {
   count: number
   /** A usable archive is retained even when the final quota acknowledgement is unknown. */
   quotaFinalized: boolean
+  savedConfirmationRef?: string
+  rangeMode?: ArkmeExportSelection['mode']
+  removedCount?: number
 }
 export interface ArkmeRecordExportPort {
   dataExportPreflight(scope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight>

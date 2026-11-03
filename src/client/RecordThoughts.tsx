@@ -75,10 +75,10 @@ function title(thought: ArkmeRecordThought): string {
   if (thought.scene === 5) return 'Arko · 回复建议'
   return thought.biz === 2 ? 'Arko · 回应' : 'Arko有想法'
 }
-function ThoughtState({ thought, onFill }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined }) {
-  if (thought.status === 'generating') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('Arko 正在思考…')}</span>
-  if (thought.status === 'failed') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('Arko 暂时没能完成回应')}
-    {onFill && <button type="button" style={{ ...buttonStyle, marginLeft: 8 }} onClick={() => onFill('@阿森 ', true)}>{tr('重新提问')}</button>}
+function ThoughtState({ thought, onFill, onRetry, retrying, continuation }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; onRetry?: (() => void) | undefined; retrying?: boolean | undefined; continuation?: boolean }) {
+  if (thought.status === 'generating') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr(continuation ? 'Arko 正在回复…' : 'Arko 正在思考…')}</span>
+  if (thought.status === 'failed') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('failure' in thought && thought.failure === 'insufficient_balance' ? '积分不足，Arko 暂时无法回复' : 'Arko 暂时没能完成回应')}
+    {onRetry ? <button type="button" disabled={retrying} style={{ ...buttonStyle, marginLeft: 8 }} onClick={onRetry}>{tr('重试')}</button> : onFill && <button type="button" style={{ ...buttonStyle, marginLeft: 8 }} onClick={() => onFill('@阿森 ', true)}>{tr('重新提问')}</button>}
   </span>
   return null
 }
@@ -138,13 +138,14 @@ function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {
     {display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
 }
-export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId }: {
+export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, onRetry, retryingId }: {
   item: RecordItem; embedded?: boolean; onReply?: ((thought: ArkmeRecordThought) => void) | undefined; selectedThoughtId?: string | undefined
+  items?: readonly ArkmeRecordThought[] | undefined; onRetry?: ((thought: ArkmeRecordThought) => void) | undefined; retryingId?: string | undefined
 }) {
-  const state = useThought(item), thoughts = visibleThoughts(state.items)
+  const state = useThought(item), thoughts = visibleThoughts(items ?? state.items)
   const section = useRef<HTMLElement>(null)
-  useEffect(() => { if (thoughts.length && state.takeFocus()) section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) }, [item.itemUid, state.items, state.focusRevision])
-  if (!thoughts.length && !state.error) return null
+  useEffect(() => { if (items === undefined && thoughts.length && state.takeFocus()) section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) }, [item.itemUid, state.items, state.focusRevision, items])
+  if (!thoughts.length && (items !== undefined || !state.error)) return null
   return <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content
     style={{ ...(embedded ? {} : replyStyles.extensionContext), minWidth: 0 }}>
     {!embedded && thoughts.length > 0 && <div data-arkme-thought-reply-count style={replyStyles.extensionContextTitle}>{tr('共')}{thoughts.length}{tr('条延展')}</div>}
@@ -162,7 +163,7 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
           <span data-arkme-thought-author style={replyStyles.extensionContextName}>Arko</span>
           {thought.visibility === 'user' && <span style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('仅你可见')}</span>}
         </div>
-        <ThoughtState thought={thought} onFill={state.onFill}/>
+        <ThoughtState thought={thought} continuation={items !== undefined} onFill={items ? undefined : state.onFill} onRetry={onRetry ? () => onRetry(thought) : undefined} retrying={retryingId === thought.id}/>
         {thought.status !== 'failed' && <>
           <ThoughtAnalysis thought={thought}/>
           {thought.display?.suggestions.length ? thought.display.suggestions.map((group, index) => <div key={index} style={{ marginTop: 14 }}>
@@ -174,7 +175,7 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
         </>}
       </div>
     </div>})}</div>
-    {state.error && <div role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr(state.error)}
+    {items === undefined && state.error && <div role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr(state.error)}
       <button type="button" disabled={state.loading} onClick={state.retry} style={{ ...buttonStyle, marginLeft: 8 }}>{tr('重试')}</button>
     </div>}
   </section>

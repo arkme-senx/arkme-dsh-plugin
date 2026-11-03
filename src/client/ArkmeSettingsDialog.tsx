@@ -3,6 +3,12 @@ import { createRoot } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { UserCircle } from '@phosphor-icons/react/UserCircle'
+import { ChartBar } from '@phosphor-icons/react/ChartBar'
+import { Database } from '@phosphor-icons/react/Database'
+import { Gear } from '@phosphor-icons/react/Gear'
+import { Info } from '@phosphor-icons/react/Info'
+import { X } from '@phosphor-icons/react/X'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -12,13 +18,13 @@ import { tr, useArkmeLocale } from './locale.js'
 import settingsCss from './settings-dialog.css?inline'
 
 type Section = ArkmeSettingsSection | 'general' | 'about'
-const sections: Array<{ id: Section; label: string }> = [
-  { id: 'arkme-account', label: '我的账户' },
-  { id: 'arkme-usage', label: '用量与额度' },
-  { id: 'arkme-data', label: '数据管理' },
-  { id: 'general', label: '通用设置' },
-  { id: 'about', label: '关于' },
-]
+const sections = [
+  { id: 'arkme-account', label: '我的账户', Icon: UserCircle },
+  { id: 'arkme-usage', label: '用量与额度', Icon: ChartBar },
+  { id: 'arkme-data', label: '数据管理', Icon: Database },
+  { id: 'general', label: '通用设置', Icon: Gear },
+  { id: 'about', label: '关于', Icon: Info },
+] as const
 type Preferences = Pick<Context, 'locale' | 'theme' | 'on'>
 
 /** Use the existing global preference owners, never a second settings file. */
@@ -50,19 +56,24 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }:
   useArkmeLocale()
   const content = useRef<HTMLDivElement>(null)
   useEffect(() => { content.current?.scrollTo?.(0, 0) }, [section])
-  return <Modal open title={tr('即我设置')} closeLabel={tr('关闭')} onClose={onClose} headless={false}
-    className="arkme-settings-dialog" contentClassName="arkme-settings-dialog-body" shortcutModal="settings">
+  return <Modal open title={tr('即我设置')} onClose={onClose} headless
+    className="arkme-settings-dialog" shortcutModal="settings">
     <style>{settingsCss}</style>
     <div className="arkme-settings-layout" data-arkme-owned="settings-dialog">
-      <nav aria-label={tr('即我设置分类')}>{sections.map(item => <button key={item.id} type="button"
+      <nav aria-label={tr('即我设置分类')}><h2 className="arkme-settings-nav-title">{tr('即我设置')}</h2>
+        <div className="arkme-settings-nav-items">{sections.map(({ Icon, ...item }) => <button key={item.id} type="button"
         data-arkme-feedback="neutral" aria-current={section === item.id ? 'page' : undefined}
-        data-modal-autofocus={section === item.id ? '' : undefined} onClick={() => onSelect(item.id)}>{tr(item.label)}</button>)}</nav>
-      <div className="arkme-settings-dialog-content" ref={content}>
+        data-modal-autofocus={section === item.id ? '' : undefined} onClick={() => onSelect(item.id)}><Icon size={20} aria-hidden /><span>{tr(item.label)}</span></button>)}</div></nav>
+      <div className="arkme-settings-main">
+        <div className="arkme-settings-toolbar"><button type="button" className="arkme-settings-close" aria-label={tr('关闭')}
+          data-arkme-feedback="neutral" onClick={onClose}><X size={20} aria-hidden /></button></div>
+        <div className="arkme-settings-dialog-content" ref={content}>
         {section === 'arkme-account' && <ArkmeSettingsSurface />}
         {section === 'arkme-usage' && <ArkmeAccountUsageSettings />}
         {section === 'arkme-data' && <ArkmeDataManagementSettings />}
         {section === 'general' && <><CommonPreferences preferences={preferences} /><ArkmeSettingsSurface view="general" /></>}
         {section === 'about' && <ArkmeSettingsSurface view="about" />}
+        </div>
       </div>
     </div>
   </Modal>

@@ -462,6 +462,15 @@ export class ArkmeService {
     }
     return result
   }
+  async sourceMessageThoughtContinuations(sourceRef: string, messageActionRef: string, options: { cursor?: string; retryId?: string; signal?: AbortSignal } = {}, signal?: AbortSignal): Promise<import('./thought-continuation.js').ArkmeThoughtContinuationPage> {
+    signal ??= options.signal
+    const { thoughtContinuations } = await import('./services/thought-continuation-service.js')
+    return thoughtContinuations(this.runtime, sourceRef, messageActionRef, options,
+      () => this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), uid => this.record.personalRecordDetail(uid, signal), signal)
+  }
+  async retrySourceMessageThoughtContinuation(sourceRef: string, messageActionRef: string, id: string, signal?: AbortSignal) {
+    return this.sourceMessageThoughtContinuations(sourceRef, messageActionRef, { retryId: id }, signal)
+  }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
       arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
@@ -1085,6 +1094,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async dataDeletedRecords(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).deleted(scope, signal) }
   async dataExport(options: import('./data-management.js').ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: import('./data-management.js').ArkmeRecordExportProgress) => void) { return this.recordExport.run(options, signal, progress) }
   async dataExportPreflight(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).exportPreflight(scope, signal) }
+  async dataExportRangePreview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal) { return this.recordExport.preview(scope, selection, order, signal) }
+  async dataExportSaved(scope: string, ref: string, signal?: AbortSignal) { return this.recordExport.confirmSaved(scope, ref, signal) }
   async dataRecoverRecord(scope: string, recordUid: string, version: number) { return await new DataManagementService(this.runtime).recover(scope, recordUid, version) }
   async backgroundSoundPreference(signal?: AbortSignal) { return await this.backgroundSoundPreferenceOwner.preference(signal) }
   async updateBackgroundSoundPreference(enabled: boolean, signal?: AbortSignal, expectedUserId?: number) {
@@ -1443,6 +1454,7 @@ arkoImagesV1:true,
         publicSocialV1: true,
         messageTextAnchorsV1: true,
         arkoThoughtRepliesV1: true,
+        arkoThoughtContinuationsV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         teamWorldV1: true,

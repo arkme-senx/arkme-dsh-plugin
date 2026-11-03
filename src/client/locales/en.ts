@@ -1,5 +1,48 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+导出日期范围|Export date range
+保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
+上次成功保存：|Last successfully saved:
+先保存一份完整备份|Save a complete backup first
+正在读取增量进度…|Loading incremental progress…
+正在统计本次导出范围…|Counting content in this export…
+请先完成一次全部导出并确认保存，再使用增量。|Export all content and confirm the file is saved before using incremental export.
+选择全部|Select all content
+新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条|{v0} new · {v1} updated · {v2} removed
+暂无新增或更新内容。|No new or updated content.
+已确认保存，日期导出不会改变增量进度。|Save confirmed. Date exports do not change incremental progress.
+已确认保存，下次将自动选择增量。|Save confirmed. Incremental export will be selected next time.
+文件完整保存后，请确认保存；取消下载请勿确认。|Confirm once the complete file is saved. Do not confirm a canceled download.
+我已保存|I have saved it
+确认导出所选内容？|Export the selected content?
+将按当前范围生成备份，并使用导出额度。|Create a backup for the selected range using your export allowance.
+确认文件已完整保存？|Is the complete file saved?
+只有文件已完整保存到你的电脑后才确认。仅生成备份或取消下载，不应更新增量进度。|Confirm only after the complete file is saved on your computer. Generating an archive or canceling its download must not advance incremental progress.
+确认已保存|Confirm saved
+正在更新进度…|Updating progress…
+按日期|By date
+增量|Incremental
+开始日期|Start date
+结束日期|End date
+快捷日期|Date shortcuts
+本月|This month
+最近7天|Last 7 days
+上月|Last month
+请选择开始日期和结束日期。|Choose a start date and an end date.
+日期无效，请重新选择。|Invalid date. Please choose again.
+结束日期不能早于开始日期。|The end date cannot be before the start date.
+按记录显示日期筛选，包含结束日期全天。|Filter by the date shown on each record, including the entire end date.
+增量导出说明|About incremental export
+增量进度尚未接通|Incremental progress is not connected yet
+接通后自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。|Once connected, selects new and updated content since the last successfully saved backup, including backdated records.
+首次需要建立完整备份；取消或保存失败不会推进进度。增量包需与此前备份一起保留。|A full backup is required first. Canceling or failing to save will not advance progress. Keep incremental archives with previous backups.
+接通后将显示本次范围的记录和附件数量。|Record and attachment counts for this selection will appear once connected.
+包含图片、语音等附件|Include images, audio, and other attachments
+不含隐私锁定内容。|Privacy-locked content is excluded.
+当前仍可选择全部内容并包含附件进行导出。|You can currently export all content with attachments.
+暂无可导出的记录。|No records to export.
+接通前不会创建导出任务或使用额度。|No export task or allowance will be used until connected.
+最近生成备份：|Last archive generated:
 原句待定位，可查看原通话|Quote not located. You can open the original call.
 原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
 通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
