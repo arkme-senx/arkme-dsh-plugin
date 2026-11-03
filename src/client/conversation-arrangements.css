@@ -1,5 +1,9 @@
-.arkme-related-arrangements-entry { flex:none; border:0; background:transparent; color:var(--dsw-alias-label-secondary,#68707c); font:inherit; font-size:11px; line-height:18px; padding:0 4px; cursor:pointer; white-space:nowrap; }
-.arkme-related-arrangements-entry[aria-expanded="true"] { color:var(--dsw-alias-state-business-primary,#3964fe); }
+.arkme-related-arrangements-entry,
+[data-arkme-workspace] .arkme-conversation-composer button.arkme-related-arrangements-entry { display:inline-flex; align-items:center; gap:4px; flex:none; height:28px; box-sizing:border-box; border:1px solid var(--dsw-alias-border-l2,#e5e7eb); border-radius:8px; background:var(--dsw-alias-bg-base,#fff); color:var(--dsw-alias-label-primary,#1f2329); font:inherit; font-size:14px; line-height:20px; padding:0 8px; cursor:pointer; white-space:nowrap; }
+.arkme-related-arrangements-entry svg { flex:none; }
+.arkme-related-arrangements-entry:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary,#3964fe); outline-offset:2px; }
+.arkme-related-arrangements-entry[aria-expanded="true"],
+[data-arkme-workspace] .arkme-conversation-composer button.arkme-related-arrangements-entry[aria-expanded="true"] { color:var(--dsw-alias-state-business-primary,#3964fe); }
 .arkme-related-arrangements button,.arkme-related-arrangement-detail button { cursor:pointer; color:inherit; font:inherit; border:1px solid var(--dsw-alias-border-l2,#e5e7eb); background:transparent; border-radius:6px; padding:5px 8px; }
 .arkme-related-arrangements button:disabled { opacity:.5; cursor:default; }
 .arkme-related-arrangements-tabs { display:flex; align-items:center; gap:8px; margin-bottom:14px; font-size:12px; }

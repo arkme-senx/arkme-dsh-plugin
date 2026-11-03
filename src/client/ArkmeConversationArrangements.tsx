@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import type { ArkmeConversationArrangement, ArkmeSourceItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { arkmeUi } from './ui-controller.js'
@@ -46,8 +47,9 @@ function ConversationArrangements({ source, active, refreshRevision }: Props) {
     <style>{css}</style>
     <button ref={button} type="button" className="arkme-related-arrangements-entry" aria-haspopup="dialog" aria-expanded={open}
       aria-label={tr('相关安排')} title={data.error || tr('查看当前对话识别出的安排')}
+      onMouseDown={event => { event.preventDefault() }}
       onClick={event => { event.stopPropagation(); setOpen(value => !value) }}>
-      {tr('相关安排')}{count}
+      <ListChecks size={16} aria-hidden /><span>{tr('相关安排')}{count}</span>
     </button>
     {open && host && createPortal(<ArkmeDetailShell title={`${tr('相关安排')} · ${source.displayName}`} label={tr('相关安排')}
       widthPreferenceKey="conversation-arrangements" onClose={close} returnFocusRef={button}

@@ -7823,9 +7823,9 @@ export function ArkmeSurface({
   const composerInfoRow = <ArkmeComposerInfoRow focused={composerInputFocused}
     variant={source?.kind === 'private_chat' ? 'direct' : source?.kind === 'group_chat' ? 'group' : 'self'}
     {...(sourceIsChat ? { destination: destinationName } : {})}
-    {...(destinationMemberCount === undefined ? {} : { memberCount: destinationMemberCount })}>
-    {sourceIsChat && source && <ArkmeConversationArrangements key={`${authenticatedAccountKey}:${source.sourceKey ?? source.sourceRef}`}
-      source={source} accountScope={authenticatedAccountKey ?? ''} active={active && activeConversation} refreshRevision={conversationArrangementRevision} />}
+    {...(destinationMemberCount === undefined ? {} : { memberCount: destinationMemberCount })}
+    shortcuts={sourceIsChat && source ? <ArkmeConversationArrangements key={`${authenticatedAccountKey}:${source.sourceKey ?? source.sourceRef}`}
+      source={source} accountScope={authenticatedAccountKey ?? ''} active={active && activeConversation} refreshRevision={conversationArrangementRevision} /> : undefined}>
     <ArkmeComposerInputStats
       active={activeConversation}
       visible={composerStatsVisible}
