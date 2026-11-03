@@ -1,4 +1,6 @@
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
+export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
+export type { ArkmeThoughtReplySnapshot } from '../thought-reply.js'
 export type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
 export type{CodexWatchRequest,CodexReadRequest,CodexWriteRequest,CodexWorkRequest,CodexWorkResult,CodexTaskLocator}from'../codex-work-records-port.js'
@@ -2609,6 +2611,18 @@ export class ArkmeSdk {
     }, signal)
   }
 
+  private async requireThoughtReplyProvider(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.arkoThoughtRepliesV1 !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持想法回复，请升级', retryable: false })
+    }
+  }
+
+  async sourceMessageThoughts(sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('../record-thought-contract.js').ArkmeRecordThoughts> {
+    if (!sourceRef.trim() || !messageActionRef.trim()) throw new TypeError('Expected signed source and message references')
+    await this.requireThoughtReplyProvider(signal)
+    return this.call('source.message-thoughts.query', { sourceRef, messageActionRef }, signal)
+  }
+
   /** Read a single comment page; the existing context method reads the complete tree. */
   async sourceMessageExtensionPage(sourceRef: string, messageActionRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceMessageExtensionContext> {
     if (!sourceRef.trim() || !messageActionRef.trim()) throw new TypeError('Arkme source message extension requires a source and action reference')
@@ -2620,8 +2634,9 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
+    if (options.thoughtReplyRef || options.privateThoughtReplyRef) await this.requireThoughtReplyProvider(options.signal)
     if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
     const fileRefs = [...new Set((options.fileRefs ?? []).map(value => value.trim()).filter(value => value !== ''))]
     if (sourceRef.trim() === '' || messageActionRef.trim() === '' || (textContent.trim() === '' && fileRefs.length === 0)) {
@@ -2633,6 +2648,8 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
+ ...(options.thoughtReplyRef ? { thoughtReplyRef: options.thoughtReplyRef } : {}),
+ ...(options.privateThoughtReplyRef ? { privateThoughtReplyRef: options.privateThoughtReplyRef } : {}),
       ...(options.quote === undefined ? {} : { quote: options.quote }),
       fileRefs,
     }, options.signal)

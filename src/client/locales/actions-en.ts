@@ -1,5 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '回复 Arko': 'Reply to Arko',
+  '暂时无法回复 Arko，输入内容会保留': 'Replies to Arko are not available yet. Your draft is kept.',
   "所选文本": "Selected text",
   "注释": "Comment",
   "{count} 条注释": "{count} annotations",

@@ -22,7 +22,7 @@ export async function readRecordThoughts(runtime: ServiceRuntime, expectedScope:
       || typeof row.id !== 'string' || !row.id || row.id.length > 256
       || typeof row.content !== 'string' || !row.content.trim() || row.content.length > 131_072
       || (row.biz !== 1 && row.biz !== 2)) continue
-    const item: ArkmeRecordThought = { id: row.id, recordUid: row.record_uid, content: row.content, biz: row.biz }
+    const item: ArkmeRecordThought = { id: row.id, recordUid: row.record_uid, content: row.content, biz: row.biz, ...(Number.isSafeInteger(row.generation) && Number(row.generation)>0 ? { generation:Number(row.generation) } : {}), ...(typeof row.reply_target_ref === 'string' && row.reply_target_ref.length <= 4096 && row.reply_target_ref ? { replyTargetRef: row.reply_target_ref } : {}) }
     items.set(JSON.stringify([item.recordUid, item.biz, item.id]), item)
   }
   return { accountScope: scope, items: [...items.values()].sort((a, b) => a.biz - b.biz || a.id.localeCompare(b.id)) }

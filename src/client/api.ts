@@ -261,6 +261,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
   | 'source.message-extension.capabilities'
+  | 'source.message-thoughts.query'
   | 'transcript.local.read'
   | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'
