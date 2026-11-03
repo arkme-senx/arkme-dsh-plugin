@@ -1,7 +1,7 @@
 import { compareCodexEvents } from '../../../team-codex-contract.js'
 import type { TeamCodexEvent, TeamCodexTask } from '../../../team-codex-contract.js'
 import type { NativeChatSelectionSnapshot } from '../../../native-chat-selection-contract.js'
-import { codexPromptText } from '../../../team-codex-prompt-text.js'
+import { codexPromptDisplayText } from '../../../team-codex-prompt-text.js'
 import { codexImageSafeText } from '../../../team-codex-image-text.js'
 
 export const codexEventKey = (event: TeamCodexEvent) => event.eventId ?? `${event.turnId}:${event.kind}:${event.sequence}`
@@ -12,7 +12,7 @@ export function codexSelectionSnapshot(teamRef: string, task: TeamCodexTask, eve
   const selected = events.filter(event => keys.has(codexEventKey(event))).sort(compareCodexEvents)
   if (selected.length !== keys.size || selected.some(event => !codexSelectable(event))) throw new Error('所选消息已变化或正文不完整，请重新选择')
   const messages = selected.map((event,index) => ({ key: codexEventKey(event), anchorSeq: index+1, role: event.kind === 'UserPromptSubmit' ? 'user' as const : 'assistant' as const,
-    text: codexImageSafeText(event.kind === 'UserPromptSubmit' ? codexPromptText(event.text) : event.text), createdAtMillis: event.at }))
+    text: codexImageSafeText(event.kind === 'UserPromptSubmit' ? codexPromptDisplayText(event.text) : event.text), createdAtMillis: event.at }))
   if (messages.some((message, i) => !message.text.trim() || !Number.isSafeInteger(message.anchorSeq) || message.anchorSeq < 0 || (i > 0 && message.anchorSeq <= messages[i-1]!.anchorSeq) || !Number.isSafeInteger(message.createdAtMillis) || message.createdAtMillis <= 0)) throw new Error('所选消息来源不完整，请重新选择')
   const bytes = messages.map(message => new TextEncoder().encode(message.text).byteLength)
   if (bytes.some(size => size > 256*1024) || bytes.reduce((sum,size) => sum+size,0) > 512*1024) throw new Error('所选内容超过大小限制，请减少消息')

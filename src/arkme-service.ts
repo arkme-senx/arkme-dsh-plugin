@@ -1544,6 +1544,10 @@ arkoImagesV1:true,
   ): Promise<Map<string, ArkmePublicAvatarPresentation>> {
     return await this.profile.publicAvatarPresentationsByArkmeIds(arkmeIds, signal)
   }
+  /** @internal Public decoration only; source authorization stays with the calling owner. */
+  async publicAvatarPresentationsByUserIds(userIds: readonly number[], signal?: AbortSignal): Promise<Map<number, ArkmePublicAvatarPresentation>> {
+    return await this.profile.publicAvatarPresentationsByUserIds(userIds, signal)
+  }
   async joinContactTeam(jotmoId: string, requestUid: string, signal?: AbortSignal, expectedAccountKey?: string): Promise<{ state: string }> {
     const result = await this.teamApp.execute('team.app.join', { jotmoId, requestUid, ...(expectedAccountKey ? { expectedAccountKey } : {}) }, signal) as { state: string }
     return { state: result.state }

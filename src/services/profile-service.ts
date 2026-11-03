@@ -220,6 +220,15 @@ export class ProfileService {
     this.publicProfileCache.delete(key)
   }
 
+  private cachePublicProfileAvatar(key: string, avatarUrl?: string): void {
+    this.publicProfileAvatarCache.delete(key)
+    if (avatarUrl === undefined) return
+    this.publicProfileAvatarCache.set(key, { avatarUrl, expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS })
+    while (this.publicProfileAvatarCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
+      this.publicProfileAvatarCache.delete(this.publicProfileAvatarCache.keys().next().value!)
+    }
+  }
+
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     const session = await this.runtime.requireAuthFlowSession()
     const cached = await this.runtime.stateStore.cachedProfile(session.userId)
@@ -586,11 +595,7 @@ export class ProfileService {
           }
         }
         const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
-        if (trustedAvatarUrl === undefined) this.publicProfileAvatarCache.delete(avatarCacheKey)
-        else this.publicProfileAvatarCache.set(avatarCacheKey, {
-          avatarUrl: trustedAvatarUrl,
-          expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-        })
+        this.cachePublicProfileAvatar(avatarCacheKey, trustedAvatarUrl)
         profiles.set(userId, {
           userId,
           displayName,
@@ -637,6 +642,20 @@ export class ProfileService {
     return profiles
   }
 
+  async publicAvatarPresentationsByUserIds(
+    userIds: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<Map<number, ArkmePublicAvatarPresentation>> {
+    const session = await this.runtime.requireSession()
+    const profiles = await this.publicProfileSummariesByUserIds(userIds, session, signal)
+    const result = new Map<number, ArkmePublicAvatarPresentation>()
+    for (const [userId, profile] of profiles) {
+      result.set(userId, profile.avatarFallback ? { avatarFallback: profile.avatarFallback }
+        : profile.avatarUrl ? { avatarRef: await this.sealProfileImageRef(session.userId, userId) } : {})
+    }
+    return result
+  }
+
   async publicAvatarPresentationsByArkmeIds(
     arkmeIds: readonly string[],
     signal?: AbortSignal,
@@ -671,17 +690,14 @@ export class ProfileService {
           continue
         }
         if (avatarUrl === '') {
-          this.publicProfileAvatarCache.delete(`${String(session.userId)}:${String(userId)}`)
+          this.cachePublicProfileAvatar(`${String(session.userId)}:${String(userId)}`)
           presentations.set(arkmeId, {})
           continue
         }
         try {
           const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
           const avatarRef = await this.sealProfileImageRef(session.userId, userId)
-          this.publicProfileAvatarCache.set(`${String(session.userId)}:${String(userId)}`, {
-            avatarUrl: trustedAvatarUrl,
-            expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-          })
+          this.cachePublicProfileAvatar(`${String(session.userId)}:${String(userId)}`, trustedAvatarUrl)
           presentations.set(arkmeId, { avatarRef })
         } catch {
           presentations.set(arkmeId, {})

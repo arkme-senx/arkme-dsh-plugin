@@ -11,7 +11,7 @@ import { codexTaskViewKey, readPersonalCodexState, type CodexViewState, type Cod
 import { CodexDispatchEntry } from './CodexDispatchEntry.js'
 import { CodexSyncStatus } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
-import { codexTaskStatus, mergeCodexTaskSummary } from './codex-task-status.js'
+import { codexTaskPhase, mergeCodexTaskSummary } from './codex-task-status.js'
 import { CodexTaskStateDot, codexTaskStatusLabel } from './CodexTaskStateDot.js'
 import { CodexConversationMenu } from './CodexConversationMenu.js'
 import { codexTaskPage, codexConversationTime, mergeCodexConversationPages, fitCodexConversationPages, CODEX_CONVERSATION_PAGES, type CodexConversationPage } from './codex-conversation-pages.js'
@@ -29,7 +29,7 @@ function status(task: TeamCodexTask): string {
   if (task.status === 'expired') return tr('接入指令已过期')
   if (task.status === 'paused') return tr('已暂停')
   if (task.status === 'disconnected') return tr('已断开')
-  return codexTaskStatusLabel(codexTaskStatus(task))
+  return codexTaskStatusLabel(codexTaskPhase(task))
 }
 
 const taskPriority = (task: TeamCodexTask): number => !liveTask(task) ? 0 : task.state==='working' ? 2 : queueAvailability(task)==='ready' && !!(task.queue?.items.length??task.queueSummary?.count) ? 1 : 0
@@ -353,7 +353,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       if (onOpenTask) onOpenTask(task,{page,member,project})
       else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
     }}>
-      <CodexTaskStateDot status={codexTaskStatus(task)}/>
+      <CodexTaskStateDot status={codexTaskPhase(task)}/>
       <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!(task.queue?.items.length??task.queueSummary?.count)) && <small>{status(task)}{!!(task.queue?.items.length??task.queueSummary?.count) && ` · ${queueLabel(task)}`}</small>}</span>
       {conversation && <time title={time(task.updatedAt)} dateTime={new Date(task.updatedAt).toISOString()}>{codexConversationTime(task.updatedAt,Date.now())}</time>}
       {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
@@ -410,7 +410,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       <strong className="arkme-codex-identity">Codex</strong>
       <div className="arkme-codex-centered-selector" ref={picker}>
         <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => {setTaskMenu(false);setPickerOpen(!pickerOpen)}}>
-          {selected && <CodexTaskStateDot status={codexTaskStatus(selected)}/>}
+          {selected && <CodexTaskStateDot status={codexTaskPhase(selected)}/>}
           <strong title={selected?.title}>{selected?.title ?? tr('选择任务')}</strong>
           {selected && <span className="arkme-team-codex-status" data-state={selected.state}>{status(selected)}</span>}<span aria-hidden>⌄</span>
         </button>

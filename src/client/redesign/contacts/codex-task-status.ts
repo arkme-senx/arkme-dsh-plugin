@@ -2,12 +2,19 @@ import type { TeamCodexTask, TeamCodexTaskSummary } from '../../../team-codex-co
 
 export type CodexTaskStatus = 'running' | 'finished' | 'interrupted' | 'unknown' | 'paused' | 'waiting'
 
-/** A saved working event on an unverified/offline source is not live execution. */
-export function codexTaskStatus(task: TeamCodexTask, now = Date.now()): CodexTaskStatus {
+/** Last reported task phase; collector connectivity is a separate fact. */
+export function codexTaskPhase(task: TeamCodexTask): CodexTaskStatus {
   if (task.excluded || task.projectExcluded || task.status === 'paused' || task.status === 'disconnected') return 'paused'
   if (task.state === 'finished') return 'finished'
   if (task.state === 'interrupted') return 'interrupted'
   if (task.state !== 'working' || task.status !== 'active') return 'waiting'
+  return 'running'
+}
+
+/** A saved working event on an unverified/offline source is not live execution. */
+export function codexTaskStatus(task: TeamCodexTask, now = Date.now()): CodexTaskStatus {
+  const phase = codexTaskPhase(task)
+  if (phase !== 'running') return phase
   if (task.captureHealth) {
     const age = now - task.captureHealth.checkedAt
     return task.captureHealth.status === 'online' && age >= 0 && age < 30_000 ? 'running' : 'unknown'

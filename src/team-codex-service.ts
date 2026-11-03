@@ -19,7 +19,7 @@ import { TeamCodexTurnTimingStore, type CodexTimingSource } from './team-codex-t
 import { TeamCodexPrivateImages } from './team-codex-private-images.js'
 import { codexImageSafeText } from './team-codex-image-text.js'
 import { TeamCodexLiveUpdates } from './team-codex-live-updates.js'
-import { codexPromptText } from './team-codex-prompt-text.js'
+import { codexPromptText, codexPromptDisplayText } from './team-codex-prompt-text.js'
 
 interface Binding {
   id: string; user_id: number; team_ref: string; member_json: string; title: string
@@ -528,8 +528,8 @@ export class TeamCodexService {
       const owned=this.collectedSource(owner,id)
       for(const value of snapshot.messages){const message=value as {key:string;text:string;role:string;createdAtMillis:number};const key=/^(.+):(UserPromptSubmit|Stop|Interrupt):(\d+)$/.exec(message.key)
         const event=key?this.db.prepare('SELECT text,kind,truncated,at FROM codex_events WHERE task_id=? AND turn_id=? AND kind=? AND sequence=? UNION SELECT text,kind,truncated,at FROM events WHERE connection_id=? AND turn_id=? AND kind=? AND sequence=?').get(id,key[1]!,key[2]!,Number(key[3]),id,key[1]!,key[2]!,Number(key[3]))
-          :owned?this.db.prepare("SELECT text,'Progress' kind,truncated,at FROM codex_live_messages WHERE scope=? AND id=? AND kind='commentary'").get(JSON.stringify([owner,owned.homeKey,owned.sessionId]),message.key):undefined
-        if(!event||event.truncated||message.role!==(event.kind==='UserPromptSubmit'?'user':'assistant')||message.createdAtMillis!==Number(event.at)||codexImageSafeText(event.kind==='UserPromptSubmit'?codexPromptText(String(event.text)):String(event.text))!==message.text)fail('本机消息已变化，请重新选择',409)
+          :owned?this.db.prepare("SELECT text,CASE kind WHEN 'input' THEN 'UserPromptSubmit' ELSE 'Progress' END kind,truncated,at FROM codex_live_messages WHERE scope=? AND id=? AND kind IN ('commentary','input')").get(JSON.stringify([owner,owned.homeKey,owned.sessionId]),message.key):undefined
+        if(!event||event.truncated||message.role!==(event.kind==='UserPromptSubmit'?'user':'assistant')||message.createdAtMillis!==Number(event.at)||codexImageSafeText(event.kind==='UserPromptSubmit'?codexPromptDisplayText(String(event.text)):String(event.text))!==message.text)fail('本机消息已变化，请重新选择',409)
       }
     }
     return {...snapshot,cloudSources:targets}
@@ -542,6 +542,7 @@ export class TeamCodexService {
     if(!Array.isArray(source)||source[0]!=='codex'||source[1]!==owner||typeof source[2]!=='string'||!Array.isArray(mark)||mark[0]!==sourceRef||typeof mark[1]!=='string')fail('标记来源无效',400)
     let scope:unknown;try{scope=JSON.parse(source[2])}catch{fail('标记来源无效',400)}
     if(!Array.isArray(scope)||scope.length!==3||scope.some(v=>typeof v!=='string'))fail('标记来源无效',400)
+    if(!this.cloud)return undefined
     const [team,sourceId,task]=scope as string[]
     const mappings=this.db.prepare('SELECT t.id,s.id source FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND t.local_id=? LIMIT 2').all(owner,task!)
     if(mappings.length>1)fail('来源存在归属冲突，未执行操作',409)
@@ -554,9 +555,9 @@ export class TeamCodexService {
           UNION SELECT session_id,'' home_key FROM connections WHERE id=? AND user_id=?`).get(task!,owner,task!,owner)
         if(owned){
           const nativeScope=JSON.stringify([owner,String(owned.home_key),String(owned.session_id)])
-          const messages=this.db.prepare("SELECT turn FROM codex_live_messages WHERE scope=? AND id=? AND kind='commentary' LIMIT 2").all(nativeScope,mark[1])
+          const messages=this.db.prepare("SELECT turn,kind FROM codex_live_messages WHERE scope=? AND id=? AND kind IN ('commentary','input') LIMIT 2").all(nativeScope,mark[1])
           if(messages.length===1){
-            const {createHash}=await import('node:crypto'),slot=createHash('sha256').update(JSON.stringify([String(messages[0]!.turn),'Progress',mark[1]])).digest('hex')
+            const {createHash}=await import('node:crypto'),slot=createHash('sha256').update(JSON.stringify([String(messages[0]!.turn),messages[0]!.kind==='input'?'UserPromptSubmit':'Progress',mark[1]])).digest('hex')
             event=this.db.prepare('SELECT id FROM codex_cloud_events WHERE task=? AND slot=?').get(String(mapped.id),slot)
           }
         }
@@ -574,7 +575,7 @@ export class TeamCodexService {
     const owner=await this.user();let source:unknown,scope:unknown
     try{source=JSON.parse(sourceRef);scope=JSON.parse((source as unknown[])[2] as string)}catch{fail('标记来源无效',400)}
     if(!Array.isArray(source)||source[0]!=='codex'||source[1]!==owner||!Array.isArray(scope)||scope.length!==3)fail('标记来源无效',400)
-    const task=String(scope[2]),mapped=this.db.prepare('SELECT 1 FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND t.local_id=?').get(owner,task)
+    const task=String(scope[2]),mapped=this.cloud&&this.db.prepare('SELECT 1 FROM codex_cloud_tasks t JOIN codex_cloud_sources s ON s.id=t.source WHERE s.owner=? AND t.local_id=?').get(owner,task)
     const local=this.db.prepare('SELECT 1 FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? UNION SELECT 1 FROM connections WHERE id=? AND user_id=?').get(task,owner,task,owner)
     if(local&&!mapped)return undefined
     if(!this.cloud)fail('云端暂不可用',503)
@@ -750,6 +751,11 @@ export class TeamCodexService {
       this.liveUpdates.schedule(user,source,authorized,valid,value=>{
         if(!valid()||!allowed.has(value.turnId))return
         const table=target.machine?'codex_events':'events',column=target.machine?'task_id':'connection_id'
+        if(value.kind==='UserPromptSubmit'){
+          // Hooks authorize the turn; the verified native root supplies its body, never a later steering input.
+          if(!value.truncated&&this.db.prepare(`UPDATE ${table} SET text=?,truncated=0 WHERE ${column}=? AND turn_id=? AND kind='UserPromptSubmit' AND (text<>? OR truncated<>0)`).run(value.text,target.id,value.turnId,value.text).changes){this.nextCloudPump=0;this.requestTick()}
+          return
+        }
         // Never overwrite the trusted Hook result or revive an interrupted turn as completed.
         if(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${column}=? AND turn_id=? AND kind IN ('Stop','Interrupt')`).get(target.id,value.turnId))return
         const inserted=this.db.prepare(`INSERT OR IGNORE INTO ${table}(${column},turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,?)`)
@@ -809,7 +815,7 @@ export class TeamCodexService {
       const title = row.title === 'Codex' && typeof claim.title === 'string' && claim.title.trim()
         ? claim.title.trim().slice(0,160) : row.title
       this.db.prepare(`INSERT INTO events(connection_id,turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,?)
-        ON CONFLICT(connection_id,turn_id,kind) DO UPDATE SET text=excluded.text,truncated=excluded.truncated WHERE excluded.at>=events.at`)
+        ON CONFLICT(connection_id,turn_id,kind) DO UPDATE SET text=excluded.text,truncated=excluded.truncated WHERE excluded.kind<>'UserPromptSubmit' AND excluded.at>=events.at`)
         .run(row.id,event.turnId,String(event.kind),event.text,event.at,event.truncated===true?1:0)
       this.db.prepare("UPDATE connections SET session_id=?,status='active',title=?,updated_at=MAX(updated_at,?) WHERE id=?").run(claim.sessionId,title,event.at,row.id)
       row.session_id = claim.sessionId

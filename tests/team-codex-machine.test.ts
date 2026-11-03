@@ -578,3 +578,30 @@ it('pausing an installation fences a metadata upload already in flight before an
  const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
  try{expect(db.prepare('SELECT count(*) n FROM codex_cloud_events WHERE ack=version').get()!.n).toBe(0)}finally{db.close()}
 })
+
+it('keeps the first Hook input and syncs native steering with its own private pictures end to end',async()=>{
+ const f=fixture();await f.enroll();expect(f.record('UserPromptSubmit',{prompt:'初始输入'}).status).toBe(0)
+ const task=await f.task(),first=(await f.service.events(teamRef,task.id)).items[0]!
+ expect(f.record('UserPromptSubmit',{prompt:'追加输入'}).status).toBe(0);await f.service.tick()
+ expect((await f.service.events(teamRef,task.id)).items[0]!.text).toBe('初始输入')
+ const path=join(f.codex,'sessions','steering.jsonl');mkdirSync(join(f.codex,'sessions'),{recursive:true})
+ const native=new DatabaseSync(join(f.codex,'state_5.sqlite'));native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+ native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','真实输入',path);native.close()
+ const at=first.at,line=(type:string,payload:object,time=at)=>JSON.stringify({type,timestamp:new Date(time).toISOString(),payload})+'\n'
+ const image='data:image/png;base64,'+(await sharp({create:{width:12,height:8,channels:3,background:'#49a'}}).png().toBuffer()).toString('base64')
+ writeFileSync(path,line('session_meta',{id:'task_current_123'})+line('turn_context',{turn_id:'turn_123'})+
+ line('response_item',{id:'root',type:'message',role:'user',content:[{type:'input_text',text:'初始输入'},{type:'input_image',image_url:image}]})+
+ line('response_item',{id:'progress',type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'处理中'}]},at+1)+
+ line('response_item',{id:'steer',type:'message',role:'user',content:[{type:'input_text',text:'追加输入'},{type:'input_image',image_url:image},{type:'input_image',image_url:image}]},at+2))
+ await vi.waitFor(async()=>{
+  f.advance(61000);await f.service.tick()
+  const page=await f.service.events(teamRef,task.id)
+  expect(page.items.map(e=>e.text)).toEqual(['初始输入','处理中','追加输入'])
+  expect(page.items[0]!.privateImages).toHaveLength(1);expect(page.items[2]!.privateImages).toHaveLength(2)
+  expect(page.items[0]!.at).toBe(first.at)
+ },{timeout:10000,interval:100})
+ const page=await f.service.events(teamRef,task.id),rootImage=page.items[0]!.privateImages![0]!,steerImage=page.items[2]!.privateImages![0]!
+ expect(steerImage.ref).not.toBe(rootImage.ref)
+ expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',steerImage.ref,false)).dataUrl).toContain('data:image/webp;')
+ f.setUser(22);await expect(f.service.events(teamRef,task.id)).rejects.toThrow()
+},15000)

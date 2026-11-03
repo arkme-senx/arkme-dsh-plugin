@@ -31,18 +31,18 @@ export function readLocalCodexEvents(db:DatabaseSync,scope:Scope,cursor?:string,
   FROM ${table} e JOIN turns t ON e.turn_id=t.turn_id WHERE e.${column}=?
   UNION ALL
   SELECT l.turn,t.turn_seq,1,CASE WHEN l.source_order>0 THEN l.source_order ELSE l.at END,t.turn_seq,l.id,1
-  FROM codex_live_messages l JOIN turns t ON l.turn=t.turn_id WHERE l.scope=? AND l.kind='commentary'
+  FROM codex_live_messages l JOIN turns t ON l.turn=t.turn_id WHERE l.scope=? AND l.kind IN ('commentary','input')
  ) SELECT * FROM candidates ${where.length?'WHERE '+where.join(' AND '):''}
  ORDER BY turn_seq ${direction},phase ${direction},message_seq ${direction},event_id ${direction} LIMIT 51`).all(...bindings)
- const visible=metadata.slice(0,50),controls=visible.filter(r=>!r.native).map(r=>Number(r.sequence)),progress=visible.filter(r=>r.native).map(r=>String(r.event_id))
+ const visible=metadata.slice(0,50),controls=visible.filter(r=>!r.native).map(r=>Number(r.sequence)),nativeIds=visible.filter(r=>r.native).map(r=>String(r.event_id))
  const controlsBySeq=new Map(controls.length?db.prepare(`SELECT * FROM ${table} WHERE ${column}=? AND sequence IN (${controls.map(()=>'?').join(',')})`).all(scope.task,...controls).map(row=>[Number(row.sequence),row]):[])
- const progressById=new Map(progress.length?db.prepare(`SELECT * FROM codex_live_messages WHERE scope=? AND id IN (${progress.map(()=>'?').join(',')}) AND kind='commentary'`).all(JSON.stringify([scope.owner,scope.homeKey,scope.sessionId]),...progress).map(row=>[String(row.id),row]):[])
+ const nativeById=new Map(nativeIds.length?db.prepare(`SELECT * FROM codex_live_messages WHERE scope=? AND id IN (${nativeIds.map(()=>'?').join(',')}) AND kind IN ('commentary','input')`).all(JSON.stringify([scope.owner,scope.homeKey,scope.sessionId]),...nativeIds).map(row=>[String(row.id),row]):[])
  const values=forward?visible:[...visible].reverse()
  const position=(row:typeof metadata[number]):Position=>[Number(row.turn_seq),Number(row.phase),Number(row.message_seq),String(row.event_id)]
  const items:TeamCodexEvent[]=values.map(row=>{
-  const body=row.native?progressById.get(String(row.event_id)):controlsBySeq.get(Number(row.sequence))
+  const body=row.native?nativeById.get(String(row.event_id)):controlsBySeq.get(Number(row.sequence))
   if(!body)throw invalid()
-  return {eventId:String(row.event_id),sequence:Number(row.sequence),turnSequence:Number(row.turn_seq),messageSequence:Number(row.message_seq),cursor:encode(position(row)),turnId:String(row.turn_id),kind:row.native?'Progress':body.kind as TeamCodexEvent['kind'],text:String(body.text),at:Number(body.at),truncated:body.truncated===1}
+  return {eventId:String(row.event_id),sequence:Number(row.sequence),turnSequence:Number(row.turn_seq),messageSequence:Number(row.message_seq),cursor:encode(position(row)),turnId:String(row.turn_id),kind:row.native?(body.kind==='input'?'UserPromptSubmit':'Progress'):body.kind as TeamCodexEvent['kind'],text:String(body.text),at:Number(body.at),truncated:body.truncated===1}
  })
  return {items,...(items.length?{firstCursor:items[0]!.cursor!,latestCursor:items.at(-1)!.cursor!}:{}),...(metadata.length>50?{nextCursor:encode(position(visible.at(-1)!))}:{})}
 }

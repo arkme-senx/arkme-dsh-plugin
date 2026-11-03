@@ -41,3 +41,14 @@ it('feeds background cloud reconciliation in bounded ascending slices without re
  do{const page=readLocalCodexEvents(db,scope,cursor,{},undefined,true);expect(page.items.length).toBeLessThanOrEqual(50);rows.push(...page.items.map(e=>e.eventId!));cursor=page.nextCursor}while(cursor)
  expect(rows).toHaveLength(516);expect(new Set(rows).size).toBe(516);expect(rows[0]).toBe('turn-1:UserPromptSubmit:1');expect(rows.at(-1)).toBe('turn-3:Stop:6')
 })
+
+it('interleaves steering inputs with assistant progress in one turn and keeps user roles',()=>{
+ const {db,message}=fixture()
+ message.run(JSON.stringify([11,'home','session']),'turn-3','steer','input','追加需求',4000,21)
+ const all=[];let cursor:string|undefined
+ do{const page=readLocalCodexEvents(db,scope,cursor,{},undefined,true);all.push(...page.items);cursor=page.nextCursor}while(cursor)
+ const i=all.findIndex(e=>e.eventId==='steer')
+ expect(all[i]).toMatchObject({kind:'UserPromptSubmit',turnId:'turn-3',messageSequence:21})
+ expect(all[i-1]).toMatchObject({kind:'Progress',messageSequence:20})
+ expect(all[i+1]).toMatchObject({kind:'Progress',messageSequence:30})
+})

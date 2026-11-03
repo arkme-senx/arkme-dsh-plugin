@@ -5,7 +5,10 @@ import {createHash,randomUUID} from 'node:crypto'
 import {DatabaseSync} from 'node:sqlite'
 import {afterEach,expect,it} from 'vitest'
 import {TeamCodexService} from '../../src/team-codex-service.js'
-import {quoteSourceContent,type ArkmeMessageQuote} from '../../src/message-quote.js'
+import {quoteSourceContent,normalizeQuoteText,type ArkmeMessageQuote} from '../../src/message-quote.js'
+import {codexPromptPresentation,codexPromptDisplayText} from '../../src/team-codex-prompt-text.js'
+import {codexSelectionSnapshot,codexEventKey} from '../../src/client/redesign/contacts/codex-message-actions.js'
+import type {TeamCodexTask,TeamCodexEvent} from '../../src/team-codex-contract.js'
 const contract=process.env.CODEX_SHARE_CONTRACT_DIR
 const roots:string[]=[],services:TeamCodexService[]=[],databases:DatabaseSync[]=[]
 afterEach(async()=>{for(const service of services.splice(0))service.close();for(const db of databases.splice(0))db.close();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
@@ -17,7 +20,9 @@ it.skipIf(!contract)('uses actual Team HTTP+Mongo for two devices, admin-private
   const root=await mkdtemp(join(tmpdir(),'codex marks device '));roots.push(root);await mkdir(join(root,'codex'))
   const post=async<T>(_owner:number,path:string,body:Record<string,unknown>,signal:AbortSignal):Promise<T>=>{
    const response=await fetch(ready.url+path,{method:'POST',signal,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)})
-   const value=await response.json() as any
+   const raw=await response.text()
+   let value:any
+   try{value=JSON.parse(raw)}catch{throw Error(`${path}: non-JSON HTTP ${response.status}`)}
    if(!response.ok||![0,200].includes(value.code))throw Object.assign(Error(value.message||'Team request failed'),{upstreamStatus:response.status})
    return value.data
   }
@@ -26,7 +31,7 @@ it.skipIf(!contract)('uses actual Team HTTP+Mongo for two devices, admin-private
   services.push(owner)
   const sourceRef=JSON.stringify(['codex',actor,JSON.stringify(['self',ready.source_id,ready.task_id])])
   const ref=(id:string)=>JSON.stringify([sourceRef,id,text])
-  return {owner,sourceRef,ref,root,setUser:(v:number)=>{user=v;owner.fence()}}
+  return {owner,sourceRef,ref,root,post,setUser:(v:number)=>{user=v;owner.fence()}}
  }
  const a=await make(101,ready.token_a),b=await make(101,ready.token_b),admin=await make(22,ready.token_member),foreign=await make(303,ready.token_foreign)
  const initial=(await a.owner.cloudMarks(a.sourceRef,[a.ref('legacy')]))![0]!.snapshot
@@ -47,6 +52,31 @@ it.skipIf(!contract)('uses actual Team HTTP+Mongo for two devices, admin-private
  await b.owner.changeCloudMark(b.sourceRef,b.ref('migration'),{kind:'remove',operationId:randomUUID(),baseRevision:accepted.revision,annotationId:accepted.items[0]!.id})
  await a.owner.changeCloudMark(a.sourceRef,a.ref('migration'),operation)
  expect((await b.owner.cloudMarks(b.sourceRef,[b.ref('migration')]))![0]!.snapshot).toMatchObject({revision:2,items:[]})
+ // Structured event reads and plain sharing/anchors must describe the same user prose.
+ const vectors=JSON.parse(await readFile(new URL('../fixtures/codex-response-annotations-v1.json',import.meta.url),'utf8'))
+ const input:TeamCodexEvent={eventId:'annotated-prompt',version:1,sequence:4,turnId:'annotation-turn',kind:'UserPromptSubmit',at:400,text:vectors[0].input,truncated:false}
+ expect(codexPromptPresentation(input.text).responseAnnotations?.annotations).toHaveLength(1)
+ const shown=codexPromptDisplayText(input.text),canonical=normalizeQuoteText(shown)
+ const detail=await a.post<{text:string}>(101,'/api/v1/team-codex/events/detail',{source_id:ready.source_id,task_id:ready.task_id,event_id:input.eventId},AbortSignal.timeout(5000))
+ expect(detail.text).toBe(shown)
+ const annotatedTask={id:ready.task_id,title:'annotation contract',member:{displayName:'owner'},cloud:{sourceId:ready.source_id,taskId:ready.task_id,ownerRef:'101',remote:true}} as TeamCodexTask
+ const snapshot=codexSelectionSnapshot('contract',annotatedTask,[input],new Set([codexEventKey(input)]))
+ expect((await a.owner.prepareExport('contract',ready.task_id,ready.source_id,snapshot)).messages[0]!.text).toBe(shown)
+ await expect(admin.owner.prepareExport('contract',ready.task_id,ready.source_id,snapshot)).rejects.toThrow()
+ const annotationDigest=createHash('sha256').update(quoteSourceContent({textContent:canonical,textFormat:'plain'})).digest('hex')
+ const noteAnchor:ArkmeMessageQuote={version:1,projection:'arkme-text-v1',sourceDigest:annotationDigest,start:0,end:6,text:canonical.slice(0,6),prefix:'',suffix:canonical.slice(6,38)}
+ const annotatedRef=(sourceRef:string)=>JSON.stringify([sourceRef,'annotated-prompt',canonical])
+ const marked=await a.owner.changeCloudMark(a.sourceRef,annotatedRef(a.sourceRef),{kind:'add',operationId:randomUUID(),baseRevision:0,anchor:noteAnchor})
+ expect(marked?.items).toHaveLength(1)
+ expect((await b.owner.cloudMarks(b.sourceRef,[annotatedRef(b.sourceRef)]))![0]!.snapshot.items).toHaveLength(1)
+ expect((await admin.owner.cloudMarks(admin.sourceRef,[annotatedRef(admin.sourceRef)]))![0]!.snapshot.items).toEqual([])
+ const steering:TeamCodexEvent={...input,eventId:'steering-input',at:401,text:'追加图片说明',messageSequence:5}
+ const steeringDetail=await a.post<{text:string;version:number;at:number}>(101,'/api/v1/team-codex/events/detail',{source_id:ready.source_id,task_id:ready.task_id,event_id:steering.eventId},AbortSignal.timeout(5000))
+ expect(steeringDetail).toMatchObject({text:'追加图片说明',version:1,at:401})
+ const steeringSnapshot=codexSelectionSnapshot('contract',annotatedTask,[steering],new Set([codexEventKey(steering)]))
+ const verified=await a.owner.prepareExport('contract',ready.task_id,ready.source_id,steeringSnapshot)
+ expect(verified.messages[0]).toMatchObject({text:'追加图片说明',role:'user',createdAtMillis:401})
+ await expect(admin.owner.prepareExport('contract',ready.task_id,ready.source_id,steeringSnapshot)).rejects.toThrow()
  a.setUser(22);await expect(a.owner.cloudMarks(a.sourceRef,[a.ref('legacy')])).rejects.toThrow()
  await writeFile(join(contract!,'done'),'passed')
 },90000)

@@ -27,6 +27,13 @@ describe('Team Codex activity UI',()=>{
   const click=async(label:string)=>{await act(async()=>{const b=renderer!.root.findAllByType('button').find(b=>text(b)===label);expect(b).toBeDefined();b!.props.onClick();await tick()})}
   const selectTask=async()=>{await act(async()=>{renderer!.root.findByProps({className:'arkme-team-codex-task-toggle'}).props.onClick();await tick()})}
   const taskMenu=async()=>{await act(async()=>{renderer!.root.findAllByType('button').find(button=>['任务信息与操作','更多 Codex 对话操作'].includes(button.props['aria-label']))!.props.onClick();await tick()})}
+  it('shows a remote task phase independently from unverified collector connectivity',async()=>{
+    const remote={...base.tasks[0]!,cloud:{taskId:'task',sourceId:'source',ownerRef:'22',sourceName:'Mac',remote:true}}
+    mocks.callArkme.mockImplementation(async(op:string)=>op==='team.codex.state'?{...base,localOnly:false,tasks:[remote],cloud:{status:'ready',pending:0,blocked:0,page:1}}:{items:[]})
+    await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} conversation selfMember="11" target={{accountKey:'prod:11',team:{teamRef,name:'Team',jotmoId:'team'},member:'22',task:remote}}/>);await tick()})
+    expect(text(renderer!.root.findByProps({className:'arkme-codex-task-trigger'}))).toContain('进行中')
+    expect(text(renderer!.root.findByProps({className:'arkme-codex-sync-status'}))).toContain('同步状态待核实')
+  })
   it('asks for a compact source alias inside existing cloud consent, validates bytes, and passes it only on confirmation',async()=>{
     mocks.callArkme.mockImplementation(async op=>op==='team.codex.state'?{...base,cloud:{status:'ready',pending:0,blocked:0,page:1,uploadEnabled:false}}:{ok:true})
     await act(async()=>{renderer=create(<TeamCodexActivity teamRef={teamRef} managementOnly/>);await tick()})

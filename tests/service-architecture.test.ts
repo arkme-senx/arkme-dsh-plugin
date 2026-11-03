@@ -72,7 +72,7 @@ const expectedPublicMethods = [
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'createShareCallLink', 'prepareCallReceiver', 'claimIncomingCall',
   'listCallHistory', 'callDetail', 'callShareLink', 'callShareViewers', 'retryCallSummary',
-  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'extensionAuthors', 'listExtensionReviews',
+  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'publicAvatarPresentationsByUserIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
   'resolveLinkMetadata', 'resolveSharePreview',

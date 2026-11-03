@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
+import { responseAnnotationPrompt } from './fixtures/codex-prompt.js'
+import { codexPromptDisplayText } from '../src/team-codex-prompt-text.js'
+import { codexSelectionSnapshot, codexEventKey } from '../src/client/redesign/contacts/codex-message-actions.js'
 
 const teamRef = `team_v1_${'a'.repeat(32)}`
 const member: ArkmeTeamMember = { userRef:`usr_v1_${'b'.repeat(32)}`,displayName:'本机用户',jotmoId:'my_user',identityState:'ready',role:'member',joinedAtMillis:1 }
@@ -58,6 +61,18 @@ function fixture() {
 }
 
 describe('local Codex team journal and real bridge helper', () => {
+  it('keeps collected annotation data intact and verifies exports against its display projection',async()=>{
+    const f=fixture(),invite=await f.service.invite(teamRef),raw=responseAnnotationPrompt()
+    f.run(['connect',invite.id]);f.record('UserPromptSubmit',{prompt:raw});await f.service.tick()
+    const task=(await f.service.state(teamRef)).tasks[0]!
+    const page=await f.service.events(teamRef,invite.id),input=page.items.find(e=>e.kind==='UserPromptSubmit')!
+    expect(input.text).toBe(raw)
+    const snapshot=codexSelectionSnapshot(teamRef,task,[input],new Set([codexEventKey(input)]))
+    expect(snapshot.messages[0]!.text).toBe(codexPromptDisplayText(raw))
+    expect((await f.service.prepareExport(teamRef,invite.id,undefined,snapshot)).messages).toEqual(snapshot.messages)
+    await expect(f.service.prepareExport(teamRef,invite.id,undefined,{...snapshot,messages:snapshot.messages.map(message=>({...message,text:'伪造正文'}))})).rejects.toThrow()
+    expect((await f.service.events(teamRef,invite.id)).items[0]!.text).toBe(raw)
+  })
   it('a new question recovers the previous missing final without changing the new turn or trusted Hook commands',async()=>{
     const f=fixture(),invite=await f.service.invite(teamRef)
     f.run(['connect',invite.id]);f.record();await f.service.tick()

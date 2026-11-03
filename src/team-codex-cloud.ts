@@ -13,6 +13,7 @@ export interface TeamCodexCloudPort {
   post<T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<T>
   bytes?(owner:number,path:string,body:Uint8Array|Record<string,unknown>,headers:Record<string,string>,signal:AbortSignal):Promise<Uint8Array|Record<string,unknown>>
   selectedTeam(teamRef: string, signal: AbortSignal): Promise<ArkmeTeam>
+  memberAvatars?(userIds: readonly number[], signal: AbortSignal): Promise<ReadonlyMap<number, Pick<ArkmeTeamMember, 'avatarRef' | 'avatarFallback'>>>
 }
 type CloudState = NonNullable<TeamCodexState['cloud']>
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -314,6 +315,25 @@ export class TeamCodexCloud {
           state: row.state === 'in_progress' ? 'working' : row.state === 'interrupted' ? 'interrupted' : row.state === 'turn_ended' ? 'finished' : 'waiting',
           updatedAt: Number(row.latest_at), eventCount: Number(row.event_count), member, projectKey: str(row.project_key), projectName: str(row.project_name), branch: str(row.branch),
           cloud: { taskId: id, sourceId, sourceName: str(row.source_name), ownerRef: user, remote: true },queueCloud,...(queueSummary?{queueSummary}:{}) })
+      }
+      if (this.port.memberAvatars) {
+        const owners = [...new Set([...remote.values()].filter(task => task.cloud?.remote)
+          .map(task => Number(task.cloud!.ownerRef)))]
+        if (owners.length) {
+          try {
+            const avatars = await this.port.memberAvatars(owners, AbortSignal.any([signal, AbortSignal.timeout(1500)]))
+            await this.guard(owner, signal)
+            for (const task of remote.values()) {
+              if (!task.cloud?.remote) continue
+              const presentation = avatars.get(Number(task.cloud.ownerRef))
+              if (presentation) task.member = { ...task.member, ...presentation }
+            }
+          } catch {
+            signal.throwIfAborted()
+            await this.guard(owner, signal)
+            // Public avatar failure must not replace an authorized task page.
+          }
+        }
       }
       if ([...remote.values()].some(task => task.cloud?.ownerRef === String(owner))) this.onConnectionEvidence(owner)
       // Local pending/excluded records remain on page one, never overwrite another member/device.

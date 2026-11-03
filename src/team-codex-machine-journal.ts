@@ -8,7 +8,7 @@ import type { TeamCodexConnectionStatus, TeamCodexEventPage, TeamCodexInstallati
 import { TeamCodexDesktopQueueReader, type QueueObservation } from './team-codex-desktop-queue.js'
 import { TeamCodexDesktopTitleReader, type CodexThreadVisibility } from './team-codex-desktop-titles.js'
 import { codexInternalRequest } from './team-codex-task-visibility.js'
-import { codexPromptText } from './team-codex-prompt-text.js'
+import { codexPromptDisplayText } from './team-codex-prompt-text.js'
 
 interface Installation {
   id:string; user_id:number; team_ref:string; member_json:string; name:string; home_key:string|null
@@ -111,7 +111,7 @@ export class TeamCodexMachineJournal {
         excluded:row.excluded===1,projectExcluded:projects.has(row.project_key),status:this.effectiveStatus(installation),
         state:row.latest_kind==='Stop'?'finished':row.latest_kind==='Interrupt'?'interrupted':row.latest_kind==='UserPromptSubmit'?'working':'waiting',
         updatedAt:row.updated_at,eventCount:row.event_count,member:JSON.parse(installation.member_json) as ArkmeTeamMember,
-        ...(queue ? {queue} : {}),...(queueSummary?{queueSummary,queueCloud:'ready' as const}:{}), ...(input ? {currentInput:{turnId:input.turn_id,text:codexPromptText(input.text).slice(0,240),at:input.at}} : {})})
+        ...(queue ? {queue} : {}),...(queueSummary?{queueSummary,queueCloud:'ready' as const}:{}), ...(input ? {currentInput:{turnId:input.turn_id,text:codexPromptDisplayText(input.text).slice(0,240),at:input.at}} : {})})
       }
     }
     return {tasks,installations:installations.map(row=>({id:row.id,name:row.name,status:this.effectiveStatus(row),
@@ -267,7 +267,7 @@ export class TeamCodexMachineJournal {
             if(!task.excluded) {
               const title=task.title
               this.db.prepare(`INSERT INTO codex_events(task_id,turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,?)
-                ON CONFLICT(task_id,turn_id,kind) DO UPDATE SET text=excluded.text,truncated=excluded.truncated WHERE excluded.at>=codex_events.at`)
+                ON CONFLICT(task_id,turn_id,kind) DO UPDATE SET text=excluded.text,truncated=excluded.truncated WHERE excluded.kind<>'UserPromptSubmit' AND excluded.at>=codex_events.at`)
                 .run(task.id,String(event.turnId),String(event.kind),String(event.text),Number(event.at),event.truncated===true?1:0)
               // Do not let late delivery move a task back to an old working directory.
               this.db.prepare('UPDATE codex_tasks SET title=? WHERE id=?').run(title,task.id)

@@ -20,7 +20,7 @@ function fixture(count=1){
  const eligible=new Set(tasks.map(t=>t.id))
  let batch:CloudBatch|undefined
  while((batch=journal.batch(11,'team',eligible))){journal.acknowledge(batch,{owner_ref:'11',task_results:batch.tasks.map(t=>({task_id:t.task_id,status:'saved',version:t.version})),event_results:batch.tasks.flatMap(t=>t.events.map(e=>({event_id:e.event_id,task_id:t.task_id,status:'saved',version:e.version})))})}
- for(const task of tasks)db.prepare('INSERT INTO codex_private_images VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(11,task.id,'turn','Stop',0,'image-'+task.id,'hash-'+task.id,1,1,Buffer.from([1,2]),Buffer.from([3]))
+ for(const task of tasks)db.prepare('INSERT INTO codex_private_images(owner,session,turn,kind,ordinal,ref,source_hash,width,height,image,thumbnail) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(11,task.id,'turn','Stop',0,'image-'+task.id,'hash-'+task.id,1,1,Buffer.from([1,2]),Buffer.from([3]))
  const post=vi.fn(async(_owner:number,_path:string,body:Record<string,unknown>)=>({version:1,items:(body.images as {client_image_id:string}[]).map((im,i)=>({image_id:'server'+i,client_image_id:im.client_image_id,state:(im as {state?:string}).state??'pending'}))}))
  const bytes=vi.fn(async()=>({}))
  const port={post,bytes} as unknown as TeamCodexCloudPort
@@ -52,4 +52,22 @@ it('advances beyond both hot-task and per-tick budgets and clears an actually re
  for(let i=0;i<3;i++)await f.sync(worker)
  expect(f.post).toHaveBeenCalledTimes(44)
  expect(f.post.mock.calls.at(-1)?.[2]).toMatchObject({images:[],base_revision:1})
+})
+
+it('publishes separate private manifests for the root and steering messages of the same turn',async()=>{
+ const f=fixture(),journal=new TeamCodexCloudJournal(f.db)
+ journal.reconcile(11,'team','101',[{id:'task0',installationId:'install',title:'Task'} as TeamCodexTask],()=>[
+  {turnId:'inputs',kind:'UserPromptSubmit',text:'first',sequence:2,at:2,truncated:false},
+  {turnId:'inputs',kind:'UserPromptSubmit',text:'steering',eventId:'native-steering',messageSequence:200,sequence:2,at:3,truncated:false},
+ ])
+ const batch=journal.batch(11,'team',f.eligible)!
+ journal.acknowledge(batch,{owner_ref:'11',task_results:batch.tasks.map(t=>({task_id:t.task_id,status:'saved',version:t.version})),event_results:batch.tasks.flatMap(t=>t.events.map(e=>({event_id:e.event_id,task_id:t.task_id,status:'saved',version:e.version})))})
+ const insert=f.db.prepare('INSERT INTO codex_private_images(owner,session,turn,kind,ordinal,ref,source_hash,width,height,image,thumbnail,message_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+ for(const [ordinal,seq,ref]of [[0,0,'root-image'],[1,200,'steering-image']] as const)insert.run(11,'task0','inputs','UserPromptSubmit',ordinal,ref,ref,1,1,Buffer.from([1]),Buffer.from([2]),seq)
+ await f.sync(f.restart())
+ const inputs=batch.tasks[0]!.events.filter(e=>e.turn_id!=='turn'&&e.kind==='UserPromptSubmit')
+ for(const input of inputs){
+  const call=f.post.mock.calls.find(c=>c[2].event_id===input.event_id)!
+  expect(call[2].images).toMatchObject([{client_image_id:input.message_seq===0?'root-image':'steering-image'}])
+ }
 })

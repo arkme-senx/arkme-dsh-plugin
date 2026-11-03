@@ -1907,8 +1907,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-message[data-event-kind="Progress"] { margin-bottom:12px; }
 .arkme-codex-message[data-event-kind="Progress"] .arkme-codex-markdown { font-size:13px; line-height:1.7; }
 .arkme-codex-message[data-event-kind="Progress"] .arkme-codex-message-meta { margin-top:2px; min-height:26px; }
-.arkme-codex-message.is-user { max-width:86%; width:fit-content; margin-left:auto; padding:12px 16px 6px; border-radius:18px; background:var(--dsw-alias-bg-layer-2,#f0f1f4); }
-.arkme-codex-user-text { white-space:pre-wrap; }
+.arkme-codex-message.is-user { max-width:86%; width:fit-content; margin-left:auto; padding:0; }
+.arkme-codex-user-text { width:fit-content; max-width:100%; box-sizing:border-box; margin-left:auto; padding:12px 16px; border-radius:18px; white-space:pre-wrap; background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4179e8) 10%,var(--dsw-alias-bg-layer-1,#fff)); }
 .arkme-codex-message.is-user:has(.arkme-codex-question-replies) { background:transparent; padding:0; }
 .arkme-codex-question-replies { display:grid; gap:12px; }
 .arkme-codex-question-reply { min-width:0; border:1px solid var(--arkme-line); border-radius:14px; padding:14px 16px 10px; background:var(--dsw-alias-bg-layer-1,#fff); }
@@ -1918,6 +1918,18 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-question-answer > svg { flex:none; margin-top:4px; color:var(--dsw-alias-state-success-primary,#298650); }
 .arkme-codex-question-answer > p { min-width:0; font-weight:500; }
 .arkme-codex-question-status { display:block; margin-top:8px; text-align:right; color:var(--dsw-alias-label-secondary,#666a73); font-size:11px; user-select:none; }
+.arkme-codex-message.is-user:has(.arkme-codex-response-annotations) { background:transparent; padding:0; }
+.arkme-codex-response-annotations { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+.arkme-codex-response-annotation-list { width:100%; font-size:14px; line-height:1.6; color:var(--dsw-alias-label-primary,#20232b); }
+div:has(> .arkme-codex-response-annotation-list) { padding:0; border-radius:16px; }
+.arkme-codex-response-annotation { display:grid; grid-template-columns:22px minmax(0,1fr); gap:8px; padding:14px 16px; border:1px solid var(--arkme-line,var(--dsw-alias-border-standard,#e4e5e9)); border-radius:16px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 3px 8px #00000008; }
+.arkme-codex-response-annotation + .arkme-codex-response-annotation { margin-top:10px; }
+.arkme-codex-response-annotation p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.arkme-codex-response-annotation-number,.arkme-codex-response-annotation-label { color:var(--arkme-muted,var(--dsw-alias-label-secondary,#92959e)); }
+.arkme-codex-response-annotation-comment { margin-top:10px; }
+.arkme-codex-response-annotation-comment > span { color:var(--arkme-muted,var(--dsw-alias-label-secondary,#92959e)); font-size:12px; }
+.arkme-team-codex button.arkme-codex-response-annotation-toggle { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:4px 11px; border:1px solid var(--arkme-line); border-radius:18px; background:var(--dsw-alias-bg-layer-1,#fff); font-size:13px; font-weight:500; user-select:none; }
+.arkme-codex-response-annotation-toggle svg { color:var(--arkme-muted); }
 .arkme-codex-message-meta { display:flex; gap:12px; align-items:center; margin-top:8px; min-height:28px; font-size:11px; }
 .arkme-codex-message.is-user .arkme-codex-message-meta { justify-content:flex-end; }
 .arkme-codex-copy-control { display:inline-flex; align-items:center; gap:6px; }
@@ -2006,7 +2018,7 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-sync-status small { font:inherit; }
 .arkme-codex-sync-status button { color:inherit; font:inherit; background:none; border:0; padding:0 4px; text-decoration:underline; cursor:pointer; }
 .arkme-codex-sync-status p { margin:6px auto 0; max-width:620px; text-align:left; }
-.arkme-codex-task-picker { position:absolute; top:54px; left:50%; transform:translateX(-50%); width:min(320px,calc(100% - 24px)); max-height:min(64vh,560px); display:flex; border:1px solid var(--arkme-line); border-radius:12px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 12px 40px #0003; overflow:hidden; }
+.arkme-codex-task-picker { position:absolute; z-index:1; top:54px; left:50%; transform:translateX(-50%); width:min(320px,calc(100% - 24px)); max-height:min(64vh,560px); display:flex; border:1px solid var(--arkme-line); border-radius:12px; background:var(--dsw-alias-bg-layer-1,#fff); box-shadow:0 12px 40px #0003; overflow:hidden; }
 .arkme-codex-task-picker .arkme-codex-task-sidebar { display:block !important; flex:1; padding:6px; border:0; background:transparent; overscroll-behavior:contain; }
 .arkme-codex-task-picker .arkme-team-codex-task-toggle { min-height:34px; padding:0 8px; gap:6px; border-radius:var(--dsw-radius-md,8px); color:var(--dsw-alias-label-primary,var(--arkme-text)); }
 .arkme-codex-task-picker .arkme-team-codex-task-toggle:is(:hover,[aria-pressed="true"]) { background:var(--dsw-alias-interactive-bg-hover,var(--arkme-soft)); }
@@ -2356,16 +2368,22 @@ body[data-ds-dark-theme] .arkme-cancellation-dialog .arkme-account-dialog-action
 
 /* Codex private pictures: reserved thumbnail area; no remote URLs in markup. */
 .arkme-codex-private-images { margin-top:12px; }
+.arkme-codex-message.is-user .arkme-codex-private-images { margin:0 0 10px; }
+.arkme-codex-message.is-user .arkme-codex-private-gallery { justify-content:flex-end; }
+.arkme-codex-message.is-user .arkme-codex-private-images > small { text-align:right; }
+.arkme-codex-message.is-user .arkme-codex-private-picture { background:var(--dsw-alias-bg-layer-1,#fff); }
 .arkme-codex-private-gallery { display:flex; flex-wrap:wrap; gap:10px; }
 .arkme-codex-private-tile { position:relative; width:clamp(120px,28vw,220px); max-width:100%; }
-.arkme-codex-private-picture { display:flex; align-items:center; justify-content:center; width:100%; min-height:96px; max-height:240px; overflow:hidden; border:1px solid var(--arkme-line); border-radius:10px; background:var(--dsw-alias-bg-layer-2,#f3f4f6); color:var(--dsw-alias-label-secondary,#68707c); font-size:12px; }
+.arkme-codex-message.is-user .arkme-codex-private-tile { width:160px; max-width:calc((100% - 10px)/2); }
+.arkme-codex-message.is-user .arkme-codex-private-tile:only-child { max-width:100%; }
+.arkme-codex-private-picture { display:flex; align-items:center; justify-content:center; width:100%; min-height:96px; max-height:240px; overflow:hidden; border:1px solid var(--arkme-line); border-radius:16px; box-sizing:border-box; background:var(--dsw-alias-bg-layer-2,#f3f4f6); color:var(--dsw-alias-label-secondary,#68707c); font-size:12px; }
 .arkme-codex-private-picture img { width:100%; height:100%; max-height:240px; object-fit:contain; }
-.arkme-team-codex .arkme-codex-private-open { position:absolute; inset:0; width:100%; height:100%; background:transparent; border:0; border-radius:10px; }
+.arkme-team-codex .arkme-codex-private-open { position:absolute; inset:0; width:100%; height:100%; background:transparent; border:0; border-radius:16px; }
 .arkme-codex-private-picture button { position:relative; z-index:1; }
 .arkme-codex-private-images > small { display:block; margin-top:6px; }
 .arkme-codex-private-overlay { position:fixed; inset:0; z-index:10001; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.78); }
 .arkme-codex-private-dialog { position:relative; max-width:94vw; max-height:92vh; min-width:180px; color:#fff; outline:none; }
-.arkme-codex-private-dialog .is-full { width:auto; min-height:160px; max-height:85vh; background:#222; border:0; }
+.arkme-codex-private-dialog .is-full { aspect-ratio:auto; width:auto; min-height:160px; max-height:85vh; background:#222; border:0; }
 .arkme-codex-private-dialog .is-full img { width:auto; height:auto; max-width:90vw; max-height:85vh; object-fit:contain; }
 .arkme-codex-private-dialog > small { display:block; margin-top:8px; text-align:center; }
 .arkme-codex-private-close { position:absolute; top:8px; right:8px; z-index:2; width:36px; height:36px; border:1px solid #777; border-radius:50%; background:#222; color:#fff; font-size:24px; cursor:pointer; }

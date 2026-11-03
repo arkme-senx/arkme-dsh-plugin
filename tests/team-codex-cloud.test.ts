@@ -144,7 +144,7 @@ describe('durable cloud upload ledger', () => {
   })
 })
 
-function cloudFixture() {
+function cloudFixture(presentation: Partial<TeamCodexCloudPort> = {}) {
   let user = 11, now = 10000
   const objects=codexObjectFixture();vi.stubGlobal('fetch',objects.fetch)
   const post = vi.fn(async (_owner: number, path: string, body: Record<string, unknown>) => {
@@ -155,10 +155,57 @@ function cloudFixture() {
     return { items: [], page: body.page, has_more: false }
   })
   const selectedTeam = vi.fn(async () => ({ teamRef: 'opaque-team', name: '即我', jotmoId: 'arkme_cn', currentUserRole: 'member' as const, createdAtMillis: 1, updatedAtMillis: 1 }))
-  const cloud = new TeamCodexCloud(db(), { post, selectedTeam } as TeamCodexCloudPort, async () => user, () => now)
+  const cloud = new TeamCodexCloud(db(), { post, selectedTeam, ...presentation } as TeamCodexCloudPort, async () => user, () => now)
   const local: TeamCodexState = { localOnly: true, self: member, installations: [], tasks: [task] }
   return { cloud, post, selectedTeam, local, objects, setUser: (value: number) => { user = value; cloud.fence() }, advance: () => { now += 61000 } }
 }
+
+describe('cloud member avatar projection', () => {
+  const rows = Array.from({length:50},(_,i)=>({task_id:`11111111-1111-4111-8111-${String(i+1).padStart(12,'0')}`,
+    source_id:'22222222-2222-4222-8222-222222222222',owner_ref:'22',team_ref:'101',display_name:'同事',identity_state:'ready',
+    task_title:'对话',latest_at:1000,event_count:1,state:'in_progress'}))
+  const prepare = (presentation: Partial<TeamCodexCloudPort>) => {
+    const f=cloudFixture(presentation),original=f.post.getMockImplementation()!
+    f.post.mockImplementation(async(owner,path,body)=>path.endsWith('/tasks/list')?{items:rows,page:1,has_more:false} as never:original(owner,path,body))
+    return f
+  }
+  it('decorates an entire page through one deduplicated public-owner batch',async()=>{
+    const memberAvatars=vi.fn(async()=>new Map([[22,{avatarRef:'public-avatar-for-current-viewer'}]]))
+    const f=prepare({memberAvatars}),result=await f.cloud.state(11,'opaque-team',{...f.local,tasks:[]})
+    expect(memberAvatars).toHaveBeenCalledExactlyOnceWith([22],expect.any(AbortSignal))
+    expect(result.tasks).toHaveLength(50)
+    expect(result.tasks.every(t=>t.member.avatarRef==='public-avatar-for-current-viewer')).toBe(true)
+    expect(result.cloud?.status).toBe('ready')
+  })
+  it('keeps authorized task data readable when public avatar lookup fails',async()=>{
+    const f=prepare({memberAvatars:vi.fn(async()=>{throw Error('avatar unavailable')})})
+    const result=await f.cloud.state(11,'opaque-team',{...f.local,tasks:[]})
+    expect(result.cloud?.status).toBe('ready');expect(result.tasks).toHaveLength(50)
+    expect(result.tasks[0]?.member.avatarRef).toBeUndefined()
+  })
+  it('rejects a late avatar result after the account changes',async()=>{
+    let entered!:()=>void,finish!:(value:Map<number,{avatarRef:string}>)=>void
+    const started=new Promise<void>(resolve=>{entered=resolve})
+    const f=prepare({memberAvatars:()=>{entered();return new Promise(resolve=>{finish=resolve})}})
+    const pending=f.cloud.state(11,'opaque-team',{...f.local,tasks:[]})
+    await started;f.setUser(22);finish(new Map([[22,{avatarRef:'old-viewer-avatar'}]]))
+    await expect(pending).rejects.toThrow()
+  })
+  it('bounds a slow avatar lookup without dropping the conversation page',async()=>{
+    vi.useFakeTimers()
+    try {
+      let entered!:()=>void
+      const started=new Promise<void>(resolve=>{entered=resolve})
+      const f=prepare({memberAvatars:(_ids,signal)=>new Promise((_resolve,reject)=>{
+        entered();signal.addEventListener('abort',()=>reject(signal.reason),{once:true})
+      })})
+      const pending=f.cloud.state(11,'opaque-team',{...f.local,tasks:[]})
+      await started;await vi.advanceTimersByTimeAsync(1500)
+      const result=await pending
+      expect(result.cloud?.status).toBe('ready');expect(result.tasks).toHaveLength(50)
+    } finally { vi.useRealTimers() }
+  })
+})
 describe('cloud coordinator account/team boundaries', () => {
   it('drains acknowledged batches in one trigger but stops immediately if ACK makes no progress',async()=>{
     const f=cloudFixture();await f.cloud.enable(11,'opaque-team')
@@ -465,4 +512,20 @@ it('does not convert a cancelled task read into an offline fallback or retry sta
   await expect(reading).rejects.toMatchObject({name:'AbortError'})
   expect((cloud as any).failures.size).toBe(0)
  }finally{cloud.fence()}
+})
+
+
+it('keeps steering input identity and source order separate from the root prompt and assistant replies',()=>{
+ const f=journalFixture()
+ const input={...events[0]!,eventId:'steer-input',messageSequence:105,text:'追加需求',at:1101}
+ const progress={...events[0]!,eventId:'public-progress',kind:'Progress' as const,messageSequence:100,text:'过程',at:1100}
+ f.reconcile([events[0]!,progress,input,events[1]!])
+ const rows=f.journal.readPage(11,'opaque-team',task.id)!.items
+ expect(rows.map(e=>[e.kind,e.text,e.messageSequence])).toEqual([['UserPromptSubmit','需求',0],['Progress','过程',100],['UserPromptSubmit','追加需求',105],['Stop','回答',0]])
+ const batch=f.batch(),steer=batch.tasks[0]!.events.find(e=>e.message_seq===105)!
+ const block=f.journal.contentBlock(batch.tasks[0]!.task_id,steer)
+ expect(block.map(e=>e.kind)).toEqual(['UserPromptSubmit'])
+ expect(steer.turn_id).toBe(batch.tasks[0]!.events[0]!.turn_id)
+ f.journal.acknowledge(batch,ack(batch));f.reconcile([events[0]!,progress,input,events[1]!])
+ expect(f.batch()).toBeUndefined()
 })

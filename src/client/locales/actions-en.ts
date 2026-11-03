@@ -1,5 +1,9 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "所选文本": "Selected text",
+  "注释": "Comment",
+  "{count} 条注释": "{count} annotations",
+  "1 条注释": "1 annotation",
   "查看 Arko 的想法": "View Arko’s thoughts",
   "查看 Arko 的回应": "View Arko’s response",
   "Arko · 快记想法": "Arko · Note insight",

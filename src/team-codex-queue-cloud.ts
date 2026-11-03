@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { TeamCodexTask, TeamCodexQueueSnapshot } from './team-codex-contract.js'
 import { clipUtf8, type TeamCodexCloudJournal, type CloudTask } from './team-codex-cloud-journal.js'
 import { codexImageSafeText } from './team-codex-image-text.js'
-import { codexPromptText } from './team-codex-prompt-text.js'
+import { codexPromptDisplayText } from './team-codex-prompt-text.js'
 import { redactCodexQueueText } from './team-codex-desktop-queue.js'
 import { codexCloudQueueWire, parseCodexCloudQueue, type CodexCloudQueueSnapshot } from './team-codex-queue-wire.js'
 
@@ -30,7 +30,7 @@ export class TeamCodexQueueCloud {
       const q=task.queue, mapping=this.journal.mapping(owner,team,task.id)
       if (!q || !mapping || task.status !== 'active' || task.excluded || task.projectExcluded || task.cloudBlocked) continue
       const items=q.items.map(item=>{
-        const safe=codexImageSafeText(redactCodexQueueText(codexPromptText(item.text)))
+        const safe=codexImageSafeText(redactCodexQueueText(codexPromptDisplayText(item.text)))
         const text=clipUtf8(safe,4096)
         return {request_id:createHash('sha256').update(`${mapping.taskId}:${item.id}`).digest('hex'),text,created_at:item.createdAt,
           delivery:item.delivery,state:item.state,paused:item.paused,attachment_count:item.attachmentCount,truncated:item.truncated||safe!==text}

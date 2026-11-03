@@ -34,7 +34,7 @@ export class TeamCodexImageCloud {
         signal.throwIfAborted()
         this.cursors.set(scope, Number(message.position))
         if (!eligible.has(String(message.local_id))) continue
-        const payload = JSON.parse(String(message.payload)) as {kind:string}
+        const payload = JSON.parse(String(message.payload)) as {kind:string;message_seq?:number}
         const local = this.db.prepare(`SELECT t.session_id session FROM codex_tasks t
           JOIN codex_installations i ON i.id=t.installation_id WHERE t.id=? AND i.user_id=? AND i.team_ref=?
           AND i.status='active' AND t.excluded=0 AND t.deleted=0
@@ -43,7 +43,7 @@ export class TeamCodexImageCloud {
         if (!local?.session) continue
         const args = [owner,String(local.session),String(message.local_turn),payload.kind] as const
         const metadata = this.db.prepare(`SELECT ref,source_hash,width,height,image IS NOT NULL AND thumbnail IS NOT NULL ready
-          FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? ORDER BY ordinal LIMIT 32`).all(...args)
+          FROM codex_private_images WHERE owner=? AND session=? AND turn=? AND kind=? AND message_seq=? ORDER BY ordinal LIMIT 32`).all(...args,payload.message_seq??0)
         let old:Receipt|undefined
         try { old = JSON.parse(String(message.image_receipt)) } catch { /* No accepted facet yet. */ }
         if (!metadata.length && !old) continue

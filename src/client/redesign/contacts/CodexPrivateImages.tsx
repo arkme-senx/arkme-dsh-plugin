@@ -26,7 +26,7 @@ function Picture({ image, params, full=false }: { image:Image; params:Record<str
     }).catch(()=>{if(!controller.signal.aborted)setError(true)})
     return ()=>controller.abort()
   },[key,image.ref,image.state,visible,full,retry])
-  return <span ref={container} className={`arkme-codex-private-picture${full?' is-full':''}`} style={full?undefined:{aspectRatio:`${image.width}/${image.height}`}}>
+  return <span ref={container} className={`arkme-codex-private-picture${full?' is-full':''}`} style={full?undefined:{aspectRatio:params.kind==='UserPromptSubmit'?'1':`${image.width}/${image.height}`}}>
     {url?<img src={url} alt={tr('仅本人可见的图片')} onError={()=>{setUrl('');setError(true)}}/>:image.state==='unavailable'?<span>{tr('原图片不可用')}</span>
       :error?<span>{tr('图片加载失败')} <button type="button" onClick={e=>{e.stopPropagation();setRetry(n=>n+1)}}>{tr('重试')}</button></span>:<span role="status">{tr('图片加载中…')}</span>}
   </span>

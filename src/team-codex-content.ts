@@ -39,7 +39,7 @@ export async function syncCodexContent(owner:number,post:Post,journal:TeamCodexC
  if(result.owner_ref!==String(owner))throw new Error('ACCOUNT_OR_DESTINATION_MISMATCH')
  const accepted=new Set(Array.isArray(result.task_results)?result.task_results.filter(raw=>{const row=raw as Record<string,unknown>;return ['saved','unchanged','stale'].includes(String(row.status))}).map(raw=>String((raw as Record<string,unknown>).task_id)):[])
  const eventResults:unknown[]=[];const blocks=new Set<string>();let count=0
- for(const task of batch.tasks)for(const event of task.events){if(!accepted.has(task.task_id))continue;const block=`${event.turn_seq}-${event.kind==='UserPromptSubmit'?1:phase(event.kind)}-${event.kind==='Progress'?Math.floor((Number(event.message_seq)-1)/4):0}`
+ for(const task of batch.tasks)for(const event of task.events){if(!accepted.has(task.task_id))continue;const block=`${event.turn_seq}-${event.kind==='UserPromptSubmit'?1:phase(event.kind)}-${event.message_seq>0?Math.floor((Number(event.message_seq)-1)/4):0}`
   const key=`${task.task_id}:${block}`;if(blocks.has(key))continue;blocks.add(key)
   if(count++>=8)break
   const events=journal.contentBlock(task.task_id,event)

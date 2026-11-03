@@ -343,6 +343,7 @@ export function apply(ctx: Context, config: Config): void {
       post: <T>(owner: number, path: string, body: Record<string, unknown>, signal: AbortSignal) => service.teamCodexPost<T>(owner, path, body, signal),
       bytes:(owner,path,body,headers,signal)=>service.teamCodexBytes(owner,path,body,headers,signal),
       selectedTeam: async (teamRef: string, signal: AbortSignal) => (await teamService.listMembers(teamRef, { limit: 1, signal })).team,
+      memberAvatars: (userIds, signal) => service.publicAvatarPresentationsByUserIds(userIds, signal),
     },
   })
   service.setCodexWorkRecords(teamCodex)

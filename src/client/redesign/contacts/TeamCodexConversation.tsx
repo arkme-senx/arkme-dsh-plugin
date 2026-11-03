@@ -5,6 +5,7 @@ import { CodexSelectableBody, useCodexMessageInteractions } from './CodexMessage
 import { codexSelectable } from './codex-message-actions.js'
 import { arkmeTheme } from '../../arkme-theme.js'
 import { Children, isValidElement, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { HoverCard } from '@deepseek-ai/dsh-client-ui-primitives'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -13,7 +14,8 @@ import { arkmeMarkdownStyles } from '../../ArkmeMarkdownBody.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
 import { compareCodexEvents } from '../../../team-codex-contract.js'
 import type { TeamCodexEvent, TeamCodexEventPage, TeamCodexTask, TeamCodexTaskSummary } from '../../../team-codex-contract.js'
-import { codexPromptPresentation, type CodexQuestionReply } from '../../../team-codex-prompt-text.js'
+import { codexPromptPresentation, type CodexQuestionReply, type CodexPromptPresentation } from '../../../team-codex-prompt-text.js'
+import { codexResponseAnnotationText, type CodexResponseAnnotations } from '../../../team-codex-response-annotations.js'
 import { codexCollectorUnavailable } from './CodexSyncStatus.js'
 import { CodexTurnDuration } from './CodexTurnDuration.js'
 import { CodexPrivateImages } from './CodexPrivateImages.js'
@@ -71,13 +73,40 @@ export const CodexMessageBody = memo(function CodexMessageBody({ text }: { text:
 })
 
 interface CodexConversationProps { teamRef: string; task: TeamCodexTask; reading: CodexReadingState; inputName: string; onTaskSummary?(summary:TeamCodexTaskSummary):void; children?: ReactNode|((detail:TeamCodexTask)=>ReactNode) }
-function visiblePrompt(raw: string) {
+function visiblePrompt(raw: string): CodexPromptPresentation {
   const prompt = codexPromptPresentation(raw)
+  if (prompt.responseAnnotations) {
+    const responseAnnotations = { request: codexImageSafeText(prompt.responseAnnotations.request),
+      annotations: prompt.responseAnnotations.annotations.map(item => ({ ...item, text: codexImageSafeText(item.text),
+        ...(item.comment === undefined ? {} : { comment: codexImageSafeText(item.comment) }) })) }
+    return { text: codexResponseAnnotationText(responseAnnotations), responseAnnotations }
+  }
   return { text: codexImageSafeText(prompt.text), ...(prompt.replies ? {
     replies: prompt.replies.map(reply => ({ question: codexImageSafeText(reply.question), answer: codexImageSafeText(reply.answer) })),
   } : {}) }
 }
-function CodexPromptBody({ text, replies }: { text: string; replies?: CodexQuestionReply[] | undefined }) {
+function CodexAnnotatedPrompt({ value }: { value: CodexResponseAnnotations }) {
+  useArkmeLocale()
+  return <div className="arkme-codex-response-annotations">
+    {/* The portaled preview must not change the source offsets of the request. */}
+    <div hidden>{value.annotations.map((item,index)=><section key={index}><p data-arkme-quote-prose>{item.text}</p>{item.comment&&<p data-arkme-quote-prose>{item.comment}</p>}</section>)}</div>
+    <HoverCard inline anchor={<button type="button" className="arkme-codex-response-annotation-toggle">
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 3.5h10A2 2 0 0 1 17 5.5v7a2 2 0 0 1-2 2h-4l-3.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M6.5 7h7m-7 3h4"/></svg>
+      {tr(value.annotations.length === 1 ? '1 条注释' : '{count} 条注释', {count:value.annotations.length})}
+    </button>} content={<div className="arkme-codex-response-annotation-list">
+      {value.annotations.map((item, index) => <section className="arkme-codex-response-annotation" aria-label={tr('所选文本')} key={index}>
+        <span className="arkme-codex-response-annotation-number" aria-hidden="true">{index + 1}.</span>
+        <div><div className="arkme-codex-response-annotation-label" aria-hidden="true">{tr('所选文本')}：</div>
+          <p>{item.text}</p>
+          {item.comment && <div className="arkme-codex-response-annotation-comment"><span>{tr('注释')}：</span><p>{item.comment}</p></div>}
+        </div>
+      </section>)}
+    </div>}/>
+    {value.request && <div className="arkme-codex-user-text" data-arkme-quote-prose>{value.request}</div>}
+  </div>
+}
+function CodexPromptBody({ text, replies, responseAnnotations }: { text: string; replies?: CodexQuestionReply[] | undefined; responseAnnotations?: CodexResponseAnnotations | undefined }) {
+  if (responseAnnotations) return <CodexAnnotatedPrompt value={responseAnnotations}/>
   if (!replies) return <div className="arkme-codex-user-text">{text || tr('无文本输入')}</div>
   return <div className="arkme-codex-question-replies">{replies.map((reply,index) =>
     <section className="arkme-codex-question-reply" aria-label={tr('问题与回答')} key={index}>
@@ -227,7 +256,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
   const visibleItems = useMemo(() => items.map(event => ({...event,...(event.kind === 'UserPromptSubmit'
     ? visiblePrompt(event.text) : {text:codexImageSafeText(event.text)})})), [items])
   const currentPrompt = current ? visiblePrompt(current.text) : undefined
-  const interactions=useCodexMessageInteractions({teamRef,task,events:visibleItems,account,userId})
+  const interactions=useCodexMessageInteractions({teamRef,task,events:items,account,userId})
   const latest=visibleItems.at(-1)
   const workingTiming=task.state==='working' && latest?.timing?.state==='working'
     && (latest.kind==='UserPromptSubmit'||latest.kind==='Progress')
@@ -243,12 +272,13 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence} data-codex-row={String(event.eventId??event.sequence)}>
           {(index === 0 || dayKey(items[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
           {((event.kind==='Stop'&&event.timing?.state==='finished')||(event.kind==='Interrupt'&&event.timing?.state==='interrupted')) && <CodexTurnDuration timing={event.timing!} task={task}/>}
-          <article onContextMenu={e=>interactions.contextMenu(event,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
-            {interactions.check(event)}<div style={{minWidth:0}}>
-            <CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
-              : event.text ? event.kind === 'UserPromptSubmit' ? <CodexPromptBody text={event.text} replies={event.replies}/> : <CodexMessageBody text={event.text}/>
-                : <p>{tr(event.kind === 'Stop' ? '本轮已结束，未收到回答文本。' : '无文本输入')}</p>}</CodexSelectableBody>
-            <CodexPrivateImages teamRef={teamRef} task={task} event={event}/>
+          <article onContextMenu={e=>interactions.contextMenu(items[index]!,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(items[index]!)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
+            {interactions.check(items[index]!)}<div style={{minWidth:0}}>
+            {event.kind==='UserPromptSubmit'&&<CodexPrivateImages teamRef={teamRef} task={task} event={event}/>}
+            {(event.text||event.kind!=='UserPromptSubmit'||!event.privateImages?.length)&&<CodexSelectableBody sourceRef={interactions.sourceRef} event={event} inputName={inputName}>{event.kind === 'Interrupt' ? <div className="arkme-codex-interrupted">{tr('任务已中断')}{event.text && <span> · {event.text}</span>}</div>
+              : event.text ? event.kind === 'UserPromptSubmit' ? <CodexPromptBody text={event.text} replies={event.replies} responseAnnotations={event.responseAnnotations}/> : <CodexMessageBody text={event.text}/>
+                : <p>{tr(event.kind === 'Stop' ? '本轮已结束，未收到回答文本。' : '无文本输入')}</p>}</CodexSelectableBody>}
+            {event.kind!=='UserPromptSubmit'&&<CodexPrivateImages teamRef={teamRef} task={task} event={event}/>}
             {event.truncated && <small>{tr('正文已截断；完整内容请在来源电脑的 Codex 查看。')}</small>}
             <footer className="arkme-codex-message-meta"><time dateTime={new Date(event.at).toISOString()}>{stamp(event.at)}</time>{event.text && <CodexCopyButton value={event.text} label={tr(event.kind === 'UserPromptSubmit' ? '复制输入' : '复制回答')}/>}</footer></div>
           </article>

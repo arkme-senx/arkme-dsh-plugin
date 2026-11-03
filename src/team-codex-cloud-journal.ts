@@ -125,11 +125,11 @@ export class TeamCodexCloudJournal {
 
   contentBlock(task:string,event:CloudEvent):CloudEvent[]{
     const controls=event.kind!=='Progress'&&event.kind!=='UserPromptSubmit'
-    const first=event.kind==='Progress'?Math.floor((Number(event.message_seq)-1)/4)*4+1:1
+    const first=event.message_seq>0?Math.floor((Number(event.message_seq)-1)/4)*4+1:1
     const rows=controls?this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind=? LIMIT 1`).all(task,event.turn_seq,event.kind)
       :[
-        ...(first===1?this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='UserPromptSubmit' LIMIT 1`).all(task,event.turn_seq):[]),
-        ...this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='Progress' AND message_seq>=? AND message_seq<=? ORDER BY message_seq LIMIT 4`).all(task,event.turn_seq,first,first+3),
+        ...(first===1?this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='UserPromptSubmit' AND message_seq=0 LIMIT 1`).all(task,event.turn_seq):[]),
+        ...this.db.prepare(`SELECT id,version,payload FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind IN ('Progress','UserPromptSubmit') AND message_seq>=? AND message_seq<=? ORDER BY message_seq LIMIT 4`).all(task,event.turn_seq,first,first+3),
       ]
     return rows.map(row=>({...JSON.parse(String(row.payload)),event_id:String(row.id),version:Number(row.version)}))
   }
@@ -208,7 +208,7 @@ export class TeamCodexCloudJournal {
     const more=rows.length>50,visible=rows.slice(0,50)
     if(!forward)visible.reverse()
     const items=visible.map(row=>{
-      const event=JSON.parse(String(row.payload)) as CloudEvent,phase=codexEventPhase(event.kind)
+      const event=JSON.parse(String(row.payload)) as CloudEvent,phase=codexEventPhase(event.kind,event.message_seq)
       return {sequence:event.turn_seq*4+phase,eventId:String(row.id),version:Number(row.version),turnSequence:event.turn_seq,messageSequence:event.message_seq,
         turnId:event.turn_id,kind:event.kind,text:event.text,at:event.at,truncated:event.truncated,...(event.timing?{timing:event.timing}:{}),
         cursor:'lc1_'+Buffer.from(JSON.stringify([mapping.sourceId,mapping.taskId,event.turn_seq,phase,event.message_seq,String(row.id)])).toString('base64url')}
@@ -273,16 +273,16 @@ export class TeamCodexCloudJournal {
             turn = { seq }
             this.db.prepare('INSERT INTO codex_cloud_turns VALUES(?,?,?)').run(row.id, localTurn, seq)
           }
-          const slot = digest(JSON.stringify(event.kind==='Progress'?[localTurn,event.kind,event.eventId]:[localTurn,event.kind]))
+          const slot = digest(JSON.stringify((event.kind==='Progress'||event.kind==='UserPromptSubmit'&&(event.messageSequence??0)>0)?[localTurn,event.kind,event.eventId]:[localTurn,event.kind]))
           const previous = this.db.prepare('SELECT * FROM codex_cloud_events WHERE task=? AND slot=?').get(row.id, slot) as unknown as EventRow | undefined
           const oldPayload = previous ? JSON.parse(previous.payload) as CloudEvent : undefined
           const safe = codexImageSafeText(event.text)
           const sharedText = event.kind==='UserPromptSubmit'?codexImageSafeText(codexPromptText(event.text)):safe
           const text = clipUtf8(sharedText, 256 * 1024)
-          const messageSeq=event.kind==='Progress'?(oldPayload?.message_seq??event.messageSequence??Number(this.db.prepare("SELECT COALESCE(MAX(message_seq),0)+1 n FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind='Progress'").get(row.id,turn.seq)!.n)):0
+          const messageSeq=(event.kind==='Progress'||event.kind==='UserPromptSubmit'&&(event.messageSequence??0)>0)?(oldPayload?.message_seq??event.messageSequence??Number(this.db.prepare("SELECT COALESCE(MAX(message_seq),0)+1 n FROM codex_cloud_events WHERE task=? AND turn_seq=? AND kind IN ('Progress','UserPromptSubmit')").get(row.id,turn.seq)!.n)):0
           const eventPayload = JSON.stringify({ message_seq:messageSeq,...(event.timing?{timing:event.timing}:{}),turn_id: codexCloudTurnId(localTurn), turn_seq: turn.seq, kind: event.kind,
             text, at: oldPayload?.at ?? event.at, truncated: event.truncated || text !== sharedText })
-          if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version,turn_seq,kind,message_seq,phase,at,payload_bytes) VALUES(?,?,?,?,1,?,?,?,?,?,?)').run(randomUUID(), row.id, slot, eventPayload,turn.seq,event.kind,messageSeq,codexEventPhase(event.kind),event.at,bytes(eventPayload))
+          if (!previous) this.db.prepare('INSERT INTO codex_cloud_events(id,task,slot,payload,version,turn_seq,kind,message_seq,phase,at,payload_bytes) VALUES(?,?,?,?,1,?,?,?,?,?,?)').run(randomUUID(), row.id, slot, eventPayload,turn.seq,event.kind,messageSeq,codexEventPhase(event.kind,messageSeq),event.at,bytes(eventPayload))
           else if (previous.payload !== eventPayload && !previous.blocked) this.db.prepare('UPDATE codex_cloud_events SET payload=?,payload_bytes=?,version=version+1 WHERE id=?').run(eventPayload,bytes(eventPayload),previous.id)
         }
       }

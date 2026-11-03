@@ -1,5 +1,6 @@
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
+import { readCodexResponseAnnotations, codexResponseAnnotationContent } from './team-codex-response-annotations.js'
 
 type Node = { type: string; url?: string; children?: Node[]; position?: { start: { offset?: number }; end: { offset?: number } } }
 type ImageReference = { url: string; start: number; end: number; definition?: { start: number; end: number } }
@@ -28,6 +29,12 @@ export function codexMarkdownImages(text: string): ImageReference[] {
 /** Shared snapshots never include image URLs/base64/local attachment paths. */
 export function codexImageSafeText(text: string): string {
   if (!/!\[|<image\b|<img\b|data:image\/|Image attachment: true/i.test(text)) return text
+  const responseAnnotations = readCodexResponseAnnotations(text)
+  if (responseAnnotations) return codexResponseAnnotationContent({
+    request: codexImageSafeText(responseAnnotations.request),
+    annotations: responseAnnotations.annotations.map(item => ({ ...item, text: codexImageSafeText(item.text),
+      ...(item.comment === undefined ? {} : { comment: codexImageSafeText(item.comment) }) })),
+  })
   let safe = text
   const images = codexMarkdownImages(text)
   const ranges = new Map(images.map(image => [image.start, { start: image.start, end: image.end }]))

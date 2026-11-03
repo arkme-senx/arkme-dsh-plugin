@@ -131,8 +131,8 @@ export interface TeamCodexEventPage {
   nextCursor?: string
 }
 
-export const codexEventPhase=(kind:TeamCodexEventKind)=>({UserPromptSubmit:0,Progress:1,Interrupt:2,Stop:3})[kind]
+export const codexEventPhase=(kind:TeamCodexEventKind,messageSequence=0)=>kind==='UserPromptSubmit'&&messageSequence>0?1:({UserPromptSubmit:0,Progress:1,Interrupt:2,Stop:3})[kind]
 export function compareCodexEvents(a:TeamCodexEvent,b:TeamCodexEvent):number {
- if(a.turnSequence!==undefined&&b.turnSequence!==undefined)return a.turnSequence-b.turnSequence||codexEventPhase(a.kind)-codexEventPhase(b.kind)||(a.messageSequence??0)-(b.messageSequence??0)||(a.eventId??'').localeCompare(b.eventId??'')
+ if(a.turnSequence!==undefined&&b.turnSequence!==undefined)return a.turnSequence-b.turnSequence||codexEventPhase(a.kind,a.messageSequence)-codexEventPhase(b.kind,b.messageSequence)||(a.messageSequence??0)-(b.messageSequence??0)||(a.eventId??'').localeCompare(b.eventId??'')
  return a.at-b.at||a.sequence-b.sequence
 }
