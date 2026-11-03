@@ -93,7 +93,7 @@ function requestBytesLimit(operation: string, params?: unknown): number {
   if (['recordings.speaker.correction.apply', 'recordings.speaker.correction.preview', 'recordings.speaker.evidence.query'].includes(operation)) return 1024 * 1024
   if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
   if (operation === 'remote.session.native') return MAX_NATIVE_REQUEST_BYTES
-  if (operation === 'source.related-quick-notes.from-message' || operation === 'source.message-thoughts.query') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
+  if (operation === 'source.related-quick-notes.from-message' || operation === 'source.message-thoughts.query' || operation.startsWith('source.message-thought-continuations.')) return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
   if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward' || operation === 'native-chat.forward' || operation === 'native-chat.copy-link' || operation === 'codex.forward') {
     return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   }
@@ -2633,6 +2633,12 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-underline.change': return await service.changeSourceUnderline(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'source.message-extension.capabilities': return await service.sourceMessageExtensionCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'source.message-thoughts.query': return await service.sourceMessageThoughts(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), requestSignal)
+    case 'source.message-thought-continuations.query': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
+    case 'source.message-thought-continuations.retry': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
+      retryId: stringParam(params, 'id'),
+    }, requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),

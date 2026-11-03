@@ -1,5 +1,6 @@
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
+export type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../thought-continuation.js'
 export type { ArkmeThoughtReplySnapshot } from '../thought-reply.js'
 export type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
@@ -2633,6 +2634,16 @@ export class ArkmeSdk {
     if (!sourceRef.trim() || !messageActionRef.trim()) throw new TypeError('Expected signed source and message references')
     await this.requireThoughtReplyProvider(signal)
     return this.call('source.message-thoughts.query', { sourceRef, messageActionRef }, signal)
+  }
+  async sourceMessageThoughtContinuations(sourceRef: string, messageActionRef: string, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<import('../thought-continuation.js').ArkmeThoughtContinuationPage> {
+    if ((await this.capabilities(options.signal)).features.arkoThoughtContinuationsV1 !== true)
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持评论续答，请升级', retryable: false })
+    return this.call('source.message-thought-continuations.query', { sourceRef, messageActionRef, ...(options.cursor ? { cursor: options.cursor } : {}) }, options.signal)
+  }
+  async retrySourceMessageThoughtContinuation(sourceRef: string, messageActionRef: string, id: string, signal?: AbortSignal): Promise<import('../thought-continuation.js').ArkmeThoughtContinuationPage> {
+    if ((await this.capabilities(signal)).features.arkoThoughtContinuationsV1 !== true)
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持评论续答，请升级', retryable: false })
+    return this.call('source.message-thought-continuations.retry', { sourceRef, messageActionRef, id }, signal)
   }
 
   /** Read a single comment page; the existing context method reads the complete tree. */

@@ -462,6 +462,15 @@ export class ArkmeService {
     }
     return result
   }
+  async sourceMessageThoughtContinuations(sourceRef: string, messageActionRef: string, options: { cursor?: string; retryId?: string; signal?: AbortSignal } = {}, signal?: AbortSignal): Promise<import('./thought-continuation.js').ArkmeThoughtContinuationPage> {
+    signal ??= options.signal
+    const { thoughtContinuations } = await import('./services/thought-continuation-service.js')
+    return thoughtContinuations(this.runtime, sourceRef, messageActionRef, options,
+      () => this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), uid => this.record.personalRecordDetail(uid, signal), signal)
+  }
+  async retrySourceMessageThoughtContinuation(sourceRef: string, messageActionRef: string, id: string, signal?: AbortSignal) {
+    return this.sourceMessageThoughtContinuations(sourceRef, messageActionRef, { retryId: id }, signal)
+  }
   async modelDirectory(expectedScope: string, signal?: AbortSignal) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
       arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
@@ -1445,6 +1454,7 @@ arkoImagesV1:true,
         publicSocialV1: true,
         messageTextAnchorsV1: true,
         arkoThoughtRepliesV1: true,
+        arkoThoughtContinuationsV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         teamWorldV1: true,

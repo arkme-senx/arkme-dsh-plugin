@@ -10,6 +10,9 @@ export function apply(ctx, config) {
     await ctx.get('loader').await()
     const service = ctx.arkmeData
     const originalRead = service.sourceMessageThoughts, originalWrite = service.extendSourceMessage
+    const originalContinuations = service.sourceMessageThoughtContinuations
+    let continuationReads = 0
+    service.sourceMessageThoughtContinuations = async () => { continuationReads++; return { accountScope: 'test:11', supported: true, items: [{ id: 'a'.repeat(64), status: 'ready', replyRecordUid: 'synthetic-human', content: 'Synthetic continuation', replyTargetRef: 'opaque-continuation' }] } }
     let reads = 0, writes = 0
     service.sourceMessageThoughts = async (_source, _action, signal) => {
       signal?.throwIfAborted(); reads++
@@ -25,16 +28,20 @@ export function apply(ctx, config) {
       const read = await ctx.tools.execute({ agent, name: 'arkme_message_thoughts', callId: randomUUID(),
         arguments: { source_ref: 'opaque-source', message_action_ref: 'opaque-action' }, signal: AbortSignal.timeout(10000) })
       assert(!read.isError, JSON.stringify(read)); assert(JSON.stringify(read).includes('opaque-test-target'))
+      const continuation = await ctx.tools.execute({ agent, name: 'arkme_message_thoughts', callId: randomUUID(),
+        arguments: { source_ref: 'opaque-source', message_action_ref: 'opaque-action', action: 'continuations' }, signal: AbortSignal.timeout(10000) })
+      assert(!continuation.isError, JSON.stringify(continuation)); assert(JSON.stringify(continuation).includes('opaque-continuation'))
       const pending = await ctx.tools.execute({ agent, name: 'arkme_thought_reply', callId: randomUUID(),
         arguments: { source_ref: 'opaque-source', message_action_ref: 'opaque-action', thought_reply_ref: 'opaque-test-target', text: 'Synthetic reply', operation_uid: 'synthetic-operation' },
         signal: AbortSignal.timeout(10000) })
       assert(JSON.stringify(pending).includes('confirmation_required'), JSON.stringify(pending))
       assert.equal(reads, 1); assert.equal(writes, 0)
+      assert.equal(continuationReads, 1)
       await ctx.sessions.flush(agent.session)
       await writeFile(config.output, JSON.stringify({ runtime: 'official DSH', packedArtifact: true,
-        toolDiscovery: true, readInvocation: true, unconfirmedWriteBlocked: true,
+        toolDiscovery: true, readInvocation: true, continuationReadInvocation: true, unconfirmedWriteBlocked: true,
         ownerAdapter: 'synthetic; real service authorization covered separately' }, null, 2) + '\n', { mode: 0o600 })
-    } finally { service.sourceMessageThoughts = originalRead; service.extendSourceMessage = originalWrite }
+    } finally { service.sourceMessageThoughts = originalRead; service.extendSourceMessage = originalWrite; service.sourceMessageThoughtContinuations = originalContinuations }
     ctx.get('appExit')(0)
   })().catch(error => { console.error(error); ctx.get('appExit')(1) })
 }
